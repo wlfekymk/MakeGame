@@ -44,3 +44,8 @@ sysinfo.txt
 # OS 파일
 .DS_Store
 Thumbs.db
+
+# Git 인증 정보 (토큰 등) - 절대 커밋 금지
+.git-credentials
+.git-ssh/
+repo.bundle
