@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Program Files/Unity/Hub/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(where unityhub *)",
+      "Read(//c/Users/wlfek/AppData/Roaming/**)",
+      "Bash(ls \"/d\")"
+    ]
+  }
+}
