@@ -6,7 +6,27 @@
   "characters": [],
   "npc": "동승자 없음 (주인공 단독 불시착)",
   "locations": [],
-  "items": [],
+  "items": [
+    {
+      "name": "고무보트",
+      "usesLimit": "무제한 (사용 횟수 제한 없음)",
+      "restriction": "대형(대) 섬부터는 해류가 강해져서 가져갈 수 없음"
+    },
+    {
+      "name": "생수",
+      "quantity": "몇 병",
+      "usesLimit": "제한 있음 (소모품)"
+    },
+    {
+      "name": "라이터",
+      "usesLimit": "제한 있음 (소모품)"
+    },
+    {
+      "name": "칼",
+      "usesLimit": "제한 있음 (소모품)"
+    }
+  ],
+  "startingLoadout": "불시착 직후 시작 지점에서 위 시작 아이템 중 일부를 챙길 수 있음",
   "plotPoints": [
     {
       "id": 1,
