@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: "Item_\uACE0\uBB34\uBCF4\uD2B8"
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: "\uACE0\uBB34\uBCF4\uD2B8"
+  description: "\uBD88\uC2DC\uCC29 \uC2DC \uCC59\uAE38 \uC218 \uC788\uB294 \uC2DC\uC791
+    \uC544\uC774\uD15C. \uC0AC\uC6A9 \uD69F\uC218 \uBB34\uC81C\uD55C\uC774\uC9C0\uB9CC
+    \uB300\uD615 \uC12C\uBD80\uD130\uB294 \uD574\uB958\uAC00 \uAC15\uD574 \uAC00\uC838\uAC08
+    \uC218 \uC5C6\uB2E4.\t"
+  maxUses: -1
+  blockedFromLargeIslandsByCurrent: 1
