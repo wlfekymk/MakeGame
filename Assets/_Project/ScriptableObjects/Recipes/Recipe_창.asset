@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_창
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: 창
+  description: "나뭇가지와 돌조각으로 창을 만든다. 사냥과 낚시에 사용한다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
+    quantity: 2
+  - item: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
+    quantity: 1
+  resultItem: {fileID: 11400000, guid: 53f26fad42714f3eb765334ed469db71, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 10
