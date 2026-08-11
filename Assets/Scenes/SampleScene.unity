@@ -444,6 +444,7 @@ GameObject:
   - component: {fileID: 1886019773}
   - component: {fileID: 1886019772}
   - component: {fileID: 1886019771}
+  - component: {fileID: 1886019775}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -507,6 +508,27 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1886019775
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d3bfb9fd048c5ae45bc305e78b290147, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.WorldMapManager
+  islandGenerator: {fileID: 1886019772}
+  islands: []
+  baseDistanceStep: 120
+  distanceJitter: 40
+  minSpacingBetweenIslands: 60
+  maxPlacementAttempts: 20
+  islandPlaceholderPrefab: {fileID: 0}
+  generateOnStart: 1
+  initialIslandCount: 8
 --- !u!1 &1925945763
 GameObject:
   m_ObjectHideFlags: 0
