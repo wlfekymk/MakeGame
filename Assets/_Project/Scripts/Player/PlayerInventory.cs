@@ -51,5 +51,48 @@ namespace MakeGame.Player
 
             return destinationSize != IslandSize.Large && destinationSize != IslandSize.ExtraLarge;
         }
+
+        /// <summary>
+        /// 채집 등으로 재료 아이템 하나를 인벤토리에 새로 추가한다 (제작 재료처럼 개수로 관리되는 아이템에 사용).
+        /// </summary>
+        public void AddItem(ItemData itemData)
+        {
+            items.Add(new InventoryItem(itemData));
+        }
+
+        /// <summary>
+        /// 지정한 아이템을 인벤토리에 몇 개 가지고 있는지 센다 (제작 재료 확인 등에 사용).
+        /// </summary>
+        public int GetItemCount(ItemData itemData)
+        {
+            int count = 0;
+            foreach (var item in items)
+            {
+                if (item.data == itemData)
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// 지정한 아이템을 count개 만큼 인벤토리에서 제거한다.
+        /// 보유 수량이 부족하면 아무것도 제거하지 않고 false를 반환한다 (제작 시 재료 소모 등에 사용).
+        /// </summary>
+        public bool RemoveItems(ItemData itemData, int count)
+        {
+            if (GetItemCount(itemData) < count)
+                return false;
+
+            int removed = 0;
+            for (int i = items.Count - 1; i >= 0 && removed < count; i--)
+            {
+                if (items[i].data == itemData)
+                {
+                    items.RemoveAt(i);
+                    removed++;
+                }
+            }
+            return true;
+        }
     }
 }
