@@ -518,6 +518,8 @@ GameObject:
   - component: {fileID: 1925945766}
   - component: {fileID: 1925945765}
   - component: {fileID: 1925945764}
+  - component: {fileID: 1925945768}
+  - component: {fileID: 1925945767}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -586,6 +588,50 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1925945767
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d985648f493b1fb4bad210fe9ac6f074, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.CraftingSystem
+  inventory: {fileID: 1925945764}
+  skills: {fileID: 1925945768}
+--- !u!114 &1925945768
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7266dd040fc37554cb4ad40f156e71da, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.PlayerSkills
+  skills:
+  - type: 0
+    level: 1
+    experience: 0
+  - type: 1
+    level: 1
+    experience: 0
+  - type: 2
+    level: 1
+    experience: 0
+  - type: 3
+    level: 1
+    experience: 0
+  - type: 4
+    level: 1
+    experience: 0
+  experiencePerLevel: 100
+  maxLevel: 10
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
