@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
+using MakeGame.Player;
 
 namespace MakeGame.Systems
 {
@@ -8,6 +9,7 @@ namespace MakeGame.Systems
     /// 탈출선(배) 제작 엔딩의 진행 상태를 관리하는 시스템.
     /// 총 3단계로 구성되며, 각 단계는 "도면 습득 → 재료 확보 → 제작 완료" 순서로 진행된다.
     /// 1~2단계 도면은 대형(대) 섬에서, 3단계(최종) 도면은 특대 섬에서만 습득할 수 있다.
+    /// 단계별 필요 재료는 ItemData 기반으로 관리되며, PlayerInventory에서 실제로 재료를 소모해 투입한다.
     /// </summary>
     public class BoatConstructionSystem : MonoBehaviour
     {
@@ -20,11 +22,27 @@ namespace MakeGame.Systems
         [Tooltip("현재 단계의 도면을 습득했는지 여부")]
         public bool hasCurrentStageBlueprint = false;
 
-        [Tooltip("현재 단계 제작을 위해 확보한 재료 목록")]
-        public List<string> collectedMaterialsForCurrentStage = new List<string>();
+        /// <summary>재료 하나와 필요 수량을 나타낸다 (CraftingRecipe.MaterialRequirement와 동일한 구조).</summary>
+        [System.Serializable]
+        public class MaterialRequirement
+        {
+            public ItemData item;
+            [Min(1)]
+            public int quantity = 1;
+        }
 
-        [Tooltip("현재 단계 제작에 필요한 전체 재료 목록 (세부 재료 설계 확정 전까지 임시 값)")]
-        public List<string> requiredMaterialsForCurrentStage = new List<string>();
+        /// <summary>한 단계에서 필요한 재료 목록을 감싸는 래퍼 (Inspector에서 단계별로 리스트를 구성하기 위함).</summary>
+        [System.Serializable]
+        public class StageRequirements
+        {
+            public List<MaterialRequirement> materials = new List<MaterialRequirement>();
+        }
+
+        [Tooltip("단계별(1~3단계) 필요 재료 설계. 인덱스 0이 1단계, 인덱스 2가 3단계에 대응한다.")]
+        public List<StageRequirements> stageMaterialRequirements = new List<StageRequirements>();
+
+        [Tooltip("현재 단계에서 확보(투입)한 재료 수량 목록")]
+        public List<MaterialRequirement> collectedMaterialsForCurrentStage = new List<MaterialRequirement>();
 
         /// <summary>
         /// 지정한 규모의 섬에서 현재 단계 도면을 습득할 수 있는지 확인한다.
@@ -48,12 +66,61 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 재료를 하나 확보했을 때 호출한다. 이미 확보한 재료는 중복 추가하지 않는다.
+        /// 현재 단계(currentStage)에 필요한 재료 목록을 반환한다. 설계가 없으면 빈 목록을 반환한다.
         /// </summary>
-        public void CollectMaterial(string materialId)
+        public List<MaterialRequirement> GetCurrentStageRequirements()
         {
-            if (!collectedMaterialsForCurrentStage.Contains(materialId))
-                collectedMaterialsForCurrentStage.Add(materialId);
+            int index = currentStage - 1;
+            if (index < 0 || index >= stageMaterialRequirements.Count)
+                return new List<MaterialRequirement>();
+
+            return stageMaterialRequirements[index].materials;
+        }
+
+        /// <summary>
+        /// 인벤토리에서 재료를 실제로 소모하여 현재 단계 제작에 투입한다.
+        /// 인벤토리에 충분한 수량이 없으면 아무것도 소모하지 않고 실패한다.
+        /// </summary>
+        public bool ContributeMaterial(PlayerInventory inventory, ItemData item, int quantity)
+        {
+            if (inventory == null || item == null || quantity <= 0)
+                return false;
+
+            if (!inventory.RemoveItems(item, quantity))
+                return false;
+
+            AddCollected(item, quantity);
+            return true;
+        }
+
+        /// <summary>
+        /// 투입된 재료 수량을 collectedMaterialsForCurrentStage에 누적 기록한다.
+        /// </summary>
+        private void AddCollected(ItemData item, int quantity)
+        {
+            foreach (var entry in collectedMaterialsForCurrentStage)
+            {
+                if (entry.item == item)
+                {
+                    entry.quantity += quantity;
+                    return;
+                }
+            }
+
+            collectedMaterialsForCurrentStage.Add(new MaterialRequirement { item = item, quantity = quantity });
+        }
+
+        /// <summary>
+        /// 현재 단계에서 특정 재료를 몇 개나 확보(투입)했는지 반환한다.
+        /// </summary>
+        public int GetCollectedQuantity(ItemData item)
+        {
+            foreach (var entry in collectedMaterialsForCurrentStage)
+            {
+                if (entry.item == item)
+                    return entry.quantity;
+            }
+            return 0;
         }
 
         /// <summary>
@@ -65,9 +132,9 @@ namespace MakeGame.Systems
             if (!hasCurrentStageBlueprint)
                 return false;
 
-            foreach (var required in requiredMaterialsForCurrentStage)
+            foreach (var required in GetCurrentStageRequirements())
             {
-                if (!collectedMaterialsForCurrentStage.Contains(required))
+                if (GetCollectedQuantity(required.item) < required.quantity)
                     return false;
             }
 
@@ -89,7 +156,6 @@ namespace MakeGame.Systems
             currentStage++;
             hasCurrentStageBlueprint = false;
             collectedMaterialsForCurrentStage.Clear();
-            requiredMaterialsForCurrentStage.Clear();
             return false;
         }
 

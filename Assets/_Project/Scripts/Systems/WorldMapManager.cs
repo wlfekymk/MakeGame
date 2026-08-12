@@ -35,6 +35,13 @@ namespace MakeGame.Systems
         [Tooltip("섬을 표시할 플레이스홀더 프리팹. 비워두면 원기둥 프리미티브를 자동 생성한다.")]
         public GameObject islandPlaceholderPrefab;
 
+        [Header("섬 콘텐츠 배치")]
+        [Tooltip("섬이 생성될 때 채집 자원 노드를 함께 배치할 스포너 (비워두면 자원을 배치하지 않는다)")]
+        public IslandResourceSpawner resourceSpawner;
+
+        [Tooltip("섬이 생성될 때 위험 요소를 함께 배치할 스포너 (비워두면 위험 요소를 배치하지 않는다)")]
+        public HazardSpawner hazardSpawner;
+
         [Header("테스트용 자동 생성")]
         [Tooltip("플레이 시작 시 자동으로 시작 섬 + 여러 섬을 생성해서 맵을 미리 확인할 수 있게 한다.")]
         public bool generateOnStart = true;
@@ -73,6 +80,7 @@ namespace MakeGame.Systems
             };
 
             SpawnPlaceholder(startIsland);
+            SpawnIslandContent(startIsland);
             islands.Add(startIsland);
             return startIsland;
         }
@@ -96,8 +104,18 @@ namespace MakeGame.Systems
             };
 
             SpawnPlaceholder(newIsland);
+            SpawnIslandContent(newIsland);
             islands.Add(newIsland);
             return newIsland;
+        }
+
+        /// <summary>
+        /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원과 위험 요소를 함께 배치한다.
+        /// </summary>
+        private void SpawnIslandContent(IslandInstance island)
+        {
+            resourceSpawner?.SpawnResourcesForIsland(island, transform);
+            hazardSpawner?.SpawnHazardsForIsland(island, transform);
         }
 
         /// <summary>

@@ -206,11 +206,11 @@ Transform:
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 1.6, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 1925945766}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &330585547
 MonoBehaviour:
@@ -445,6 +445,12 @@ GameObject:
   - component: {fileID: 1886019772}
   - component: {fileID: 1886019771}
   - component: {fileID: 1886019775}
+  - component: {fileID: 2000000006}
+  - component: {fileID: 2000000007}
+  - component: {fileID: 2000000008}
+  - component: {fileID: 2000000009}
+  - component: {fileID: 2000000010}
+  - component: {fileID: 2000000011}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -466,8 +472,29 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.BoatConstructionSystem
   currentStage: 1
   hasCurrentStageBlueprint: 0
+  stageMaterialRequirements:
+  - materials:
+    - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
+      quantity: 5
+    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+      quantity: 4
+    - item: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
+      quantity: 3
+  - materials:
+    - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
+      quantity: 8
+    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+      quantity: 6
+    - item: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
+      quantity: 2
+  - materials:
+    - item: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
+      quantity: 5
+    - item: {fileID: 11400000, guid: 664c5c68df1543368e20c8fd2c52f8b9, type: 2}
+      quantity: 3
+    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+      quantity: 8
   collectedMaterialsForCurrentStage: []
-  requiredMaterialsForCurrentStage: []
 --- !u!114 &1886019772
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -527,6 +554,8 @@ MonoBehaviour:
   minSpacingBetweenIslands: 60
   maxPlacementAttempts: 20
   islandPlaceholderPrefab: {fileID: 0}
+  resourceSpawner: {fileID: 2000000006}
+  hazardSpawner: {fileID: 2000000007}
   generateOnStart: 1
   initialIslandCount: 8
 --- !u!1 &1925945763
@@ -542,6 +571,11 @@ GameObject:
   - component: {fileID: 1925945764}
   - component: {fileID: 1925945768}
   - component: {fileID: 1925945767}
+  - component: {fileID: 2000000001}
+  - component: {fileID: 2000000002}
+  - component: {fileID: 2000000003}
+  - component: {fileID: 2000000004}
+  - component: {fileID: 2000000005}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -604,10 +638,11 @@ Transform:
   m_GameObject: {fileID: 1925945763}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0, y: -0, z: -0}
+  m_LocalPosition: {x: 0, y: 1, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 330585546}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1925945767
@@ -654,11 +689,235 @@ MonoBehaviour:
     experience: 0
   experiencePerLevel: 100
   maxLevel: 10
+--- !u!143 &2000000001
+CharacterController:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Material: {fileID: 0}
+  m_IsTrigger: 0
+  serializedVersion: 3
+  m_Height: 2
+  m_Radius: 0.5
+  m_SlopeLimit: 45
+  m_StepOffset: 0.3
+  m_SkinWidth: 0.08
+  m_MinMoveDistance: 0.001
+  m_Center: {x: 0, y: 1, z: 0}
+--- !u!114 &2000000002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ace23cc37ccb477e8f7ae827f7274cef, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.PlayerController
+  moveSpeed: 5
+  brokenBoneSpeedMultiplier: 0.4
+  jumpForce: 6
+  gravity: -20
+  lookSensitivity: 2
+  cameraTransform: {fileID: 330585546}
+  survivalStats: {fileID: 1925945765}
+--- !u!114 &2000000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9e1bd1926fa240e7a80acc69137f3908, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.SurvivalTickDriver
+  survivalStats: {fileID: 1925945765}
+  shadeLayerMask:
+    serializedVersion: 2
+    m_Bits: 0
+  shadeCheckDistance: 20
+--- !u!114 &2000000004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5a56b951c0af42d0937278996fa60e2d, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.InteractionController
+  interactionCamera: {fileID: 330585545}
+  interactionDistance: 4
+  interactKey: 101
+  cookKey: 114
+  consumeKey: 99
+  inventory: {fileID: 1925945764}
+  skills: {fileID: 1925945768}
+  survivalStats: {fileID: 1925945765}
+  consumptionSystem: {fileID: 2000000005}
+--- !u!114 &2000000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cbc220dfa9b94ba88f9b16f18db028f6, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.ConsumptionSystem
+  inventory: {fileID: 1925945764}
+  survivalStats: {fileID: 1925945765}
+  rawFoodPoisonChance: 0.3
+--- !u!114 &2000000006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c8e9b28c7eb4c379626f1e088555107, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.IslandResourceSpawner
+  resourceEntries:
+  - yieldItem: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
+    baseCount: 4
+  - yieldItem: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
+    baseCount: 3
+  - yieldItem: {fileID: 11400000, guid: 3f55ff4a55f7414b891a323c5e7c303a, type: 2}
+    baseCount: 3
+  - yieldItem: {fileID: 11400000, guid: 0b631157c4864eb3adb1b0bf99ba09da, type: 2}
+    baseCount: 2
+  - yieldItem: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
+    baseCount: 2
+  - yieldItem: {fileID: 11400000, guid: b86d36da6d5b45bba13e7d0c24e6a66e, type: 2}
+    baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: e6d70fced200407eb31b08731cd6db82, type: 2}
+    baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
+    baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: 664c5c68df1543368e20c8fd2c52f8b9, type: 2}
+    baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
+    baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
+    baseCount: 1
+  smallMultiplier: 1
+  mediumMultiplier: 2
+  largeMultiplier: 3
+  extraLargeMultiplier: 4
+  scatterRadius: 8
+--- !u!114 &2000000007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b3b6bcfbb8b14998ad38912741123f0b, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.HazardSpawner
+  hazardEntries:
+  - type: 1
+    baseChance: 0.25
+  - type: 2
+    baseChance: 0.2
+  - type: 3
+    baseChance: 0.15
+  - type: 4
+    baseChance: 0.2
+  - type: 5
+    baseChance: 0.2
+  - type: 6
+    baseChance: 0.1
+  smallMultiplier: 1
+  mediumMultiplier: 1.5
+  largeMultiplier: 2
+  extraLargeMultiplier: 2.5
+  scatterRadius: 10
+--- !u!114 &2000000008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 003c9e3ec7e641cb985492add6c8c2c6, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.IslandTravel
+  worldMapManager: {fileID: 1886019775}
+  rubberBoatItem: {fileID: 11400000, guid: 8d1c7553b9312d84ca35db5829795373, type: 2}
+  currentIslandId: 0
+--- !u!114 &2000000009
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e61e1ee594ed4ad5988b0a0db797d759, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SurvivalClock
+  secondsPerDay: 600
+  elapsedSeconds: 0
+--- !u!114 &2000000010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d535b7aa56964c3b9a5313a23e64e84b, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.EndingChecker
+  boatConstruction: {fileID: 1886019771}
+  inventory: {fileID: 1925945764}
+  nonPerishableFoodItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
+  requiredFoodCount: 30
+  waterSupplyItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
+  requiredWaterCount: 30
+  fuelItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
+  requiredFuelCount: 1
+--- !u!114 &2000000011
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8b4cbd3037504599a354c005462e963f, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.DebugHud
+  survivalStats: {fileID: 1925945765}
+  boatConstruction: {fileID: 1886019771}
+  survivalClock: {fileID: 2000000009}
+  inventory: {fileID: 1925945764}
+  showControlsHelp: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 330585546}
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 1925945766}

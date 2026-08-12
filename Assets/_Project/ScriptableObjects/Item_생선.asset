@@ -10,17 +10,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
-  m_Name: "Item_\uC0DD\uC218"
+  m_Name: Item_생선
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
-  itemName: "\uC0DD\uC218"
-  description: "\uBD88\uC2DC\uCC29 \uC2DC \uCC59\uAE38 \uC218 \uC788\uB294 \uC2DC\uC791
-    \uC544\uC774\uD15C. \uB9C8\uC2E4 \uB54C\uB9C8\uB2E4 \uC0AC\uC6A9 \uD69F\uC218\uAC00
-    \uC18C\uBAA8\uB41C\uB2E4. (\uBA87 \uBCD1 \uD655\uBCF4 - \uC815\uD655\uD55C \uCD08\uAE30
-    \uC218\uB7C9\uC740 \uCD94\uD6C4 \uBC38\uB7F0\uC2F1)\t"
+  itemName: 생선
+  description: "낚시나 사냥으로 얻은 생선. 날로 먹으면 식중독 위험이 있다. 모닥불에 구워 먹는 것이 안전하다."
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
-  hungerRestoreAmount: 0
-  thirstRestoreAmount: 40
-  isRawFood: 0
-  cookedResult: {fileID: 0}
+  hungerRestoreAmount: 10
+  thirstRestoreAmount: 0
+  isRawFood: 1
+  cookedResult: {fileID: 11400000, guid: 000803e45e0b49fba685b6d469cde39c, type: 2}
   isCoconutWaterSource: 0

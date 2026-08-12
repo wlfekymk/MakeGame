@@ -19,6 +19,14 @@ namespace MakeGame.Systems
         public float maxStorage = 20f;
 
         /// <summary>
+        /// 매 프레임 자동으로 시간 경과 로직을 진행시킨다 (별도 드라이버 없이 스스로 작동).
+        /// </summary>
+        private void Update()
+        {
+            Tick(Time.deltaTime);
+        }
+
+        /// <summary>
         /// 시간 경과에 따라 물을 생산한다. 저장량이 최대치를 넘지 않는다.
         /// </summary>
         public void Tick(float deltaTime)

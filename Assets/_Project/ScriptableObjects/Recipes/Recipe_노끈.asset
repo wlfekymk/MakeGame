@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_노끈
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: 노끈
+  description: "야자잎을 꼬아 노끈을 만든다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 3f55ff4a55f7414b891a323c5e7c303a, type: 2}
+    quantity: 3
+  resultItem: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 6
