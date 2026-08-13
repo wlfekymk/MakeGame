@@ -49,6 +49,16 @@ namespace MakeGame.Player
         [Tooltip("출혈 상태일 때 초당 입는 피해량")]
         public float bleedingDamagePerSecond = 1.2f;
 
+        [Header("산소(잠수)")]
+        [Tooltip("현재 산소 수치 (잠수 중 감소하며, 0이 되면 익사 피해를 입는다)")]
+        public float oxygen = 100f;
+        [Tooltip("수면 위/육지에 있을 때 초당 산소 회복량")]
+        public float oxygenRecoveryPerSecond = 25f;
+        [Tooltip("잠수(수면 아래) 중 초당 산소 감소량")]
+        public float oxygenDrainPerSecond = 5f;
+        [Tooltip("산소가 고갈된 채로 잠수 중일 때 초당 입는 익사 피해량")]
+        public float drowningDamagePerSecond = 3f;
+
         /// <summary>현재 사망 상태인지 여부.</summary>
         public bool IsDead => health <= 0f;
 
@@ -58,7 +68,8 @@ namespace MakeGame.Player
         /// </summary>
         /// <param name="deltaTime">경과 시간(초)</param>
         /// <param name="isInShade">현재 그늘/실내에 있는지 여부 (일사병 회복 여부 판정용)</param>
-        public void Tick(float deltaTime, bool isInShade)
+        /// <param name="isUnderwater">현재 수면 아래(잠수 중)인지 여부 (산소 감소 판정용)</param>
+        public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false)
         {
             if (IsDead)
                 return;
@@ -66,6 +77,21 @@ namespace MakeGame.Player
             UpdateHungerAndThirst(deltaTime);
             UpdateSunstroke(deltaTime, isInShade);
             UpdateStatusEffectDamage(deltaTime);
+            UpdateOxygen(deltaTime, isUnderwater);
+        }
+
+        /// <summary>
+        /// 잠수 여부에 따라 산소 수치를 증감시키고, 산소가 고갈된 채로 잠수 중이면 익사 피해를 입힌다.
+        /// </summary>
+        private void UpdateOxygen(float deltaTime, bool isUnderwater)
+        {
+            if (isUnderwater)
+                oxygen = Mathf.Max(0f, oxygen - oxygenDrainPerSecond * deltaTime);
+            else
+                oxygen = Mathf.Min(100f, oxygen + oxygenRecoveryPerSecond * deltaTime);
+
+            if (isUnderwater && oxygen <= 0f)
+                TakeDamage(drowningDamagePerSecond * deltaTime);
         }
 
         /// <summary>

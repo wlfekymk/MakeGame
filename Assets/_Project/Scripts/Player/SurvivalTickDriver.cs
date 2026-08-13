@@ -17,15 +17,27 @@ namespace MakeGame.Player
         [Tooltip("그늘 판정용 레이캐스트 최대 거리")]
         public float shadeCheckDistance = 20f;
 
+        [Tooltip("해수면 높이. PlayerController.waterLevel과 같은 값을 사용해야 한다 (잠수/산소 판정 기준).")]
+        public float waterLevel = 0f;
+
         /// <summary>
-        /// 매 프레임 그늘 여부를 판정하고 SurvivalStats.Tick을 호출해 생존 수치를 갱신한다.
+        /// 매 프레임 그늘 여부와 잠수 여부를 판정하고 SurvivalStats.Tick을 호출해 생존 수치를 갱신한다.
         /// </summary>
         private void Update()
         {
             if (survivalStats == null)
                 return;
 
-            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade());
+            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater());
+        }
+
+        /// <summary>
+        /// 현재 발 위치(transform.position.y)가 해수면보다 낮으면 잠수 중인 것으로 판정한다.
+        /// 섬 지형은 항상 y=0 이상이므로, 이 값보다 낮다는 것은 섬을 벗어나 바다에 있다는 뜻이다.
+        /// </summary>
+        private bool IsCurrentlyUnderwater()
+        {
+            return transform.position.y < waterLevel;
         }
 
         /// <summary>

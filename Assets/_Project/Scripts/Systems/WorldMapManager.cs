@@ -58,6 +58,8 @@ namespace MakeGame.Systems
         /// </summary>
         private void Start()
         {
+            CreateOcean();
+
             if (!generateOnStart)
                 return;
 
@@ -66,6 +68,52 @@ namespace MakeGame.Systems
             {
                 GenerateNextIsland();
             }
+        }
+
+        [Header("바다")]
+        [Tooltip("바다 평면의 한 변 크기. 섬들이 모두 이 범위 안에 들어올 만큼 충분히 커야 한다.")]
+        public float oceanSize = 4000f;
+
+        [Tooltip("해수면 높이. 섬 지형의 가장자리 높이(0)와 맞닿으며, PlayerController.waterLevel과 같아야 한다.")]
+        public float seaLevel = 0f;
+
+        /// <summary>
+        /// 섬들을 모두 감싸는 커다란 바다 평면을 한 번 만든다. 플레이어의 수영/잠수 판정은 y 좌표만으로
+        /// 이뤄지므로, 이 평면의 콜라이더는 제거해 시각적 표시 용도로만 쓴다.
+        /// </summary>
+        private void CreateOcean()
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            go.name = "Ocean";
+            go.transform.SetParent(transform);
+            go.transform.position = new Vector3(0f, seaLevel, 0f);
+
+            // 기본 Plane 메시는 10x10 크기이므로, oceanSize에 맞춰 스케일한다.
+            float scale = oceanSize / 10f;
+            go.transform.localScale = new Vector3(scale, 1f, scale);
+
+            int waterLayer = LayerMask.NameToLayer("Water");
+            if (waterLayer >= 0)
+                go.layer = waterLayer;
+
+            var collider = go.GetComponent<Collider>();
+            if (collider != null)
+                Destroy(collider);
+
+            var renderer = go.GetComponent<MeshRenderer>();
+            if (renderer != null)
+                renderer.sharedMaterial = CreateOceanMaterial();
+        }
+
+        /// <summary>
+        /// 바다 평면에 사용할 기본 파란색 URP Lit 머티리얼을 만든다.
+        /// </summary>
+        private Material CreateOceanMaterial()
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var material = new Material(shader != null ? shader : Shader.Find("Standard"));
+            material.color = new Color(0.1f, 0.35f, 0.55f);
+            return material;
         }
 
         /// <summary>

@@ -39,7 +39,7 @@ namespace MakeGame.UI
             {
                 GUILayout.Label($"체력: {survivalStats.health:F0} / {survivalStats.maxHealth:F0}");
                 GUILayout.Label($"허기: {survivalStats.hunger:F0}   갈증: {survivalStats.thirst:F0}");
-                GUILayout.Label($"일사병: {survivalStats.sunstroke:F0}");
+                GUILayout.Label($"일사병: {survivalStats.sunstroke:F0}   산소: {survivalStats.oxygen:F0}");
                 GUILayout.Label($"중독:{(survivalStats.isPoisoned ? "O" : "X")} 출혈:{(survivalStats.isBleeding ? "O" : "X")} 골절:{(survivalStats.hasBrokenBone ? "O" : "X")}");
             }
 
@@ -56,6 +56,7 @@ namespace MakeGame.UI
                 GUILayout.Space(8);
                 GUILayout.Label("[E] 상호작용   [R] 조리   [C] 섭취   [G] 설치");
                 GUILayout.Label("[Tab] 인벤토리   [V] 제작");
+                GUILayout.Label("[수영중] [Space] 위로   [Ctrl] 잠수");
             }
 
             GUILayout.EndArea();
