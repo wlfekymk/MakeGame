@@ -494,6 +494,8 @@ GameObject:
   - component: {fileID: 2000000015}
   - component: {fileID: 2000000016}
   - component: {fileID: 2000000017}
+  - component: {fileID: 2000000018}
+  - component: {fileID: 2000000019}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -1001,8 +1003,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.BoatBlueprintSpawner
   boatConstruction: {fileID: 1886019771}
-  largeIslandSpawnChance: 0.5
-  extraLargeIslandSpawnChance: 0.7
+  largeIslandSpawnChance: 0.9
+  extraLargeIslandSpawnChance: 0.95
   placementOffset: 4
 --- !u!114 &2000000013
 MonoBehaviour:
@@ -1100,6 +1102,39 @@ MonoBehaviour:
   toggleKey: 109
   radarWorldRadius: 400
   radarPanelSize: 160
+--- !u!114 &2000000018
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c38589704514bba9d63a9629b4a1e3a, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.MainMenuController
+  gameTitle: "무인도 탈출"
+  gameSubtitle: "Stranded Deep 스타일 서바이벌"
+  playerController: {fileID: 2000000002}
+  interactionController: {fileID: 2000000004}
+  settingsMenu: {fileID: 2000000019}
+  isMenuOpen: 1
+--- !u!114 &2000000019
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d69a1b1a390b4e31917fcb789cbc6635, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.SettingsMenuController
+  toggleKey: 27
+  pauseTimeWhenOpenedDuringPlay: 1
+  isOpen: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -13,13 +13,18 @@ namespace MakeGame.Systems
         [Tooltip("도면을 지급할 대상 배 제작 시스템 (같은 Managers 오브젝트의 BoatConstructionSystem을 연결)")]
         public BoatConstructionSystem boatConstruction;
 
-        [Tooltip("대형 섬에 도면 습득 지점이 생성될 확률 (0~1). 1~2단계 도면은 대형 섬에서만 나온다.")]
+        [Tooltip("대형 섬에 도면 습득 지점이 생성될 확률 (0~1). 1~2단계 도면은 대형 섬에서만 나온다.\n" +
+            "도면 습득 지점은 한 번 쓰면 사라지는 일회성이라, 이 확률이 낮으면 IslandGenerator가 최소 2개로" +
+            " 보장하는 대형 섬 중 일부에 도면이 아예 없어 2단계 진행이 막힐 수 있다. 기본값을 0.9로 높여" +
+            " 그 위험을 크게 낮췄다(완전히 1로 고정하지 않은 이유는 약간의 탐험 긴장감을 남기기 위함).")]
         [Range(0f, 1f)]
-        public float largeIslandSpawnChance = 0.5f;
+        public float largeIslandSpawnChance = 0.9f;
 
-        [Tooltip("특대 섬에 도면 습득 지점이 생성될 확률 (0~1). 최종(3단계) 도면은 특대 섬에서만 나온다.")]
+        [Tooltip("특대 섬에 도면 습득 지점이 생성될 확률 (0~1). 최종(3단계) 도면은 특대 섬에서만 나온다.\n" +
+            "특대 섬은 최소 1개만 보장되므로 여기서 놓치면 배 엔딩이 완전히 막히기 때문에 대형 섬보다도" +
+            " 더 높은 기본값(0.95)을 쓴다.")]
         [Range(0f, 1f)]
-        public float extraLargeIslandSpawnChance = 0.7f;
+        public float extraLargeIslandSpawnChance = 0.95f;
 
         [Tooltip("도면 습득 지점을 섬 중심으로부터 흩뿌릴 반경")]
         public float placementOffset = 4f;

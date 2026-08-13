@@ -144,5 +144,27 @@ namespace MakeGame.Systems
         {
             Instance = null;
         }
+
+        /// <summary>
+        /// 설정 화면에서 배경음 볼륨 슬라이더를 조작할 때 호출한다. sfxVolume과 달리 bgmSource는
+        /// Start()에서 한 번만 volume을 설정하고 계속 재생 중이므로, 필드만 바꿔서는 이미 재생 중인
+        /// 소리 크기가 즉시 반영되지 않는다. 그래서 필드와 실제 AudioSource.volume을 함께 갱신한다.
+        /// </summary>
+        public void SetBgmVolume(float value)
+        {
+            bgmVolume = Mathf.Clamp01(value);
+            if (bgmSource != null)
+                bgmSource.volume = bgmVolume;
+        }
+
+        /// <summary>
+        /// 설정 화면에서 효과음 볼륨 슬라이더를 조작할 때 호출한다. PlaySfx가 매 재생마다 sfxVolume을
+        /// 즉시 읽어 쓰므로 필드만 갱신해도 다음 효과음부터 바로 반영되지만, bgm과 대칭되는 진입점을
+        /// 두어 설정 화면 쪽 코드를 일관되게 만든다.
+        /// </summary>
+        public void SetSfxVolume(float value)
+        {
+            sfxVolume = Mathf.Clamp01(value);
+        }
     }
 }
