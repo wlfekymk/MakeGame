@@ -69,7 +69,7 @@ namespace MakeGame.UI
             {
                 GUILayout.Space(8);
                 GUILayout.Label("[E] 상호작용/공격(무기 필요)   [R] 조리   [C] 섭취   [G] 설치");
-                GUILayout.Label("[Tab] 인벤토리   [V] 제작");
+                GUILayout.Label("[Tab] 인벤토리   [V] 제작   [M] 섬 목록/이동");
                 GUILayout.Label("[수영중] [Space] 위로   [Ctrl] 잠수");
                 GUILayout.Label("[F5] 저장   [F9] 불러오기");
             }
