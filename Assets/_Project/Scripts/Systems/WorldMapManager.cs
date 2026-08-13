@@ -45,6 +45,10 @@ namespace MakeGame.Systems
         [Tooltip("섬이 생성될 때 배 도면 습득 지점을 함께 배치할 스포너 (비워두면 도면을 배치하지 않는다)")]
         public BoatBlueprintSpawner blueprintSpawner;
 
+        [Tooltip("섬이 생성될 때 사냥감/물고기를 함께 배치할 스포너 (비워두면 사냥감을 배치하지 않는다).\n" +
+                 "이게 없으면 생고기/생선 자체를 얻을 방법이 없어 사냥/낚시/조리 시스템이 전부 죽은 콘텐츠가 된다.")]
+        public CreatureSpawner creatureSpawner;
+
         [Header("경비행기 수리 엔딩")]
         [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
@@ -90,6 +94,32 @@ namespace MakeGame.Systems
             if (!generateOnStart)
                 return;
 
+            GenerateStartingIsland();
+            for (int i = 0; i < initialIslandCount; i++)
+            {
+                GenerateNextIsland(i, initialIslandCount);
+            }
+        }
+
+        /// <summary>
+        /// 지정한 시드로 월드(섬/바다/자원/위험요소/사냥감/도면/작업대/잔해)를 처음부터 다시 생성한다.
+        /// 저장/불러오기에서 같은 worldSeed로 같은 섬 배치를 재현하기 위해 사용한다.
+        /// 예전에는 SaveLoadController.Load()가 worldSeed 필드 값만 갱신하고 실제로 월드를 다시 만들지
+        /// 않아서, "월드 시드로 같은 섬 배치를 재현한다"는 설계 의도가 실제로는 전혀 동작하지 않는
+        /// 죽은 기능이었다 (불러오기를 해도 이미 생성되어 있던 이전 섬 배치가 그대로 남아있었음).
+        /// </summary>
+        public void RegenerateWorld(int seed)
+        {
+            // 기존에 생성해 둔 섬/바다/자원/위험요소 등 이 매니저 아래의 모든 오브젝트를 제거한다.
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                Destroy(transform.GetChild(i).gameObject);
+
+            islands.Clear();
+
+            worldSeed = seed;
+            Random.InitState(worldSeed);
+
+            CreateOcean();
             GenerateStartingIsland();
             for (int i = 0; i < initialIslandCount; i++)
             {
@@ -273,6 +303,7 @@ namespace MakeGame.Systems
             resourceSpawner?.SpawnResourcesForIsland(island, transform);
             hazardSpawner?.SpawnHazardsForIsland(island, transform);
             blueprintSpawner?.SpawnBlueprintForIsland(island, transform);
+            creatureSpawner?.SpawnCreaturesForIsland(island, transform);
         }
 
         /// <summary>

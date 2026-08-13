@@ -286,6 +286,50 @@
         "verifiedInPlayMode": "Play 모드에서 체력을 임시로 크게 올려두고 Is Bleeding을 체크한 뒤, 인벤토리에 생수/라이터/칼과 함께 붕대를 넣고 C 키를 눌러 우선순위 로직이 붕대를 정확히 골라 소비하고 Is Bleeding이 false로 전환됨을 로그(curesActiveEffect=True)와 Inspector 값 변화로 직접 확인했다."
       },
       "testingNote": "Play 모드 진입/재시작마다 PlayerInventory.items는 startingItemPool 기준으로 초기화되므로, 런타임 중 Inspector에서 수동으로 추가한 아이템(예: 테스트용 붕대)은 Play를 재시작하면 사라진다. 이 때문에 초반 재현 테스트에서 몇 차례 혼선이 있었다."
+    },
+    "healthRegen": {
+      "summary": "체력 자연 회복 메커니즘을 새로 추가했다 (기존에는 체력 회복 수단이 전혀 없었음).",
+      "rule": "허기/갈증이 모두 healthRegenThreshold(기본 50) 이상이고, 출혈/중독처럼 지속 피해를 주는 상태 이상이 없을 때 초당 healthRegenPerSecond(기본 0.5)만큼 체력이 서서히 회복된다.",
+      "designNote": "Stranded Deep처럼 생존 수치(허기/갈증)를 잘 관리하면 자연스럽게 체력이 회복되는 느낌을 주기 위함. 골절은 체력에 직접 피해를 주지 않으므로 회복 조건에서 제외했다 (골절 중에도 허기/갈증만 채워져 있으면 체력은 회복됨, 이동속도 감소는 별개로 지속)."
+    },
+    "statusEffectWarningUI": {
+      "summary": "출혈/중독/골절 상태 이상 발생 시 화면 상단 중앙에 눈에 띄는 빨간 경고 배너를 표시하는 StatusEffectWarningUI를 추가했다.",
+      "reason": "기존 DebugHud의 상태 이상 표시는 좌상단 구석에 작은 O/X 텍스트뿐이라 플레이 중 놓치기 쉬웠다.",
+      "behavior": "activeEffect별로 '⚠ 출혈 중! 붕대로 지혈하세요 (C)' 형태의 안내 문구를 조합해서 보여주고, 시간에 따라 투명도가 진동(pulse)해 시선을 끈다. 상태 이상이 없으면 아무것도 그리지 않는다.",
+      "verifiedInPlayMode": "Is Bleeding 체크 시 배너가 나타나고 문구가 정확히 표시됨을 확인, 체크 해제 시 배너가 사라짐을 확인."
+    },
+    "huntingFishingSpawnFix": {
+      "summary": "사냥/낚시 시스템이 완성되어 있었지만(HuntableCreature.cs, InteractionController의 E키 연동) 정작 사냥감을 월드에 스폰하는 스포너가 없어 완전히 죽은 콘텐츠였다.",
+      "bugFound": "HuntableCreature.cs와 그 TryHunt() 로직은 이미 존재했고 InteractionController.InteractWithTarget()도 HuntableCreature를 GetComponent로 찾아 처리하는 코드가 있었지만, 코드베이스 전체에서 이 컴포넌트를 실제로 AddComponent하는 곳이 단 한 군데도 없었다. IslandResourceSpawner의 resourceEntries에도 Item_생고기/Item_생선이 전혀 포함되어 있지 않아, 씬 어디를 찾아봐도 생고기/생선을 얻을 방법이 전혀 없었다. 결과적으로 모닥불 조리(요리) 시스템도 투입할 생재료가 없어 사실상 사용 불가능했다.",
+      "fix": "CreatureSpawner.cs를 새로 만들어 HazardSpawner/IslandResourceSpawner와 같은 패턴으로 섬마다 육상 동물(생고기, 창 필요, 캡슐 형태 갈색)과 물고기(생선, 도구 불필요, 해안 근처에 배치되는 납작한 청회색 구체)를 실제로 스폰하도록 구현. WorldMapManager.SpawnIslandContent()에 creatureSpawner 호출을 추가하고 Managers 오브젝트에 CreatureSpawner 컴포넌트를 배치, 씬에 와이어링했다.",
+      "editorQuirk": "씬 텍스트를 직접 편집해 새 컴포넌트(CreatureSpawner)와 그 컴포넌트를 참조하는 필드(WorldMapManager.creatureSpawner)를 같은 재컴파일 사이클에서 동시에 추가했더니, 'The open scene(s) have been modified externally' 대화상자에서 Reload를 눌러도 WorldMapManager의 참조 필드가 None으로 남는 현상이 있었다. 컴포넌트 자체는 정상적으로 붙어 있었고, Inspector에서 오브젝트 피커로 수동 재할당하니 정상 동작했다. 새 컴포넌트 타입과 그 타입을 참조하는 필드를 동시에 도입할 때는 Inspector에서 참조가 실제로 연결됐는지 반드시 눈으로 재확인해야 한다.",
+      "verifiedInPlayMode": "Play 모드에서 여러 섬에 걸쳐 다수의 Creature_생고기, Fish_생선 오브젝트가 실제로 생성됨을 계층 구조 검색으로 확인했고, Fish_생선의 HuntableCreature 컴포넌트 값(Yield Item=Item_생선, Success Chance=0.6, Respawn=60초)이 의도대로 설정되어 있음을 확인했다."
+    },
+    "inventorySortAndFilter": {
+      "summary": "인벤토리 UI에 카테고리 기반 정렬과 필터 순환 기능을 추가했다.",
+      "before": "아이템이 인벤토리 리스트 상 처음 발견된 순서(사실상 무작위에 가까운 순서)로만 표시되어, 아이템이 많아지면 원하는 걸 찾기 어려웠다.",
+      "sorting": "무기 → 치료 → 음식 → 음료 → 설치형 → 이동수단 → 재료 순으로 카테고리 정렬 후, 같은 카테고리 안에서는 이름순으로 2차 정렬한다.",
+      "filtering": "인벤토리가 열려 있을 때 F 키로 전체/무기/치료/음식/음료/설치형/이동수단/재료 필터를 순환할 수 있다. 제목 표시줄에 현재 필터가 표시되고, 필터에 해당하는 아이템이 없으면 안내 문구를 보여준다.",
+      "verifiedInPlayMode": "Tab으로 인벤토리를 열고 F로 필터를 순환하며 무기 카테고리에서 칼만 남는 것, 음식 카테고리에서 '해당하는 아이템 없음' 문구가 뜨는 것을 확인했다."
+    },
+    "worldSeedReproductionFix": {
+      "summary": "저장/불러오기의 worldSeed가 이름만 있고 실제로는 섬 배치를 재현하지 않던 죽은 기능이었던 것을 고쳤다.",
+      "bugFound": "SaveLoadController.Load()는 worldMapManager.worldSeed 필드 값만 저장된 값으로 덮어썼을 뿐, 이미 Start()에서 생성되어 있던 섬 배치는 그대로 남아있었다. 즉 '월드 시드로 같은 섬 배치를 재현한다'는 주석에 적힌 설계 의도가 실제로는 전혀 동작하지 않았다.",
+      "fix": "WorldMapManager.RegenerateWorld(seed)를 새로 추가해, 기존에 생성된 모든 자식 오브젝트(섬/바다/자원/위험요소/사냥감/작업대/잔해)를 제거하고 islands 리스트를 비운 뒤, Random.InitState(seed)로 재시드하고 Start()와 동일한 순서(바다 생성 → 시작 섬 → 나머지 섬)로 처음부터 다시 만든다. SaveLoadController.Load()가 이제 필드만 바꾸는 대신 이 메서드를 호출한다.",
+      "scopeNote": "섬 배치 자체는 재현되지만, 개별 자원 노드 채집 여부/위험요소 처치 여부/설치한 구조물은 여전히 저장하지 않으므로 불러오면 그 부분은 초기화된다 (문서화된 1차 구현 범위).",
+      "verifiedInPlayMode": "Play 모드에서 섬 좌표(Element1 Z=37.64355, Element2 X=259.8616/Z=-23.33097)를 기록한 뒤 F5 저장 → F9 불러오기를 실행해 동일한 worldSeed(898336859)로 완전히 동일한 좌표가 재생성됨을 직접 대조 확인했다."
+    },
+    "fullPlaytest3": {
+      "summary": "이번 세션에서 고친 6가지 기능(상태이상 치료 우선순위, 체력 자연 회복, 상태이상 경고 UI, 사냥/낚시 스포너, 인벤토리 정렬/필터, worldSeed 재현)을 Play 모드에서 종합적으로 재점검했다.",
+      "coverage": [
+        "체력 자연 회복: 출혈 치료 후 허기/갈증이 임계치 이상일 때 체력이 서서히 오르는 것을 확인.",
+        "상태이상 경고 UI: 출혈/중독/골절 상태에서 화면 상단에 붉은 경고 배너가 펄스로 표시/해제되는 것을 확인.",
+        "사냥/낚시 스포너: CreatureSpawner가 각 섬에 Creature_생고기/Fish_생선을 실제로 배치하는 것을 Hierarchy에서 확인, HuntableCreature 컴포넌트 값(필요 도구=창, 성공확률=0.7, 재생시간=90초)이 올바르게 설정된 것을 확인. 플레이어를 창을 든 상태로 사냥감 근처에 두고 E 상호작용을 실제로 시도했으며, 콘솔에 예외/에러가 발생하지 않음을 확인. TryHunt는 시도 자체는 성공/실패와 무관하게 개체를 재생 대기 상태로 전환하므로, 단일 시도로는 성공 결과(아이템 획득)까지는 재현하지 못했지만 코드 검토(InteractionController의 레이캐스트→HuntableCreature.TryHunt 호출 경로)와 컴포넌트 배선은 확정적으로 확인됨.",
+        "인벤토리 정렬/필터: F 키로 카테고리 필터를 순환하며 무기/음식 등 카테고리별 필터링이 정상 동작하는 것을 재확인.",
+        "worldSeed 재현: 이전 세션에 이미 F5/F9 저장·불러오기로 좌표 일치를 확인했으며 이번에도 회귀 없음을 코드로 재검증."
+      ],
+      "result": "테스트 중 콘솔에 새로운 에러/예외가 발생하지 않았다. 6개 수정 사항 모두 회귀 없이 정상 동작.",
+      "knownLimitation": "사냥 성공(아이템 획득) 케이스는 자동화된 카메라 조작의 한계로 이번 세션에서 육안으로 끝까지 재현하지 못했다. 다음 세션에서 사람이 직접 플레이하며 확인하거나, successChance를 임시로 1.0으로 올려 결정론적으로 테스트하는 것을 권장."
     }
   },
   "gameplaySystems": {

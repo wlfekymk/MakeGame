@@ -49,6 +49,12 @@ namespace MakeGame.Player
         [Tooltip("출혈 상태일 때 초당 입는 피해량")]
         public float bleedingDamagePerSecond = 1.2f;
 
+        [Header("체력 자연 회복")]
+        [Tooltip("허기/갈증이 모두 이 수치 이상이고 출혈/중독 상태가 아닐 때 체력이 서서히 자연 회복된다.")]
+        public float healthRegenThreshold = 50f;
+        [Tooltip("자연 회복 조건을 만족할 때 초당 회복되는 체력량")]
+        public float healthRegenPerSecond = 0.5f;
+
         [Header("산소(잠수)")]
         [Tooltip("현재 산소 수치 (잠수 중 감소하며, 0이 되면 익사 피해를 입는다)")]
         public float oxygen = 100f;
@@ -78,6 +84,21 @@ namespace MakeGame.Player
             UpdateSunstroke(deltaTime, isInShade);
             UpdateStatusEffectDamage(deltaTime);
             UpdateOxygen(deltaTime, isUnderwater);
+            UpdateHealthRegen(deltaTime);
+        }
+
+        /// <summary>
+        /// 허기/갈증이 충분히 채워져 있고 출혈/중독처럼 지속 피해를 주는 상태 이상이 없을 때
+        /// 체력을 서서히 자연 회복시킨다 (Stranded Deep처럼 생존 수치를 잘 관리하면 서서히 회복).
+        /// 골절은 체력에 직접 피해를 주지 않으므로 회복 조건에서는 제외한다.
+        /// </summary>
+        private void UpdateHealthRegen(float deltaTime)
+        {
+            bool needsMet = hunger >= healthRegenThreshold && thirst >= healthRegenThreshold;
+            bool freeOfDamagingEffects = !isPoisoned && !isBleeding;
+
+            if (needsMet && freeOfDamagingEffects)
+                Heal(healthRegenPerSecond * deltaTime);
         }
 
         /// <summary>

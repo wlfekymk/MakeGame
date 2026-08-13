@@ -10,8 +10,10 @@ namespace MakeGame.Systems
     /// 게임 진행 상황을 저장/불러오기하는 시스템.
     /// SaveData를 JsonUtility로 직렬화해 Application.persistentDataPath에 파일로 기록하고,
     /// 불러올 때는 씬을 재시작하지 않고 현재 오브젝트들의 값을 저장된 상태로 되돌려 적용한다.
-    /// 자원 노드 채집 상태, 위험 요소 처치 상태, 플레이어가 설치한 구조물(물 증류기/쉼터)은
-    /// 이번 1차 구현 범위에서는 저장하지 않는다 (섬/자원/위험요소는 월드 시드로 다시 생성됨).
+    /// 섬/자원/위험요소/사냥감 배치는 저장된 worldSeed로 WorldMapManager.RegenerateWorld를 호출해
+    /// 저장 시점과 동일하게 다시 만들어낸다 (재현 가능). 다만 개별 자원 노드의 채집 여부, 위험 요소
+    /// 처치 여부, 플레이어가 설치한 구조물(물 증류기/쉼터)은 이번 1차 구현 범위에서는 저장하지
+    /// 않으므로, 불러오면 섬 배치는 동일하지만 자원/위험요소는 다시 미채집/생존 상태로 리셋된다.
     /// </summary>
     public class SaveLoadController : MonoBehaviour
     {
@@ -156,10 +158,11 @@ namespace MakeGame.Systems
                 return;
             }
 
-            // 섬/자원/위험요소 배치는 이번 구현에서 씬을 재생성하지 않으므로, 시드는 기록만 갱신해둔다.
-            // (완전한 재현을 원하면 씬을 다시 로드한 뒤 이 시드로 월드를 새로 생성해야 한다.)
+            // 저장된 worldSeed로 섬/바다/자원/위험요소/사냥감 배치를 처음부터 다시 만들어, 저장 시점과
+            // 동일한 섬 배치를 재현한다. (예전에는 필드 값만 갱신하고 실제로 재생성하지 않아 이 기능이
+            // 이름만 있고 실제로는 아무 효과가 없는 죽은 기능이었다.)
             if (worldMapManager != null)
-                worldMapManager.worldSeed = data.worldSeed;
+                worldMapManager.RegenerateWorld(data.worldSeed);
 
             if (player != null)
             {

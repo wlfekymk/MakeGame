@@ -498,6 +498,8 @@ GameObject:
   - component: {fileID: 2000000017}
   - component: {fileID: 2000000018}
   - component: {fileID: 2000000019}
+  - component: {fileID: 2000000020}
+  - component: {fileID: 2000000021}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -520,6 +522,7 @@ MonoBehaviour:
   currentStage: 1
   hasCurrentStageBlueprint: 0
   highestCompletedStage: 0
+  isFullyComplete: 0
   stageMaterialRequirements:
   - materials:
     - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
@@ -556,6 +559,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.IslandGenerator
   spawnConfig: {fileID: 11400000, guid: 5279d2310d10c3244b165b8b44e07486, type: 2}
+  minimumLargeIslands: 2
+  minimumExtraLargeIslands: 1
 --- !u!114 &1886019773
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -605,10 +610,14 @@ MonoBehaviour:
   resourceSpawner: {fileID: 2000000006}
   hazardSpawner: {fileID: 2000000007}
   blueprintSpawner: {fileID: 2000000012}
+  creatureSpawner: {fileID: 2000000021}
   aircraftRepair: {fileID: 2000000015}
   boatConstruction: {fileID: 1886019771}
   generateOnStart: 1
   initialIslandCount: 8
+  worldSeed: 0
+  oceanSize: 4000
+  seaLevel: 0
   terrainMaxHeight: 2.5
   terrainMaterial: {fileID: 0}
 --- !u!1 &1925945763
@@ -684,6 +693,12 @@ MonoBehaviour:
   hasBrokenBone: 0
   poisonDamagePerSecond: 0.8
   bleedingDamagePerSecond: 1.2
+  healthRegenThreshold: 50
+  healthRegenPerSecond: 0.5
+  oxygen: 100
+  oxygenRecoveryPerSecond: 25
+  oxygenDrainPerSecond: 5
+  drowningDamagePerSecond: 3
 --- !u!4 &1925945766
 Transform:
   m_ObjectHideFlags: 0
@@ -785,6 +800,11 @@ MonoBehaviour:
   brokenBoneSpeedMultiplier: 0.4
   jumpForce: 6
   gravity: -20
+  waterLevel: 0
+  swimSpeed: 3
+  swimVerticalSpeed: 2
+  buoyancy: 1
+  diveKey: 306
   lookSensitivity: 2
   cameraTransform: {fileID: 330585546}
   survivalStats: {fileID: 1925945765}
@@ -805,6 +825,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 64
   shadeCheckDistance: 20
+  waterLevel: 0
 --- !u!114 &2000000004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -858,18 +879,25 @@ MonoBehaviour:
   resourceEntries:
   - yieldItem: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
     baseCount: 4
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
     baseCount: 3
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: 3f55ff4a55f7414b891a323c5e7c303a, type: 2}
     baseCount: 3
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: 0b631157c4864eb3adb1b0bf99ba09da, type: 2}
     baseCount: 2
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
     baseCount: 2
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: b86d36da6d5b45bba13e7d0c24e6a66e, type: 2}
     baseCount: 1
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: e6d70fced200407eb31b08731cd6db82, type: 2}
     baseCount: 1
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
     baseCount: 2
     minimumIslandSize: 2
@@ -878,8 +906,10 @@ MonoBehaviour:
     minimumIslandSize: 2
   - yieldItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
     baseCount: 1
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
+    minimumIslandSize: 0
   - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
     baseCount: 2
     minimumIslandSize: 2
@@ -1018,7 +1048,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d914b9ec530b489198bdfc7894f174bc, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SaveLoadController
   player: {fileID: 1925945766}
   survivalStats: {fileID: 1925945765}
@@ -1031,6 +1061,7 @@ MonoBehaviour:
   worldMapManager: {fileID: 1886019775}
   saveKey: 286
   loadKey: 290
+  lastStatusMessage: 
 --- !u!114 &2000000014
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1041,7 +1072,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a3a569ed68e241208e5be3b7f92fd5db, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.AudioManager
   sfxVolume: 0.7
   bgmVolume: 0.3
@@ -1055,7 +1086,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5a996de59c3b414d9d54c8b31c32217e, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.AircraftRepairSystem
   isRepairComplete: 0
   requiredMaterials:
@@ -1078,7 +1109,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7e965f0f4d8e4af8b4cf8466718cb8ea, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.GameOverController
   survivalStats: {fileID: 1925945765}
   playerController: {fileID: 2000000002}
@@ -1095,7 +1126,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d89b453fedc240bc8e0576d888f185aa, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.MinimapUI
   worldMapManager: {fileID: 1886019775}
   player: {fileID: 1925945766}
@@ -1114,10 +1145,10 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0c38589704514bba9d63a9629b4a1e3a, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.MainMenuController
-  gameTitle: "무인도 탈출"
-  gameSubtitle: "Stranded Deep 스타일 서바이벌"
+  gameTitle: "\uBB34\uC778\uB3C4 \uD0C8\uCD9C"
+  gameSubtitle: "Stranded Deep \uC2A4\uD0C0\uC77C \uC11C\uBC14\uC774\uBC8C"
   playerController: {fileID: 2000000002}
   interactionController: {fileID: 2000000004}
   settingsMenu: {fileID: 2000000019}
@@ -1132,11 +1163,56 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d69a1b1a390b4e31917fcb789cbc6635, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.SettingsMenuController
   toggleKey: 27
   pauseTimeWhenOpenedDuringPlay: 1
   isOpen: 0
+--- !u!114 &2000000020
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fa844962912e44fca991c560bd7aa108, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.StatusEffectWarningUI
+  survivalStats: {fileID: 1925945765}
+  warningColor: {r: 0.6, g: 0, b: 0, a: 0.75}
+  pulseSpeed: 2.5
+--- !u!114 &2000000021
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 414c0251e2314c9585b9261fc0c8ca55, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.CreatureSpawner
+  creatureEntries:
+  - yieldItem: {fileID: 11400000, guid: 61bf8d7fb52249649499a0ad8b8c3faf, type: 2}
+    requiredTool: {fileID: 11400000, guid: 53f26fad42714f3eb765334ed469db71, type: 2}
+    baseCount: 2
+    successChance: 0.7
+    respawnSeconds: 90
+    preferShoreline: 0
+  - yieldItem: {fileID: 11400000, guid: 358830a65ae94744b1565a47670653c6, type: 2}
+    requiredTool: {fileID: 0}
+    baseCount: 2
+    successChance: 0.6
+    respawnSeconds: 60
+    preferShoreline: 1
+  smallMultiplier: 1
+  mediumMultiplier: 1.5
+  largeMultiplier: 2
+  extraLargeMultiplier: 2.5
+  scatterRadius: 9
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

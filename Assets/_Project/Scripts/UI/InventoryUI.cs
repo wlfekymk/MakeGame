@@ -18,6 +18,29 @@ namespace MakeGame.UI
         [Tooltip("인벤토리 창을 여닫는 키")]
         public KeyCode toggleKey = KeyCode.Tab;
 
+        [Tooltip("인벤토리가 열려 있을 때 카테고리 필터를 순환시키는 키")]
+        public KeyCode cycleFilterKey = KeyCode.F;
+
+        /// <summary>인벤토리 아이템 분류 카테고리. 정렬 순서와 필터 순환 순서로 함께 사용한다.</summary>
+        private enum ItemCategory
+        {
+            Weapon = 0,
+            Cure = 1,
+            Food = 2,
+            Drink = 3,
+            Placeable = 4,
+            Vehicle = 5,
+            Material = 6,
+        }
+
+        private static readonly string[] CategoryFilterNames =
+        {
+            "전체", "무기", "치료", "음식", "음료", "설치형", "이동수단", "재료"
+        };
+
+        // 필터 인덱스 0은 "전체"를 뜻하고, 1부터는 ItemCategory 값 + 1에 대응한다.
+        private int currentFilterIndex = 0;
+
         /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트)을 구성하는 UI 요소 묶음.</summary>
         private class ItemRow
         {
@@ -29,6 +52,7 @@ namespace MakeGame.UI
 
         private GameObject panelRoot;
         private RectTransform listContainer;
+        private Text titleLabel;
         private readonly List<ItemRow> rowPool = new List<ItemRow>();
         private readonly List<ItemData> orderBuffer = new List<ItemData>();
         private readonly Dictionary<ItemData, int> countBuffer = new Dictionary<ItemData, int>();
@@ -51,7 +75,59 @@ namespace MakeGame.UI
                 SetOpen(!panelRoot.activeSelf);
 
             if (panelRoot != null && panelRoot.activeSelf)
+            {
+                // 인벤토리가 열려 있을 때만 필터 순환 키를 받는다 (닫혀 있을 때 실수로 필터가 바뀌는 것을 방지).
+                if (Input.GetKeyDown(cycleFilterKey))
+                    CycleFilter();
+
                 RefreshList();
+            }
+        }
+
+        /// <summary>
+        /// 카테고리 필터를 다음 순서로 넘긴다 (전체 → 무기 → 치료 → 음식 → 음료 → 설치형 → 이동수단 → 재료 → 전체...).
+        /// </summary>
+        private void CycleFilter()
+        {
+            currentFilterIndex = (currentFilterIndex + 1) % CategoryFilterNames.Length;
+        }
+
+        /// <summary>
+        /// 제목 텍스트에 현재 적용 중인 카테고리 필터를 함께 표시한다 (예: "인벤토리 (Tab)  [필터: 무기, F로 전환]").
+        /// </summary>
+        private void UpdateTitle()
+        {
+            if (titleLabel == null)
+                return;
+
+            titleLabel.text = $"인벤토리 (Tab)  [필터: {CategoryFilterNames[currentFilterIndex]}, F로 전환]";
+        }
+
+        /// <summary>
+        /// 아이템 하나의 분류 카테고리를 판정한다. 정렬 순서와 필터링에 함께 사용한다.
+        /// UIBuilder.GetItemCategoryColor와 동일한 우선순위 규칙을 따른다.
+        /// </summary>
+        private static ItemCategory GetCategory(ItemData item)
+        {
+            if (item.isWeapon)
+                return ItemCategory.Weapon;
+
+            if (item.curesBleeding || item.curesPoison || item.curesBrokenBone)
+                return ItemCategory.Cure;
+
+            if (item.hungerRestoreAmount > 0f)
+                return ItemCategory.Food;
+
+            if (item.thirstRestoreAmount > 0f)
+                return ItemCategory.Drink;
+
+            if (item.isPlaceable)
+                return ItemCategory.Placeable;
+
+            if (item.blockedFromLargeIslandsByCurrent)
+                return ItemCategory.Vehicle;
+
+            return ItemCategory.Material;
         }
 
         /// <summary>
@@ -75,6 +151,7 @@ namespace MakeGame.UI
             title.rectTransform.pivot = new Vector2(0.5f, 1f);
             title.rectTransform.anchoredPosition = new Vector2(0f, -8f);
             title.rectTransform.sizeDelta = new Vector2(0f, 28f);
+            titleLabel = title;
 
             var listGo = new GameObject("ItemList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             listGo.transform.SetParent(panel, false);
@@ -115,9 +192,16 @@ namespace MakeGame.UI
             orderBuffer.Clear();
             countBuffer.Clear();
 
+            // 필터 인덱스 0은 "전체"이고, 1 이상이면 해당 카테고리(인덱스-1)만 통과시킨다.
+            bool filterActive = currentFilterIndex > 0;
+            ItemCategory activeCategory = filterActive ? (ItemCategory)(currentFilterIndex - 1) : default;
+
             foreach (var item in inventory.items)
             {
                 if (item.data == null)
+                    continue;
+
+                if (filterActive && GetCategory(item.data) != activeCategory)
                     continue;
 
                 if (!countBuffer.ContainsKey(item.data))
@@ -128,13 +212,24 @@ namespace MakeGame.UI
                 countBuffer[item.data]++;
             }
 
+            // 카테고리별로 묶이도록 정렬하고, 같은 카테고리 안에서는 이름순으로 정렬해 항목을 찾기 쉽게 한다.
+            orderBuffer.Sort((a, b) =>
+            {
+                int categoryCompare = GetCategory(a).CompareTo(GetCategory(b));
+                if (categoryCompare != 0)
+                    return categoryCompare;
+                return string.Compare(a.itemName, b.itemName, System.StringComparison.CurrentCulture);
+            });
+
+            UpdateTitle();
+
             int rowsNeeded = Mathf.Max(orderBuffer.Count, 1);
             EnsureRowCount(rowsNeeded);
 
             if (orderBuffer.Count == 0)
             {
                 rowPool[0].icon.gameObject.SetActive(false);
-                rowPool[0].nameCountLabel.text = "(비어 있음)";
+                rowPool[0].nameCountLabel.text = filterActive ? "(이 카테고리에 해당하는 아이템 없음)" : "(비어 있음)";
                 rowPool[0].nameCountLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
                 rowPool[0].rowGo.SetActive(true);
                 for (int i = 1; i < rowPool.Count; i++)
