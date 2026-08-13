@@ -7,8 +7,22 @@
     "name": "Stranded Deep",
     "usageNote": "가능한 한 이 게임의 기본 시스템을 그대로 기준으로 삼아 개발한다",
     "coreLoop": "비행기 추락으로 표류한 생존자가 절차적으로 생성된 섬과 바닷속을 탐색하며 자원을 모아 도구/쉼터/뗏목을 제작하고 생존 수치를 관리한다",
-    "survivalStats": ["체력(HP)", "허기", "갈증", "일사병(더위)", "중독(바다뱀/성게 등)", "출혈(상어 등)", "골절"],
-    "skillLeveling": ["채집(Harvesting)", "제작(Craftsmanship)", "요리(Cooking)", "신체(Physical)", "사냥(Hunting)"],
+    "survivalStats": [
+      "체력(HP)",
+      "허기",
+      "갈증",
+      "일사병(더위)",
+      "중독(바다뱀/성게 등)",
+      "출혈(상어 등)",
+      "골절"
+    ],
+    "skillLeveling": [
+      "채집(Harvesting)",
+      "제작(Craftsmanship)",
+      "요리(Cooking)",
+      "신체(Physical)",
+      "사냥(Hunting)"
+    ],
     "craftingFocus": "쉼터, 도구, 뗏목 제작이 진행의 핵심",
     "raftSystem": "막대기/노끈/부력 재료(타이어, 통, 부표 등)로 뗏목을 만들어 섬 간 이동하며, 엔진 부품을 구하면 동력 뗏목으로 업그레이드 가능",
     "waterSource": "코코넛 워터로 임시 해갈(과음 시 설사로 급격히 갈증 악화), 이후 물 증류기(Water Still) 제작으로 지속적인 담수 확보",
@@ -37,13 +51,41 @@
       "name": "칼",
       "usesLimit": "제한 있음 (소모품)"
     },
-    { "name": "생선", "category": "생음식", "effect": "허기 10 회복, 식중독 위험 있음, 모닥불에 구우면 구운생선으로 조리 가능" },
-    { "name": "구운생선", "category": "조리된 음식", "effect": "허기 25 회복, 안전함" },
-    { "name": "생고기", "category": "생음식", "effect": "허기 15 회복, 식중독 위험 있음, 모닥불에 구우면 구운고기로 조리 가능" },
-    { "name": "구운고기", "category": "조리된 음식", "effect": "허기 35 회복, 안전함" },
-    { "name": "코코넛", "category": "음료", "effect": "갈증 50 회복(코코넛 워터), 과음 시 설사로 갈증 급격히 악화" },
-    { "name": "비상식량", "category": "비축 물자", "effect": "허기 20 회복, 배 엔딩에 필요한 상하지 않는 비축 식량(30개 필요)" },
-    { "name": "연료", "category": "비축 물자", "effect": "배 엔딩에 필요한 연료(1개 필요)" }
+    {
+      "name": "생선",
+      "category": "생음식",
+      "effect": "허기 10 회복, 식중독 위험 있음, 모닥불에 구우면 구운생선으로 조리 가능"
+    },
+    {
+      "name": "구운생선",
+      "category": "조리된 음식",
+      "effect": "허기 25 회복, 안전함"
+    },
+    {
+      "name": "생고기",
+      "category": "생음식",
+      "effect": "허기 15 회복, 식중독 위험 있음, 모닥불에 구우면 구운고기로 조리 가능"
+    },
+    {
+      "name": "구운고기",
+      "category": "조리된 음식",
+      "effect": "허기 35 회복, 안전함"
+    },
+    {
+      "name": "코코넛",
+      "category": "음료",
+      "effect": "갈증 50 회복(코코넛 워터), 과음 시 설사로 갈증 급격히 악화"
+    },
+    {
+      "name": "비상식량",
+      "category": "비축 물자",
+      "effect": "허기 20 회복, 배 엔딩에 필요한 상하지 않는 비축 식량(30개 필요)"
+    },
+    {
+      "name": "연료",
+      "category": "비축 물자",
+      "effect": "배 엔딩에 필요한 연료(1개 필요)"
+    }
   ],
   "startingLoadout": "불시착 직후 시작 지점에서 위 시작 아이템 중 일부를 챙길 수 있음",
   "plotPoints": [
@@ -107,24 +149,86 @@
   "craftingSystem": {
     "note": "Stranded Deep 기준으로 설계한 1차 제작 시스템. 채집 UI/실제 채집 로직은 추후 구현 예정이며, 여기서는 재료/레시피 데이터 구조를 먼저 정의한다.",
     "materials": [
-      { "name": "나뭇가지", "description": "나무나 덤불에서 채집하는 기본 재료" },
-      { "name": "노끈", "description": "야자잎 등 식물 섬유를 꼬아 만든 끈" },
-      { "name": "돌조각", "description": "날카롭게 깨진 돌, 도구의 날 부분" },
-      { "name": "부싯돌", "description": "불을 피우는 데 쓰는 돌" },
-      { "name": "천조각", "description": "찢어진 옷가지나 가방에서 얻는 천" },
-      { "name": "야자잎", "description": "노끈 제작, 쉼터 지붕 재료" },
-      { "name": "대나무", "description": "물통/뗏목 골조 등 핵심 제작 재료" },
-      { "name": "금속조각", "description": "난파선/비행기 잔해에서 나오는 희귀 재료, 배 상급 단계에 필요" },
-      { "name": "부력통", "description": "드럼통/부표 등 부력 재료, 배 제작에 필요한 희귀 재료" }
+      {
+        "name": "나뭇가지",
+        "description": "나무나 덤불에서 채집하는 기본 재료"
+      },
+      {
+        "name": "노끈",
+        "description": "야자잎 등 식물 섬유를 꼬아 만든 끈"
+      },
+      {
+        "name": "돌조각",
+        "description": "날카롭게 깨진 돌, 도구의 날 부분"
+      },
+      {
+        "name": "부싯돌",
+        "description": "불을 피우는 데 쓰는 돌"
+      },
+      {
+        "name": "천조각",
+        "description": "찢어진 옷가지나 가방에서 얻는 천"
+      },
+      {
+        "name": "야자잎",
+        "description": "노끈 제작, 쉼터 지붕 재료"
+      },
+      {
+        "name": "대나무",
+        "description": "물통/뗏목 골조 등 핵심 제작 재료"
+      },
+      {
+        "name": "금속조각",
+        "description": "난파선/비행기 잔해에서 나오는 희귀 재료, 배 상급 단계에 필요"
+      },
+      {
+        "name": "부력통",
+        "description": "드럼통/부표 등 부력 재료, 배 제작에 필요한 희귀 재료"
+      }
     ],
     "recipes": [
-      { "name": "손도끼", "materials": "나뭇가지x1 + 돌조각x2", "skillLevel": 1, "effect": "나무 채집 속도 증가" },
-      { "name": "창", "materials": "나뭇가지x2 + 돌조각x1", "skillLevel": 1, "effect": "사냥/낚시 도구" },
-      { "name": "붕대", "materials": "천조각x2", "skillLevel": 1, "effect": "출혈 치료" },
-      { "name": "물통", "materials": "대나무x2 + 노끈x1", "skillLevel": 2, "effect": "휴대용 물 보관" },
-      { "name": "파이어스타터", "materials": "부싯돌x1 + 돌조각x1", "skillLevel": 1, "effect": "모닥불 발화 도구" },
-      { "name": "물 증류기 키트", "materials": "대나무x3 + 노끈x2 + 천조각x1", "skillLevel": 3, "effect": "설치 시 지속적으로 담수 확보 (WaterStill 프리팹이 실제로 월드에 생성됨, G키로 설치)" },
-      { "name": "쉼터 키트", "materials": "대나무x4 + 야자잎x6 + 노끈x3", "skillLevel": 2, "effect": "설치 시 그늘/휴식처가 되는 쉼터(Shelter)가 실제로 월드에 생성됨 (G키로 설치, Shade 레이어로 일사병 회복에 반영됨)" }
+      {
+        "name": "손도끼",
+        "materials": "나뭇가지x1 + 돌조각x2",
+        "skillLevel": 1,
+        "effect": "나무 채집 속도 증가"
+      },
+      {
+        "name": "창",
+        "materials": "나뭇가지x2 + 돌조각x1",
+        "skillLevel": 1,
+        "effect": "사냥/낚시 도구"
+      },
+      {
+        "name": "붕대",
+        "materials": "천조각x2",
+        "skillLevel": 1,
+        "effect": "출혈 치료"
+      },
+      {
+        "name": "물통",
+        "materials": "대나무x2 + 노끈x1",
+        "skillLevel": 2,
+        "effect": "휴대용 물 보관"
+      },
+      {
+        "name": "파이어스타터",
+        "materials": "부싯돌x1 + 돌조각x1",
+        "skillLevel": 1,
+        "effect": "모닥불 발화 도구"
+      },
+      {
+        "name": "물 증류기 키트",
+        "materials": "대나무x3 + 노끈x2 + 천조각x1",
+        "skillLevel": 3,
+        "effect": "설치 시 지속적으로 담수 확보 (WaterStill 프리팹이 실제로 월드에 생성됨, G키로 설치)"
+      },
+      {
+        "name": "쉼터 키트",
+        "materials": "대나무x4 + 야자잎x6 + 노끈x3",
+        "skillLevel": 2,
+        "effect": "설치 시 그늘/휴식처가 되는 쉼터(Shelter)가 실제로 월드에 생성됨 (G키로 설치, Shade 레이어로 일사병 회복에 반영됨)"
+      }
     ],
     "requiredSkillForAllRecipes": "Craftsmanship (제작)",
     "boatMaterialsPlan": "endings.탈출선(배) 제작.requirements.construction.stageMaterials 참고. BoatConstructionSystem에 실제 연동 완료 (재료는 인벤토리에서 실제로 소모되어 투입됨)"
@@ -133,7 +237,12 @@
     "note": "여기부터는 실제로 플레이 가능한 상태로 구현된 게임플레이 시스템 (Unity 씬에 Player/Managers 오브젝트로 배치됨).",
     "playerController": "CharacterController 기반 1인칭 이동(WASD+점프)과 마우스 시점 조작. 골절 상태이면 이동 속도가 40%로 감소.",
     "interaction": {
-      "keys": { "E": "정면 대상과 상호작용 (채집/사냥/모닥불 점화/물 수확/배 도면 습득/배 조립)", "R": "정면의 켜진 모닥불에 생음식 조리", "C": "인벤토리의 음식/음료 첫 아이템 섭취", "G": "인벤토리의 첫 설치형(빌드) 아이템을 정면 바닥에 설치 (물 증류기 키트, 쉼터 키트 등 isPlaceable 아이템 공통 처리)" }
+      "keys": {
+        "E": "정면 대상과 상호작용 (채집/사냥/모닥불 점화/물 수확/배 도면 습득/배 조립)",
+        "R": "정면의 켜진 모닥불에 생음식 조리",
+        "C": "인벤토리의 음식/음료 첫 아이템 섭취",
+        "G": "인벤토리의 첫 설치형(빌드) 아이템을 정면 바닥에 설치 (물 증류기 키트, 쉼터 키트 등 isPlaceable 아이템 공통 처리)"
+      }
     },
     "placementSystem": "ItemData에 isPlaceable/placementPrefab 필드를 추가해 범용 설치 시스템 구현. InteractionController.PlaceFirstPlaceableItem()이 인벤토리의 첫 설치형 아이템을 소모하며 플레이어 정면 바닥에 해당 프리팹을 생성함. 물 증류기 키트→WaterStill 프리팹, 쉼터 키트→Shelter 프리팹이 이 시스템을 공유해서 사용.",
     "waterStill": "물 증류기 키트를 설치하면 WaterStill 프리팹(Assets/_Project/Prefabs/WaterStill.prefab)이 실제로 월드에 생성됨. 초당 0.3의 물을 생산해 최대 20까지 저장, E키로 수확 시 즉시 갈증 회복.",
@@ -150,7 +259,8 @@
     "boatWorkbench": "풀 플레이테스트(#49) 중 발견: BoatWorkbench(배 작업대)가 씬 어디에도 실제로 배치되어 있지 않아, 도면과 재료를 다 모아도 배를 조립할 방법이 없는 치명적 누락이었음. WorldMapManager.GenerateStartingIsland에서 SpawnBoatWorkbench를 호출해 시작 섬(캠프)에 작업대를 고정 배치하도록 수정. AircraftWreck과 마찬가지로 프리미티브 조합(상판+다리+공구) 시각화.",
     "audio": "AudioManager(싱글턴) + ProceduralAudioClipGenerator로 별도 오디오 에셋 없이 런타임 절차적 사운드(사인파 비프음/화음/노이즈/파도 앰비언트)를 생성해 채집/제작/섭취/피격/피해/단계완료/저장불러오기 효과음과 배경 파도음을 재생.",
     "saveLoad": "SaveLoadController(F5 저장/F9 불러오기)가 JsonUtility로 Application.persistentDataPath에 플레이어 위치/생존수치/스킬/인벤토리/배 제작 진행/경비행기 수리 진행/경과시간/현재 섬/엔딩 달성 여부/월드 시드를 저장. 자원 노드 채집 상태/위험요소 처치 상태/설치 구조물은 이번 구현 범위에서 제외.",
-    "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/경비행기 수리 진행도/인벤토리 개수/저장 상태 메시지를 화면에 표시."
+    "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/경비행기 수리 진행도/인벤토리 개수/저장 상태 메시지를 화면에 표시.",
+    "gameOver": "체력이 0이 되면 GameOverController가 사망을 감지해 PlayerController/InteractionController를 비활성화하고 Time.timeScale=0으로 시간을 멈춘 뒤, 화면에 게임 오버 안내와 [R] 재시작 안내를 표시한다. R 키를 누르면 씬을 다시 로드해 처음부터 재시작한다."
   },
   "gameplaySystems": {
     "playerModes": {
@@ -160,10 +270,22 @@
     },
     "islands": {
       "sizes": [
-        { "size": "소", "spawnRate": "50%" },
-        { "size": "중", "spawnRate": "30%" },
-        { "size": "대", "spawnRate": "15%" },
-        { "size": "특대", "spawnRate": "5%" }
+        {
+          "size": "소",
+          "spawnRate": "50%"
+        },
+        {
+          "size": "중",
+          "spawnRate": "30%"
+        },
+        {
+          "size": "대",
+          "spawnRate": "15%"
+        },
+        {
+          "size": "특대",
+          "spawnRate": "5%"
+        }
       ],
       "note": "섬 종류는 향후 업데이트를 통해 계속 추가될 예정",
       "worldGeneration": {

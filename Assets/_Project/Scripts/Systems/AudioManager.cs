@@ -125,5 +125,24 @@ namespace MakeGame.Systems
             bgmSource.volume = bgmVolume;
             bgmSource.Play();
         }
+
+        /// <summary>
+        /// 이 인스턴스가 파괴될 때 정적 참조가 죽은 오브젝트를 계속 가리키지 않도록 정리한다.
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (Instance == this)
+                Instance = null;
+        }
+
+        /// <summary>
+        /// 게임 오버 후 재시작처럼, DontDestroyOnLoad로 살아남은 이 싱글턴을 의도적으로 파괴하고
+        /// 새 씬에서 새 인스턴스를 만들어야 할 때 미리 정적 참조를 비워둔다.
+        /// 비워두지 않으면 새 씬의 AudioManager가 "이미 인스턴스가 있다"고 오인해 스스로 파괴된다.
+        /// </summary>
+        public static void ClearInstance()
+        {
+            Instance = null;
+        }
     }
 }

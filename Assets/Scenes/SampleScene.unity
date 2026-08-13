@@ -492,6 +492,7 @@ GameObject:
   - component: {fileID: 2000000013}
   - component: {fileID: 2000000014}
   - component: {fileID: 2000000015}
+  - component: {fileID: 2000000016}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -1056,6 +1057,23 @@ MonoBehaviour:
   - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
     quantity: 4
   collectedMaterials: []
+--- !u!114 &2000000016
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7e965f0f4d8e4af8b4cf8466718cb8ea, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.GameOverController
+  survivalStats: {fileID: 1925945765}
+  playerController: {fileID: 2000000002}
+  interactionController: {fileID: 2000000004}
+  restartKey: 114
+  isGameOver: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
