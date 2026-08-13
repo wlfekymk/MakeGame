@@ -17,6 +17,14 @@ namespace MakeGame.Player
         public List<InventoryItem> items = new List<InventoryItem>();
 
         /// <summary>
+        /// 게임 시작 시 자동으로 시작 아이템 풀을 지급한다 (불시착 직후 상황 재현).
+        /// </summary>
+        private void Start()
+        {
+            GrantStartingLoadout();
+        }
+
+        /// <summary>
         /// 시작 아이템 풀에 있는 아이템들을 인벤토리에 지급한다. 불시착 직후 최초 1회 호출한다.
         /// </summary>
         public void GrantStartingLoadout()

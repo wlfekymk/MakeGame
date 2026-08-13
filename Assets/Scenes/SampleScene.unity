@@ -432,6 +432,43 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1240651468
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3c45cf73908ddeb4784a5d52bf734950, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.CraftingUI
+  craftingSystem: {fileID: 1925945767}
+  recipeBook:
+  - {fileID: 11400000, guid: 48cdc875e2364a279e84724cf03c28d6, type: 2}
+  - {fileID: 11400000, guid: 2f06c4fb00a149ef9f6180699790cd10, type: 2}
+  - {fileID: 11400000, guid: 6e2e954a85ec4954be8636f558491ae6, type: 2}
+  - {fileID: 11400000, guid: 8ebdb601a80543e28a9d8e532350aebc, type: 2}
+  - {fileID: 11400000, guid: 3cffd91e62fb49a08aa77fec7ab9fdbe, type: 2}
+  - {fileID: 11400000, guid: c9478c2e9bc548acba2932f6cc1a1a2e, type: 2}
+  - {fileID: 11400000, guid: 66b534a5c09b43da9f1ab634ae085716, type: 2}
+  - {fileID: 11400000, guid: 34ed00dd690e49e8902053db098e4caa, type: 2}
+  toggleKey: 118
+--- !u!114 &1240651469
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1925945763}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 647ff4cd77493c744be4ff27252175a4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.InventoryUI
+  inventory: {fileID: 1925945764}
+  toggleKey: 9
 --- !u!1 &1886019770
 GameObject:
   m_ObjectHideFlags: 0
@@ -579,6 +616,8 @@ GameObject:
   - component: {fileID: 2000000003}
   - component: {fileID: 2000000004}
   - component: {fileID: 2000000005}
+  - component: {fileID: 1240651469}
+  - component: {fileID: 1240651468}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
