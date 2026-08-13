@@ -261,7 +261,8 @@
     "saveLoad": "SaveLoadController(F5 저장/F9 불러오기)가 JsonUtility로 Application.persistentDataPath에 플레이어 위치/생존수치/스킬/인벤토리/배 제작 진행/경비행기 수리 진행/경과시간/현재 섬/엔딩 달성 여부/월드 시드를 저장. 자원 노드 채집 상태/위험요소 처치 상태/설치 구조물은 이번 구현 범위에서 제외.",
     "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/경비행기 수리 진행도/인벤토리 개수/저장 상태 메시지를 화면에 표시.",
     "gameOver": "체력이 0이 되면 GameOverController가 사망을 감지해 PlayerController/InteractionController를 비활성화하고 Time.timeScale=0으로 시간을 멈춘 뒤, 화면에 게임 오버 안내와 [R] 재시작 안내를 표시한다. R 키를 누르면 씬을 다시 로드해 처음부터 재시작한다.",
-    "rareResourceBalance": "IslandResourceSpawner.ResourceEntry에 minimumIslandSize 필드를 추가해 희귀 재료(금속조각/부력통/엔진부품)는 Large/ExtraLarge 섬에서만 등장하도록 제한했다(이전에는 모든 섬 크기에 baseCount=1로 낮은 확률 등장). 위치가 제한된 만큼 baseCount를 1->2로 올려 등장 밀도를 보정했다. 연료/비상식량은 배 엔딩에 30개 단위로 대량 필요하므로 제한하지 않고 모든 섬에서 계속 등장한다."
+    "rareResourceBalance": "IslandResourceSpawner.ResourceEntry에 minimumIslandSize 필드를 추가해 희귀 재료(금속조각/부력통/엔진부품)는 Large/ExtraLarge 섬에서만 등장하도록 제한했다(이전에는 모든 섬 크기에 baseCount=1로 낮은 확률 등장). 위치가 제한된 만큼 baseCount를 1->2로 올려 등장 밀도를 보정했다. 연료/비상식량은 배 엔딩에 30개 단위로 대량 필요하므로 제한하지 않고 모든 섬에서 계속 등장한다.",
+    "islandSizeGuarantee": "IslandGenerator에 minimumLargeIslands/minimumExtraLargeIslands(각 기본 1) 필드를 추가했다. 기존에는 섬 규모가 순수 확률(대형 15%, 특대 5%)로만 결정되어, 초기 섬 8개 기준 특대 섬이 하나도 안 나올 확률이 약 66%에 달해 배 3단계(최종) 도면을 영영 구할 수 없는 시드가 나올 수 있었다(치명적 밸런스 결함). 이제 초기 생성 순서의 마지막 몇 자리를 예약해두고, 남은 생성 기회 안에 최소 보장 개수를 못 채울 위기면 확률과 무관하게 강제로 배정한다. Play 모드 실측: 초기 섬 9개(시작 섬 포함) 생성 시 Large 1개(Island_4_Large) + ExtraLarge 2개(Island_7/8_ExtraLarge) 확인, 배 도면 스포너도 두 섬 모두에서 도면을 생성함을 확인."
   },
   "gameplaySystems": {
     "playerModes": {

@@ -93,7 +93,7 @@ namespace MakeGame.Systems
             GenerateStartingIsland();
             for (int i = 0; i < initialIslandCount; i++)
             {
-                GenerateNextIsland();
+                GenerateNextIsland(i, initialIslandCount);
             }
         }
 
@@ -242,10 +242,12 @@ namespace MakeGame.Systems
         /// <summary>
         /// 새 섬을 하나 생성한다. IslandGenerator로 규모를 정하고, 기존 섬과 겹치지 않는 위치를 찾아 배치한다.
         /// </summary>
-        public IslandInstance GenerateNextIsland()
+        /// <param name="islandIndex">초기 생성 순서에서 이 섬이 몇 번째(0부터)인지. 대형/특대 섬 최소 보장 판단에 쓰인다.</param>
+        /// <param name="totalIslandCount">이번 초기 생성에서 만들 전체 섬 개수.</param>
+        public IslandInstance GenerateNextIsland(int islandIndex = 0, int totalIslandCount = 1)
         {
             IslandSize size = islandGenerator != null
-                ? islandGenerator.GenerateNextIslandSize()
+                ? islandGenerator.GenerateNextIslandSize(islandIndex, totalIslandCount)
                 : IslandSize.Small;
 
             var newIsland = new IslandInstance

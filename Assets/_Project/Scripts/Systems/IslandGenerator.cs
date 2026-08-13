@@ -12,18 +12,57 @@ namespace MakeGame.Systems
         [Tooltip("섬 규모별 등장 확률 설정 데이터")]
         public IslandSpawnConfig spawnConfig;
 
-        [Tooltip("지금까지 생성한 섬의 개수 (초반 보정 판단에 사용)")]
+        [Header("최소 보장 섬 개수")]
+        [Tooltip("초기 섬 생성 중 최소 이만큼은 대형 섬으로 보장한다. 대형 섬이 없으면 배 1~2단계 도면을" +
+            " 영영 구할 수 없으므로, 순수 확률(기본 15%)에만 맡기면 운이 나쁜 시드에서 배 엔딩이 막힐 수 있다.")]
+        public int minimumLargeIslands = 1;
+
+        [Tooltip("초기 섬 생성 중 최소 이만큼은 특대 섬으로 보장한다. 특대 섬이 없으면 배 최종(3단계) 도면을" +
+            " 영영 구할 수 없으므로, 순수 확률(기본 5%)에만 맡기면 8개 섬 기준 약 66% 확률로 특대 섬이" +
+            " 하나도 없는 시드가 나올 수 있다. 경비행기 엔딩은 시작 섬에 항상 있어 별도 보장이 필요 없다.")]
+        public int minimumExtraLargeIslands = 1;
+
+        /// <summary>지금까지 생성한 섬의 개수 (초반 보정 판단에 사용)</summary>
         private int generatedIslandCount = 0;
+
+        /// <summary>지금까지 생성 확정된 대형 섬 개수 (최소 보장 판단에 사용).</summary>
+        private int largeGeneratedCount = 0;
+
+        /// <summary>지금까지 생성 확정된 특대 섬 개수 (최소 보장 판단에 사용).</summary>
+        private int extraLargeGeneratedCount = 0;
 
         /// <summary>
         /// 다음 섬의 규모를 랜덤하게 결정하여 반환한다.
         /// 초반 구간(earlyGameIslandCount 이내)에는 소형 섬 확률에 보너스 배수를 적용해
         /// 시작 지점 근처에는 소형 섬이 더 잘 나오도록 만든다.
         /// </summary>
-        public IslandSize GenerateNextIslandSize()
+        /// <param name="islandIndex">지금 생성 중인 섬이 전체 초기 생성 순서에서 몇 번째(0부터)인지.</param>
+        /// <param name="totalIslandCount">이번 초기 생성에서 만들 전체 섬 개수.</param>
+        public IslandSize GenerateNextIslandSize(int islandIndex, int totalIslandCount)
         {
             bool isEarlyGame = generatedIslandCount < spawnConfig.earlyGameIslandCount;
             generatedIslandCount++;
+
+            // 이 섬을 포함하지 않고, 이후로 몇 번의 생성 기회가 더 남았는지.
+            int slotsRemainingAfterThis = Mathf.Max(0, totalIslandCount - islandIndex - 1);
+
+            // 남은 기회 안에 특대 섬 최소 보장 개수를 채우지 못할 위기라면(예: 마지막 섬인데 아직 하나도
+            // 안 나왔다면) 확률과 상관없이 강제로 특대 섬을 배정해, 배 최종 도면을 구할 방법이 아예
+            // 사라지는 시드가 나오지 않도록 한다.
+            int extraLargeStillNeeded = Mathf.Max(0, minimumExtraLargeIslands - extraLargeGeneratedCount);
+            if (extraLargeStillNeeded > 0 && slotsRemainingAfterThis < extraLargeStillNeeded)
+            {
+                extraLargeGeneratedCount++;
+                return IslandSize.ExtraLarge;
+            }
+
+            // 대형 섬도 같은 방식으로 최소 보장한다. 특대 섬 강제 배정 몫은 남은 기회 계산에서 미리 뺀다.
+            int largeStillNeeded = Mathf.Max(0, minimumLargeIslands - largeGeneratedCount);
+            if (largeStillNeeded > 0 && slotsRemainingAfterThis < largeStillNeeded + extraLargeStillNeeded)
+            {
+                largeGeneratedCount++;
+                return IslandSize.Large;
+            }
 
             float smallWeight = spawnConfig.GetBaseSpawnRate(IslandSize.Small);
             if (isEarlyGame)
@@ -36,18 +75,31 @@ namespace MakeGame.Systems
             float totalWeight = smallWeight + mediumWeight + largeWeight + extraLargeWeight;
             float roll = Random.Range(0f, totalWeight);
 
+            IslandSize result;
             if (roll < smallWeight)
-                return IslandSize.Small;
-            roll -= smallWeight;
+            {
+                result = IslandSize.Small;
+            }
+            else
+            {
+                roll -= smallWeight;
+                if (roll < mediumWeight)
+                {
+                    result = IslandSize.Medium;
+                }
+                else
+                {
+                    roll -= mediumWeight;
+                    result = roll < largeWeight ? IslandSize.Large : IslandSize.ExtraLarge;
+                }
+            }
 
-            if (roll < mediumWeight)
-                return IslandSize.Medium;
-            roll -= mediumWeight;
+            if (result == IslandSize.Large)
+                largeGeneratedCount++;
+            else if (result == IslandSize.ExtraLarge)
+                extraLargeGeneratedCount++;
 
-            if (roll < largeWeight)
-                return IslandSize.Large;
-
-            return IslandSize.ExtraLarge;
+            return result;
         }
 
         /// <summary>
@@ -56,6 +108,8 @@ namespace MakeGame.Systems
         public void ResetGenerationState()
         {
             generatedIslandCount = 0;
+            largeGeneratedCount = 0;
+            extraLargeGeneratedCount = 0;
         }
     }
 }
