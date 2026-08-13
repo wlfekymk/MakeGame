@@ -19,6 +19,10 @@ namespace MakeGame.Systems
 
             [Tooltip("소형 섬 기준 기본 배치 개수 (규모가 커질수록 배율이 곱해진다)")]
             public int baseCount = 3;
+
+            [Tooltip("이 자원이 등장할 수 있는 최소 섬 규모. 예를 들어 Large로 설정하면 대형/특대 섬에만 등장하고" +
+                " 소형/중형 섬에는 전혀 등장하지 않는다. 희귀 재료(금속조각/부력통/엔진부품 등)의 등장 위치를 제한할 때 사용한다.")]
+            public IslandSize minimumIslandSize = IslandSize.Small;
         }
 
         [Tooltip("섬에 배치할 자원 종류와 기본 개수 목록")]
@@ -48,6 +52,10 @@ namespace MakeGame.Systems
             foreach (var entry in resourceEntries)
             {
                 if (entry.yieldItem == null)
+                    continue;
+
+                // 최소 섬 규모 미만이면 이 자원은 아예 등장하지 않는다 (희귀 재료 위치 제한용).
+                if (island.size < entry.minimumIslandSize)
                     continue;
 
                 int count = Mathf.RoundToInt(entry.baseCount * multiplier);

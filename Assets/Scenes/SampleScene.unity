@@ -866,15 +866,18 @@ MonoBehaviour:
   - yieldItem: {fileID: 11400000, guid: e6d70fced200407eb31b08731cd6db82, type: 2}
     baseCount: 1
   - yieldItem: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
-    baseCount: 1
+    baseCount: 2
+    minimumIslandSize: 2
   - yieldItem: {fileID: 11400000, guid: 664c5c68df1543368e20c8fd2c52f8b9, type: 2}
-    baseCount: 1
+    baseCount: 2
+    minimumIslandSize: 2
   - yieldItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
     baseCount: 1
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
   - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
-    baseCount: 1
+    baseCount: 2
+    minimumIslandSize: 2
   smallMultiplier: 1
   mediumMultiplier: 2
   largeMultiplier: 3
