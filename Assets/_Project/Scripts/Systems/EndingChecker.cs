@@ -6,14 +6,19 @@ using MakeGame.Managers;
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 엔딩 달성 조건을 매 프레임 확인한다.
-    /// 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보.
-    /// (경비행기 수리 엔딩은 story_dictionary.json 기준 아직 설계 보류 상태라 여기서 다루지 않는다.)
+    /// 엔딩 달성 조건을 매 프레임 확인한다. 두 가지 엔딩 경로 중 먼저 달성한 쪽으로 게임을 종료시킨다.
+    /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보.
+    ///    여러 단계를 밟아 꾸준히 자원을 모으는 정공법 경로.
+    /// 2) 경비행기 수리 엔딩: 시작 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
+    ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete가 true가 되는 순간 확정된다.
     /// </summary>
     public class EndingChecker : MonoBehaviour
     {
         [Tooltip("완성 여부를 확인할 배 제작 시스템")]
         public BoatConstructionSystem boatConstruction;
+
+        [Tooltip("완성 여부를 확인할 경비행기 수리 시스템 (비워두면 경비행기 엔딩을 검사하지 않는다)")]
+        public AircraftRepairSystem aircraftRepair;
 
         [Tooltip("비축 물자를 확인할 인벤토리")]
         public PlayerInventory inventory;
@@ -37,7 +42,7 @@ namespace MakeGame.Systems
         public bool EndingTriggered => endingTriggered;
 
         /// <summary>
-        /// 매 프레임 엔딩 조건을 확인하고, 조건을 모두 만족하면 배 엔딩을 트리거한다.
+        /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 먼저 만족되는 쪽을 트리거한다.
         /// </summary>
         private void Update()
         {
@@ -45,7 +50,15 @@ namespace MakeGame.Systems
                 return;
 
             if (CheckBoatEndingConditions())
-                TriggerBoatEnding();
+            {
+                TriggerEnding("배 엔딩 달성! 섬을 탈출했습니다.");
+                return;
+            }
+
+            if (aircraftRepair != null && aircraftRepair.isRepairComplete)
+            {
+                TriggerEnding("경비행기 수리 엔딩 달성! 하늘로 섬을 탈출했습니다.");
+            }
         }
 
         /// <summary>
@@ -72,12 +85,12 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 배 엔딩을 확정한다. GameManager에 알려 멀티플레이를 개방시킨다.
+        /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시킨다.
         /// </summary>
-        private void TriggerBoatEnding()
+        private void TriggerEnding(string message)
         {
             endingTriggered = true;
-            Debug.Log("배 엔딩 달성! 섬을 탈출했습니다.");
+            Debug.Log(message);
             GameManager.Instance?.CompleteEnding();
         }
     }

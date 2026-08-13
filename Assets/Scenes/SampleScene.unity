@@ -491,6 +491,7 @@ GameObject:
   - component: {fileID: 2000000012}
   - component: {fileID: 2000000013}
   - component: {fileID: 2000000014}
+  - component: {fileID: 2000000015}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -598,6 +599,7 @@ MonoBehaviour:
   resourceSpawner: {fileID: 2000000006}
   hazardSpawner: {fileID: 2000000007}
   blueprintSpawner: {fileID: 2000000012}
+  aircraftRepair: {fileID: 2000000015}
   generateOnStart: 1
   initialIslandCount: 8
   terrainMaxHeight: 2.5
@@ -869,6 +871,8 @@ MonoBehaviour:
     baseCount: 1
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
+  - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
+    baseCount: 1
   smallMultiplier: 1
   mediumMultiplier: 2
   largeMultiplier: 3
@@ -948,6 +952,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.EndingChecker
   boatConstruction: {fileID: 1886019771}
+  aircraftRepair: {fileID: 2000000015}
   inventory: {fileID: 1925945764}
   nonPerishableFoodItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
   requiredFoodCount: 30
@@ -969,6 +974,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.DebugHud
   survivalStats: {fileID: 1925945765}
   boatConstruction: {fileID: 1886019771}
+  aircraftRepair: {fileID: 2000000015}
   survivalClock: {fileID: 2000000009}
   inventory: {fileID: 1925945764}
   saveLoadController: {fileID: 2000000013}
@@ -1006,6 +1012,7 @@ MonoBehaviour:
   playerSkills: {fileID: 1925945768}
   playerInventory: {fileID: 1925945764}
   boatConstruction: {fileID: 1886019771}
+  aircraftRepair: {fileID: 2000000015}
   survivalClock: {fileID: 2000000009}
   islandTravel: {fileID: 2000000008}
   worldMapManager: {fileID: 1886019775}
@@ -1025,6 +1032,29 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.AudioManager
   sfxVolume: 0.7
   bgmVolume: 0.3
+--- !u!114 &2000000015
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5a996de59c3b414d9d54c8b31c32217e, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.AircraftRepairSystem
+  isRepairComplete: 0
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
+    quantity: 2
+  - item: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
+    quantity: 6
+  - item: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
+    quantity: 3
+  - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+    quantity: 4
+  collectedMaterials: []
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

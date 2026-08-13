@@ -21,6 +21,7 @@ namespace MakeGame.Systems
         public PlayerSkills playerSkills;
         public PlayerInventory playerInventory;
         public BoatConstructionSystem boatConstruction;
+        public AircraftRepairSystem aircraftRepair;
         public SurvivalClock survivalClock;
         public IslandTravel islandTravel;
         public WorldMapManager worldMapManager;
@@ -112,6 +113,18 @@ namespace MakeGame.Systems
                     if (entry.item == null)
                         continue;
                     data.boatCollectedMaterials.Add(new ItemCountEntry { itemName = entry.item.itemName, count = entry.quantity });
+                }
+            }
+
+            if (aircraftRepair != null)
+            {
+                data.aircraftRepairComplete = aircraftRepair.isRepairComplete;
+
+                foreach (var entry in aircraftRepair.collectedMaterials)
+                {
+                    if (entry.item == null)
+                        continue;
+                    data.aircraftCollectedMaterials.Add(new ItemCountEntry { itemName = entry.item.itemName, count = entry.quantity });
                 }
             }
 
@@ -212,6 +225,22 @@ namespace MakeGame.Systems
 
                     boatConstruction.collectedMaterialsForCurrentStage.Add(
                         new BoatConstructionSystem.MaterialRequirement { item = itemData, quantity = saved.count });
+                }
+            }
+
+            if (aircraftRepair != null)
+            {
+                aircraftRepair.isRepairComplete = data.aircraftRepairComplete;
+
+                aircraftRepair.collectedMaterials.Clear();
+                foreach (var saved in data.aircraftCollectedMaterials)
+                {
+                    ItemData itemData = FindItemDataByName(saved.itemName);
+                    if (itemData == null)
+                        continue;
+
+                    aircraftRepair.collectedMaterials.Add(
+                        new AircraftRepairSystem.MaterialRequirement { item = itemData, quantity = saved.count });
                 }
             }
 

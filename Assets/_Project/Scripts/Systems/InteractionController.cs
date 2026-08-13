@@ -108,6 +108,13 @@ namespace MakeGame.Systems
                 return;
             }
 
+            var aircraftWreck = target.GetComponent<AircraftWreck>();
+            if (aircraftWreck != null)
+            {
+                aircraftWreck.TryRepair(inventory);
+                return;
+            }
+
             var hazard = target.GetComponent<HazardSource>();
             if (hazard != null)
             {

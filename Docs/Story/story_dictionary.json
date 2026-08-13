@@ -94,8 +94,14 @@
     },
     {
       "type": "경비행기 수리",
-      "description": "경비행기를 고쳐서 섬을 탈출하는 엔딩.",
-      "requirements": "보류 - 추후 설계 예정"
+      "description": "불시착 시작 섬에 놓인 경비행기 잔해(AircraftWreck)를 수리해 하늘로 섬을 탈출하는 엔딩. 배 제작처럼 여러 단계를 거치는 정공법과 달리, 희귀 재료를 모아 한 번에 수리를 완료하는 대체 경로로 설계했다.",
+      "requirements": {
+        "location": "시작 섬(0번 섬)에 고정 배치. WorldMapManager.GenerateStartingIsland에서 AircraftWreck을 프리미티브 조합(동체+날개+꼬리날개)으로 생성.",
+        "materials": "엔진부품x2 + 금속조각x6 + 연료x3 + 노끈x4 (AircraftRepairSystem.requiredMaterials에 구현됨. 밸런스는 추후 조정 예정)",
+        "engineParts": "엔진부품은 이번 엔딩 전용 신규 희귀 아이템으로, IslandResourceSpawner에 baseCount 1로 추가되어 금속조각/부력통과 마찬가지로 낮은 확률로 섬 어디서든 채집 가능",
+        "interaction": "E키로 AircraftWreck과 상호작용하면 인벤토리에서 부족한 재료를 자동으로 최대한 투입하고(BoatWorkbench와 동일한 패턴), 조건을 만족하면 즉시 수리 완료",
+        "note": "AircraftRepairSystem.isRepairComplete가 true가 되는 순간 EndingChecker가 감지해 배 엔딩과 동일하게 GameManager.CompleteEnding()을 호출함. 두 엔딩 중 먼저 달성되는 쪽으로 게임이 종료됨."
+      }
     }
   ],
   "craftingSystem": {
@@ -139,8 +145,11 @@
     "hazardDistribution": "HazardSpawner가 섬 생성 시(시작 섬 제외) 규모에 비례한 확률로 위험 요소를 배치. 소형 기준 확률: 독사25%/전갈20%/곰15%/벌떼20%/함정20%/식인종10%, 규모별 배율 소형1/중형1.5/대형2/특대2.5배. (음식부족/탈수는 물리적 오브젝트 없이 허기·갈증 감소 로직으로 상시 처리)",
     "islandTravel": "IslandTravel - 고무보트로 발견된 섬까지 이동. 목적지가 대형/특대 섬이면 기본적으로 해류 제약으로 고무보트만으로는 이동 불가하나, 배(뗏목) 제작이 1단계 이상 완료되면(BoatConstructionSystem.HasCompletedStage) 해류 제약을 뚫고 대형/특대 섬까지 갈 수 있도록 확장됨.",
     "survivalClock": "SurvivalClock - 게임 내 하루=실제 600초(10분) 기준으로 경과 일수 계산.",
-    "endingChecker": "매 프레임 배 3단계 완성 + 비상식량 30개 + 생수 30개 + 연료 1개 조건을 확인해 자동으로 탈출선 엔딩을 트리거.",
-    "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/인벤토리 개수를 화면에 표시."
+    "endingChecker": "매 프레임 두 엔딩 경로를 확인: 1) 배 3단계 완성 + 비상식량 30개 + 생수 30개 + 연료 1개, 2) AircraftRepairSystem.isRepairComplete. 먼저 만족되는 쪽으로 자동으로 엔딩을 트리거.",
+    "aircraftRepair": "AircraftRepairSystem + AircraftWreck으로 구현된 경비행기 수리 엔딩. 시작 섬에 고정 배치된 잔해에서 E키로 상호작용하면 엔진부품x2/금속조각x6/연료x3/노끈x4를 자동 투입하고 조건 충족 시 즉시 수리 완료.",
+    "audio": "AudioManager(싱글턴) + ProceduralAudioClipGenerator로 별도 오디오 에셋 없이 런타임 절차적 사운드(사인파 비프음/화음/노이즈/파도 앰비언트)를 생성해 채집/제작/섭취/피격/피해/단계완료/저장불러오기 효과음과 배경 파도음을 재생.",
+    "saveLoad": "SaveLoadController(F5 저장/F9 불러오기)가 JsonUtility로 Application.persistentDataPath에 플레이어 위치/생존수치/스킬/인벤토리/배 제작 진행/경비행기 수리 진행/경과시간/현재 섬/엔딩 달성 여부/월드 시드를 저장. 자원 노드 채집 상태/위험요소 처치 상태/설치 구조물은 이번 구현 범위에서 제외.",
+    "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/경비행기 수리 진행도/인벤토리 개수/저장 상태 메시지를 화면에 표시."
   },
   "gameplaySystems": {
     "playerModes": {
@@ -164,8 +173,8 @@
     }
   },
   "openQuestions": [
-    "경비행기 수리 엔딩 - 보류",
     "멀티플레이 방식 - 보류",
+    "경비행기 수리 엔딩의 재료 수량(엔진부품x2/금속조각x6/연료x3/노끈x4)은 1차 임시값으로 구현됨 - 실제 플레이 밸런스 테스트 후 조정 필요",
     "1~2단계 도면(대형 섬 50%)/3단계 도면(특대 섬 70%) 습득 확률은 1차 임시값으로 구현됨(BoatBlueprintSpawner.largeIslandSpawnChance/extraLargeIslandSpawnChance) - 실제 플레이 밸런스 테스트 후 조정 필요",
     "배 단계별 재료 수량(대나무/노끈/금속조각/부력통 등)은 1차 임시값으로 구현됨 - 실제 플레이 밸런스 테스트 후 조정 필요",
     "금속조각/부력통처럼 '희귀 재료'로 의도한 것들이 현재 IslandResourceSpawner에서 소형 섬에도 낮은 확률로 나오게 되어 있음(규모별 배율만 적용) - 대형/특대 섬 전용으로 제한할지 결정 필요",

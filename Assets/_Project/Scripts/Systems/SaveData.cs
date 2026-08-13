@@ -54,6 +54,10 @@ namespace MakeGame.Systems
         public int boatHighestCompletedStage;
         public bool boatIsFullyComplete;
         public List<ItemCountEntry> boatCollectedMaterials = new List<ItemCountEntry>();
+
+        [Header("경비행기 수리 진행")]
+        public bool aircraftRepairComplete;
+        public List<ItemCountEntry> aircraftCollectedMaterials = new List<ItemCountEntry>();
     }
 
     /// <summary>스킬 하나의 저장 항목(종류, 레벨, 경험치).</summary>

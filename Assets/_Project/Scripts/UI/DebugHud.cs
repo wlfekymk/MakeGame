@@ -16,6 +16,9 @@ namespace MakeGame.UI
         [Tooltip("표시할 배 제작 진행 상태")]
         public BoatConstructionSystem boatConstruction;
 
+        [Tooltip("표시할 경비행기 수리 진행 상태")]
+        public AircraftRepairSystem aircraftRepair;
+
         [Tooltip("표시할 경과 일수")]
         public SurvivalClock survivalClock;
 
@@ -49,6 +52,11 @@ namespace MakeGame.UI
             if (boatConstruction != null)
             {
                 GUILayout.Label($"배 제작: {boatConstruction.currentStage} / {BoatConstructionSystem.TotalStages}단계 (도면 {(boatConstruction.hasCurrentStageBlueprint ? "보유" : "없음")})");
+            }
+
+            if (aircraftRepair != null)
+            {
+                GUILayout.Label($"경비행기 수리: {(aircraftRepair.GetOverallProgress() * 100f):F0}% {(aircraftRepair.isRepairComplete ? "(완료)" : "")}");
             }
 
             if (inventory != null)

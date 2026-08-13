@@ -45,6 +45,10 @@ namespace MakeGame.Systems
         [Tooltip("섬이 생성될 때 배 도면 습득 지점을 함께 배치할 스포너 (비워두면 도면을 배치하지 않는다)")]
         public BoatBlueprintSpawner blueprintSpawner;
 
+        [Header("경비행기 수리 엔딩")]
+        [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
+        public AircraftRepairSystem aircraftRepair;
+
         [Header("테스트용 자동 생성")]
         [Tooltip("플레이 시작 시 자동으로 시작 섬 + 여러 섬을 생성해서 맵을 미리 확인할 수 있게 한다.")]
         public bool generateOnStart = true;
@@ -150,8 +154,47 @@ namespace MakeGame.Systems
 
             SpawnPlaceholder(startIsland);
             SpawnIslandContent(startIsland);
+            SpawnAircraftWreck(startIsland);
             islands.Add(startIsland);
             return startIsland;
+        }
+
+        /// <summary>
+        /// 시작 섬(불시착 지점)에 경비행기 잔해를 한 번 배치한다. 프리미티브를 조합해 부서진 기체 형태를 만들고,
+        /// AircraftWreck 컴포넌트를 붙여 상호작용(E키)으로 수리 재료를 투입할 수 있게 한다.
+        /// </summary>
+        private void SpawnAircraftWreck(IslandInstance startIsland)
+        {
+            if (aircraftRepair == null)
+                return;
+
+            Vector3 position = startIsland.mapPosition + new Vector3(6f, 0f, -4f);
+            position = TerrainSampler.SnapToGround(position);
+
+            var go = new GameObject("AircraftWreck");
+            go.transform.SetParent(transform);
+            go.transform.position = position;
+
+            // 동체(원기둥, 옆으로 눕힘) + 부러진 날개(양옆 납작한 큐브) + 꼬리날개(세로 큐브)로 부서진 기체 형태를 표현한다.
+            StructureVisualBuilder.CreateVisualPart(go.transform, "Fuselage", PrimitiveType.Cylinder,
+                Vector3.up * 0.6f, new Vector3(0.8f, 2.2f, 0.8f), new Color(0.55f, 0.58f, 0.6f),
+                Quaternion.Euler(0f, 0f, 90f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "WingLeft", PrimitiveType.Cube,
+                new Vector3(-1.6f, 0.6f, 0.3f), new Vector3(2.2f, 0.15f, 0.8f), new Color(0.45f, 0.48f, 0.5f),
+                Quaternion.Euler(0f, 0f, 15f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "WingRight", PrimitiveType.Cube,
+                new Vector3(1.8f, 0.5f, -0.4f), new Vector3(1.8f, 0.15f, 0.8f), new Color(0.45f, 0.48f, 0.5f),
+                Quaternion.Euler(0f, 0f, -25f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "TailFin", PrimitiveType.Cube,
+                new Vector3(-2.2f, 1f, 0f), new Vector3(0.15f, 1f, 0.6f), new Color(0.6f, 0.25f, 0.2f));
+
+            // 상호작용 레이캐스트가 맞을 수 있도록 전체를 감싸는 박스 콜라이더를 추가한다.
+            var boxCollider = go.AddComponent<BoxCollider>();
+            boxCollider.center = new Vector3(0f, 0.6f, 0f);
+            boxCollider.size = new Vector3(4.5f, 1.6f, 2f);
+
+            var wreck = go.AddComponent<AircraftWreck>();
+            wreck.repairSystem = aircraftRepair;
         }
 
         /// <summary>
