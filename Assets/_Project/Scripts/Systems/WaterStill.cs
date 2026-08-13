@@ -19,11 +19,43 @@ namespace MakeGame.Systems
         public float maxStorage = 20f;
 
         /// <summary>
+        /// 생성 직후 캡슐 하나뿐인 밋밋한 프리팹 대신, 바스킷+지지대+집수 돔으로 구성된
+        /// 실제 물 증류기 모양의 시각 파츠를 절차적으로 만든다.
+        /// </summary>
+        private void Awake()
+        {
+            BuildVisual();
+        }
+
+        /// <summary>
         /// 매 프레임 자동으로 시간 경과 로직을 진행시킨다 (별도 드라이버 없이 스스로 작동).
         /// </summary>
         private void Update()
         {
             Tick(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// 프리팹 루트의 캡슐 MeshRenderer(플레이스홀더)는 숨기고, 그 자리에 바스킷(물받이)/중심 지지대/
+        /// 집수용 돔 천막을 절차적으로 조합해 붙인다. 상호작용에 쓰이는 CapsuleCollider는 루트에 그대로 둔다.
+        /// </summary>
+        private void BuildVisual()
+        {
+            var rootRenderer = GetComponent<MeshRenderer>();
+            if (rootRenderer != null)
+                rootRenderer.enabled = false;
+
+            // 바닥에 놓이는 물받이 바스킷
+            StructureVisualBuilder.CreateVisualPart(transform, "Basin", PrimitiveType.Cylinder,
+                new Vector3(0f, 0.25f, 0f), new Vector3(0.9f, 0.25f, 0.9f), new Color(0.16f, 0.16f, 0.16f));
+
+            // 돔 천막을 받치는 중심 지지대
+            StructureVisualBuilder.CreateVisualPart(transform, "Pole", PrimitiveType.Cylinder,
+                new Vector3(0f, 0.75f, 0f), new Vector3(0.06f, 0.5f, 0.06f), new Color(0.4f, 0.28f, 0.15f));
+
+            // 증발한 수분을 모으는 반투명한 느낌의 집수 돔(비닐 천막)
+            StructureVisualBuilder.CreateVisualPart(transform, "Tarp", PrimitiveType.Sphere,
+                new Vector3(0f, 1.15f, 0f), new Vector3(0.85f, 0.5f, 0.85f), new Color(0.78f, 0.87f, 0.9f));
         }
 
         /// <summary>
