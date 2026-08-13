@@ -25,6 +25,9 @@ namespace MakeGame.Systems
         [Tooltip("지금까지 완료한 배 제작 최고 단계 (0이면 아직 한 단계도 완료 못함). 뗏목 진행도에 따른 이동 범위 확장 판정에 사용한다.")]
         public int highestCompletedStage = 0;
 
+        [Tooltip("최종 단계까지 전부 완성했는지 여부. TryAdvanceStage가 마지막 단계에서 성공하면 true가 된다.")]
+        public bool isFullyComplete = false;
+
         /// <summary>재료 하나와 필요 수량을 나타낸다 (CraftingRecipe.MaterialRequirement와 동일한 구조).</summary>
         [System.Serializable]
         public class MaterialRequirement
@@ -156,7 +159,10 @@ namespace MakeGame.Systems
             highestCompletedStage = Mathf.Max(highestCompletedStage, currentStage);
 
             if (currentStage >= TotalStages)
+            {
+                isFullyComplete = true;
                 return true; // 3단계까지 모두 완료 - 배 100% 완성
+            }
 
             currentStage++;
             hasCurrentStageBlueprint = false;
@@ -176,9 +182,14 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 배 제작 전체 진행률(0~1)을 대략적으로 반환한다. 완료된 단계 수 기준이며 단계 내 세부 진행은 반영하지 않는다.
+        /// 예전 계산식(currentStage-1)/TotalStages은 3단계를 완성해도 currentStage가 더 이상 증가하지 않아
+        /// 진행률이 2/3에서 멈추는 버그가 있었다. isFullyComplete를 우선 확인해 100%를 정확히 반환하도록 고쳤다.
         /// </summary>
         public float GetOverallProgress()
         {
+            if (isFullyComplete)
+                return 1f;
+
             return (float)(currentStage - 1) / TotalStages;
         }
     }

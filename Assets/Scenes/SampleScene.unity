@@ -514,25 +514,25 @@ MonoBehaviour:
   stageMaterialRequirements:
   - materials:
     - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
-      quantity: 5
-    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
       quantity: 4
+    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+      quantity: 3
     - item: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
       quantity: 3
   - materials:
     - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
-      quantity: 8
-    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
       quantity: 6
+    - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+      quantity: 5
     - item: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
       quantity: 2
   - materials:
     - item: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
-      quantity: 5
+      quantity: 4
     - item: {fileID: 11400000, guid: 664c5c68df1543368e20c8fd2c52f8b9, type: 2}
-      quantity: 3
+      quantity: 2
     - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
-      quantity: 8
+      quantity: 6
   collectedMaterialsForCurrentStage: []
 --- !u!114 &1886019772
 MonoBehaviour:
