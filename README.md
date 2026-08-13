@@ -1,70 +1,90 @@
-# MakeGame
+# MakeGame — 무인도 탈출 서바이벌
 
-1인 인디 게임 개발 프로젝트.
+Stranded Deep을 참고한 1인용 3D 무인도 탈출/서바이벌 게임. Unity 6 (URP) 기반.
 
-## 1. Unity 설치 (아직 안 했다면)
+비행기 추락으로 무인도에 불시착한 플레이어가 생존 수치를 관리하며 자원을 채집하고,
+여러 섬을 탐험해 배(고무보트→뗏목→범선)를 완성하거나 경비행기를 수리해 섬을 탈출하는 것이 목표.
 
-1. [Unity Hub](https://unity.com/download) 설치
-2. Unity Hub에서 최신 **LTS 버전**(예: 2022 LTS 또는 6 LTS) 설치
-   - 설치 시 모듈에서 타깃 빌드 플랫폼(Windows Build Support 등) 체크
-3. Unity Hub → **New Project** 클릭
-   - Template: **Universal 2D** 또는 **Universal 3D** (장르 정해지면 선택, URP 기반)
-   - Project name: `MakeGame`
-   - **Location: 이 폴더(`D:\MakeGame`)의 상위 폴더로 지정하고, 생성 후 `Assets`, `Packages`, `ProjectSettings` 내용을 이 폴더로 병합**
-     (또는 Location을 바로 `D:\MakeGame`으로 지정 — 이미 있는 `Assets/_Project`, `.gitignore` 등과 자동으로 합쳐짐)
+## 1. 실행 방법
 
-Unity가 프로젝트를 생성하면 `Library/`, `Packages/`, `ProjectSettings/`, `Temp/` 등이 자동으로 채워집니다. `Library/`, `Temp/` 등은 `.gitignore`에 이미 등록되어 있어 커밋되지 않습니다.
+1. [Unity Hub](https://unity.com/download)에서 **Unity 6 (6000.5.6f1)** 이상 설치
+2. Unity Hub → **Open** → 이 폴더(`D:\MakeGame`) 선택
+3. `Assets/Scenes/SampleScene.unity`를 열고 Play
 
-## 2. 폴더 구조
+## 2. 조작법
 
-```
-Assets/
-  _Project/          # 우리 프로젝트 전용 에셋 (Unity 기본 폴더와 구분)
-    Scripts/
-      Player/
-      Enemy/
-      Systems/       # 게임 로직/규칙
-      UI/
-      Managers/      # GameManager, SceneLoader 등 싱글턴류
-      Utils/
-    Scenes/
-    Prefabs/
-    Art/
-      Sprites/
-      Models/
-      Animations/
-    Audio/
-      SFX/
-      Music/
-    ScriptableObjects/
-    Resources/       # Resources.Load가 꼭 필요한 경우만 사용
-  Settings/          # URP Pipeline Asset, Input Actions 등 프로젝트 설정 에셋
-```
+| 키 | 기능 |
+| --- | --- |
+| W/A/S/D | 이동 |
+| 마우스 | 시점 회전 (상하 -80°~80° 제한) |
+| Space | 점프 / 수영 중 위로 부상 |
+| Ctrl | 수영 중 잠수 |
+| E | 상호작용 · 공격(무기 필요) |
+| R | 조리 (모닥불 앞) / 사망 시 재시작 |
+| C | 아이템 섭취 |
+| G | 설치형 아이템(물 증류기, 쉼터 등) 설치 |
+| Tab | 인벤토리 열기/닫기 |
+| V | 제작(크래프팅) 창 열기/닫기 |
+| M | 미니맵 섬 목록/이동 패널 열기/닫기 |
+| F5 / F9 | 저장 / 불러오기 |
+| Space (엔딩 화면) | 엔딩 연출 닫고 계속 플레이 |
 
-- `_Project` 접두사(`_`)는 Unity Editor에서 폴더를 맨 위로 정렬시켜 서드파티 에셋과 구분하기 위함입니다.
-- 새 스크립트는 장르가 정해지면 해당 하위 폴더(Player/Enemy/Systems 등)에 배치하세요.
+## 3. 구현된 시스템
 
-## 3. 코드 컨벤션
+### 생존
+- 체력/허기/갈증/일사병/산소 수치와 중독·출혈·골절 상태 이상 (`SurvivalStats`, `SurvivalTickDriver`)
+- 경과 일수 카운트 (`SurvivalClock`)
+- 사망 시 Game Over 화면 및 씬 재시작 (`GameOverController`)
 
-- 기능을 구현하는 모든 메서드에는 **어떤 기능인지 설명하는 주석**을 남깁니다.
+### 채집 · 제작 · 생존 활동
+- 자원 채집(하베스팅), 모닥불/요리, 사냥/낚시, 아이템 섭취(`ConsumptionSystem`)
+- 제작 레시피/크래프팅 시스템 (`CraftingSystem`), 스킬 레벨링 (`PlayerSkills`)
+- 설치형 아이템: 물 증류기(WaterStill), 쉼터(Shelter) — 다중 프리미티브 조합 프리팹
 
-```csharp
-/// <summary>
-/// 플레이어 입력을 받아 이동 벡터를 계산하고 Rigidbody에 적용한다.
-/// </summary>
-private void Move(Vector2 input)
-{
-    ...
-}
-```
+### 섬 · 월드
+- 절차적 섬 생성 및 확장 배치, 실제 지형 메시 (`IslandGenerator`, `WorldMapManager`)
+- 섬 규모(소/중/대/특대)별 자원·위험요소 분포, 대형/특대 섬 최소 생성 개수 보장
+- 희귀 자원(금속조각/부력통/엔진부품)의 섬 규모 기반 스폰 제한
+- 바다 수영/잠수, 뗏목·고무보트를 통한 섬 간 이동 (`IslandTravel`)
+- 미니맵 레이더 + 섬 목록/이동 UI (`MinimapUI`)
 
-## 4. Git 워크플로
+### 위험 요소
+- 독사/전갈/곰/벌떼/함정/식인종 — 종류별 상태이상·직접피해 로직 (`HazardSource`)
+- 전투 가능 대상(곰/식인종/벌떼)은 무기로 물리치면 일정 시간 후 재등장
+- 종류별로 형태·크기·색상이 다른 시각화(캡슐/구체/원판 조합)로 한눈에 구분 가능
 
-- `main` 브랜치에 직접 커밋하거나, 기능 단위로 브랜치를 나눠 작업 후 병합
-- Unity 에디터에서 **Edit > Project Settings > Editor > Version Control Mode**를 `Visible Meta Files`로, **Asset Serialization**을 `Force Text`로 설정해야 `.meta` 파일 충돌과 diff가 정상 동작합니다 (Unity Hub로 새 프로젝트 생성 직후 꼭 설정)
-- 씬/프리팹 동시 편집 시 충돌이 잦으니 가능하면 한 사람(1인 개발이므로 크게 문제 없음)이 순차 작업
+### 엔딩
+- 배 제작: 고무보트 → 뗏목 → 범선 3단계, 도면과 재료 수집으로 진행 (`BoatConstructionSystem`)
+- 경비행기 수리 엔딩 (`AircraftRepairSystem`)
+- 엔딩 달성 시 축하 UI 연출 (`EndingChecker`)
 
-## 5. 다음 단계
+### 기타
+- 인벤토리/제작 UI (아이템 카테고리별 색상 아이콘, 재료 부족 여부 개별 표시)
+- 저장/불러오기 (`SaveLoadController`)
+- 효과음/배경음 (`AudioManager`)
+- 디버그 HUD로 생존 수치·진행도·조작법 상시 표시 (`DebugHud`)
 
-- 게임 장르가 정해지면 `Assets/_Project/Scripts` 하위에 코어 시스템부터 설계
-- 필요 시 Input System, 카메라 등 초기 스크립트 요청
+## 4. 코드 컨벤션
+
+- 기능을 구현하는 모든 메서드에는 **어떤 기능인지 설명하는 한글 주석**을 남긴다.
+- 새 스크립트는 역할에 맞는 하위 폴더(`Player/`, `Systems/`, `UI/`, `Managers/`, `Utils/`)에 배치한다.
+- 절차적 시각 요소(색상 머티리얼 등)는 `.mat` 에셋을 늘리기보다 `StructureVisualBuilder.CreateColorMaterial`처럼 런타임 생성 방식을 우선 검토한다. 다만 프리팹에 고정 배치되는 파츠는 실제 `.mat` 에셋으로 만들어 안정적으로 참조한다.
+
+## 5. Git 워크플로
+
+- `main` 브랜치에 직접 커밋. 버전은 `x.xx.xxx` 형식으로 커밋마다 `Tools/bump_version.sh`로 patch를 1씩 올린다.
+- Unity 에디터의 **Version Control Mode = Visible Meta Files**, **Asset Serialization = Force Text** 설정 필수.
+- 원격 저장소: `wlfekymk/MakeGame` (private). 커밋 후 `git bundle create --all`로 `repo.bundle` 백업을 함께 갱신한다.
+
+## 6. 버전 히스토리 요약
+
+| 범위 | 내용 |
+| --- | --- |
+| v0.01.001–009 | 프로젝트 초기 셋팅, Git/버전 관리 체계, Unity 3D URP 프로젝트 생성, 스토리 딕셔너리(설계 문서) 기반 구축 |
+| v0.01.010–018 | 생존 수치, 위험 요소, 섬/월드맵 생성, 스킬/제작 시스템, 플레이 가능한 핵심 루프 최초 구현 |
+| v0.01.019–022 | 입력 시스템 수정, 설치형 아이템(물 증류기/쉼터), 배 도면 스포너, 인벤토리/제작 UI, 섬 지형 실제 메시화 |
+| v0.01.023–030 | 물 증류기/쉼터 시각 개선(1차), 바다 수영·잠수, 배 제작 밸런스, 위험요소 전투, 저장/불러오기, 사운드, 경비행기 엔딩, 풀 플레이테스트(배 작업대 누락 버그 발견·수정) |
+| v0.01.031–036 | 사망 처리(Game Over), 엔딩 승리 UI, 희귀 재료 밸런스, 대형/특대 섬 최소 생성 보장, 인벤토리/제작 UI 시각 개선, 미니맵/섬 목록 UI(섬 이동 기능 최초 연결) |
+| v0.01.037–038 | 쉼터/물 증류기 프리팹 디테일 개선(다중 파츠 조합, 신규 머티리얼 3종), 위험 요소 시각 개선(종류별 형태/색상 구분) |
+
+세부 설계 근거와 발견된 버그 기록은 `Docs/Story/story_dictionary.json`을 참고.
