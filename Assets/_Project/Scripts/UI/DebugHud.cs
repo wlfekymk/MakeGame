@@ -22,6 +22,9 @@ namespace MakeGame.UI
         [Tooltip("표시할 인벤토리")]
         public PlayerInventory inventory;
 
+        [Tooltip("저장/불러오기 상태 메시지를 표시할 세이브 시스템")]
+        public SaveLoadController saveLoadController;
+
         [Tooltip("조작키 안내를 함께 표시할지 여부")]
         public bool showControlsHelp = true;
 
@@ -51,12 +54,16 @@ namespace MakeGame.UI
             if (inventory != null)
                 GUILayout.Label($"인벤토리 아이템 수: {inventory.items.Count}");
 
+            if (saveLoadController != null && !string.IsNullOrEmpty(saveLoadController.lastStatusMessage))
+                GUILayout.Label($"저장: {saveLoadController.lastStatusMessage}");
+
             if (showControlsHelp)
             {
                 GUILayout.Space(8);
                 GUILayout.Label("[E] 상호작용/공격(무기 필요)   [R] 조리   [C] 섭취   [G] 설치");
                 GUILayout.Label("[Tab] 인벤토리   [V] 제작");
                 GUILayout.Label("[수영중] [Space] 위로   [Ctrl] 잠수");
+                GUILayout.Label("[F5] 저장   [F9] 불러오기");
             }
 
             GUILayout.EndArea();

@@ -52,6 +52,24 @@ namespace MakeGame.Systems
         [Tooltip("자동 생성 시 시작 섬 외에 추가로 생성할 섬 개수")]
         public int initialIslandCount = 8;
 
+        [Header("월드 시드")]
+        [Tooltip("섬 배치/자원/위험요소 생성에 사용하는 난수 시드. 저장/불러오기 시 이 값을 기록해두면\n" +
+                 "같은 섬 배치를 다시 만들어낼 수 있다. 0이면 실행할 때마다 무작위 시드를 새로 뽑는다.")]
+        public int worldSeed = 0;
+
+        /// <summary>
+        /// 섬 생성보다 먼저 실행되어야 하므로 Awake에서 난수 시드를 고정한다.
+        /// worldSeed가 0(미지정)이면 이번 실행에 사용할 시드를 무작위로 뽑아 기록해둔다.
+        /// 이후 SaveLoadController가 이 값을 저장 파일에 함께 기록해, 다음에 같은 섬 배치를 재현할 수 있게 한다.
+        /// </summary>
+        private void Awake()
+        {
+            if (worldSeed == 0)
+                worldSeed = System.Environment.TickCount;
+
+            Random.InitState(worldSeed);
+        }
+
         /// <summary>
         /// generateOnStart가 켜져 있으면 플레이 시작과 동시에 시작 섬과 초기 섬들을 생성해
         /// 맵이 어떻게 만들어지는지 바로 확인할 수 있게 한다.

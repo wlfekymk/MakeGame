@@ -489,6 +489,7 @@ GameObject:
   - component: {fileID: 2000000010}
   - component: {fileID: 2000000011}
   - component: {fileID: 2000000012}
+  - component: {fileID: 2000000013}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -969,6 +970,7 @@ MonoBehaviour:
   boatConstruction: {fileID: 1886019771}
   survivalClock: {fileID: 2000000009}
   inventory: {fileID: 1925945764}
+  saveLoadController: {fileID: 2000000013}
   showControlsHelp: 1
 --- !u!114 &2000000012
 MonoBehaviour:
@@ -986,6 +988,28 @@ MonoBehaviour:
   largeIslandSpawnChance: 0.5
   extraLargeIslandSpawnChance: 0.7
   placementOffset: 4
+--- !u!114 &2000000013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d914b9ec530b489198bdfc7894f174bc, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SaveLoadController
+  player: {fileID: 1925945766}
+  survivalStats: {fileID: 1925945765}
+  playerSkills: {fileID: 1925945768}
+  playerInventory: {fileID: 1925945764}
+  boatConstruction: {fileID: 1886019771}
+  survivalClock: {fileID: 2000000009}
+  islandTravel: {fileID: 2000000008}
+  worldMapManager: {fileID: 1886019775}
+  saveKey: 286
+  loadKey: 290
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
