@@ -52,6 +52,7 @@ namespace MakeGame.Systems
                 {
                     Vector2 offset = Random.insideUnitCircle * scatterRadius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
+                    position = TerrainSampler.SnapToGround(position);
                     spawned.Add(SpawnSingleHazard(entry.type, position, parent));
                 }
             }
@@ -66,8 +67,8 @@ namespace MakeGame.Systems
         {
             GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             go.transform.SetParent(parent);
-            go.transform.position = position;
             go.transform.localScale = new Vector3(0.6f, 0.6f, 0.6f);
+            go.transform.position = position + Vector3.up * 0.6f; // 캡슐 피벗이 중심이므로 절반 높이만큼 띄워 지형 위에 놓이게 한다
             go.name = $"Hazard_{type}";
 
             var col = go.GetComponent<Collider>();

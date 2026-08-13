@@ -160,9 +160,16 @@ namespace MakeGame.Systems
             return true;
         }
 
+        [Header("섬 지형 생성")]
+        [Tooltip("절차적 섬 지형(언덕 메시)의 중심부 최대 높이. 걸어서 오르기 편하도록 섬 규모와 무관하게 완만한 값으로 고정한다.")]
+        public float terrainMaxHeight = 2.5f;
+
+        [Tooltip("섬 지형 메시에 사용할 머티리얼 (비워두면 기본 URP Lit 모래색 머티리얼을 사용한다)")]
+        public Material terrainMaterial;
+
         /// <summary>
-        /// 섬 규모에 맞는 크기의 플레이스홀더 오브젝트를 생성해 배치한다.
-        /// islandPlaceholderPrefab이 지정돼 있으면 그것을 사용하고, 없으면 원기둥 프리미티브를 만든다.
+        /// 섬 규모에 맞는 크기의 지형 오브젝트를 생성해 배치한다.
+        /// islandPlaceholderPrefab이 지정돼 있으면 그것을 사용하고, 없으면 걸어다닐 수 있는 절차적 언덕 메시(IslandMeshGenerator)를 만든다.
         /// </summary>
         private void SpawnPlaceholder(IslandInstance island)
         {
@@ -174,16 +181,47 @@ namespace MakeGame.Systems
             }
             else
             {
-                placeholder = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                placeholder.transform.SetParent(transform);
-                placeholder.transform.position = island.mapPosition;
-
-                float scale = GetSizeScale(island.size);
-                placeholder.transform.localScale = new Vector3(scale, 0.5f, scale);
+                float radius = GetSizeScale(island.size);
+                placeholder = CreateProceduralIslandTerrain(radius, island.mapPosition);
             }
 
             placeholder.name = $"Island_{island.islandId}_{island.size}";
             island.placeholderObject = placeholder;
+        }
+
+        /// <summary>
+        /// 지정한 반지름/위치에 절차적 섬 지형 메시를 생성한다.
+        /// MeshFilter/MeshRenderer/MeshCollider를 직접 붙여 플레이어가 실제로 걸어다닐 수 있게 한다.
+        /// </summary>
+        private GameObject CreateProceduralIslandTerrain(float radius, Vector3 position)
+        {
+            var go = new GameObject("IslandTerrain");
+            go.transform.SetParent(transform);
+            go.transform.position = position;
+
+            var mesh = IslandMeshGenerator.GenerateIslandMesh(radius, terrainMaxHeight);
+
+            var meshFilter = go.AddComponent<MeshFilter>();
+            meshFilter.sharedMesh = mesh;
+
+            var meshRenderer = go.AddComponent<MeshRenderer>();
+            meshRenderer.sharedMaterial = terrainMaterial != null ? terrainMaterial : CreateDefaultTerrainMaterial();
+
+            var meshCollider = go.AddComponent<MeshCollider>();
+            meshCollider.sharedMesh = mesh;
+
+            return go;
+        }
+
+        /// <summary>
+        /// 섬 지형용 머티리얼이 지정되지 않았을 때 사용할 기본 모래색 URP Lit 머티리얼을 만든다.
+        /// </summary>
+        private Material CreateDefaultTerrainMaterial()
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var material = new Material(shader != null ? shader : Shader.Find("Standard"));
+            material.color = new Color(0.76f, 0.7f, 0.5f);
+            return material;
         }
 
         /// <summary>

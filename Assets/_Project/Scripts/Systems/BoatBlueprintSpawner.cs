@@ -41,12 +41,13 @@ namespace MakeGame.Systems
                 return null;
 
             Vector2 offset = Random.insideUnitCircle * placementOffset;
-            Vector3 position = island.mapPosition + new Vector3(offset.x, 0.5f, offset.y);
+            Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
+            position = TerrainSampler.SnapToGround(position);
 
             GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             go.transform.SetParent(parent);
-            go.transform.position = position;
             go.transform.localScale = new Vector3(0.8f, 0.8f, 0.8f);
+            go.transform.position = position + Vector3.up * 0.4f; // 구체 피벗이 중심이므로 절반 높이만큼 띄워 지형 위에 놓이게 한다
             go.name = $"BoatBlueprint_{island.islandId}_{island.size}";
 
             var pickup = go.AddComponent<BoatBlueprintPickup>();
