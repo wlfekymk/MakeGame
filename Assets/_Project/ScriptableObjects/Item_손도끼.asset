@@ -16,3 +16,5 @@ MonoBehaviour:
   description: "나뭇가지와 돌조각으로 만든 손도끼. 나무 채집 속도를 높여준다."
   maxUses: 20
   blockedFromLargeIslandsByCurrent: 0
+  isWeapon: 1
+  weaponDamage: 14

@@ -16,3 +16,5 @@ MonoBehaviour:
   description: "나뭇가지와 돌조각으로 만든 창. 사냥과 낚시에 사용한다."
   maxUses: 15
   blockedFromLargeIslandsByCurrent: 0
+  isWeapon: 1
+  weaponDamage: 18

@@ -54,7 +54,7 @@ namespace MakeGame.UI
             if (showControlsHelp)
             {
                 GUILayout.Space(8);
-                GUILayout.Label("[E] 상호작용   [R] 조리   [C] 섭취   [G] 설치");
+                GUILayout.Label("[E] 상호작용/공격(무기 필요)   [R] 조리   [C] 섭취   [G] 설치");
                 GUILayout.Label("[Tab] 인벤토리   [V] 제작");
                 GUILayout.Label("[수영중] [Space] 위로   [Ctrl] 잠수");
             }

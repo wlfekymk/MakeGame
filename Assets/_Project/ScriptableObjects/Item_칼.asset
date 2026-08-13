@@ -19,3 +19,5 @@ MonoBehaviour:
     \uC0AC\uC6A9 \uD69F\uC218\uB294 \uCD94\uD6C4 \uBC38\uB7F0\uC2F1)\t"
   maxUses: 10
   blockedFromLargeIslandsByCurrent: 0
+  isWeapon: 1
+  weaponDamage: 8

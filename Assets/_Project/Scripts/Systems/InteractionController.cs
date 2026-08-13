@@ -107,6 +107,13 @@ namespace MakeGame.Systems
                 workbench.TryBuild(inventory);
                 return;
             }
+
+            var hazard = target.GetComponent<HazardSource>();
+            if (hazard != null)
+            {
+                hazard.TryAttack(inventory, skills);
+                return;
+            }
         }
 
         /// <summary>

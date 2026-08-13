@@ -46,6 +46,13 @@ namespace MakeGame.Data
         [Tooltip("설치 시 월드에 생성할 프리팹 (isPlaceable이 true일 때만 사용)")]
         public GameObject placementPrefab;
 
+        [Header("무기 효과 (해당하는 경우에만 사용)")]
+        [Tooltip("위험 요소(맹수/식인종 등)를 상대로 전투에 사용할 수 있는 무기인지 여부 (예: 칼, 손도끼, 창)")]
+        public bool isWeapon = false;
+
+        [Tooltip("이 무기로 위험 요소를 공격했을 때 입히는 피해량 (isWeapon이 true일 때만 사용)")]
+        public float weaponDamage = 10f;
+
         /// <summary>
         /// 이 아이템이 사용 횟수 무제한인지 여부를 반환한다.
         /// </summary>

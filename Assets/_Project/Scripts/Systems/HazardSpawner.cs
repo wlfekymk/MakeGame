@@ -77,6 +77,7 @@ namespace MakeGame.Systems
 
             var hazard = go.AddComponent<HazardSource>();
             hazard.hazardType = type;
+            hazard.ConfigureForType(); // 종류(곰/식인종/벌떼 등)에 맞춰 전투 가능 여부와 체력을 설정한다.
             return hazard;
         }
 
