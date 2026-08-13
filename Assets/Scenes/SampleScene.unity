@@ -490,6 +490,7 @@ GameObject:
   - component: {fileID: 2000000011}
   - component: {fileID: 2000000012}
   - component: {fileID: 2000000013}
+  - component: {fileID: 2000000014}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -1010,6 +1011,20 @@ MonoBehaviour:
   worldMapManager: {fileID: 1886019775}
   saveKey: 286
   loadKey: 290
+--- !u!114 &2000000014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a3a569ed68e241208e5be3b7f92fd5db, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.AudioManager
+  sfxVolume: 0.7
+  bgmVolume: 0.3
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

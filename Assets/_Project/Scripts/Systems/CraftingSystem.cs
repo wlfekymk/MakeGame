@@ -59,6 +59,7 @@ namespace MakeGame.Systems
             if (skills != null)
                 skills.AddExperience(recipe.requiredSkill, recipe.experienceReward);
 
+            AudioManager.Instance?.PlayCraftSuccess(); // 제작 성공 효과음
             return true;
         }
     }

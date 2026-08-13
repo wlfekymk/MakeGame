@@ -157,6 +157,7 @@ namespace MakeGame.Systems
                 return false;
 
             highestCompletedStage = Mathf.Max(highestCompletedStage, currentStage);
+            AudioManager.Instance?.PlayStageComplete(); // 단계 완료 축하 효과음
 
             if (currentStage >= TotalStages)
             {

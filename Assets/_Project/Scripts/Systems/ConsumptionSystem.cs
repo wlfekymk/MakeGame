@@ -32,7 +32,10 @@ namespace MakeGame.Systems
                 return false;
 
             if (item.data.hungerRestoreAmount > 0f)
+            {
                 survivalStats.ConsumeFood(item.data.hungerRestoreAmount);
+                AudioManager.Instance?.PlayEat(); // 음식 섭취 효과음
+            }
 
             if (item.data.thirstRestoreAmount > 0f)
             {
@@ -40,6 +43,8 @@ namespace MakeGame.Systems
                     survivalStats.ConsumeCoconutWater(item.data.thirstRestoreAmount);
                 else
                     survivalStats.ConsumeWater(item.data.thirstRestoreAmount);
+
+                AudioManager.Instance?.PlayDrink(); // 음료 섭취 효과음
             }
 
             if (item.data.isRawFood && Random.value < rawFoodPoisonChance)

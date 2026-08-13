@@ -83,6 +83,7 @@ namespace MakeGame.Systems
                 skills.AddExperience(SkillType.Harvesting, harvestExperience);
 
             remainingHarvestCount--;
+            AudioManager.Instance?.PlayPickup(); // 채집 성공 효과음
             return true;
         }
     }

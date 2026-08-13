@@ -152,6 +152,7 @@ namespace MakeGame.Systems
                 return false;
 
             currentHealth = Mathf.Max(0f, currentHealth - bestWeapon.weaponDamage);
+            AudioManager.Instance?.PlayHit(); // 공격 적중 효과음
 
             if (currentHealth <= 0f)
             {
@@ -231,6 +232,7 @@ namespace MakeGame.Systems
 
             ApplyHazardEffect(stats);
             contactCooldownTimer = contactDamageCooldown;
+            AudioManager.Instance?.PlayDamage(); // 피해를 입었을 때 경고 효과음
         }
     }
 }

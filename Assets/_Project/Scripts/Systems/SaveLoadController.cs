@@ -118,6 +118,7 @@ namespace MakeGame.Systems
             string json = JsonUtility.ToJson(data, true);
             File.WriteAllText(SavePath, json);
             lastStatusMessage = $"저장 완료 ({System.DateTime.Now:HH:mm:ss})";
+            AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 저장 완료 확인음
             Debug.Log($"[SaveLoadController] 게임을 저장했습니다: {SavePath}");
         }
 
@@ -224,6 +225,7 @@ namespace MakeGame.Systems
                 GameManager.Instance.CompleteEnding();
 
             lastStatusMessage = $"불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
+            AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 불러오기 완료 확인음
             Debug.Log("[SaveLoadController] 게임을 불러왔습니다.");
         }
 
