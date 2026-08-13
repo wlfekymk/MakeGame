@@ -956,6 +956,9 @@ MonoBehaviour:
   boatConstruction: {fileID: 1886019771}
   aircraftRepair: {fileID: 2000000015}
   inventory: {fileID: 1925945764}
+  playerController: {fileID: 2000000002}
+  interactionController: {fileID: 2000000004}
+  continueKey: 32
   nonPerishableFoodItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
   requiredFoodCount: 30
   waterSupplyItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}

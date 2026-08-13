@@ -23,6 +23,16 @@ namespace MakeGame.Systems
         [Tooltip("비축 물자를 확인할 인벤토리")]
         public PlayerInventory inventory;
 
+        [Header("엔딩 연출")]
+        [Tooltip("엔딩 달성 시 잠시 비활성화할 이동/시점 컨트롤러")]
+        public PlayerController playerController;
+
+        [Tooltip("엔딩 달성 시 잠시 비활성화할 상호작용 컨트롤러")]
+        public InteractionController interactionController;
+
+        [Tooltip("엔딩 연출 화면에서 계속 진행하는 키")]
+        public KeyCode continueKey = KeyCode.Space;
+
         [Header("탈출에 필요한 비축 물자")]
         [Tooltip("상하지 않는 비축 식량 아이템 (없으면 식량 조건을 검사하지 않는다)")]
         public ItemData nonPerishableFoodItem;
@@ -38,26 +48,40 @@ namespace MakeGame.Systems
 
         private bool endingTriggered = false;
 
+        /// <summary>엔딩 연출 화면이 현재 표시 중인지 여부.</summary>
+        private bool showEndingUI = false;
+
+        /// <summary>엔딩 연출 화면에 표시할 메시지.</summary>
+        private string endingMessage = "";
+
         /// <summary>엔딩이 이미 달성되었는지 여부.</summary>
         public bool EndingTriggered => endingTriggered;
 
         /// <summary>
         /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 먼저 만족되는 쪽을 트리거한다.
+        /// 엔딩 연출 화면이 떠 있는 동안에는 계속하기 입력만 감시한다.
         /// </summary>
         private void Update()
         {
+            if (showEndingUI)
+            {
+                if (Input.GetKeyDown(continueKey))
+                    DismissEndingUI();
+                return;
+            }
+
             if (endingTriggered)
                 return;
 
             if (CheckBoatEndingConditions())
             {
-                TriggerEnding("배 엔딩 달성! 섬을 탈출했습니다.");
+                TriggerEnding("배를 타고 섬을 탈출했습니다!");
                 return;
             }
 
             if (aircraftRepair != null && aircraftRepair.isRepairComplete)
             {
-                TriggerEnding("경비행기 수리 엔딩 달성! 하늘로 섬을 탈출했습니다.");
+                TriggerEnding("경비행기를 수리해 하늘로 섬을 탈출했습니다!");
             }
         }
 
@@ -85,13 +109,70 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시킨다.
+        /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시키고,
+        /// 화면에 승리 연출을 띄운 뒤 이동/상호작용을 잠시 멈춘다.
         /// </summary>
         private void TriggerEnding(string message)
         {
             endingTriggered = true;
+            endingMessage = message;
             Debug.Log(message);
             GameManager.Instance?.CompleteEnding();
+
+            showEndingUI = true;
+            if (playerController != null)
+                playerController.enabled = false;
+            if (interactionController != null)
+                interactionController.enabled = false;
+
+            Time.timeScale = 0f;
+            AudioManager.Instance?.PlayStageComplete(); // 승리 팡파르 재생
+        }
+
+        /// <summary>
+        /// 엔딩 연출 화면을 닫고 시간을 다시 흐르게 한 뒤, 이동/상호작용을 되돌려준다.
+        /// 첫 엔딩을 본 이후에도 계속 자유롭게 플레이할 수 있도록 허용한다(멀티플레이 개방 규칙과 별개).
+        /// </summary>
+        private void DismissEndingUI()
+        {
+            showEndingUI = false;
+            Time.timeScale = 1f;
+
+            if (playerController != null)
+                playerController.enabled = true;
+            if (interactionController != null)
+                interactionController.enabled = true;
+        }
+
+        /// <summary>
+        /// 엔딩 연출 화면일 때 화면 전체를 어둡게 덮고 중앙에 축하 문구를 표시한다.
+        /// </summary>
+        private void OnGUI()
+        {
+            if (!showEndingUI)
+                return;
+
+            GUI.color = new Color(0f, 0f, 0f, 0.75f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            var titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 48,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            titleStyle.normal.textColor = new Color(1f, 0.85f, 0.2f); // 금색: 승리 강조
+
+            var subStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 20,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            subStyle.normal.textColor = Color.white;
+
+            GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "탈출 성공!", titleStyle);
+            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), endingMessage, subStyle);
+            GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), $"[{continueKey}] 키를 눌러 계속하기", subStyle);
         }
     }
 }

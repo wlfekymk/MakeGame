@@ -254,7 +254,7 @@
     "hazardDistribution": "HazardSpawner가 섬 생성 시(시작 섬 제외) 규모에 비례한 확률로 위험 요소를 배치. 소형 기준 확률: 독사25%/전갈20%/곰15%/벌떼20%/함정20%/식인종10%, 규모별 배율 소형1/중형1.5/대형2/특대2.5배. (음식부족/탈수는 물리적 오브젝트 없이 허기·갈증 감소 로직으로 상시 처리)",
     "islandTravel": "IslandTravel - 고무보트로 발견된 섬까지 이동. 목적지가 대형/특대 섬이면 기본적으로 해류 제약으로 고무보트만으로는 이동 불가하나, 배(뗏목) 제작이 1단계 이상 완료되면(BoatConstructionSystem.HasCompletedStage) 해류 제약을 뚫고 대형/특대 섬까지 갈 수 있도록 확장됨.",
     "survivalClock": "SurvivalClock - 게임 내 하루=실제 600초(10분) 기준으로 경과 일수 계산.",
-    "endingChecker": "매 프레임 두 엔딩 경로를 확인: 1) 배 3단계 완성 + 비상식량 30개 + 생수 30개 + 연료 1개, 2) AircraftRepairSystem.isRepairComplete. 먼저 만족되는 쪽으로 자동으로 엔딩을 트리거.",
+    "endingChecker": "배/경비행기 엔딩 조건을 매 프레임 검사한다. 조건 달성 시 GameManager.CompleteEnding() 호출과 함께 화면에 금색 \"탈출 성공!\" 승리 연출을 띄우고 Time.timeScale=0으로 잠시 정지시키며 이동/상호작용을 막는다. [Space] 키로 연출을 닫으면 시간이 다시 흐르고 조작이 복구되어 엔딩 이후에도 자유롭게 플레이를 이어갈 수 있다.",
     "aircraftRepair": "AircraftRepairSystem + AircraftWreck으로 구현된 경비행기 수리 엔딩. 시작 섬에 고정 배치된 잔해에서 E키로 상호작용하면 엔진부품x2/금속조각x6/연료x3/노끈x4를 자동 투입하고 조건 충족 시 즉시 수리 완료.",
     "boatWorkbench": "풀 플레이테스트(#49) 중 발견: BoatWorkbench(배 작업대)가 씬 어디에도 실제로 배치되어 있지 않아, 도면과 재료를 다 모아도 배를 조립할 방법이 없는 치명적 누락이었음. WorldMapManager.GenerateStartingIsland에서 SpawnBoatWorkbench를 호출해 시작 섬(캠프)에 작업대를 고정 배치하도록 수정. AircraftWreck과 마찬가지로 프리미티브 조합(상판+다리+공구) 시각화.",
     "audio": "AudioManager(싱글턴) + ProceduralAudioClipGenerator로 별도 오디오 에셋 없이 런타임 절차적 사운드(사인파 비프음/화음/노이즈/파도 앰비언트)를 생성해 채집/제작/섭취/피격/피해/단계완료/저장불러오기 효과음과 배경 파도음을 재생.",
