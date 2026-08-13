@@ -39,6 +39,13 @@ namespace MakeGame.Data
         [Tooltip("코코넛 워터처럼 과음 시 설사로 갈증이 급격히 악화되는 수분 공급원인지 여부")]
         public bool isCoconutWaterSource = false;
 
+        [Header("설치(빌드) 효과 (해당하는 경우에만 사용)")]
+        [Tooltip("월드에 설치(건설)할 수 있는 키트 아이템인지 여부 (예: 물 증류기 키트, 쉼터 키트)")]
+        public bool isPlaceable = false;
+
+        [Tooltip("설치 시 월드에 생성할 프리팹 (isPlaceable이 true일 때만 사용)")]
+        public GameObject placementPrefab;
+
         /// <summary>
         /// 이 아이템이 사용 횟수 무제한인지 여부를 반환한다.
         /// </summary>

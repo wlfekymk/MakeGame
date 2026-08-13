@@ -42,6 +42,9 @@ namespace MakeGame.Systems
         [Tooltip("섬이 생성될 때 위험 요소를 함께 배치할 스포너 (비워두면 위험 요소를 배치하지 않는다)")]
         public HazardSpawner hazardSpawner;
 
+        [Tooltip("섬이 생성될 때 배 도면 습득 지점을 함께 배치할 스포너 (비워두면 도면을 배치하지 않는다)")]
+        public BoatBlueprintSpawner blueprintSpawner;
+
         [Header("테스트용 자동 생성")]
         [Tooltip("플레이 시작 시 자동으로 시작 섬 + 여러 섬을 생성해서 맵을 미리 확인할 수 있게 한다.")]
         public bool generateOnStart = true;
@@ -110,12 +113,13 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원과 위험 요소를 함께 배치한다.
+        /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원, 위험 요소, 배 도면 습득 지점을 함께 배치한다.
         /// </summary>
         private void SpawnIslandContent(IslandInstance island)
         {
             resourceSpawner?.SpawnResourcesForIsland(island, transform);
             hazardSpawner?.SpawnHazardsForIsland(island, transform);
+            blueprintSpawner?.SpawnBlueprintForIsland(island, transform);
         }
 
         /// <summary>

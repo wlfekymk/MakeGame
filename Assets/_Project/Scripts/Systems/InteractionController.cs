@@ -28,6 +28,12 @@ namespace MakeGame.Systems
         [Tooltip("인벤토리의 첫 음식/음료 아이템을 섭취하는 키")]
         public KeyCode consumeKey = KeyCode.C;
 
+        [Tooltip("인벤토리의 첫 설치형(빌드) 아이템을 정면 바닥에 설치하는 키 (예: 물 증류기 키트, 쉼터 키트)")]
+        public KeyCode placeKey = KeyCode.G;
+
+        [Tooltip("설치형 아이템을 플레이어 앞 얼마나 떨어진 위치에 놓을지 (미터)")]
+        public float placementDistance = 3f;
+
         [Header("연결할 플레이어 컴포넌트")]
         public PlayerInventory inventory;
         public PlayerSkills skills;
@@ -47,6 +53,9 @@ namespace MakeGame.Systems
 
             if (Input.GetKeyDown(consumeKey))
                 ConsumeFirstFoodOrDrink();
+
+            if (Input.GetKeyDown(placeKey))
+                PlaceFirstPlaceableItem();
         }
 
         /// <summary>
@@ -133,6 +142,34 @@ namespace MakeGame.Systems
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// 인벤토리에서 가장 먼저 발견되는 설치형(빌드) 아이템을 찾아 플레이어 정면 바닥에 설치한다.
+        /// 설치에 성공하면 아이템을 인벤토리에서 소모한다(사용 횟수 1 차감, 대부분 그대로 소진됨).
+        /// </summary>
+        private void PlaceFirstPlaceableItem()
+        {
+            if (inventory == null)
+                return;
+
+            InventoryItem placeableItem = null;
+            foreach (var item in inventory.items)
+            {
+                if (item.data != null && item.data.isPlaceable && item.data.placementPrefab != null)
+                {
+                    placeableItem = item;
+                    break;
+                }
+            }
+
+            if (placeableItem == null)
+                return;
+
+            Vector3 spawnPosition = transform.position + transform.forward * placementDistance;
+            Instantiate(placeableItem.data.placementPrefab, spawnPosition, Quaternion.identity);
+
+            inventory.UseItem(placeableItem);
         }
 
         /// <summary>

@@ -22,6 +22,9 @@ namespace MakeGame.Systems
         [Tooltip("현재 단계의 도면을 습득했는지 여부")]
         public bool hasCurrentStageBlueprint = false;
 
+        [Tooltip("지금까지 완료한 배 제작 최고 단계 (0이면 아직 한 단계도 완료 못함). 뗏목 진행도에 따른 이동 범위 확장 판정에 사용한다.")]
+        public int highestCompletedStage = 0;
+
         /// <summary>재료 하나와 필요 수량을 나타낸다 (CraftingRecipe.MaterialRequirement와 동일한 구조).</summary>
         [System.Serializable]
         public class MaterialRequirement
@@ -150,6 +153,8 @@ namespace MakeGame.Systems
             if (!CanAdvanceStage())
                 return false;
 
+            highestCompletedStage = Mathf.Max(highestCompletedStage, currentStage);
+
             if (currentStage >= TotalStages)
                 return true; // 3단계까지 모두 완료 - 배 100% 완성
 
@@ -157,6 +162,16 @@ namespace MakeGame.Systems
             hasCurrentStageBlueprint = false;
             collectedMaterialsForCurrentStage.Clear();
             return false;
+        }
+
+        /// <summary>
+        /// 지정한 단계까지 배(뗏목) 제작을 완료했는지 확인한다.
+        /// 뗏목이 일정 단계 이상 완성되면 고무보트의 해류 제약(대형/특대 섬 접근 불가)을 뚫을 수 있을 만큼
+        /// 튼튼해진 것으로 간주해 IslandTravel의 이동 범위 확장 판정에 사용한다.
+        /// </summary>
+        public bool HasCompletedStage(int stage)
+        {
+            return highestCompletedStage >= stage;
         }
 
         /// <summary>

@@ -451,6 +451,7 @@ GameObject:
   - component: {fileID: 2000000009}
   - component: {fileID: 2000000010}
   - component: {fileID: 2000000011}
+  - component: {fileID: 2000000012}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -472,6 +473,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.BoatConstructionSystem
   currentStage: 1
   hasCurrentStageBlueprint: 0
+  highestCompletedStage: 0
   stageMaterialRequirements:
   - materials:
     - item: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
@@ -556,6 +558,7 @@ MonoBehaviour:
   islandPlaceholderPrefab: {fileID: 0}
   resourceSpawner: {fileID: 2000000006}
   hazardSpawner: {fileID: 2000000007}
+  blueprintSpawner: {fileID: 2000000012}
   generateOnStart: 1
   initialIslandCount: 8
 --- !u!1 &1925945763
@@ -697,7 +700,15 @@ CharacterController:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1925945763}
   m_Material: {fileID: 0}
-  m_IsTrigger: 0
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Height: 2
   m_Radius: 0.5
@@ -716,7 +727,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ace23cc37ccb477e8f7ae827f7274cef, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.PlayerController
   moveSpeed: 5
   brokenBoneSpeedMultiplier: 0.4
@@ -735,12 +746,12 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 9e1bd1926fa240e7a80acc69137f3908, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.SurvivalTickDriver
   survivalStats: {fileID: 1925945765}
   shadeLayerMask:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 64
   shadeCheckDistance: 20
 --- !u!114 &2000000004
 MonoBehaviour:
@@ -752,13 +763,15 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5a56b951c0af42d0937278996fa60e2d, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.InteractionController
   interactionCamera: {fileID: 330585545}
   interactionDistance: 4
   interactKey: 101
   cookKey: 114
   consumeKey: 99
+  placeKey: 103
+  placementDistance: 3
   inventory: {fileID: 1925945764}
   skills: {fileID: 1925945768}
   survivalStats: {fileID: 1925945765}
@@ -773,7 +786,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cbc220dfa9b94ba88f9b16f18db028f6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.ConsumptionSystem
   inventory: {fileID: 1925945764}
   survivalStats: {fileID: 1925945765}
@@ -788,7 +801,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8c8e9b28c7eb4c379626f1e088555107, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.IslandResourceSpawner
   resourceEntries:
   - yieldItem: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
@@ -828,7 +841,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b3b6bcfbb8b14998ad38912741123f0b, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.HazardSpawner
   hazardEntries:
   - type: 1
@@ -858,11 +871,13 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 003c9e3ec7e641cb985492add6c8c2c6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.IslandTravel
   worldMapManager: {fileID: 1886019775}
   rubberBoatItem: {fileID: 11400000, guid: 8d1c7553b9312d84ca35db5829795373, type: 2}
   currentIslandId: 0
+  boatConstruction: {fileID: 1886019771}
+  stageRequiredToBypassCurrent: 1
 --- !u!114 &2000000009
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -873,7 +888,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e61e1ee594ed4ad5988b0a0db797d759, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SurvivalClock
   secondsPerDay: 600
   elapsedSeconds: 0
@@ -887,7 +902,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d535b7aa56964c3b9a5313a23e64e84b, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.EndingChecker
   boatConstruction: {fileID: 1886019771}
   inventory: {fileID: 1925945764}
@@ -907,13 +922,29 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8b4cbd3037504599a354c005462e963f, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.DebugHud
   survivalStats: {fileID: 1925945765}
   boatConstruction: {fileID: 1886019771}
   survivalClock: {fileID: 2000000009}
   inventory: {fileID: 1925945764}
   showControlsHelp: 1
+--- !u!114 &2000000012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ee036b3bd16edfd488beaf1284fe15c2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.BoatBlueprintSpawner
+  boatConstruction: {fileID: 1886019771}
+  largeIslandSpawnChance: 0.5
+  extraLargeIslandSpawnChance: 0.7
+  placementOffset: 4
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

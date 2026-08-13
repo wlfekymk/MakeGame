@@ -18,6 +18,7 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 도면 습득을 시도한다. 현재 진행 단계와 섬 규모가 맞지 않으면 습득에 실패한다.
+        /// 습득에 성공하면 이 오브젝트는 다시 주울 수 없도록 월드에서 사라진다(파괴).
         /// </summary>
         public bool TryObtain()
         {
@@ -26,6 +27,10 @@ namespace MakeGame.Systems
 
             bool canObtain = boatConstruction.CanFindBlueprintOnIsland(islandSize);
             boatConstruction.ObtainBlueprint(islandSize);
+
+            if (canObtain)
+                Destroy(gameObject);
+
             return canObtain;
         }
     }
