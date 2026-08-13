@@ -10,10 +10,10 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
-  m_Name: Item_붕대
+  m_Name: Item_부목
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
-  itemName: 붕대
-  description: "천조각으로 만든 붕대. 출혈을 멎게 한다."
+  itemName: 부목
+  description: "대나무와 노끈으로 고정한 부목. 골절을 치료한다."
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
-  curesBleeding: 1
+  curesBrokenBone: 1

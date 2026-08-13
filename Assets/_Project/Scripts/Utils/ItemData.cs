@@ -53,14 +53,27 @@ namespace MakeGame.Data
         [Tooltip("이 무기로 위험 요소를 공격했을 때 입히는 피해량 (isWeapon이 true일 때만 사용)")]
         public float weaponDamage = 10f;
 
+        [Header("치료 효과 (해당하는 경우에만 사용)")]
+        [Tooltip("사용 시 출혈 상태 이상을 치료하는지 여부 (예: 붕대)")]
+        public bool curesBleeding = false;
+
+        [Tooltip("사용 시 중독 상태 이상을 치료하는지 여부 (예: 해독제)")]
+        public bool curesPoison = false;
+
+        [Tooltip("사용 시 골절 상태 이상을 치료하는지 여부 (예: 부목)")]
+        public bool curesBrokenBone = false;
+
         /// <summary>
         /// 이 아이템이 사용 횟수 무제한인지 여부를 반환한다.
         /// </summary>
         public bool IsUnlimited => maxUses < 0;
 
         /// <summary>
-        /// 이 아이템이 섭취 가능한 음식/음료인지 여부를 반환한다 (허기 또는 갈증 회복 효과가 있는 경우).
+        /// 이 아이템이 섭취/사용 가능한지 여부를 반환한다 (허기·갈증 회복 효과 또는 상태 이상 치료 효과가 있는 경우).
+        /// 치료 효과 필드가 추가되기 전에는 붕대처럼 치료만 하는 아이템이 IsConsumable=false로 판정되어
+        /// C(섭취) 키로 아예 사용할 방법이 없는 죽은 아이템이 되는 버그가 있었다.
         /// </summary>
-        public bool IsConsumable => hungerRestoreAmount > 0f || thirstRestoreAmount > 0f;
+        public bool IsConsumable => hungerRestoreAmount > 0f || thirstRestoreAmount > 0f
+            || curesBleeding || curesPoison || curesBrokenBone;
     }
 }

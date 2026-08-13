@@ -50,6 +50,21 @@ namespace MakeGame.Systems
             if (item.data.isRawFood && Random.value < rawFoodPoisonChance)
                 survivalStats.ApplyPoison();
 
+            // 치료 효과가 있는 아이템(붕대/해독제/부목 등)을 사용하면 해당 상태 이상을 치료한다.
+            // 예전에는 이 아이템들을 사용할 방법 자체가 없어 중독/출혈/골절이 한 번 걸리면 영구 지속되는
+            // 치명적인 버그가 있었다 (CurePoison/BandageBleeding/HealBrokenBone 호출부가 어디에도 없었음).
+            if (item.data.curesBleeding && survivalStats.isBleeding)
+            {
+                survivalStats.BandageBleeding();
+                AudioManager.Instance?.PlayCraftSuccess(); // 치료 성공 피드백음 (전용 효과음이 없어 완성 효과음을 재사용)
+            }
+
+            if (item.data.curesPoison && survivalStats.isPoisoned)
+                survivalStats.CurePoison();
+
+            if (item.data.curesBrokenBone && survivalStats.hasBrokenBone)
+                survivalStats.HealBrokenBone();
+
             inventory.UseItem(item);
             return true;
         }

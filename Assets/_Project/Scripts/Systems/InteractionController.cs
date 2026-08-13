@@ -141,12 +141,36 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 인벤토리에서 가장 먼저 발견되는 섭취 가능한(음식/음료) 아이템을 섭취한다.
+        /// 인벤토리에서 섭취 가능한(음식/음료/치료) 아이템을 찾아 섭취한다.
+        /// 현재 활성화된 상태 이상(출혈/중독/골절)을 치료할 수 있는 아이템이 있으면 그것을 최우선으로 사용한다.
+        /// 그렇지 않으면 인벤토리에서 가장 먼저 발견되는 섭취 가능 아이템을 사용한다.
+        /// (예전에는 순서상 앞에 있는 생수/음식이 먼저 소모되어, 출혈 중에 붕대를 들고도 C 키로
+        /// 치료를 못 하고 엉뚱한 음식만 먹게 되는 버그가 있었다.)
         /// </summary>
         private void ConsumeFirstFoodOrDrink()
         {
             if (inventory == null || consumptionSystem == null)
                 return;
+
+            if (survivalStats != null)
+            {
+                foreach (var item in inventory.items)
+                {
+                    if (item.data == null)
+                        continue;
+
+                    bool curesActiveEffect =
+                        (item.data.curesBleeding && survivalStats.isBleeding) ||
+                        (item.data.curesPoison && survivalStats.isPoisoned) ||
+                        (item.data.curesBrokenBone && survivalStats.hasBrokenBone);
+
+                    if (curesActiveEffect)
+                    {
+                        consumptionSystem.Consume(item);
+                        return;
+                    }
+                }
+            }
 
             foreach (var item in inventory.items)
             {
