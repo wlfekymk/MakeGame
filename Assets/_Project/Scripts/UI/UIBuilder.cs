@@ -78,6 +78,64 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// 아이템을 시각적으로 구분하기 위한 작은 정사각형 "아이콘"을 생성한다.
+        /// 실제 아이콘 이미지 에셋이 없으므로, 카테고리별 색상 배경 + 아이템 이름 첫 글자로 대체 표시한다.
+        /// LayoutElement가 붙어 있어 HorizontalLayoutGroup 등 레이아웃 그룹 안에서 고정 크기로 배치된다.
+        /// </summary>
+        public static RectTransform CreateIcon(Transform parent, string name, float size, Color backgroundColor, string letter)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            go.GetComponent<Image>().color = backgroundColor;
+
+            var layoutElement = go.GetComponent<LayoutElement>();
+            layoutElement.preferredWidth = size;
+            layoutElement.preferredHeight = size;
+            layoutElement.minWidth = size;
+            layoutElement.minHeight = size;
+
+            if (!string.IsNullOrEmpty(letter))
+            {
+                var label = CreateText(go.transform, "Letter", letter, Mathf.RoundToInt(size * 0.55f), Color.white, TextAnchor.MiddleCenter);
+                var labelRt = label.rectTransform;
+                labelRt.anchorMin = Vector2.zero;
+                labelRt.anchorMax = Vector2.one;
+                labelRt.offsetMin = Vector2.zero;
+                labelRt.offsetMax = Vector2.zero;
+            }
+
+            return go.GetComponent<RectTransform>();
+        }
+
+        /// <summary>
+        /// 아이템의 종류(무기/음식/음료/설치형/일반 재료)에 따라 아이콘 배경색을 정한다.
+        /// 실제 아이콘 이미지가 없는 상태에서 최소한의 시각적 구분을 주기 위한 임시 규칙이다.
+        /// </summary>
+        public static Color GetItemCategoryColor(MakeGame.Data.ItemData item)
+        {
+            if (item == null)
+                return new Color(0.5f, 0.5f, 0.5f, 1f);
+
+            if (item.isWeapon)
+                return new Color(0.8f, 0.25f, 0.25f, 1f); // 빨강: 무기
+
+            if (item.hungerRestoreAmount > 0f)
+                return new Color(0.85f, 0.55f, 0.2f, 1f); // 주황: 음식
+
+            if (item.thirstRestoreAmount > 0f)
+                return new Color(0.25f, 0.55f, 0.85f, 1f); // 파랑: 음료
+
+            if (item.isPlaceable)
+                return new Color(0.3f, 0.7f, 0.6f, 1f); // 청록: 설치형(빌드) 아이템
+
+            if (item.blockedFromLargeIslandsByCurrent)
+                return new Color(0.6f, 0.5f, 0.85f, 1f); // 보라: 이동 수단(고무보트 등)
+
+            return new Color(0.55f, 0.45f, 0.35f, 1f); // 갈색: 일반 채집 재료
+        }
+
+        /// <summary>
         /// 클릭 시 콜백을 실행하는 버튼을 생성한다 (배경 + 가운데 정렬 라벨 텍스트 포함).
         /// </summary>
         public static Button CreateButton(Transform parent, string name, string label, UnityEngine.Events.UnityAction onClick)

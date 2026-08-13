@@ -18,9 +18,18 @@ namespace MakeGame.UI
         [Tooltip("인벤토리 창을 여닫는 키")]
         public KeyCode toggleKey = KeyCode.Tab;
 
+        /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트)을 구성하는 UI 요소 묶음.</summary>
+        private class ItemRow
+        {
+            public GameObject rowGo;
+            public Image icon;
+            public Text letterLabel;
+            public Text nameCountLabel;
+        }
+
         private GameObject panelRoot;
         private RectTransform listContainer;
-        private readonly List<Text> rowPool = new List<Text>();
+        private readonly List<ItemRow> rowPool = new List<ItemRow>();
         private readonly List<ItemData> orderBuffer = new List<ItemData>();
         private readonly Dictionary<ItemData, int> countBuffer = new Dictionary<ItemData, int>();
 
@@ -124,35 +133,71 @@ namespace MakeGame.UI
 
             if (orderBuffer.Count == 0)
             {
-                rowPool[0].text = "(비어 있음)";
-                rowPool[0].gameObject.SetActive(true);
+                rowPool[0].icon.gameObject.SetActive(false);
+                rowPool[0].nameCountLabel.text = "(비어 있음)";
+                rowPool[0].nameCountLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+                rowPool[0].rowGo.SetActive(true);
                 for (int i = 1; i < rowPool.Count; i++)
-                    rowPool[i].gameObject.SetActive(false);
+                    rowPool[i].rowGo.SetActive(false);
                 return;
             }
 
             for (int i = 0; i < orderBuffer.Count; i++)
             {
                 var data = orderBuffer[i];
-                rowPool[i].text = $"{data.itemName}  x{countBuffer[data]}";
-                rowPool[i].gameObject.SetActive(true);
+                var row = rowPool[i];
+
+                row.icon.gameObject.SetActive(true);
+                row.icon.color = UIBuilder.GetItemCategoryColor(data);
+                row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
+
+                int count = countBuffer[data];
+                string usesInfo = data.IsUnlimited ? "" : $" (최대 {data.maxUses}회 사용)";
+                row.nameCountLabel.text = $"{data.itemName}  x{count}{usesInfo}";
+                row.nameCountLabel.color = Color.white;
+                row.rowGo.SetActive(true);
             }
             for (int i = orderBuffer.Count; i < rowPool.Count; i++)
-                rowPool[i].gameObject.SetActive(false);
+                rowPool[i].rowGo.SetActive(false);
         }
 
         /// <summary>
-        /// 텍스트 행 풀의 개수가 부족하면 필요한 만큼 새로 만든다.
+        /// 행(아이콘 + 이름/개수 텍스트) 풀의 개수가 부족하면 필요한 만큼 새로 만든다.
         /// </summary>
         private void EnsureRowCount(int count)
         {
             while (rowPool.Count < count)
-            {
-                var text = UIBuilder.CreateText(listContainer, $"Row{rowPool.Count}", "", 16, Color.white, TextAnchor.MiddleLeft);
-                var layoutElement = text.gameObject.AddComponent<LayoutElement>();
-                layoutElement.minHeight = 22f;
-                rowPool.Add(text);
-            }
+                rowPool.Add(CreateRow(rowPool.Count));
+        }
+
+        /// <summary>
+        /// 아이콘(카테고리 색상 + 이름 첫 글자) + "이름 x개수" 텍스트로 구성된 한 줄을 생성한다.
+        /// 짝수/홀수 행마다 배경을 살짝 다르게 칠해 가독성을 높인다(줄무늬 배경).
+        /// </summary>
+        private ItemRow CreateRow(int index)
+        {
+            var rowGo = new GameObject($"Row{index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            rowGo.transform.SetParent(listContainer, false);
+            rowGo.GetComponent<LayoutElement>().minHeight = 28f;
+            rowGo.GetComponent<Image>().color = index % 2 == 0
+                ? new Color(1f, 1f, 1f, 0.04f)
+                : new Color(1f, 1f, 1f, 0f);
+
+            var hlg = rowGo.GetComponent<HorizontalLayoutGroup>();
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = true;
+            hlg.spacing = 8f;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.padding = new RectOffset(4, 4, 2, 2);
+
+            var iconRt = UIBuilder.CreateIcon(rowGo.transform, "Icon", 22f, Color.gray, "?");
+            var icon = iconRt.GetComponent<Image>();
+            var letterLabel = iconRt.Find("Letter").GetComponent<Text>();
+
+            var nameCountLabel = UIBuilder.CreateText(rowGo.transform, "NameCount", "", 16, Color.white, TextAnchor.MiddleLeft);
+            nameCountLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            return new ItemRow { rowGo = rowGo, icon = icon, letterLabel = letterLabel, nameCountLabel = nameCountLabel };
         }
     }
 }

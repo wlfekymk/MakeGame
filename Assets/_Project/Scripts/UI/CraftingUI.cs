@@ -22,12 +22,21 @@ namespace MakeGame.UI
         [Tooltip("제작 창을 여닫는 키")]
         public KeyCode toggleKey = KeyCode.V;
 
+        /// <summary>재료 하나를 표시하는 작은 칩(아이콘 + "이름x개수" 텍스트)을 나타낸다.</summary>
+        private class MaterialChip
+        {
+            public ItemData item;
+            public int requiredQuantity;
+            public Text label;
+        }
+
         /// <summary>레시피 한 줄을 구성하는 UI 요소와 원본 레시피를 함께 담는다.</summary>
         private class RecipeRow
         {
             public CraftingRecipe recipe;
-            public Text label;
+            public Text nameLabel;
             public Button button;
+            public List<MaterialChip> materialChips = new List<MaterialChip>();
         }
 
         private GameObject panelRoot;
@@ -103,57 +112,97 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 레시피 하나에 대응하는 "이름+필요재료" 텍스트와 "제작" 버튼으로 구성된 한 줄을 생성한다.
+        /// 레시피 하나에 대응하는 두 줄짜리 블록(① 결과물 아이콘+이름+제작 버튼, ② 필요 재료 칩 목록)을 생성한다.
         /// </summary>
         private RecipeRow CreateRow(CraftingRecipe recipe)
         {
-            var rowGo = new GameObject($"Row_{recipe.recipeName}", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-            rowGo.transform.SetParent(listContainer, false);
-            rowGo.GetComponent<LayoutElement>().minHeight = 40f;
+            var blockGo = new GameObject($"Row_{recipe.recipeName}", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+            blockGo.transform.SetParent(listContainer, false);
+            blockGo.GetComponent<LayoutElement>().minHeight = 58f;
 
-            var hlg = rowGo.GetComponent<HorizontalLayoutGroup>();
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = true;
-            hlg.spacing = 8f;
-            hlg.childAlignment = TextAnchor.MiddleLeft;
+            var blockVlg = blockGo.GetComponent<VerticalLayoutGroup>();
+            blockVlg.childForceExpandWidth = true;
+            blockVlg.childForceExpandHeight = false;
+            blockVlg.spacing = 2f;
+            blockVlg.childAlignment = TextAnchor.UpperLeft;
 
-            var label = UIBuilder.CreateText(rowGo.transform, "Label", BuildRecipeLabel(recipe), 14, Color.white, TextAnchor.MiddleLeft);
-            label.gameObject.AddComponent<LayoutElement>().preferredWidth = 260f;
+            // ① 헤더 줄: 결과물 아이콘 + 레시피 이름 + 제작 버튼
+            var headerGo = new GameObject("Header", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            headerGo.transform.SetParent(blockGo.transform, false);
+            headerGo.GetComponent<LayoutElement>().minHeight = 28f;
+            var headerHlg = headerGo.GetComponent<HorizontalLayoutGroup>();
+            headerHlg.childForceExpandWidth = false;
+            headerHlg.childForceExpandHeight = true;
+            headerHlg.spacing = 8f;
+            headerHlg.childAlignment = TextAnchor.MiddleLeft;
 
-            var row = new RecipeRow { recipe = recipe, label = label };
-            row.button = UIBuilder.CreateButton(rowGo.transform, "CraftButton", "제작", () => craftingSystem?.TryCraft(recipe));
+            string resultLetter = recipe.resultItem != null && !string.IsNullOrEmpty(recipe.resultItem.itemName)
+                ? recipe.resultItem.itemName.Substring(0, 1)
+                : "?";
+            UIBuilder.CreateIcon(headerGo.transform, "ResultIcon", 22f, UIBuilder.GetItemCategoryColor(recipe.resultItem), resultLetter);
+
+            var nameLabel = UIBuilder.CreateText(headerGo.transform, "Name", recipe.recipeName, 15, Color.white, TextAnchor.MiddleLeft);
+            nameLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var row = new RecipeRow { recipe = recipe, nameLabel = nameLabel };
+            row.button = UIBuilder.CreateButton(headerGo.transform, "CraftButton", "제작", () => craftingSystem?.TryCraft(recipe));
             row.button.gameObject.AddComponent<LayoutElement>().preferredWidth = 60f;
+
+            // ② 재료 줄: 재료마다 작은 아이콘 + "이름x개수" 칩. 보유량이 부족하면 빨간색으로 표시된다.
+            var materialsGo = new GameObject("Materials", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            materialsGo.transform.SetParent(blockGo.transform, false);
+            materialsGo.GetComponent<LayoutElement>().minHeight = 24f;
+            var materialsHlg = materialsGo.GetComponent<HorizontalLayoutGroup>();
+            materialsHlg.childForceExpandWidth = false;
+            materialsHlg.childForceExpandHeight = true;
+            materialsHlg.spacing = 10f;
+            materialsHlg.childAlignment = TextAnchor.MiddleLeft;
+            materialsHlg.padding = new RectOffset(30, 0, 0, 0); // 위 아이콘과 시작 위치를 맞추기 위한 들여쓰기
+
+            foreach (var req in recipe.requiredMaterials)
+            {
+                if (req.item == null)
+                    continue;
+
+                var chipGo = new GameObject($"Chip_{req.item.itemName}", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+                chipGo.transform.SetParent(materialsGo.transform, false);
+                var chipHlg = chipGo.GetComponent<HorizontalLayoutGroup>();
+                chipHlg.childForceExpandWidth = false;
+                chipHlg.childForceExpandHeight = true;
+                chipHlg.spacing = 3f;
+                chipHlg.childAlignment = TextAnchor.MiddleLeft;
+
+                UIBuilder.CreateIcon(chipGo.transform, "Icon", 14f, UIBuilder.GetItemCategoryColor(req.item), "");
+                var qtyLabel = UIBuilder.CreateText(chipGo.transform, "Qty", $"{req.item.itemName}x{req.quantity}", 12, Color.white, TextAnchor.MiddleLeft);
+                qtyLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 90f;
+
+                row.materialChips.Add(new MaterialChip { item = req.item, requiredQuantity = req.quantity, label = qtyLabel });
+            }
 
             return row;
         }
 
         /// <summary>
-        /// 레시피 이름과 필요 재료 목록을 두 줄짜리 표시용 문자열로 만든다.
-        /// </summary>
-        private string BuildRecipeLabel(CraftingRecipe recipe)
-        {
-            var parts = new List<string>();
-            foreach (var req in recipe.requiredMaterials)
-            {
-                if (req.item != null)
-                    parts.Add($"{req.item.itemName}x{req.quantity}");
-            }
-            return $"{recipe.recipeName}\n({string.Join(", ", parts)})";
-        }
-
-        /// <summary>
         /// 매 프레임 각 레시피의 제작 가능 여부(재료/스킬 레벨)를 확인해 버튼 활성화와 글자 색을 갱신한다.
+        /// 재료 칩은 개별적으로 보유량을 확인해, 부족한 재료만 콕 집어 빨간색으로 표시한다.
         /// </summary>
         private void RefreshRows()
         {
-            if (craftingSystem == null)
+            if (craftingSystem == null || craftingSystem.inventory == null)
                 return;
 
             foreach (var row in rows)
             {
                 bool canCraft = craftingSystem.CanCraft(row.recipe);
                 row.button.interactable = canCraft;
-                row.label.color = canCraft ? Color.white : new Color(1f, 0.4f, 0.4f, 1f);
+                row.nameLabel.color = canCraft ? Color.white : new Color(1f, 0.75f, 0.75f, 1f);
+
+                foreach (var chip in row.materialChips)
+                {
+                    int have = craftingSystem.inventory.GetItemCount(chip.item);
+                    bool enough = have >= chip.requiredQuantity;
+                    chip.label.color = enough ? new Color(0.6f, 1f, 0.6f, 1f) : new Color(1f, 0.45f, 0.45f, 1f);
+                }
             }
         }
 
