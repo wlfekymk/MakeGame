@@ -600,6 +600,7 @@ MonoBehaviour:
   hazardSpawner: {fileID: 2000000007}
   blueprintSpawner: {fileID: 2000000012}
   aircraftRepair: {fileID: 2000000015}
+  boatConstruction: {fileID: 1886019771}
   generateOnStart: 1
   initialIslandCount: 8
   terrainMaxHeight: 2.5

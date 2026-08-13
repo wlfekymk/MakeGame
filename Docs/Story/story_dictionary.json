@@ -147,6 +147,7 @@
     "survivalClock": "SurvivalClock - 게임 내 하루=실제 600초(10분) 기준으로 경과 일수 계산.",
     "endingChecker": "매 프레임 두 엔딩 경로를 확인: 1) 배 3단계 완성 + 비상식량 30개 + 생수 30개 + 연료 1개, 2) AircraftRepairSystem.isRepairComplete. 먼저 만족되는 쪽으로 자동으로 엔딩을 트리거.",
     "aircraftRepair": "AircraftRepairSystem + AircraftWreck으로 구현된 경비행기 수리 엔딩. 시작 섬에 고정 배치된 잔해에서 E키로 상호작용하면 엔진부품x2/금속조각x6/연료x3/노끈x4를 자동 투입하고 조건 충족 시 즉시 수리 완료.",
+    "boatWorkbench": "풀 플레이테스트(#49) 중 발견: BoatWorkbench(배 작업대)가 씬 어디에도 실제로 배치되어 있지 않아, 도면과 재료를 다 모아도 배를 조립할 방법이 없는 치명적 누락이었음. WorldMapManager.GenerateStartingIsland에서 SpawnBoatWorkbench를 호출해 시작 섬(캠프)에 작업대를 고정 배치하도록 수정. AircraftWreck과 마찬가지로 프리미티브 조합(상판+다리+공구) 시각화.",
     "audio": "AudioManager(싱글턴) + ProceduralAudioClipGenerator로 별도 오디오 에셋 없이 런타임 절차적 사운드(사인파 비프음/화음/노이즈/파도 앰비언트)를 생성해 채집/제작/섭취/피격/피해/단계완료/저장불러오기 효과음과 배경 파도음을 재생.",
     "saveLoad": "SaveLoadController(F5 저장/F9 불러오기)가 JsonUtility로 Application.persistentDataPath에 플레이어 위치/생존수치/스킬/인벤토리/배 제작 진행/경비행기 수리 진행/경과시간/현재 섬/엔딩 달성 여부/월드 시드를 저장. 자원 노드 채집 상태/위험요소 처치 상태/설치 구조물은 이번 구현 범위에서 제외.",
     "debugHud": "정식 UI 제작 전까지 OnGUI로 경과일수/생존수치/상태이상/배 진행도/경비행기 수리 진행도/인벤토리 개수/저장 상태 메시지를 화면에 표시."

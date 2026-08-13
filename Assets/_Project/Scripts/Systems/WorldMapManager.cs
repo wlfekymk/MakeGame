@@ -49,6 +49,11 @@ namespace MakeGame.Systems
         [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
 
+        [Header("배 제작 엔딩")]
+        [Tooltip("시작 섬에 배치할 배 작업대가 진행 상태를 갱신할 배 제작 시스템 (비워두면 작업대를 배치하지 않는다).\n" +
+                 "작업대가 없으면 도면과 재료를 다 모아도 실제로 배를 조립할 방법이 없으므로 반드시 연결해야 한다.")]
+        public BoatConstructionSystem boatConstruction;
+
         [Header("테스트용 자동 생성")]
         [Tooltip("플레이 시작 시 자동으로 시작 섬 + 여러 섬을 생성해서 맵을 미리 확인할 수 있게 한다.")]
         public bool generateOnStart = true;
@@ -155,8 +160,45 @@ namespace MakeGame.Systems
             SpawnPlaceholder(startIsland);
             SpawnIslandContent(startIsland);
             SpawnAircraftWreck(startIsland);
+            SpawnBoatWorkbench(startIsland);
             islands.Add(startIsland);
             return startIsland;
+        }
+
+        /// <summary>
+        /// 시작 섬(캠프)에 배 작업대를 한 번 배치한다. 도면과 재료를 다 모아도 이 오브젝트와 상호작용(E키)해야
+        /// 실제로 재료가 투입되고 단계가 진행되므로, 배 엔딩 경로에 반드시 필요한 배치다.
+        /// 간단한 작업대(받침대+공구대) 형태를 프리미티브 조합으로 표현한다.
+        /// </summary>
+        private void SpawnBoatWorkbench(IslandInstance startIsland)
+        {
+            if (boatConstruction == null)
+                return;
+
+            Vector3 position = startIsland.mapPosition + new Vector3(-6f, 0f, -3f);
+            position = TerrainSampler.SnapToGround(position);
+
+            var go = new GameObject("BoatWorkbench");
+            go.transform.SetParent(transform);
+            go.transform.position = position;
+
+            // 작업대 상판(넓적한 큐브) + 다리 2개(가는 원기둥) + 위에 놓인 공구(작은 큐브)로 작업대 형태를 표현한다.
+            StructureVisualBuilder.CreateVisualPart(go.transform, "Tabletop", PrimitiveType.Cube,
+                Vector3.up * 0.8f, new Vector3(2.2f, 0.15f, 1.2f), new Color(0.5f, 0.35f, 0.2f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "LegLeft", PrimitiveType.Cylinder,
+                new Vector3(-0.8f, 0.4f, 0f), new Vector3(0.12f, 0.4f, 0.12f), new Color(0.35f, 0.24f, 0.14f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "LegRight", PrimitiveType.Cylinder,
+                new Vector3(0.8f, 0.4f, 0f), new Vector3(0.12f, 0.4f, 0.12f), new Color(0.35f, 0.24f, 0.14f));
+            StructureVisualBuilder.CreateVisualPart(go.transform, "Tool", PrimitiveType.Cube,
+                new Vector3(0.4f, 0.95f, 0.2f), new Vector3(0.5f, 0.12f, 0.12f), new Color(0.4f, 0.4f, 0.42f),
+                Quaternion.Euler(0f, 30f, 0f));
+
+            var boxCollider = go.AddComponent<BoxCollider>();
+            boxCollider.center = new Vector3(0f, 0.6f, 0f);
+            boxCollider.size = new Vector3(2.4f, 1.2f, 1.4f);
+
+            var workbench = go.AddComponent<BoatWorkbench>();
+            workbench.boatConstruction = boatConstruction;
         }
 
         /// <summary>
