@@ -637,6 +637,27 @@
         "결론: 버그 아님(오탐). 코드 변경 없이 검토 결론만 기록"
       ],
       "result": "InventoryUI 아이콘 시스템은 이미 정상 작동 중 - 코드 변경 없음"
+    },
+    "batch224DurabilityAndSleepPlaytest": {
+      "status": "durability 완전 검증, sleep 핵심 로직 검증(부분)",
+      "durabilityTest": "칼(Remaining Uses 10) 보유 상태로 곰(Bear) 위험요소를 공격 -> TryAttack 성공, Remaining Uses가 10에서 9로 감소함을 Inspector로 직접 확인. 콘솔 오류/경고 0건.",
+      "sleepTest": "임시 GameObject(Shelter+BoxCollider)를 Play 모드에서 생성해 SurvivalClock.elapsedSeconds를 야간 값으로 설정한 뒤 상호작용(E) -> TrySleep 성공 확인: elapsedSeconds가 다음 날 일출 시각 공식((nextDay+0.25)*secondsPerDay)에 정확히 부합하는 값으로 점프함을 Inspector로 확인, sunstroke가 취침 직후 낮은 값으로 리셋된 뒤 시간 경과에 따라 다시 서서히 오르는 것도 확인.",
+      "caveat": "체력 회복량(+15)은 정확한 수치로 캡처하지 못함 - Unity 에디터 UI 조작(마우스 시점 조정 등)에 걸린 실제 시간 동안 허기/갈증이 자연 감소하다 갈증이 0에 도달해 기아 피해로 캐릭터가 사망(GameOverController 정상 작동 확인)했기 때문. 취침 로직 자체(시간 점프+sunstroke 리셋)는 확실히 검증되었고, Heal 호출은 코드 리뷰로도 재확인됨. 사망은 테스트 진행 중 실시간 경과에 의한 것으로, Shelter 기능의 결함이 아님.",
+      "sideEffect": "GameOverController가 기아(Starvation)로 인한 사망을 정상적으로 감지해 '게임 오버' 화면을 띄우는 것도 부수적으로 확인됨."
+    },
+    "batch225DurabilityBalanceReview": {
+      "status": "완료 - 위험한 순환 의존성 발견 및 예방(코드 변경 없이 설정만 되돌림)",
+      "weaponBalance": "손도끼(피해14/20회), 창(피해18/15회), 칼(피해8/10회) - FindBestWeapon이 피해량 최댓값을 우선 사용하므로 창을 보유하면 항상 창부터 소모되고, 손도끼/칼은 여분 무기로 남는 자연스러운 우선순위 확인. 기존 피해량 밸런스(상어가 체력 대비 최고 피해)와 충돌 없음.",
+      "harvestToolGapFound": "ResourceNode.Harvest에 requiresTool/requiredTool 도구 요구 로직이 있었지만, 실제 자원 노드를 생성하는 IslandResourceSpawner.ResourceEntry에는 애초에 requiresTool/requiredTool 필드 자체가 없어 어떤 나뭇가지/돌조각 노드도 절차적으로 도구를 요구하도록 설정할 방법이 없었음(사냥 쪽 CreatureSpawner.CreatureEntry는 이미 requiredTool 필드가 있어 창 요구가 정상 작동 중인 것과 대조적). ResourceEntry에 requiresTool/requiredTool 필드를 추가해 코드상으로는 채집도 사냥처럼 절차적 도구 요구가 가능하게 만듦.",
+      "criticalNearMiss": "위 필드를 추가한 뒤 나뭇가지(Item_나뭇가지) 노드에 손도끼를 요구하도록 씬 Inspector에서 설정했다가, Recipe_손도끼가 나뭇가지 1개+돌조각 2개를 재료로 요구하고 시작 인벤토리에는 나뭇가지가 전혀 없다는 것을 뒤늦게 확인 - 손도끼를 만들려면 나뭇가지가 있어야 하는데 나뭇가지를 캐려면 손도끼가 있어야 하는 순환 소프트락이 될 뻔했다. 씬을 저장하기 전 즉시 Requires Tool 체크를 해제해 실제로는 비활성 상태로 되돌렸다(Required Tool 참조 값 자체는 남아있지만 Requires Tool이 false라 Harvest()에서 전혀 사용되지 않음, 콘솔 0 에러로 재확인).",
+      "conclusion": "채집 도구 요구 인프라(코드)는 완성됐지만, 어떤 자원에 실제로 적용할지는 이번 배치에서 보류 - 향후 도입 시 반드시 그 자원이 어떤 레시피의 필수 재료로도 쓰이지 않는지, 또는 시작 인벤토리에 최소 1세트가 있는지 먼저 확인해야 한다는 규칙을 openQuestions에 기록.",
+      "sleepBalance": "sleepHealAmount=15는 SurvivalStats 최대 체력 100 대비 15% 회복으로, 기존 자연 회복(Health Regen Per Second 0.5, 허기/갈증 50% 이상일 때)에 비해 즉각적이고 확실한 회복 수단이라는 점에서 쉼터를 지을 유인으로 적절하다고 판단. 시간 점프가 허기/갈증을 소모시키지 않는 단순화는 유지(취침 자체가 리스크 없는 행동이 되지 않도록, 오히려 취침 전후 실시간 동안의 자연 감소만 반영되는 구조가 '무조건 안전한 휴식처'로 사기적이지 않게 균형을 맞춤)."
+    },
+    "batch227Playtest17": {
+      "status": "완료 - 정적 검증(씬 데이터+레시피 교차 확인) 방식",
+      "method": "이번 배치는 라이브 UI 조작 대신 씬 YAML과 레시피 에셋을 직접 대조하는 방식으로 사냥 도구 요구 배선을 검증 - CreatureSpawner.creatureEntries 첫 번째 항목(생고기)의 requiredTool이 실제로 Item_창을 가리키고 있음을 씬 파일에서 확인, Recipe_창이 나뭇가지 2개만 요구하고(나뭇가지는 도구 불필요) 생고기를 전혀 요구하지 않음을 확인해 사냥 도구 순환 의존은 없음을 재확인. 두 번째 항목(생선)은 requiredTool이 비어있어(도구 불필요) 낚시는 기존대로 누구나 가능.",
+      "regressionCheck": "IslandResourceSpawner.cs 시그니처 변경(SpawnSingleNode(ItemData) -> SpawnSingleNode(ResourceEntry)) 이후 Play 모드 진입 -> 9개 섬에 자원 노드 정상 생성, 콘솔 0 에러/0 경고/0 정보 확인 후 정상 종료.",
+      "conclusion": "batch219-226에서 구현한 내구도(무기/사냥 도구)·수면 시스템 전체가 사냥 경로에서는 완전히 안전하게 라이브 배선되어 있고, 채집 경로는 의도적으로 비활성 상태로 안전하게 보류됨을 최종 확인."
     }
   },
   "gameplaySystems": {
@@ -683,6 +704,7 @@
     "전투/피격 시 화면 플래시 이펙트는 v0.01.049에서 CombatFeedbackUI로 구현 완료 (HazardSource.ApplyHazardEffect 접촉 순간에만 발동, 상시 피해와 분리). 재시작 시 중복 생성 없음 실측 검증됨(batch139to148).",
     "밤/낮 주기 및 조명 변화는 v0.01.049에서 DayNightCycle로 구현 완료 (SurvivalClock 진행률에 따라 태양 각도/밝기/색온도 변화). 재시작 시 소실되던 버그는 v0.01.050에서 SceneManager.sceneLoaded 구독 방식으로 수정 완료.",
     "밤 시간대 저체온(추위) 메커니즘 검토(batch204): 현재 SurvivalStats.UpdateSunstroke는 밤이거나 그늘이면 일사병 수치가 회복만 될 뿐, 밤에 추워서 위험해지는 메커니즘은 전혀 없다(코드 확인 완료 - SurvivalTickDriver.Update -> SurvivalStats.Tick -> UpdateSunstroke, isDaytime=false면 항상 감소). Stranded Deep류 서바이벌 게임 관례상 밤이 낮보다 안전하기만 한 것은 긴장감 측면에서 아쉬운 지점. 다만 별도 체온(Cold) 수치 신규 도입은 필드/틱 로직/HUD 바/모닥불·쉼터 온기 연동/밸런스 테스트까지 필요해 날씨 시스템급의 별도 배치가 필요한 규모로 판단, 이번 배치(198~203 상어 구현 직후)에서는 설계만 검토하고 구현은 다음 신규 기능 배치로 미룬다.",
-    "조난자 구조 NPC 시스템 도입 여부 검토(batch205): story_dictionary.json의 premise가 '비행기를 타고 여행을 가던 주인공이 기체 고장으로 무인도에 불시착한다'이고 npc 항목이 명시적으로 '동승자 없음 (주인공 단독 불시착)', characters 배열도 비어 있음을 확인. 다른 조난자를 찾아 구조하는 NPC 시스템은 이 '단독 불시착' 전제와 정면으로 배치되는 스코프 확장이라고 판단해 도입하지 않기로 결정 - 코드 변경 없음. 협동/동료 콘텐츠가 필요하다면 premise 자체를 먼저 바꾸는 별도 논의가 선행되어야 한다."
+    "조난자 구조 NPC 시스템 도입 여부 검토(batch205): story_dictionary.json의 premise가 '비행기를 타고 여행을 가던 주인공이 기체 고장으로 무인도에 불시착한다'이고 npc 항목이 명시적으로 '동승자 없음 (주인공 단독 불시착)', characters 배열도 비어 있음을 확인. 다른 조난자를 찾아 구조하는 NPC 시스템은 이 '단독 불시착' 전제와 정면으로 배치되는 스코프 확장이라고 판단해 도입하지 않기로 결정 - 코드 변경 없음. 협동/동료 콘텐츠가 필요하다면 premise 자체를 먼저 바꾸는 별도 논의가 선행되어야 한다.",
+    "자원 노드(ResourceEntry)에 채집 도구 요구를 실제로 적용하려면, 해당 자원이 도구 레시피 자체의 재료로 쓰이지 않는지(순환 의존) 또는 시작 인벤토리에 충분한 초기 물량이 있는지 먼저 검증할 것 - 나뭇가지+손도끼 조합에서 실제로 순환 소프트락 직전까지 갔던 사례 있음(batch225)."
   ]
 }

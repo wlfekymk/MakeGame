@@ -161,18 +161,26 @@ namespace MakeGame.Systems
         /// <summary>
         /// 인벤토리에서 가장 피해량이 높은 무기(isWeapon)를 찾아 이 위험 요소를 공격한다.
         /// 무기가 없으면 공격할 수 없다. 체력이 0이 되면 물리쳐서 일정 시간 동안 비활성화된다.
+        /// 버그 수정: 손도끼(20회)/창(15회)/칼(10회)처럼 무기 ItemData에 이미 maxUses(최대 사용 횟수)가
+        /// 설정되어 있고 세이브/로드·인벤토리 UI 표시("최대 N회 사용")까지 다 준비되어 있었는데,
+        /// 정작 전투에서는 무기를 소모하는 코드가 없어 무기가 절대 닳지 않던 문제를 고쳤다.
+        /// 공격이 성공할 때마다 PlayerInventory.UseItem으로 실제 내구도를 1 소모시킨다.
         /// </summary>
         public bool TryAttack(PlayerInventory inventory, PlayerSkills skills)
         {
             if (!isCombatTarget || isDefeated || inventory == null)
                 return false;
 
-            ItemData bestWeapon = FindBestWeapon(inventory);
-            if (bestWeapon == null)
+            InventoryItem bestWeaponItem = FindBestWeapon(inventory);
+            if (bestWeaponItem == null)
                 return false;
 
-            currentHealth = Mathf.Max(0f, currentHealth - bestWeapon.weaponDamage);
+            currentHealth = Mathf.Max(0f, currentHealth - bestWeaponItem.data.weaponDamage);
             AudioManager.Instance?.PlayHit(); // 공격 적중 효과음
+
+            // 내구도 소모: 무제한(IsUnlimited) 무기는 자동으로 소모되지 않는다. 사용 횟수가 다하면
+            // UseItem이 인벤토리에서 자동으로 제거해 "무기가 파손되었다"를 자연스럽게 표현한다.
+            inventory.UseItem(bestWeaponItem);
 
             if (currentHealth <= 0f)
             {
@@ -188,18 +196,19 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 인벤토리에 보유한 무기(isWeapon) 중 피해량이 가장 높은 아이템을 찾는다. 없으면 null.
+        /// 인벤토리에 보유한 무기(isWeapon) 중 피해량이 가장 높은 InventoryItem 인스턴스를 찾는다. 없으면 null.
+        /// ItemData가 아니라 InventoryItem을 반환해야 TryAttack에서 그 무기 하나의 내구도를 실제로 소모시킬 수 있다.
         /// </summary>
-        private ItemData FindBestWeapon(PlayerInventory inventory)
+        private InventoryItem FindBestWeapon(PlayerInventory inventory)
         {
-            ItemData best = null;
+            InventoryItem best = null;
             foreach (var item in inventory.items)
             {
                 if (item.data == null || !item.data.isWeapon)
                     continue;
 
-                if (best == null || item.data.weaponDamage > best.weaponDamage)
-                    best = item.data;
+                if (best == null || item.data.weaponDamage > best.data.weaponDamage)
+                    best = item;
             }
             return best;
         }

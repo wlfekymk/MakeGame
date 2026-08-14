@@ -40,6 +40,9 @@ namespace MakeGame.Systems
         public SurvivalStats survivalStats;
         public ConsumptionSystem consumptionSystem;
 
+        [Tooltip("쉼터 취침(Shelter.TrySleep) 판정에 필요한 게임 내 시계. 비워두면 쉼터에서 취침할 수 없다.")]
+        public SurvivalClock survivalClock;
+
         /// <summary>
         /// 매 프레임 입력을 감지해 정면 상호작용 또는 인벤토리 행동(조리/섭취)을 실행한다.
         /// </summary>
@@ -119,6 +122,14 @@ namespace MakeGame.Systems
             if (hazard != null)
             {
                 hazard.TryAttack(inventory, skills);
+                return;
+            }
+
+            // 쉼터: 밤에 상호작용하면 취침해 아침까지 시간을 건너뛰고 소량 회복한다 (Shelter.TrySleep 참고).
+            var shelter = target.GetComponent<Shelter>();
+            if (shelter != null)
+            {
+                shelter.TrySleep(survivalClock, survivalStats);
                 return;
             }
         }

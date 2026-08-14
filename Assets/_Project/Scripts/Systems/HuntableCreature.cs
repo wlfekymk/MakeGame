@@ -61,17 +61,28 @@ namespace MakeGame.Systems
         /// 사냥을 시도한다. 도구가 지정되어 있으면 인벤토리에 해당 도구를 보유해야 시도할 수 있다.
         /// 시도하면 성공 여부와 관계없이 개체는 자리를 벗어나 재생 타이머가 시작된다.
         /// 성공 시 재료를 지급하고 사냥 스킬 경험치를 준다.
+        /// 버그 수정: 창(15회 사용)도 전투/채집과 같은 도구 내구도 소모 대상인데 사냥 시도에서는
+        /// 전혀 소모되지 않던 문제를 고쳤다 - 성공 여부와 무관하게 던지는(찌르는) 시도 자체로
+        /// 내구도가 1 닳는다 (실제로 휘두른 것은 성공/실패와 무관하기 때문).
         /// </summary>
         public bool TryHunt(PlayerInventory inventory, PlayerSkills skills)
         {
             if (!IsAvailable || inventory == null)
                 return false;
 
-            if (requiredTool != null && inventory.GetItemCount(requiredTool) <= 0)
-                return false;
+            InventoryItem toolItem = null;
+            if (requiredTool != null)
+            {
+                toolItem = inventory.FindItem(requiredTool);
+                if (toolItem == null)
+                    return false;
+            }
 
             isCaught = true;
             respawnTimer = 0f;
+
+            if (toolItem != null)
+                inventory.UseItem(toolItem); // 시도 자체로 도구 내구도 소모 (성공 여부와 무관)
 
             bool success = Random.value < successChance;
             if (success && yieldItem != null)

@@ -76,6 +76,22 @@ namespace MakeGame.Player
         }
 
         /// <summary>
+        /// 지정한 종류의 아이템을 실제로 소지 중인 개별 InventoryItem 인스턴스 하나를 찾는다.
+        /// 무기/도구의 내구도(remainingUses)를 실제로 소모시키려면 ItemData(원본 정의)가 아니라
+        /// 이 개별 인스턴스가 필요하다 (같은 "손도끼"라도 인스턴스마다 남은 사용 횟수가 다를 수 있음).
+        /// 없으면 null을 반환한다.
+        /// </summary>
+        public InventoryItem FindItem(ItemData itemData)
+        {
+            foreach (var item in items)
+            {
+                if (item.data == itemData)
+                    return item;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// 지정한 아이템을 인벤토리에 몇 개 가지고 있는지 센다 (제작 재료 확인 등에 사용).
         /// </summary>
         public int GetItemCount(ItemData itemData)

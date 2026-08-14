@@ -67,20 +67,31 @@ namespace MakeGame.Systems
         /// <summary>
         /// 이 노드를 채집한다. 도구가 필요한 경우 인벤토리에 도구가 있는지 먼저 확인한다.
         /// 성공 시 인벤토리에 재료를 지급하고 채집 스킬 경험치를 주며, 남은 횟수를 1 줄인다.
+        /// 버그 수정: 손도끼처럼 채집에도 쓰이고 전투에도 쓰이는 도구가 채집으로는 전혀 닳지 않던 문제를
+        /// 고쳤다 - 요구 도구를 실제로 보유한 InventoryItem 인스턴스 하나를 찾아 내구도를 1 소모시킨다.
         /// </summary>
         public bool Harvest(PlayerInventory inventory, PlayerSkills skills)
         {
             if (!CanHarvest || inventory == null || yieldItem == null)
                 return false;
 
-            if (requiresTool && requiredTool != null && inventory.GetItemCount(requiredTool) <= 0)
-                return false;
+            InventoryItem toolItem = null;
+            if (requiresTool && requiredTool != null)
+            {
+                toolItem = inventory.FindItem(requiredTool);
+                if (toolItem == null)
+                    return false;
+            }
 
             for (int i = 0; i < yieldPerHarvest; i++)
                 inventory.AddItem(yieldItem);
 
             if (skills != null)
                 skills.AddExperience(SkillType.Harvesting, harvestExperience);
+
+            // 도구 내구도 소모: 무제한(IsUnlimited) 도구는 UseItem 내부에서 자동으로 소모되지 않는다.
+            if (toolItem != null)
+                inventory.UseItem(toolItem);
 
             remainingHarvestCount--;
             AudioManager.Instance?.PlayPickup(); // 채집 성공 효과음

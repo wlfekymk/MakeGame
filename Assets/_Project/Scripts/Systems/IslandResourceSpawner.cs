@@ -27,6 +27,13 @@ namespace MakeGame.Systems
             [Tooltip("이 자원이 등장할 수 있는 최소 섬 규모. 예를 들어 Large로 설정하면 대형/특대 섬에만 등장하고" +
                 " 소형/중형 섬에는 전혀 등장하지 않는다. 희귀 재료(금속조각/부력통/엔진부품 등)의 등장 위치를 제한할 때 사용한다.")]
             public IslandSize minimumIslandSize = IslandSize.Small;
+
+            [Tooltip("이 자원을 채집하는 데 도구가 필요한지 여부. true면 requiredTool을 인벤토리에 보유해야 채집할 수 있고,\n" +
+                "채집할 때마다 그 도구의 내구도(ItemData.maxUses)가 1씩 소모된다 (예: 나뭇가지 채집에 손도끼 필요).")]
+            public bool requiresTool = false;
+
+            [Tooltip("채집에 필요한 도구 아이템 (requiresTool이 true일 때만 사용, 예: 손도끼)")]
+            public ItemData requiredTool;
         }
 
         [Tooltip("섬에 배치할 자원 종류와 기본 개수 목록")]
@@ -68,7 +75,7 @@ namespace MakeGame.Systems
                     Vector2 offset = Random.insideUnitCircle * scatterRadius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleNode(entry.yieldItem, position, parent));
+                    spawned.Add(SpawnSingleNode(entry, position, parent));
                 }
             }
 
@@ -77,9 +84,13 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 자원 노드 하나를 실제로 생성한다. 시각화용 큐브 프리미티브에 ResourceNode 컴포넌트를 붙인다.
+        /// 버그 수정: requiresTool/requiredTool을 ResourceNode에 전달하지 않아, ResourceNode.Harvest에
+        /// 도구 요구 로직이 있어도 실제로 생성되는 노드는 전부 도구 없이 채집 가능했던 문제를 고쳤다
+        /// (ResourceEntry에 requiresTool/requiredTool 필드가 아예 없어 절차적으로 설정할 방법 자체가 없었음).
         /// </summary>
-        private ResourceNode SpawnSingleNode(ItemData yieldItem, Vector3 position, Transform parent)
+        private ResourceNode SpawnSingleNode(ResourceEntry entry, Vector3 position, Transform parent)
         {
+            ItemData yieldItem = entry.yieldItem;
             GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.transform.SetParent(parent);
             go.transform.localScale = new Vector3(1f, 1.5f, 1f);
@@ -95,6 +106,8 @@ namespace MakeGame.Systems
             var node = go.AddComponent<ResourceNode>();
             node.yieldItem = yieldItem;
             node.remainingHarvestCount = node.maxHarvestCount;
+            node.requiresTool = entry.requiresTool;
+            node.requiredTool = entry.requiredTool;
             return node;
         }
 
