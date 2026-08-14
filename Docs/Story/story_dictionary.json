@@ -576,6 +576,16 @@
         "**실제 버그 발견 및 수정**: MinimapUI.BuildIslandInfo가 미발견 섬에도 실제 규모(소/중/대/특대)를 그대로 노출해, 방문하지 않고도 어느 섬이 대형/특대(도면·희귀 재료 스폰 섬)인지 미리 알 수 있었음. 시작 섬이 아니고 미발견인 경우 규모를 '미확인'으로 가리도록 수정, 배 도면 확률 설계 의도(탐험 긴장감)와 일치시킴. Play 모드에서 미확인 표시 확인 완료."
       ],
       "result": "MinimapUI.cs 1개 파일 수정(미발견 섬 규모 정보 은폐). 컴파일 0/0/0, Play 모드에서 섬 목록 패널의 '미확인' 표시 라이브 검증 완료."
+    },
+    "batch181to186ReviewPass": {
+      "summary": "사냥/요리/설치/작업대 재검토 배치. 코드 변경 없이 값/로직 재확인",
+      "findings": [
+        "HuntableCreature: successChance=0.7, respawnSeconds=90 - 창 보유 요구와 결합해 적정한 보조 식량 경로로 판단.",
+        "Campfire.CookItem: 불이 켜진 상태에서 즉시 성공(조리 시간/실패 확률 없음) - 단순화된 의도된 설계, 버그 아님.",
+        "InteractionController.PlaceFirstPlaceableItem: 설치 개수/중복 제한 없음 - Stranded Deep 원작처럼 여러 물증류기를 배치해 생산량을 늘리는 것이 정당한 전략이라 의도된 설계로 판단, 제한 추가하지 않음.",
+        "BoatWorkbench 상호작용은 다른 모든 상호작용 대상과 동일한 InteractionController.interactionDistance(4m) 공용 레이캐스트를 사용 - 특이사항 없음."
+      ],
+      "result": "코드 변경 없음(문서만 갱신). 컴파일 0/0/0, Play 세션에서 이동/상호작용(E)/설치(G) 콘솔 에러 없이 정상 동작 확인."
     }
   },
   "gameplaySystems": {
