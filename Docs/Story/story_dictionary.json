@@ -553,6 +553,18 @@
         "긴 설명 텍스트 줄바꿈: 가장 긴 설명(물증류기 키트, 88자)이 CraftingUI에서 2줄로 자동 줄바꿈되어도 VerticalLayoutGroup 중첩 구조 덕분에 재료 줄과 겹치지 않고 다음 레시피 블록이 정상적으로 밀려남을 라이브로 확인."
       ],
       "result": "코드 변경 없음(문서만 갱신). 컴파일 0/0/0, Play 세션 중 이동/상호작용/UI 토글 시 콘솔 에러 없음 확인."
+    },
+    "batch164to171ReviewPass": {
+      "summary": "위험요소/UI/세이브 관련 재검토 배치. 코드 변경 없이 값/로직 재확인 및 story_dictionary 최신화만 수행",
+      "findings": [
+        "Shelter/WaterStill 프리팹 Inspector 프리뷰 확인: 여전히 다중 프리미티브 조합(지붕+기둥 테이블 형태 / 원통+뚜껑)이며 용도를 알아볼 수 있는 최소 수준 유지, 실제 3D 모델 교체는 계속 보류.",
+        "HazardSource.respawnSeconds=120f, Update()에서 매 프레임 타이머 누적 후 도달 시 isDefeated=false + SetVisualActive(true)로 재등장하는 로직을 코드로 확인.",
+        "StatusEffectWarningUI는 OnGUI로 그려지는 2D 오버레이라 DayNightCycle의 Directional Light 변화와 무관하게 항상 동일한 밝기로 표시됨 - 밤 시간대 가독성 문제 없음.",
+        "F5/F9 라이브 테스트: 콘솔에 '게임을 저장했습니다'/'게임을 불러왔습니다' 로그 정상 출력, SaveLoadController 코드상 aircraftRepair.collectedMaterials/isRepairComplete 저장·복원 라인 존재 확인.",
+        "InventoryUI.RefreshList는 매 프레임 카테고리→이름순으로 orderBuffer를 완전히 재정렬하는 결정적 로직이라, PlayerInventory.items의 추가/제거(LIFO) 순서와 무관하게 항상 동일한 표시 순서를 보장함을 확인.",
+        "GameOverController.GetDeathMessage의 6개 case(Starvation/Sunstroke/Poison/Bleeding/Drowning/Predator)가 SurvivalStats.DamageCause enum(Unknown 포함 7개 값)과 정확히 매핑됨을 확인 - 누락 없음."
+      ],
+      "result": "코드 변경 없음(문서만 갱신). 컴파일 0/0/0, Play 세션에서 이동/소비(C)/미니맵(M)/저장/불러오기 모두 콘솔 에러 없이 정상 동작 확인."
     }
   },
   "gameplaySystems": {
