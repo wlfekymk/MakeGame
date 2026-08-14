@@ -96,13 +96,15 @@ namespace MakeGame.Player
         /// <param name="deltaTime">경과 시간(초)</param>
         /// <param name="isInShade">현재 그늘/실내에 있는지 여부 (일사병 회복 여부 판정용)</param>
         /// <param name="isUnderwater">현재 수면 아래(잠수 중)인지 여부 (산소 감소 판정용)</param>
-        public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false)
+        /// <param name="isDaytime">현재 태양이 떠 있는 낮 시간대인지 여부 (일사병 증가 판정용, 기본값 true는
+        /// 밤/낮 주기가 없는 호출부와의 하위 호환을 위함 - 항상 낮인 것처럼 취급해 기존 동작을 유지한다)</param>
+        public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false, bool isDaytime = true)
         {
             if (IsDead)
                 return;
 
             UpdateHungerAndThirst(deltaTime);
-            UpdateSunstroke(deltaTime, isInShade);
+            UpdateSunstroke(deltaTime, isInShade, isDaytime);
             UpdateStatusEffectDamage(deltaTime);
             UpdateOxygen(deltaTime, isUnderwater);
             UpdateHealthRegen(deltaTime);
@@ -149,11 +151,16 @@ namespace MakeGame.Player
         }
 
         /// <summary>
-        /// 그늘 여부에 따라 일사병 수치를 증감시키고, 최대치에 도달하면 체력을 깎는다.
+        /// 그늘 여부와 낮/밤 시간대에 따라 일사병 수치를 증감시키고, 최대치에 도달하면 체력을 깎는다.
+        /// 버그 수정: 예전에는 밤/낮 주기 자체가 없어 그늘 여부만으로 판정했는데, DayNightCycle
+        /// 도입 이후에도 이 로직을 그대로 두면 한밤중 뙤약볕 아래 있는 것도 아닌데 일사병이 계속
+        /// 오르는 모순이 생긴다. 그늘에 있으면 낮/밤과 무관하게 항상 회복되고, 그늘 밖이라도 밤에는
+        /// 햇빛이 없으므로 낮과 같은 속도로(태양 없이 식는다는 의미로) 회복되며, 오직 '그늘 밖 + 낮'
+        /// 조합에서만 실제로 증가한다.
         /// </summary>
-        private void UpdateSunstroke(float deltaTime, bool isInShade)
+        private void UpdateSunstroke(float deltaTime, bool isInShade, bool isDaytime)
         {
-            if (isInShade)
+            if (isInShade || !isDaytime)
                 sunstroke = Mathf.Max(0f, sunstroke - sunstrokeRecoveryPerSecond * deltaTime);
             else
                 sunstroke = Mathf.Min(100f, sunstroke + sunstrokeGainPerSecond * deltaTime);

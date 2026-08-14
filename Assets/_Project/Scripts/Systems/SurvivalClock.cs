@@ -25,6 +25,13 @@ namespace MakeGame.Systems
         public float TimeOfDay01 => (elapsedSeconds % secondsPerDay) / secondsPerDay;
 
         /// <summary>
+        /// 현재 태양이 떠 있는(낮) 시간대인지 여부. DayNightCycle의 태양 각도 계산과 같은 기준으로,
+        /// TimeOfDay01이 0.25(일출)~0.75(일몰) 사이일 때를 낮으로 본다. 일사병(UpdateSunstroke)이
+        /// 밤에도 계속 증가하지 않도록 이 값을 참조한다.
+        /// </summary>
+        public bool IsDaytime => TimeOfDay01 >= 0.25f && TimeOfDay01 <= 0.75f;
+
+        /// <summary>
         /// 매 프레임 경과 시간을 누적한다.
         /// </summary>
         private void Update()

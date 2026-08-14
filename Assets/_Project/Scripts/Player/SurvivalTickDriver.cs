@@ -1,4 +1,5 @@
 using UnityEngine;
+using MakeGame.Systems;
 
 namespace MakeGame.Player
 {
@@ -25,15 +26,29 @@ namespace MakeGame.Player
             "정상적인 상태) 머리는 물 밖에 있는데도 산소가 계속 줄어드는 문제가 생긴다.")]
         public float headHeightOffset = 1.6f;
 
+        // 일사병 판정용 낮/밤 시간대 조회에 쓴다. 씬에 SurvivalClock이 없으면(예: 밤낮 주기를 아직
+        // 안 쓰는 테스트 씬) null로 남아, SurvivalStats.Tick의 기본값(항상 낮 취급)으로 자연스럽게 대체된다.
+        private SurvivalClock clock;
+
         /// <summary>
-        /// 매 프레임 그늘 여부와 잠수 여부를 판정하고 SurvivalStats.Tick을 호출해 생존 수치를 갱신한다.
+        /// 씬에서 SurvivalClock을 찾아 캐시해둔다. 밤/낮 주기가 없는 씬에서는 clock이 null로 남고,
+        /// Update()에서 이를 감지해 "항상 낮"으로 취급하는 기존 동작으로 자연스럽게 대체된다.
+        /// </summary>
+        private void Start()
+        {
+            clock = FindAnyObjectByType<SurvivalClock>();
+        }
+
+        /// <summary>
+        /// 매 프레임 그늘/잠수/낮 여부를 판정하고 SurvivalStats.Tick을 호출해 생존 수치를 갱신한다.
         /// </summary>
         private void Update()
         {
             if (survivalStats == null)
                 return;
 
-            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater());
+            bool isDaytime = clock == null || clock.IsDaytime;
+            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater(), isDaytime);
         }
 
         /// <summary>

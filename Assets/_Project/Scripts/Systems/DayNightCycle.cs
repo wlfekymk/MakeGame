@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MakeGame.Systems
 {
@@ -30,15 +31,23 @@ namespace MakeGame.Systems
         private SurvivalClock clock;
 
         /// <summary>
-        /// 씬에 이 컴포넌트가 아직 없으면 스스로 생성한다. AudioManager/GameManager와 달리
-        /// 씬이 바뀌면(재시작 등) 새 씬의 Directional Light를 다시 찾아야 하므로
-        /// DontDestroyOnLoad를 쓰지 않고, 씬이 로드될 때마다 새로 만들어진다.
+        /// 버그 수정: 처음에는 RuntimeInitializeLoadType.AfterSceneLoad로 한 번만 생성했는데, 이
+        /// 훅은 "플레이 시작 후 첫 씬 로드"에만 호출되고 이후 SceneManager.LoadScene으로 씬을
+        /// 다시 불러올 때(예: GameOverController.RestartGame으로 사망 후 재시작)는 다시 호출되지
+        /// 않는다는 것을 재시작 라이브 테스트에서 확인했다. DayNightCycle은 DontDestroyOnLoad가
+        /// 아니므로 재시작 시 기존 인스턴스가 씬과 함께 파괴된 뒤 새로 생성되지 않아, 재시작한
+        /// 게임에서는 밤/낮 주기가 조용히 사라지는 문제가 있었다. SubsystemRegistration 시점에
+        /// SceneManager.sceneLoaded 이벤트를 한 번만 구독해두면, 씬이 몇 번을 다시 로드되더라도
+        /// (최초 시작이든 재시작이든) 그때마다 새 씬에 맞는 DayNightCycle이 매번 새로 생성된다.
         /// </summary>
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Bootstrap()
         {
-            var go = new GameObject("DayNightCycle");
-            go.AddComponent<DayNightCycle>();
+            SceneManager.sceneLoaded += (scene, mode) =>
+            {
+                var go = new GameObject("DayNightCycle");
+                go.AddComponent<DayNightCycle>();
+            };
         }
 
         /// <summary>
