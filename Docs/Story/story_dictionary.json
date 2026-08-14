@@ -627,6 +627,16 @@
         "전체 전투형 위험요소 스펙 비교: 벌떼(체력12/피해10) < 상어(체력25/피해18) < 식인종(체력35/피해10) < 곰(체력50/피해10). 상어만 유일하게 다른 위험요소보다 체력 대비 피해량이 높게 설계되어 있는데, 이는 '물속에서는 무기를 안정적으로 쓰기 어렵다'는 의도된 설계이며(코드 주석에 이미 명시) 기존 균형을 깨뜨리지 않는다고 판단."
       ],
       "result": "실측 검증 결과 상어 시스템이 기존 위험요소 프레임워크와 완전히 일관되게 동작함을 확인. 밸런스/미니맵 노출 모두 변경 불필요하다고 판단, 코드 변경 없음."
+    },
+    "batch217InventoryIconFalseAlarm": {
+      "summary": "인벤토리 아이템 아이콘 다양성 재검토 - 실제로는 버그가 아니었음을 코드 확인으로 결론",
+      "findings": [
+        "grep으로 CreateIcon 호출부를 전수 조사한 결과 InventoryUI.cs:296(CreateRow 내부)에서 Color.gray, \"?\"로 초기화하는 코드를 발견, CraftingUI.cs가 GetItemCategoryColor를 쓰는 것과 대조되어 처음엔 버그로 의심함",
+        "InventoryUI.cs의 RefreshList (약 230~264행)를 추가로 읽어본 결과, 242~249행에서 매 갱신마다 row.icon.color = UIBuilder.GetItemCategoryColor(data)와 row.letterLabel.text = 아이템 이름 첫 글자를 실제로 채우고 있음을 확인",
+        "즉 CreateRow의 회색+\"?\"는 오브젝트 풀에 새 행을 만들 때의 임시 초기값일 뿐이며, RefreshList가 뒤이어 항상 카테고리 색상으로 덮어쓰므로 실제 플레이 화면에서는 아이템마다 색상이 다르게 보임",
+        "결론: 버그 아님(오탐). 코드 변경 없이 검토 결론만 기록"
+      ],
+      "result": "InventoryUI 아이콘 시스템은 이미 정상 작동 중 - 코드 변경 없음"
     }
   },
   "gameplaySystems": {
