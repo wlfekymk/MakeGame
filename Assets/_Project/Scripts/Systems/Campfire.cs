@@ -73,6 +73,11 @@ namespace MakeGame.Systems
 
             isLit = true;
             remainingFuelSeconds += secondsPerFuel;
+
+            // 점화 성공 피드백음. 전용 효과음이 없어 제작 성공음을 재사용한다
+            // (ConsumptionSystem의 치료 성공 피드백과 동일한 재사용 패턴).
+            AudioManager.Instance?.PlayCraftSuccess();
+
             return true;
         }
 

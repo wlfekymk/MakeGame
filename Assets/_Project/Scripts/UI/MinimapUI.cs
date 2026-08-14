@@ -242,7 +242,12 @@ namespace MakeGame.UI
                 row.infoLabel.text = BuildIslandInfo(island);
                 row.infoLabel.color = island.isDiscovered ? Color.white : new Color(0.6f, 0.6f, 0.6f, 1f);
 
-                row.travelButton.interactable = island.isDiscovered && !island.isStartingIsland;
+                // 치명적 버그 수정: island.isDiscovered는 IslandTravel.TryTravelTo가 "도착에 성공한 뒤"에만
+                // true로 바뀌는데, 예전 코드는 그 isDiscovered를 이동 버튼의 활성화 조건으로도 썼다.
+                // 즉 도착해야 발견되고, 발견돼야 이동 버튼이 눌리는 순환 잠금(soft-lock)이라 시작 섬 밖의
+                // 어떤 섬도 영원히 갈 수 없었다. 미발견 섬으로 "처음 항해해서 발견하는 것"이 원래 의도이므로,
+                // 이동 가능 여부는 시작 섬 여부로만 판단하고 isDiscovered는 목록 표시(글자 색/상태 문구)에만 쓴다.
+                row.travelButton.interactable = !island.isStartingIsland;
 
                 int islandId = island.islandId; // 클로저 캡처용 로컬 변수
                 row.travelButton.onClick.RemoveAllListeners();

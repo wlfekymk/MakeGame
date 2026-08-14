@@ -20,7 +20,9 @@ namespace MakeGame.Data
         [Tooltip("최대 사용 횟수. -1이면 무제한 사용 (예: 고무보트)")]
         public int maxUses = 1;
 
-        [Tooltip("대형(대) 섬부터 해류가 강해져서 이 아이템을 들고 갈 수 없는지 여부 (고무보트 전용 제약)")]
+        [Tooltip("특대 섬은 해류가 너무 강해 이 아이템을 들고 갈 수 없는지 여부 (고무보트 전용 제약).\n" +
+            "대형(대) 섬은 배 도면(1~2단계)을 구할 수 있는 유일한 장소라 처음부터 갈 수 있어야 하므로 제약에서 " +
+            "제외했다 (자세한 내용은 PlayerInventory.CanCarryToIsland 참고).")]
         public bool blockedFromLargeIslandsByCurrent = false;
 
         [Header("음식/음료 효과 (해당하는 경우에만 사용)")]

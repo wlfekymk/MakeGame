@@ -79,6 +79,10 @@ namespace MakeGame.Systems
                 inventory.AddItem(yieldItem);
                 if (skills != null)
                     skills.AddExperience(SkillType.Hunting, huntExperience);
+
+                // 사냥/낚시 성공 피드백음. 채집(ResourceNode)과 동일하게 "아이템 획득" 효과음을 재사용해
+                // 플레이어가 성공 여부를 소리로도 즉시 알 수 있게 한다 (기존에는 사운드 피드백이 전혀 없었음).
+                AudioManager.Instance?.PlayPickup();
             }
 
             return success;

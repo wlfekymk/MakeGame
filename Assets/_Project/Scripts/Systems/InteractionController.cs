@@ -208,6 +208,9 @@ namespace MakeGame.Systems
             Instantiate(placeableItem.data.placementPrefab, spawnPosition, Quaternion.identity);
 
             inventory.UseItem(placeableItem);
+
+            // 설치 완료 피드백음. 전용 효과음이 없어 제작 성공음을 재사용한다 (기존에는 설치 시 무음이었음).
+            AudioManager.Instance?.PlayCraftSuccess();
         }
 
         /// <summary>

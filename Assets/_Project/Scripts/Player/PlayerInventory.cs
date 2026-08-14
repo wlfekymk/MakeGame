@@ -50,14 +50,21 @@ namespace MakeGame.Player
 
         /// <summary>
         /// 지정한 아이템을 목적지 섬까지 들고 갈 수 있는지 확인한다.
-        /// 고무보트처럼 해류 제약이 있는 아이템은 대형(대)/특대 섬으로는 가져갈 수 없다.
+        /// 고무보트처럼 해류 제약이 있는 아이템은 특대 섬으로는 가져갈 수 없다.
+        /// 치명적 버그 수정: 예전에는 대형(대) 섬까지도 막았는데, 배 제작 1~2단계 도면은
+        /// BoatBlueprintSpawner가 오직 대형 섬에만 배치한다(BoatBlueprintSpawner.cs 참고). 그런데
+        /// IslandTravel.TryTravelTo는 "배 1단계를 완성해야만" 대형/특대 섬 해류를 뚫을 수 있게 했으니,
+        /// 1단계를 완성하려면 대형 섬의 도면이 필요하고, 대형 섬에 가려면 이미 1단계를 완성했어야 하는
+        /// 순환 잠금(soft-lock)이었다 - 배 엔딩 경로 전체가 처음부터 영원히 도달 불가능했다.
+        /// 대형 섬은 처음부터 갈 수 있게 하고, 정말로 강한 해류가 필요한 특대 섬(최종 3단계 도면)만
+        /// 진행도 요건으로 막아 두면 잠금 없이 원래 의도한 난이도 곡선(대형→특대 순으로 더 강해지는 해류)이 유지된다.
         /// </summary>
         public bool CanCarryToIsland(ItemData itemData, IslandSize destinationSize)
         {
             if (!itemData.blockedFromLargeIslandsByCurrent)
                 return true;
 
-            return destinationSize != IslandSize.Large && destinationSize != IslandSize.ExtraLarge;
+            return destinationSize != IslandSize.ExtraLarge;
         }
 
         /// <summary>
