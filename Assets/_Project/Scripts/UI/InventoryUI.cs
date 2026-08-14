@@ -57,6 +57,10 @@ namespace MakeGame.UI
         private readonly List<ItemRow> rowPool = new List<ItemRow>();
         private readonly List<ItemData> orderBuffer = new List<ItemData>();
         private readonly Dictionary<ItemData, int> countBuffer = new Dictionary<ItemData, int>();
+        // 버그 수정: 인벤토리 목록이 도구/무기의 "최대 사용 횟수"만 보여주고 실제로 지금 몇 번 남았는지는
+        // 전혀 표시하지 않아, 손도끼가 거의 다 닳았는지 플레이어가 알 방법이 없었다. 같은 종류가 여러 개
+        // 쌓여 있을 수 있으므로(remainingUses가 서로 다를 수 있음) 그중 가장 적게 남은 값을 대표로 보여준다.
+        private readonly Dictionary<ItemData, int> minRemainingBuffer = new Dictionary<ItemData, int>();
 
         /// <summary>
         /// 시작 시 인벤토리 UI 계층을 생성하고 기본적으로 닫힌 상태로 둔다.
@@ -192,6 +196,7 @@ namespace MakeGame.UI
 
             orderBuffer.Clear();
             countBuffer.Clear();
+            minRemainingBuffer.Clear();
 
             // 필터 인덱스 0은 "전체"이고, 1 이상이면 해당 카테고리(인덱스-1)만 통과시킨다.
             bool filterActive = currentFilterIndex > 0;
@@ -209,8 +214,13 @@ namespace MakeGame.UI
                 {
                     countBuffer[item.data] = 0;
                     orderBuffer.Add(item.data);
+                    minRemainingBuffer[item.data] = item.remainingUses;
                 }
                 countBuffer[item.data]++;
+
+                // 무제한(remainingUses < 0) 항목은 비교 대상에서 제외하고, 그 외에는 가장 적게 남은 값을 추적한다.
+                if (item.remainingUses >= 0 && item.remainingUses < minRemainingBuffer[item.data])
+                    minRemainingBuffer[item.data] = item.remainingUses;
             }
 
             // 카테고리별로 묶이도록 정렬하고, 같은 카테고리 안에서는 이름순으로 정렬해 항목을 찾기 쉽게 한다.
@@ -249,9 +259,21 @@ namespace MakeGame.UI
                 row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
 
                 int count = countBuffer[data];
-                string usesInfo = data.IsUnlimited ? "" : $" (최대 {data.maxUses}회 사용)";
+                // 최대 사용 횟수뿐 아니라 실제로 몇 번 남았는지(같은 종류 중 가장 적게 남은 값)도 함께 보여준다.
+                string usesInfo = data.IsUnlimited ? "" : $" ({minRemainingBuffer[data]}/{data.maxUses}회 남음)";
                 row.nameCountLabel.text = $"{data.itemName}  x{count}{usesInfo}";
-                row.nameCountLabel.color = Color.white;
+                // 내구도가 얼마 남지 않은 도구/무기는 노란색(경고)~빨간색(위급)으로 강조해 눈에 띄게 한다.
+                if (!data.IsUnlimited && data.maxUses > 0)
+                {
+                    float remainRatio = (float)minRemainingBuffer[data] / data.maxUses;
+                    row.nameCountLabel.color = remainRatio <= 0.2f ? new Color(1f, 0.35f, 0.3f, 1f)
+                        : remainRatio <= 0.4f ? new Color(1f, 0.85f, 0.3f, 1f)
+                        : Color.white;
+                }
+                else
+                {
+                    row.nameCountLabel.color = Color.white;
+                }
 
                 // 버그 수정: ItemData.description이 그동안 어떤 UI에도 표시되지 않는 죽은 데이터였다.
                 // 이름/개수 아래에 작은 회색 글씨로 설명을 함께 보여줘, 이미 작성해둔 아이템 설명이
