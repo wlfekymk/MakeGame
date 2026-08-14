@@ -32,7 +32,8 @@ namespace MakeGame.Systems
         public float extraLargeMultiplier = 2.5f;
 
         [Tooltip("위험 요소를 흩뿌릴 반경")]
-        public float scatterRadius = 10f;
+        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale)에 맞춰 함께 10배로 키웠다.
+        public float scatterRadius = 100f;
 
         /// <summary>
         /// 지정한 섬에 규모와 확률에 따라 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.

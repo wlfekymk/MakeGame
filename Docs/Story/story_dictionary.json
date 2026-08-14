@@ -808,6 +808,21 @@
     "2026-08-14: 아이템 아이콘/표면 텍스처 시스템 라이브 검증 완료(컴파일 에러 0, 스프라이트/텍스처 임포트 정상, 인벤토리·제작 UI 아이콘 표시 확인). 섬 지형 모래 텍스처가 실제로 화면에 보이는지는 낮 시간대에 재확인 권장.",
     "자원 노드 텍스처 종류 세분화(leaf/metal 추가)는 v0.01.068에서 완료. 3D 캐릭터/자원 모델을 프리미티브 대신 실제 메시로 교체하는 것은 여전히 장기 과제로 남아있음.",
     "자원 노드가 전부 동일한 큐브라 실루엣으로 구분이 안 되던 문제는 v0.01.069에서 GetNodeShape/AddResourceDetailParts로 12종 자원마다 다른 프리미티브 조합을 쓰도록 수정해 해결(사용자 직접 피드백으로 발견 - batch305to323VisualPolishAndResourceShapes 참고). 사냥감(HuntableCreature)과 위험요소(HazardSpawner)도 동일한 문제(전부 캡슐/구 실루엣)가 남아있을 수 있어 다음 배치에서 점검 후보로 고려할 것.",
-    "다음 배치 후보: 사냥감/위험요소도 종별 프리미티브 실루엣이 충분히 구분되는지 재점검, 부력통/비상식량/연료/엔진부품처럼 GetItemCategoryColor상 전부 '일반 재료'(갈색)로 뭉뚱그려지는 아이템들에 형태 외에 색상 구분도 추가할지 검토."
-  ]
+    "다음 배치 후보: 사냥감/위험요소도 종별 프리미티브 실루엣이 충분히 구분되는지 재점검, 부력통/비상식량/연료/엔진부품처럼 GetItemCategoryColor상 전부 '일반 재료'(갈색)로 뭉뚱그려지는 아이템들에 형태 외에 색상 구분도 추가할지 검토.",
+    "v0.01.070: 자원 산포 반경(scatterRadius)이 섬 규모(Small/Medium/Large/ExtraLarge)와 무관하게 전 규모 공통 고정값이라, 정확히는 섬 크기별로 반경을 비례시키는 게 이상적이나 기존 아키텍처(스포너가 island.size는 알지만 실제 반지름 값 자체는 WorldMapManager 안에 private로 갇혀있음)를 유지한 채 절대값만 10배로 맞춤 - 추후 GetSizeScale을 public화하거나 island 인스턴스에 실제 반지름을 저장해 산포 반경을 섬별로 정확히 비례시키는 리팩터링 후보"
+  ],
+  "batch345And344UserFeedbackResourceVarietyAndIslandSize": {
+    "summary": "사용자가 자원 노드 모양 다양화(v0.01.069) 라이브 확인 직후 추가로 남긴 두 가지 피드백을 반영한 배치. userReport 원문: '자원류 같은경우 같은 종류의 자원이라도 보여지는 모양은 종류가 다양하게 보여졌으면 좋겠어. 그리고 섬 크기의 정의가 소가 지금 크기의 10배는 커져야할거 같아.'",
+    "resourceInstanceVariety": {
+      "problem": "GetNodeShape가 자원 타입 하나당 고정된 스케일/회전 하나만 반환해, 같은 나뭇가지끼리도 완전히 동일한 인스턴스로 스폰됨",
+      "fix": "SpawnSingleNode에서 스폰마다 축별 크기 배율(0.85~1.25배 랜덤)과 Y축 무작위 회전을 곱함. AddResourceDetailParts의 반복 파츠(나뭇가지 곁가지 1~3개, 대나무 마디 2~4개, 돌조각 곁돌 0~3개, 코코넛 추가 열매 0~2개, 천조각 주름 70% 확률, 야자잎 4~6장+펼침각, 금속조각 꺾임각, 엔진부품 볼트 3~6개)를 전부 무작위 범위로 변경",
+      "note": "Object.GetInstanceID()는 이 Unity 버전에서 컴파일 에러가 나는 Obsolete API라(HazardSpawner에서 이미 겪은 문제) 시드 없는 UnityEngine.Random을 그대로 사용"
+    },
+    "islandSizeIncrease": {
+      "problem": "WorldMapManager.GetSizeScale의 섬 반지름(Small=5, Medium=9, Large=14, ExtraLarge=20)이 실제로 걸어보니 너무 작음",
+      "fix": "4단계 반지름을 비례해서 10배 확대(50/90/140/200)하고 Small<Medium<Large<ExtraLarge 순서/비율 유지. 연쇄 조정: baseDistanceStep 120→1200, distanceJitter 40→400, minSpacingBetweenIslands 60→500, oceanSize 4000→40000, 지형 메시 ringCount/radialSegments를 반지름 비례 동적 계산으로 변경(고정 6/24이면 큰 섬이 각져 보임), 모래 텍스처 타일링 반지름 비례, IslandResourceSpawner/HazardSpawner/CreatureSpawner의 scatterRadius 8/10/9 → 80/100/90, SharkSpawner의 minDistanceFromIslands 35→350·safeZoneRadiusFromStart 60→600, MinimapUI.radarWorldRadius 400→4000",
+      "sceneOverrideNote": "SampleScene.unity에 직렬화된 override 값(스크립트 기본값과 별개로 씬에 저장된 값)도 전부 함께 갱신함 - 스크립트만 고치고 씬 값을 놓치면 에디터에서 예전 값이 그대로 적용되는 함정이 있음"
+    },
+    "liveVerification": "Play 모드 진입 후 Scene 뷰에서 Managers 하위 동적 생성 오브젝트 확인: Island_1의 Map Position이 (-720.68, 0, 514.94)로 커진 배치 간격 확인, Island_0_Small 지형 반지름이 씬 뷰에서 크게 보임, 나뭇가지 Resource 노드 2개를 각각 선택해 곁가지 개수/각도/스케일이 서로 다름을 확인(예: 첫 번째는 곁가지 1개 짧게, 두 번째는 곁가지 1개가 더 크고 다른 각도)"
+  }
 }

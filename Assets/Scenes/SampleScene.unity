@@ -605,9 +605,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.WorldMapManager
   islandGenerator: {fileID: 1886019772}
   islands: []
-  baseDistanceStep: 120
-  distanceJitter: 40
-  minSpacingBetweenIslands: 60
+  baseDistanceStep: 1200
+  distanceJitter: 400
+  minSpacingBetweenIslands: 500
   maxPlacementAttempts: 20
   islandPlaceholderPrefab: {fileID: 0}
   resourceSpawner: {fileID: 2000000006}
@@ -620,7 +620,7 @@ MonoBehaviour:
   generateOnStart: 1
   initialIslandCount: 8
   worldSeed: 0
-  oceanSize: 4000
+  oceanSize: 40000
   seaLevel: 0
   terrainMaxHeight: 2.5
   terrainMaterial: {fileID: 0}
@@ -948,7 +948,7 @@ MonoBehaviour:
   mediumMultiplier: 2
   largeMultiplier: 3
   extraLargeMultiplier: 4
-  scatterRadius: 8
+  scatterRadius: 80
 --- !u!114 &2000000007
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -978,7 +978,7 @@ MonoBehaviour:
   mediumMultiplier: 1.5
   largeMultiplier: 2
   extraLargeMultiplier: 2.5
-  scatterRadius: 10
+  scatterRadius: 100
 --- !u!114 &2000000008
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1164,7 +1164,7 @@ MonoBehaviour:
   islandTravel: {fileID: 2000000008}
   inventory: {fileID: 1925945764}
   toggleKey: 109
-  radarWorldRadius: 400
+  radarWorldRadius: 4000
   radarPanelSize: 160
 --- !u!114 &2000000018
 MonoBehaviour:
@@ -1243,7 +1243,7 @@ MonoBehaviour:
   mediumMultiplier: 1.5
   largeMultiplier: 2
   extraLargeMultiplier: 2.5
-  scatterRadius: 9
+  scatterRadius: 90
 --- !u!114 &2000000022
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1258,8 +1258,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SharkSpawner
   hazardSpawner: {fileID: 2000000007}
   sharkCount: 6
-  minDistanceFromIslands: 35
-  safeZoneRadiusFromStart: 60
+  minDistanceFromIslands: 350
+  safeZoneRadiusFromStart: 600
   placementRangeRatio: 0.7
   depthBelowSeaLevel: 2
   maxPlacementAttempts: 20

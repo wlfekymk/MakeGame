@@ -34,7 +34,9 @@ namespace MakeGame.UI
 
         [Header("레이더 설정")]
         [Tooltip("레이더에 표시할 실제 월드 반경(미터). 이보다 먼 섬은 가장자리에 붙어서 표시된다.")]
-        public float radarWorldRadius = 400f;
+        // 퀄리티 개선: 섬 배치 거리가 10배로 커진 것(WorldMapManager.baseDistanceStep)에 맞춰
+        // 레이더가 보여주는 실제 월드 범위도 10배로 넓혀야 멀리 있는 섬도 미니맵 안에 들어온다.
+        public float radarWorldRadius = 4000f;
 
         [Tooltip("레이더 패널의 한 변 크기(픽셀)")]
         public float radarPanelSize = 160f;

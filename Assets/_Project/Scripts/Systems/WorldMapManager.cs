@@ -19,14 +19,16 @@ namespace MakeGame.Systems
         public List<IslandInstance> islands = new List<IslandInstance>();
 
         [Header("배치 설정")]
+        // 퀄리티 개선: 섬 반지름을 10배로 키운 것(GetSizeScale)에 맞춰, 섬끼리 배치되는 거리도
+        // 같은 비율로 키우지 않으면 훨씬 커진 섬들이 서로 파고들며 겹쳐버린다.
         [Tooltip("섬 하나가 추가될 때마다 시작 섬으로부터 멀어지는 기본 거리")]
-        public float baseDistanceStep = 120f;
+        public float baseDistanceStep = 1200f;
 
         [Tooltip("배치 거리에 더해지는 무작위 편차 범위")]
-        public float distanceJitter = 40f;
+        public float distanceJitter = 400f;
 
         [Tooltip("섬끼리 서로 겹치지 않도록 유지할 최소 간격")]
-        public float minSpacingBetweenIslands = 60f;
+        public float minSpacingBetweenIslands = 500f;
 
         [Tooltip("겹치지 않는 위치를 찾기 위한 최대 시도 횟수")]
         public int maxPlacementAttempts = 20;
@@ -136,8 +138,10 @@ namespace MakeGame.Systems
         }
 
         [Header("바다")]
+        // 퀄리티 개선: 섬 배치 간격(baseDistanceStep 등)을 10배로 키운 것에 맞춰 바다도 같이
+        // 키우지 않으면 먼 섬이 바다 평면 밖으로 나가 시각적으로 끊겨 보인다.
         [Tooltip("바다 평면의 한 변 크기. 섬들이 모두 이 범위 안에 들어올 만큼 충분히 커야 한다.")]
-        public float oceanSize = 4000f;
+        public float oceanSize = 40000f;
 
         [Tooltip("해수면 높이. 섬 지형의 가장자리 높이(0)와 맞닿으며, PlayerController.waterLevel과 같아야 한다.")]
         public float seaLevel = 0f;
@@ -408,13 +412,19 @@ namespace MakeGame.Systems
             go.transform.SetParent(transform);
             go.transform.position = position;
 
-            var mesh = IslandMeshGenerator.GenerateIslandMesh(radius, terrainMaxHeight);
+            // 퀄리티 개선: 섬 반지름이 10배로 커진 뒤 예전 고정 해상도(링6/세그먼트24)를 그대로 쓰면
+            // 삼각형 하나하나가 너무 커져 각진 저해상도 지형처럼 보인다. 반지름에 비례해 링/세그먼트
+            // 수를 늘려 단위 면적당 디테일 밀도를 비슷하게 유지하되, 정점 수가 지나치게 많아지지
+            // 않도록 상한선을 둔다.
+            int ringCount = Mathf.Clamp(Mathf.RoundToInt(radius / 5f), 6, 40);
+            int radialSegments = Mathf.Clamp(Mathf.RoundToInt(radius * 1.5f), 24, 90);
+            var mesh = IslandMeshGenerator.GenerateIslandMesh(radius, terrainMaxHeight, ringCount, radialSegments);
 
             var meshFilter = go.AddComponent<MeshFilter>();
             meshFilter.sharedMesh = mesh;
 
             var meshRenderer = go.AddComponent<MeshRenderer>();
-            meshRenderer.sharedMaterial = terrainMaterial != null ? terrainMaterial : CreateDefaultTerrainMaterial();
+            meshRenderer.sharedMaterial = terrainMaterial != null ? terrainMaterial : CreateDefaultTerrainMaterial(radius);
 
             var meshCollider = go.AddComponent<MeshCollider>();
             meshCollider.sharedMesh = mesh;
@@ -424,8 +434,11 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 섬 지형용 머티리얼이 지정되지 않았을 때 사용할 기본 모래색 URP Lit 머티리얼을 만든다.
+        /// radius: 이 섬의 실제 반지름(미터). UV가 0~1로 정규화돼 있어(IslandMeshGenerator),
+        /// 타일 반복 횟수를 고정값으로 두면 섬이 커질수록 텍스처 한 칸이 늘어나 흐릿해 보인다.
+        /// 반지름에 비례해서 반복 횟수를 늘려 실제 모래 알갱이 크기가 섬 크기와 무관하게 일정하게 보이도록 한다.
         /// </summary>
-        private Material CreateDefaultTerrainMaterial()
+        private Material CreateDefaultTerrainMaterial(float radius)
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
@@ -437,23 +450,30 @@ namespace MakeGame.Systems
             if (sandTexture != null)
             {
                 material.mainTexture = sandTexture;
-                material.mainTextureScale = new Vector2(15f, 15f); // 섬 크기 대비 타일 반복 횟수
+                float tiling = radius * 1.5f; // 섬 크기 대비 타일 반복 횟수(반지름 비례)
+                material.mainTextureScale = new Vector2(tiling, tiling);
             }
             return material;
         }
 
         /// <summary>
-        /// 섬 규모에 대응하는 시각적 크기 배율을 반환한다 (플레이스홀더 스케일 계산용).
+        /// 섬 규모에 대응하는 시각적 크기 배율(=지형 반지름, 미터)을 반환한다.
+        /// 사용자 피드백: 기존 값(5/9/14/20)이 실제로 걸어보니 너무 작아서 답답하다는 지적을 받아,
+        /// Small 기준 약 10배(5→50)로 키우고 나머지 등급도 같은 비율로 함께 키워
+        /// Small<Medium<Large<ExtraLarge 상대적 크기 순서와 비율은 그대로 유지했다.
+        /// 이 값을 바꾸면 섬끼리 겹치지 않기 위한 배치 간격(baseDistanceStep 등)과 바다 크기(oceanSize),
+        /// 자원/위험요소/사냥감 산포 반경(scatterRadius)도 함께 비례해서 커져야 한다 - 그렇지 않으면
+        /// 훨씬 커진 섬의 극히 일부 구역에만 콘텐츠가 몰리게 된다.
         /// </summary>
         private float GetSizeScale(IslandSize size)
         {
             switch (size)
             {
-                case IslandSize.Small: return 5f;
-                case IslandSize.Medium: return 9f;
-                case IslandSize.Large: return 14f;
-                case IslandSize.ExtraLarge: return 20f;
-                default: return 5f;
+                case IslandSize.Small: return 50f;
+                case IslandSize.Medium: return 90f;
+                case IslandSize.Large: return 140f;
+                case IslandSize.ExtraLarge: return 200f;
+                default: return 50f;
             }
         }
 

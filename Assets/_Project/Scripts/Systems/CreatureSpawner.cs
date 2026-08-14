@@ -45,8 +45,9 @@ namespace MakeGame.Systems
         public float largeMultiplier = 2f;
         public float extraLargeMultiplier = 2.5f;
 
+        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale)에 맞춰 함께 10배로 키웠다.
         [Tooltip("사냥감을 흩뿌릴 반경 (섬 플레이스홀더 크기에 맞춰 조절)")]
-        public float scatterRadius = 9f;
+        public float scatterRadius = 90f;
 
         /// <summary>
         /// 지정한 섬에 규모에 맞는 개체 수만큼 사냥감/물고기를 배치한다.

@@ -15,6 +15,10 @@ namespace MakeGame.Systems
     /// 버그 수정: 예전에는 모든 자원 노드가 색 지정 없이 기본 회색 큐브로만 나와, 나뭇가지/돌조각/코코넛/
     /// 금속조각 등 종류가 전혀 구분되지 않았다. 인벤토리/제작 UI에서 이미 쓰던
     /// UIBuilder.GetItemCategoryColor를 재사용해 최소한 음식/음료/일반 재료 정도는 색으로 구분되게 했다.
+    /// 퀄리티 개선: "같은 종류 자원이라도 보여지는 모양이 다양했으면 좋겠다"는 추가 피드백을 받아,
+    /// SpawnSingleNode에서 스폰마다 축별 크기 배율과 Y축 회전을 무작위로 주고, AddResourceDetailParts의
+    /// 곁가지/마디/잎사귀/볼트 등 반복 파츠 개수도 무작위 범위로 바꿔 같은 자원이라도 인스턴스마다
+    /// 조금씩 다르게 생기도록 했다(완전한 클론처럼 보이지 않게).
     /// </summary>
     public class IslandResourceSpawner : MonoBehaviour
     {
@@ -48,8 +52,9 @@ namespace MakeGame.Systems
         public float largeMultiplier = 3f;
         public float extraLargeMultiplier = 4f;
 
+        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale)에 맞춰 함께 10배로 키웠다.
         [Tooltip("자원 노드를 흩뿌릴 반경 (섬 플레이스홀더 크기에 맞춰 조절)")]
-        public float scatterRadius = 8f;
+        public float scatterRadius = 80f;
 
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.
@@ -101,6 +106,18 @@ namespace MakeGame.Systems
             string itemName = yieldItem.itemName;
 
             GetNodeShape(itemName, out PrimitiveType primitive, out Vector3 scale, out Quaternion rotation);
+
+            // 퀄리티 개선: 사용자 피드백("같은 종류 자원이라도 보여지는 모양이 다양했으면 좋겠다")을 반영해,
+            // 자원 하나하나가 완전히 같은 크기/방향으로 찍히지 않도록 스폰마다 축별로 살짝 다른 배율을 곱하고
+            // Y축(위아래 축) 기준으로 무작위 회전을 더한다. GetInstanceID()는 이 Unity 버전에서 컴파일
+            // 에러가 나는 Obsolete API라(HazardSpawner에서 겪은 것과 동일한 문제) 시드 없는
+            // UnityEngine.Random을 그대로 써서 매 스폰마다 다른 값이 나오게 한다.
+            Vector3 scaleJitter = new Vector3(
+                UnityEngine.Random.Range(0.85f, 1.18f),
+                UnityEngine.Random.Range(0.85f, 1.25f),
+                UnityEngine.Random.Range(0.85f, 1.18f));
+            scale = Vector3.Scale(scale, scaleJitter);
+            rotation = rotation * Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
 
             GameObject go = GameObject.CreatePrimitive(primitive);
             go.transform.SetParent(parent);
@@ -228,46 +245,83 @@ namespace MakeGame.Systems
             switch (itemName)
             {
                 case "나뭇가지":
-                    AddPart(go, "Twig2", PrimitiveType.Cylinder, new Vector3(0.05f, 0.05f, 0.02f), new Vector3(0.07f, 0.3f, 0.07f), parentScale, Quaternion.Euler(15f, 0f, 55f), color, textureName);
-                    AddPart(go, "Twig3", PrimitiveType.Cylinder, new Vector3(-0.05f, 0.02f, -0.03f), new Vector3(0.07f, 0.25f, 0.07f), parentScale, Quaternion.Euler(-10f, 0f, -50f), color, textureName);
-                    break;
+                    // 퀄리티 개선: 곁가지 개수(1~3개)와 각도를 스폰마다 무작위로 바꿔, 같은 나뭇가지라도
+                    // 어떤 건 가지가 많고 어떤 건 홑가지처럼 보이게 해서 클론처럼 보이지 않게 했다.
+                    {
+                        int twigCount = UnityEngine.Random.Range(1, 4);
+                        for (int i = 0; i < twigCount; i++)
+                        {
+                            float baseAngle = 55f + i * 40f;
+                            float jitter = UnityEngine.Random.Range(-15f, 15f);
+                            Vector3 pos = new Vector3(UnityEngine.Random.Range(-0.06f, 0.06f), UnityEngine.Random.Range(-0.02f, 0.05f), UnityEngine.Random.Range(-0.04f, 0.04f));
+                            AddPart(go, $"Twig{i}", PrimitiveType.Cylinder, pos, new Vector3(0.07f, UnityEngine.Random.Range(0.22f, 0.32f), 0.07f), parentScale, Quaternion.Euler(15f, 0f, (i % 2 == 0 ? 1f : -1f) * baseAngle + jitter), color, textureName);
+                        }
+                        break;
+                    }
 
                 case "대나무":
-                    AddPart(go, "Joint0", PrimitiveType.Cylinder, new Vector3(0f, -0.7f, 0f), new Vector3(1.15f, 0.02f, 1.15f), parentScale, Quaternion.identity, color * 0.75f, textureName);
-                    AddPart(go, "Joint1", PrimitiveType.Cylinder, new Vector3(0f, -0.1f, 0f), new Vector3(1.15f, 0.02f, 1.15f), parentScale, Quaternion.identity, color * 0.75f, textureName);
-                    AddPart(go, "Joint2", PrimitiveType.Cylinder, new Vector3(0f, 0.55f, 0f), new Vector3(1.15f, 0.02f, 1.15f), parentScale, Quaternion.identity, color * 0.75f, textureName);
-                    break;
+                    // 퀄리티 개선: 마디 개수(2~4개)를 무작위로 바꿔 대나무 길이감이 다양해 보이게 했다.
+                    {
+                        int jointCount = UnityEngine.Random.Range(2, 5);
+                        for (int i = 0; i < jointCount; i++)
+                        {
+                            float t = (float)i / Mathf.Max(1, jointCount - 1); // 0~1
+                            float y = Mathf.Lerp(-0.7f, 0.55f, t);
+                            AddPart(go, $"Joint{i}", PrimitiveType.Cylinder, new Vector3(0f, y, 0f), new Vector3(1.15f, 0.02f, 1.15f), parentScale, Quaternion.identity, color * 0.75f, textureName);
+                        }
+                        break;
+                    }
 
                 case "돌조각":
-                    AddPart(go, "Rock2", PrimitiveType.Sphere, new Vector3(0.35f, -0.15f, 0.1f), new Vector3(0.28f, 0.2f, 0.28f), parentScale, Quaternion.identity, color, textureName);
-                    AddPart(go, "Rock3", PrimitiveType.Sphere, new Vector3(-0.3f, -0.18f, -0.15f), new Vector3(0.22f, 0.16f, 0.22f), parentScale, Quaternion.identity, color, textureName);
-                    break;
+                    // 퀄리티 개선: 곁돌 개수(0~3개)를 무작위로 바꿔 돌무더기 크기가 다양해 보이게 했다.
+                    {
+                        int rockCount = UnityEngine.Random.Range(0, 4);
+                        Vector3[] offsets = { new Vector3(0.35f, -0.15f, 0.1f), new Vector3(-0.3f, -0.18f, -0.15f), new Vector3(0.1f, -0.12f, -0.32f) };
+                        for (int i = 0; i < rockCount && i < offsets.Length; i++)
+                        {
+                            float size = UnityEngine.Random.Range(0.16f, 0.28f);
+                            AddPart(go, $"Rock{i + 2}", PrimitiveType.Sphere, offsets[i], new Vector3(size, size * 0.75f, size), parentScale, Quaternion.identity, color, textureName);
+                        }
+                        break;
+                    }
 
                 case "코코넛":
-                    AddPart(go, "Coconut2", PrimitiveType.Sphere, new Vector3(0.4f, -0.05f, 0.1f), new Vector3(0.38f, 0.38f, 0.38f), parentScale, Quaternion.identity, color, textureName);
-                    break;
+                    // 퀄리티 개선: 열매가 1개짜리 노드도, 3개까지 뭉친 노드도 나오게 해서 다발 크기가 다양해 보이게 했다.
+                    {
+                        int extraCount = UnityEngine.Random.Range(0, 3);
+                        Vector3[] offsets = { new Vector3(0.4f, -0.05f, 0.1f), new Vector3(-0.35f, -0.08f, 0.25f) };
+                        for (int i = 0; i < extraCount && i < offsets.Length; i++)
+                            AddPart(go, $"Coconut{i + 2}", PrimitiveType.Sphere, offsets[i], new Vector3(0.38f, 0.38f, 0.38f), parentScale, Quaternion.identity, color, textureName);
+                        break;
+                    }
 
                 case "천조각":
-                    AddPart(go, "Fold", PrimitiveType.Cube, new Vector3(0.05f, 0.3f, -0.05f), new Vector3(0.4f, 0.05f, 0.3f), parentScale, Quaternion.Euler(0f, 18f, 3f), color * 0.92f, textureName);
+                    // 퀄리티 개선: 접힌 주름이 있을 때도(70% 확률) 없을 때도 있게 해 밋밋한 조각과 구겨진 조각이 섞여 보이게 했다.
+                    if (UnityEngine.Random.value < 0.7f)
+                        AddPart(go, "Fold", PrimitiveType.Cube, new Vector3(0.05f, 0.3f, -0.05f), new Vector3(0.4f, 0.05f, 0.3f), parentScale, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 36f), 3f), color * 0.92f, textureName);
                     break;
 
                 case "야자잎":
                     {
-                        // 줄기 기준으로 5장의 잎사귀를 부채꼴로 퍼뜨린다. 각 잎은 줄기 쪽 끝이 중심에 붙도록
-                        // 회전 방향으로 절반 길이만큼 이동시키고, 살짝 위로 들려 보이게 X축을 기울인다.
-                        float[] fanAngles = { -60f, -30f, 0f, 30f, 60f };
-                        for (int i = 0; i < fanAngles.Length; i++)
+                        // 퀄리티 개선: 잎사귀 개수(4~6장)와 부채꼴 각도 간격, 개별 잎 길이를 무작위로 바꿔
+                        // 같은 야자잎이라도 풍성해 보이는 것과 성긴 것이 섞여 보이게 했다.
+                        int leafCount = UnityEngine.Random.Range(4, 7);
+                        float spread = UnityEngine.Random.Range(100f, 140f); // 부채꼴 전체 펼침 각도
+                        for (int i = 0; i < leafCount; i++)
                         {
-                            float rad = fanAngles[i] * Mathf.Deg2Rad;
+                            float angle = -spread * 0.5f + spread * i / Mathf.Max(1, leafCount - 1);
+                            float rad = angle * Mathf.Deg2Rad;
+                            float leafLength = UnityEngine.Random.Range(0.45f, 0.62f);
                             Vector3 localPos = new Vector3(Mathf.Sin(rad) * 0.26f, 0.1f, Mathf.Cos(rad) * 0.26f);
-                            Quaternion rot = Quaternion.Euler(-20f, fanAngles[i], 0f);
-                            AddPart(go, $"Leaf{i}", PrimitiveType.Cube, localPos, new Vector3(0.05f, 0.02f, 0.55f), parentScale, rot, color, textureName);
+                            Quaternion rot = Quaternion.Euler(-20f, angle, 0f);
+                            AddPart(go, $"Leaf{i}", PrimitiveType.Cube, localPos, new Vector3(0.05f, 0.02f, leafLength), parentScale, rot, color, textureName);
                         }
                         break;
                     }
 
                 case "금속조각":
-                    AddPart(go, "Bend", PrimitiveType.Cube, new Vector3(-0.05f, 0.4f, 0.05f), new Vector3(0.32f, 0.06f, 0.22f), parentScale, Quaternion.Euler(0f, -35f, 8f), color * 0.85f, textureName);
+                    // 퀄리티 개선: 구부러진 정도(각도)를 무작위로 바꿔 찌그러진 모양이 조금씩 다르게 보이게 했다.
+                    AddPart(go, "Bend", PrimitiveType.Cube, new Vector3(-0.05f, 0.4f, 0.05f), new Vector3(0.32f, 0.06f, 0.22f), parentScale, Quaternion.Euler(0f, UnityEngine.Random.Range(-50f, -20f), 8f), color * 0.85f, textureName);
                     break;
 
                 case "부력통":
@@ -283,13 +337,17 @@ namespace MakeGame.Systems
                     break;
 
                 case "엔진부품":
-                    for (int i = 0; i < 4; i++)
+                    // 퀄리티 개선: 볼트 개수(3~6개)를 무작위로 바꿔 부품마다 조립 상태가 달라 보이게 했다.
                     {
-                        float rad = i * 90f * Mathf.Deg2Rad;
-                        Vector3 localPos = new Vector3(Mathf.Cos(rad) * 0.24f, 0.05f, Mathf.Sin(rad) * 0.24f);
-                        AddPart(go, $"Bolt{i}", PrimitiveType.Cube, localPos, new Vector3(0.06f, 0.06f, 0.06f), parentScale, Quaternion.identity, color * 0.8f, textureName);
+                        int boltCount = UnityEngine.Random.Range(3, 7);
+                        for (int i = 0; i < boltCount; i++)
+                        {
+                            float rad = i * (360f / boltCount) * Mathf.Deg2Rad;
+                            Vector3 localPos = new Vector3(Mathf.Cos(rad) * 0.24f, 0.05f, Mathf.Sin(rad) * 0.24f);
+                            AddPart(go, $"Bolt{i}", PrimitiveType.Cube, localPos, new Vector3(0.06f, 0.06f, 0.06f), parentScale, Quaternion.identity, color * 0.8f, textureName);
+                        }
+                        break;
                     }
-                    break;
             }
         }
 

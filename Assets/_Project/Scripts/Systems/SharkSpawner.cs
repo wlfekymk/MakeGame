@@ -21,11 +21,13 @@ namespace MakeGame.Systems
         [Tooltip("생성할 상어 개체 수")]
         public int sharkCount = 6;
 
+        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale, 최대 200)에 맞춰
+        // 함께 10배로 키우지 않으면 큰 섬 지형 안에서 상어가 튀어나오는 문제가 생긴다.
         [Tooltip("모든 섬 중심으로부터 이만큼 떨어진 곳에만 상어를 배치한다 (섬 지형 안이나 바로 옆에서 튀어나오지 않도록)")]
-        public float minDistanceFromIslands = 35f;
+        public float minDistanceFromIslands = 350f;
 
         [Tooltip("시작 섬(불시착 지점) 주변 이 반경 안에는 상어를 배치하지 않는다 (게임 시작하자마자 습격당하는 것을 방지)")]
-        public float safeZoneRadiusFromStart = 60f;
+        public float safeZoneRadiusFromStart = 600f;
 
         [Tooltip("바다 전체 크기(WorldMapManager.oceanSize)에서 이 비율 이내로만 배치해 맵 가장자리에 몰리지 않게 한다")]
         [Range(0.1f, 1f)]
