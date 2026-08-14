@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 돌조각
   description: "날카롭게 깨진 돌. 손도끼나 창의 날 부분을 만드는 데 쓰인다."
+  icon: {fileID: 21300000, guid: 4d2b909b038bca71fb03a9b038bf02fe, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

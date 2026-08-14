@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 노끈
   description: "야자잎 등 식물 섬유를 꼬아 만든 끈. 도구 결합과 뗏목 제작에 필요하다."
+  icon: {fileID: 21300000, guid: 07e38efc9eebc2454ce0019ac4137803, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 비상식량
   description: "난파선 잔해에서 발견되는 상하지 않는 비상식량. 배 엔딩(탈출)에 필요한 30일치 비축 식량으로 쓰인다."
+  icon: {fileID: 21300000, guid: a03169bb121f41a5bfc9fa348659e9ee, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   hungerRestoreAmount: 20

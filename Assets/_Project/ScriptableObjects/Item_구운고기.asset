@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 구운고기
   description: "모닥불에 구운 고기. 안전하게 허기를 크게 채울 수 있다."
+  icon: {fileID: 21300000, guid: 89a8a65d8e4c4fb13f4fe59da251eb29, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   hungerRestoreAmount: 35

@@ -101,7 +101,19 @@ namespace MakeGame.Systems
             // 큐브로 보이던 것을 최소한의 카테고리 단위로 구분할 수 있게 한다.
             var renderer = go.GetComponent<Renderer>();
             if (renderer != null)
+            {
                 renderer.material.color = UIBuilder.GetItemCategoryColor(yieldItem);
+
+                // 단색 큐브가 밋밋해 보이는 문제 개선: 아이템 종류에 맞는 흑백 그레인 텍스처를 곱해 씌워
+                // 나무 재질(세로 결)/돌 재질(반점)/그 외(부드러운 얼룩) 표면 디테일을 준다. 색상 구분은
+                // 여전히 위 material.color가 담당하고, 텍스처는 표면 질감만 추가한다.
+                var surfaceTexture = Resources.Load<Texture2D>($"Textures/{GetSurfaceTextureName(yieldItem.itemName)}");
+                if (surfaceTexture != null)
+                {
+                    renderer.material.mainTexture = surfaceTexture;
+                    renderer.material.mainTextureScale = new Vector2(1.5f, 2f);
+                }
+            }
 
             var node = go.AddComponent<ResourceNode>();
             node.yieldItem = yieldItem;
@@ -109,6 +121,24 @@ namespace MakeGame.Systems
             node.requiresTool = entry.requiresTool;
             node.requiredTool = entry.requiredTool;
             return node;
+        }
+
+        /// <summary>
+        /// 아이템 이름을 보고 어떤 표면 질감 텍스처(Resources/Textures/*)를 씌울지 결정한다.
+        /// 나무/식물류는 세로 결(wood), 돌/금속류는 반점(stone), 그 외에는 부드러운 얼룩(noise)을 쓴다.
+        /// </summary>
+        private string GetSurfaceTextureName(string itemName)
+        {
+            if (string.IsNullOrEmpty(itemName))
+                return "noise";
+
+            if (itemName.Contains("나뭇가지") || itemName.Contains("대나무") || itemName.Contains("야자잎") || itemName.Contains("천조각"))
+                return "wood";
+
+            if (itemName.Contains("돌조각") || itemName.Contains("금속조각") || itemName.Contains("부싯돌"))
+                return "stone";
+
+            return "noise";
         }
 
         /// <summary>

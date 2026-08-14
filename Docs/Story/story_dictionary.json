@@ -713,6 +713,26 @@
         "인벤토리용량과소모품(262)": "PlayerInventory에는애초에 무게/용량 제한 코드가 전혀 없다(batch112에서 이미 '제한 없음'으로 결정) - 라이터를 포함해 모든 소모품이 동일하게 제한 없이 개별 InventoryItem 인스턴스로 관리된다."
       },
       "conclusion": "라이터 고아 아이템 수정(batch241)과 관련된 주변 시스템(우선순위, 세이브, 밸런스, UI 표시, 조리/연료 공통 로직, 다른 모닥불 인스턴스 유무)을 전수 재점검한 결과 모두 정상이며 추가 코드 변경이 필요한 항목은 없었다."
+    },
+    "batch268to286ItemIconsAndSurfaceTextures": {
+      "summary": "아이템/자원/섬 시각 디테일 개선 작업. 사용자가 '섬, 자원, 아이템 이미지를 디테일하게' 요청.",
+      "itemIcons": {
+        "description": "ItemData에 icon(Sprite) 필드를 신설하고, 아이템 31종 전체에 대해 카테고리 색상 배경 + 실루엣 글리프로 구성된 512x512 아이콘을 자체 제작(SVG->PNG, cairosvg)해 연결했다.",
+        "pipeline": "Tools 참고용 스크립트는 세션 임시 작업 폴더에서 실행 후 결과물만 프로젝트에 반영. Assets/_Project/Art/Sprites/Icon_<이름>.png + .meta(Sprite, Single, 512x512)로 저장.",
+        "wiring": "각 Item_*.asset의 icon 필드에 {fileID: 21300000(Single 스프라이트 서브오브젝트 관례), guid, type: 3} 형태로 연결.",
+        "uiChanges": "InventoryUI.cs: data.icon이 있으면 실제 스프라이트 표시, 없으면 기존 카테고리색+문자 placeholder로 폴백. CraftingUI.cs: UIBuilder.ApplyItemIcon 헬퍼로 결과물/재료 칩 아이콘에도 동일 적용.",
+        "categoryColorFix": "UIBuilder.GetItemCategoryColor 색상 스킴을 아이콘 배경색과 최대한 일치시킴(무기=빨강, 음식=주황, 음료=파랑, 설치=청록, 이동수단=보라, 일반재료=갈색). 의료 아이템(붕대/부목/해독제)은 초록으로 구분했으나, 기존 GetItemCategoryColor 함수 자체는 curesBleeding 등을 검사하지 않아 여전히 갈색으로 표시됨 - 아이콘 색과 UI 색상 dot이 불일치하는 기존 버그가 남아있음(연결된 openQuestions 참고)."
+      },
+      "worldSurfaceTextures": {
+        "description": "월드의 자원 노드/사냥감/위험요소/설치물이 전부 CreatePrimitive(큐브/캡슐/구)에 단색만 입혀 밋밋했던 문제를 개선. 절차적으로 생성한 흑백 타일링 노이즈 텍스처(sand/stone/wood/noise)를 Assets/_Project/Resources/Textures/에 넣고 런타임에 Resources.Load로 불러와 material.mainTexture로 곱해 씌운다(색상은 기존처럼 material.color가 담당, 텍스처는 표면 질감만 추가).",
+        "terrain": "WorldMapManager.CreateDefaultTerrainMaterial()에 sand.png 적용 (mainTextureScale 15x15).",
+        "resourceNodes": "IslandResourceSpawner.SpawnSingleNode()에 GetSurfaceTextureName() 추가 - 나뭇가지/대나무/야자잎/천조각=wood, 돌조각/금속조각/부싯돌=stone, 나머지=noise.",
+        "structuresAndCreatures": "StructureVisualBuilder.CreateColorMaterial()이 쉼터/물증류기/모닥불/사냥감(CreatureSpawner)/위험요소(HazardSpawner)가 전부 공유하는 단일 진입점이라, 여기에 noise 텍스처를 곱하는 것만으로 프로젝트 전체 프리미티브 시각 개선이 한 번에 적용됨."
+      },
+      "islandConceptArt": {
+        "description": "README/문서용 섬 전경 컨셉 일러스트(1600x900)를 아이콘과 동일한 플랫 디자인 스타일로 제작. Docs/ConceptArt/island_concept.png, Docs/ConceptArt/item_icons_sheet.png(아이콘 31종 검수용 시트)로 저장. 실제 인게임 에셋이 아니라 문서/README 삽입용 참고 이미지."
+      },
+      "knownLimitation": "cairosvg/PIL 기반 절차적 아트라 실사 텍스처 대비 디테일은 제한적이다. Unity 에디터가 실행 중이 아니어서 라이브 Play 테스트로 스프라이트/텍스처가 실제로 씬에 올바르게 렌더링되는지는 확인하지 못했고, .meta 파일도 이번 세션에서 직접 손으로 작성한 것이라(Unity가 생성한 것이 아님) 다음 세션에서 Unity Editor를 열어 Assets>Refresh 후 반드시 1차 라이브 확인이 필요하다."
     }
   },
   "gameplaySystems": {
@@ -762,6 +782,14 @@
     "조난자 구조 NPC 시스템 도입 여부 검토(batch205): story_dictionary.json의 premise가 '비행기를 타고 여행을 가던 주인공이 기체 고장으로 무인도에 불시착한다'이고 npc 항목이 명시적으로 '동승자 없음 (주인공 단독 불시착)', characters 배열도 비어 있음을 확인. 다른 조난자를 찾아 구조하는 NPC 시스템은 이 '단독 불시착' 전제와 정면으로 배치되는 스코프 확장이라고 판단해 도입하지 않기로 결정 - 코드 변경 없음. 협동/동료 콘텐츠가 필요하다면 premise 자체를 먼저 바꾸는 별도 논의가 선행되어야 한다.",
     "자원 노드(ResourceEntry)에 채집 도구 요구를 실제로 적용하려면, 해당 자원이 도구 레시피 자체의 재료로 쓰이지 않는지(순환 의존) 또는 시작 인벤토리에 충분한 초기 물량이 있는지 먼저 검증할 것 - 나뭇가지+손도끼 조합에서 실제로 순환 소프트락 직전까지 갔던 사례 있음(batch225).",
     "Play 모드에서 Game 뷰를 클릭하면 포커스 확보와 동시에 FPS 마우스룩 카메라 회전이 함께 발생해, 정확한 조준이 필요한 상호작용(E키)을 컴퓨터 사용 자동화로 재현하기 어렵다 - 필요 시 디버그 전용 '카메라 고정' 토글이나 상호작용 거리/각도를 넓히는 테스트 모드 도입을 고려.",
-    "디버그/테스트 편의를 위해 InteractionController에 에디터 전용 강제 상호작용 훅(좌표/조준 무관하게 특정 대상 스크립트의 상호작용 메서드를 직접 호출)을 추가하면, 향후 정밀 조준이 필요한 라이브 검증(모닥불 점화, 채집 등)을 컴퓨터 사용 자동화로도 안정적으로 재현할 수 있다."
+    "디버그/테스트 편의를 위해 InteractionController에 에디터 전용 강제 상호작용 훅(좌표/조준 무관하게 특정 대상 스크립트의 상호작용 메서드를 직접 호출)을 추가하면, 향후 정밀 조준이 필요한 라이브 검증(모닥불 점화, 채집 등)을 컴퓨터 사용 자동화로도 안정적으로 재현할 수 있다.",
+    {
+      "question": "UIBuilder.GetItemCategoryColor가 curesBleeding/curesPoison/curesBrokenBone(의료 아이템)을 별도 카테고리로 인식하지 않아, 새로 만든 의료 아이콘(초록)과 인벤토리 UI의 카테고리 색상 점(갈색)이 서로 다르게 표시되는 불일치가 있다. GetItemCategoryColor에 의료 카테고리(초록) 분기를 추가하면 해결된다.",
+      "addedInBatch": "batch268to286ItemIconsAndSurfaceTextures"
+    },
+    {
+      "question": "새로 추가한 Sprite(.meta)와 Texture(.meta) 파일들은 Unity Editor가 실행되지 않은 상태에서 스크립트로 직접 작성한 것이라, 다음 세션에서 Unity를 열어 Assets>Refresh 후 아이콘/텍스처가 정상적으로 임포트·렌더링되는지 반드시 라이브로 확인해야 한다.",
+      "addedInBatch": "batch268to286ItemIconsAndSurfaceTextures"
+    }
   ]
 }

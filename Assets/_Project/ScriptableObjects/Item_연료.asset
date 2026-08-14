@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 연료
   description: "난파선 잔해에서 발견되는 배 연료. 완성된 배를 타고 탈출하려면 반드시 확보해야 한다."
+  icon: {fileID: 21300000, guid: e4020ede5b7054c8bc7bcea7a2c6d0e3, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   hungerRestoreAmount: 0

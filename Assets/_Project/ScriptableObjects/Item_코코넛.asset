@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 코코넛
   description: "야자나무에서 얻는 코코넛. 코코넛 워터로 갈증을 해소할 수 있지만, 한 번에 너무 많이 마시면 설사로 갈증이 급격히 악화된다."
+  icon: {fileID: 21300000, guid: 5d5cb6c34afeca1abcb2f69eea58be71, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   hungerRestoreAmount: 0

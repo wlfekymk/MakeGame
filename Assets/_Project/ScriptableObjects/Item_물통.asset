@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 물통
   description: "대나무와 노끈으로 만든 휴대용 물통. 물을 담아 다닐 수 있다."
+  icon: {fileID: 21300000, guid: 2eb385d6732136e1525e16dff9285e8e, type: 3}
   maxUses: -1
   blockedFromLargeIslandsByCurrent: 0

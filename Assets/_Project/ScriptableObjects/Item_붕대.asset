@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 붕대
   description: "천조각으로 만든 붕대. 출혈을 멎게 한다."
+  icon: {fileID: 21300000, guid: 0f6afb9c0ada5743e1339f35339ac104, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   curesBleeding: 1

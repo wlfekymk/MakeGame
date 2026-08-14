@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 쉼터키트
   description: "대나무, 야자잎, 노끈으로 만든 쉼터 설치 키트. 사용하면 그 자리에 쉼터가 설치되어 그늘과 휴식처가 된다."
+  icon: {fileID: 21300000, guid: f54a78ed0b778b89cf6277b19a131433, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   hungerRestoreAmount: 0

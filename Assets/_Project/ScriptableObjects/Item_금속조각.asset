@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 금속조각
   description: "난파선이나 비행기 잔해에서 나오는 금속 조각. 튼튼한 도구와 배 상급 단계 제작에 필요한 희귀 재료."
+  icon: {fileID: 21300000, guid: dc9c6e7f88f66ef9103721d98615b979, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

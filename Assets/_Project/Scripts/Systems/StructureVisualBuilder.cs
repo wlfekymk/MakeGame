@@ -36,12 +36,23 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 지정한 단색의 기본 URP Lit 머티리얼을 만든다 (섬 지형 생성 시 사용한 것과 동일한 방식).
+        /// 이 게임의 모든 프리미티브 기반 시각 파츠(쉼터/물증류기/모닥불/사냥감/위험요소 등)가
+        /// 전부 이 메서드를 거치므로, 여기서 절차적 그레인 텍스처를 함께 곱해 씌우면
+        /// 프로젝트 전체의 밋밋한 단색 프리미티브 문제를 한 번에 개선할 수 있다.
         /// </summary>
         public static Material CreateColorMaterial(Color color)
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = color;
+
+            // 흑백 얼룩 노이즈 텍스처를 곱해 표면에 미세한 질감을 더한다 (색상은 그대로 위 material.color가 담당).
+            var noiseTexture = Resources.Load<Texture2D>("Textures/noise");
+            if (noiseTexture != null)
+            {
+                material.mainTexture = noiseTexture;
+                material.mainTextureScale = new Vector2(1.5f, 1.5f);
+            }
             return material;
         }
     }

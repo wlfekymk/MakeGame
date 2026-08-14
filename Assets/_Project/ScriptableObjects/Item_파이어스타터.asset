@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 파이어스타터
   description: "부싯돌과 돌조각으로 만든 발화 도구. 모닥불을 피울 수 있다."
+  icon: {fileID: 21300000, guid: 0895bf4140962763a2d95250a6edd5dd, type: 3}
   maxUses: -1
   blockedFromLargeIslandsByCurrent: 0

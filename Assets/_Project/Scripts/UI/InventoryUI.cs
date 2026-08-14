@@ -255,8 +255,27 @@ namespace MakeGame.UI
                 var row = rowPool[i];
 
                 row.icon.gameObject.SetActive(true);
-                row.icon.color = UIBuilder.GetItemCategoryColor(data);
-                row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
+                // 아이템별 아이콘 스프라이트가 있으면 실제 그림을 보여주고, 없으면 기존처럼
+                // 카테고리 색상 배경 + 이름 첫 글자 placeholder로 대체 표시한다(하위 호환).
+                if (data.icon != null)
+                {
+                    row.icon.sprite = data.icon;
+                    row.icon.color = Color.white;
+                    row.icon.type = Image.Type.Simple;
+                    row.icon.preserveAspect = true;
+                    if (row.letterLabel != null)
+                        row.letterLabel.gameObject.SetActive(false);
+                }
+                else
+                {
+                    row.icon.sprite = null;
+                    row.icon.color = UIBuilder.GetItemCategoryColor(data);
+                    if (row.letterLabel != null)
+                    {
+                        row.letterLabel.gameObject.SetActive(true);
+                        row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
+                    }
+                }
 
                 int count = countBuffer[data];
                 // 최대 사용 횟수뿐 아니라 실제로 몇 번 남았는지(같은 종류 중 가장 적게 남은 값)도 함께 보여준다.

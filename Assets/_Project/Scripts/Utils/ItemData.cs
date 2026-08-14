@@ -17,6 +17,10 @@ namespace MakeGame.Data
         [Tooltip("아이템 설명")]
         public string description;
 
+        [Tooltip("인벤토리/제작 UI에 표시할 아이템 아이콘 스프라이트. " +
+            "비어 있으면 UI가 기존처럼 카테고리 색상 + 이름 첫 글자 placeholder로 대체 표시한다.")]
+        public Sprite icon;
+
         [Tooltip("최대 사용 횟수. -1이면 무제한 사용 (예: 고무보트)")]
         public int maxUses = 1;
 

@@ -413,6 +413,15 @@ namespace MakeGame.Systems
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = new Color(0.76f, 0.7f, 0.5f);
+
+            // 모래 그레인 노이즈 텍스처를 곱해 씌워, 밋밋한 단색 대신 표면에 자잘한 질감을 준다.
+            // (Resources/Textures/sand.png. 절차적으로 생성한 흑백 타일링 노이즈로, 색상은 위 material.color가 그대로 담당한다.)
+            var sandTexture = Resources.Load<Texture2D>("Textures/sand");
+            if (sandTexture != null)
+            {
+                material.mainTexture = sandTexture;
+                material.mainTextureScale = new Vector2(15f, 15f); // 섬 크기 대비 타일 반복 횟수
+            }
             return material;
         }
 

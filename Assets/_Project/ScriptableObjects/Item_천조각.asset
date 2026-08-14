@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 천조각
   description: "찢어진 옷가지나 가방에서 얻는 천. 붕대나 물 증류기 제작에 쓰인다."
+  icon: {fileID: 21300000, guid: d1973b362a467ef770cf8f0a96fceb2e, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 부력통
   description: "드럼통이나 부표처럼 부력을 만들어주는 통. 배를 물에 띄우는 데 꼭 필요한 희귀 재료."
+  icon: {fileID: 21300000, guid: c7a0b1a690228104e36db146f0d4ad95, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

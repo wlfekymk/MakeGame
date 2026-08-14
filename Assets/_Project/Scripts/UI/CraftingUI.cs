@@ -140,7 +140,9 @@ namespace MakeGame.UI
             string resultLetter = recipe.resultItem != null && !string.IsNullOrEmpty(recipe.resultItem.itemName)
                 ? recipe.resultItem.itemName.Substring(0, 1)
                 : "?";
-            UIBuilder.CreateIcon(headerGo.transform, "ResultIcon", 22f, UIBuilder.GetItemCategoryColor(recipe.resultItem), resultLetter);
+            var resultIconRt = UIBuilder.CreateIcon(headerGo.transform, "ResultIcon", 22f, UIBuilder.GetItemCategoryColor(recipe.resultItem), resultLetter);
+            // 결과 아이템에 아이콘 스프라이트가 있으면 실제 그림으로, 없으면 기존 문자 placeholder로 표시한다.
+            UIBuilder.ApplyItemIcon(resultIconRt, recipe.resultItem);
 
             var nameLabel = UIBuilder.CreateText(headerGo.transform, "Name", recipe.recipeName, 15, Color.white, TextAnchor.MiddleLeft);
             nameLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
@@ -193,7 +195,8 @@ namespace MakeGame.UI
                 chipHlg.spacing = 3f;
                 chipHlg.childAlignment = TextAnchor.MiddleLeft;
 
-                UIBuilder.CreateIcon(chipGo.transform, "Icon", 14f, UIBuilder.GetItemCategoryColor(req.item), "");
+                var chipIconRt = UIBuilder.CreateIcon(chipGo.transform, "Icon", 14f, UIBuilder.GetItemCategoryColor(req.item), "");
+                UIBuilder.ApplyItemIcon(chipIconRt, req.item);
                 var qtyLabel = UIBuilder.CreateText(chipGo.transform, "Qty", $"{req.item.itemName}x{req.quantity}", 12, Color.white, TextAnchor.MiddleLeft);
                 qtyLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 90f;
 

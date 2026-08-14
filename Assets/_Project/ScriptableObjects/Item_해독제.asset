@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 해독제
   description: "코코넛 과육과 천조각으로 만든 즉석 해독제. 중독을 치료한다."
+  icon: {fileID: 21300000, guid: ccb5114b290e2572e2a73ae283f0dffb, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
   curesPoison: 1

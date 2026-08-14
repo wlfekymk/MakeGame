@@ -109,6 +109,31 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// CreateIcon으로 만든 아이콘에 ItemData.icon 스프라이트를 적용한다.
+        /// 아이템에 아이콘 이미지가 있으면 실제 그림으로 바꾸고(색은 흰색, 문자 placeholder는 숨김),
+        /// 없으면 아무것도 하지 않아 CreateIcon이 만들어둔 카테고리 색상 + 문자 placeholder가 그대로 남는다.
+        /// (CraftingUI처럼 한 번만 만들고 다시 갱신하지 않는 정적인 아이콘에서 사용)
+        /// </summary>
+        public static void ApplyItemIcon(RectTransform iconRt, MakeGame.Data.ItemData item)
+        {
+            if (iconRt == null || item == null || item.icon == null)
+                return;
+
+            var image = iconRt.GetComponent<Image>();
+            if (image != null)
+            {
+                image.sprite = item.icon;
+                image.color = Color.white;
+                image.type = Image.Type.Simple;
+                image.preserveAspect = true;
+            }
+
+            var letter = iconRt.Find("Letter");
+            if (letter != null)
+                letter.gameObject.SetActive(false);
+        }
+
+        /// <summary>
         /// 아이템의 종류(무기/음식/음료/설치형/일반 재료)에 따라 아이콘 배경색을 정한다.
         /// 실제 아이콘 이미지가 없는 상태에서 최소한의 시각적 구분을 주기 위한 임시 규칙이다.
         /// </summary>

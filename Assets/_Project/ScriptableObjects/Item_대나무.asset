@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 대나무
   description: "곧고 가벼운 대나무 줄기. 물통, 뗏목 골조 등 다양한 제작에 쓰이는 핵심 재료."
+  icon: {fileID: 21300000, guid: 447e3ce0f2fda52cc51732d74f3bbc06, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0

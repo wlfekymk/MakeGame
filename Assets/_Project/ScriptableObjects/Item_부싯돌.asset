@@ -14,5 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 부싯돌
   description: "불을 피우는 데 쓰는 돌. 파이어스타터 제작에 필요하다."
+  icon: {fileID: 21300000, guid: d74005344b6d5e0af76095fc887693b1, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
