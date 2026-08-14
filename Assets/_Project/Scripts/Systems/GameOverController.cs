@@ -110,8 +110,38 @@ namespace MakeGame.Systems
             subStyle.normal.textColor = Color.white;
 
             GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "게임 오버", titleStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), "무인도에서 생존하지 못했습니다.", subStyle);
+            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), GetDeathMessage(), subStyle);
             GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), "[R] 키를 눌러 다시 시작", subStyle);
+        }
+
+        /// <summary>
+        /// 버그 수정: 예전에는 사망 원인과 무관하게 "무인도에서 생존하지 못했습니다." 한 문장만 표시했다.
+        /// SurvivalStats.lastDamageCause(체력을 마지막으로 깎은 원인)를 읽어, 굶주림/탈수/일사병/중독/출혈/
+        /// 익사/맹수 중 실제로 죽음에 이른 원인에 맞는 문구를 보여준다. 원인을 알 수 없으면(예: 초기값 그대로
+        /// 죽은 경우) 기존 문구로 대체한다.
+        /// </summary>
+        private string GetDeathMessage()
+        {
+            if (survivalStats == null)
+                return "무인도에서 생존하지 못했습니다.";
+
+            switch (survivalStats.lastDamageCause)
+            {
+                case DamageCause.Starvation:
+                    return "굶주림과 갈증을 이기지 못하고 쓰러졌습니다.";
+                case DamageCause.Sunstroke:
+                    return "뜨거운 햇빛 아래 일사병으로 쓰러졌습니다.";
+                case DamageCause.Poison:
+                    return "독을 이겨내지 못하고 쓰러졌습니다.";
+                case DamageCause.Bleeding:
+                    return "출혈을 멈추지 못하고 쓰러졌습니다.";
+                case DamageCause.Drowning:
+                    return "물속에서 숨을 쉬지 못하고 익사했습니다.";
+                case DamageCause.Predator:
+                    return "섬의 포식자에게 목숨을 잃었습니다.";
+                default:
+                    return "무인도에서 생존하지 못했습니다.";
+            }
         }
     }
 }

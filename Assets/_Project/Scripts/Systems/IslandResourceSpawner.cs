@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
+using MakeGame.UI;
 
 namespace MakeGame.Systems
 {
@@ -8,6 +9,9 @@ namespace MakeGame.Systems
     /// 섬 하나에 채집 가능한 자원 노드들을 배치하는 스포너.
     /// 섬 규모가 클수록 더 많은 자원 노드를 생성한다 (Stranded Deep 기준: 큰 섬일수록 자원이 풍부).
     /// 실제 지형/나무 에셋이 없으므로, 큐브 플레이스홀더에 ResourceNode를 붙여 시각화한다.
+    /// 버그 수정: 예전에는 모든 자원 노드가 색 지정 없이 기본 회색 큐브로만 나와, 나뭇가지/돌조각/코코넛/
+    /// 금속조각 등 종류가 전혀 구분되지 않았다. 인벤토리/제작 UI에서 이미 쓰던
+    /// UIBuilder.GetItemCategoryColor를 재사용해 최소한 음식/음료/일반 재료 정도는 색으로 구분되게 했다.
     /// </summary>
     public class IslandResourceSpawner : MonoBehaviour
     {
@@ -81,6 +85,12 @@ namespace MakeGame.Systems
             go.transform.localScale = new Vector3(1f, 1.5f, 1f);
             go.transform.position = position + Vector3.up * 0.75f; // 큐브 피벗이 중심이므로 절반 높이만큼 띄워 지형 위에 놓이게 한다
             go.name = $"Resource_{yieldItem.itemName}";
+
+            // 아이템 종류(무기/음식/음료/설치형/이동수단/일반 재료)에 맞는 색을 입혀, 전부 똑같은 회색
+            // 큐브로 보이던 것을 최소한의 카테고리 단위로 구분할 수 있게 한다.
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material.color = UIBuilder.GetItemCategoryColor(yieldItem);
 
             var node = go.AddComponent<ResourceNode>();
             node.yieldItem = yieldItem;

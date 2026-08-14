@@ -117,13 +117,13 @@ namespace MakeGame.Systems
                 case HazardType.Bear:
                 case HazardType.Cannibal:
                     // 곰/식인종: 직접 피해 + 출혈을 유발한다.
-                    target.TakeDamage(directDamage);
+                    target.TakeDamage(directDamage, DamageCause.Predator);
                     target.ApplyBleeding();
                     break;
 
                 case HazardType.BeeSwarm:
                     // 벌떼: 직접 피해를 입힌다 (중독/출혈은 없음).
-                    target.TakeDamage(directDamage);
+                    target.TakeDamage(directDamage, DamageCause.Predator);
                     break;
 
                 case HazardType.Trap:

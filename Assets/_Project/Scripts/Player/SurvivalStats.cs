@@ -3,6 +3,21 @@ using UnityEngine;
 namespace MakeGame.Player
 {
     /// <summary>
+    /// 사망/피해의 원인. 게임 오버 화면에서 원인별로 다른 안내 문구를 보여주기 위해 기록한다
+    /// (deathCauseVariety 참고 - 예전에는 원인과 무관하게 "생존하지 못했습니다" 한 문장만 표시했다).
+    /// </summary>
+    public enum DamageCause
+    {
+        Unknown,
+        Starvation,
+        Sunstroke,
+        Poison,
+        Bleeding,
+        Drowning,
+        Predator,
+    }
+
+    /// <summary>
     /// 플레이어의 생존 수치를 관리한다 (Stranded Deep 기준: 체력/허기/갈증/일사병/중독/출혈/골절).
     /// 허기, 갈증, 일사병은 0~100 범위의 수치이며, 중독/출혈/골절은 발생 여부(플래그)로 관리한다.
     /// </summary>
@@ -69,6 +84,12 @@ namespace MakeGame.Player
         public bool IsDead => health <= 0f;
 
         /// <summary>
+        /// 체력을 마지막으로 깎은 원인. TakeDamage가 호출될 때마다 갱신되며, 사망 시점에는
+        /// "무엇 때문에 죽었는지"를 나타내므로 게임 오버 화면에서 원인별 문구를 고르는 데 쓴다.
+        /// </summary>
+        public DamageCause lastDamageCause = DamageCause.Unknown;
+
+        /// <summary>
         /// 매 프레임(또는 일정 주기)마다 호출하여 허기/갈증 감소, 상태 이상으로 인한 피해 등
         /// 시간에 따른 생존 수치 변화를 처리한다.
         /// </summary>
@@ -112,7 +133,7 @@ namespace MakeGame.Player
                 oxygen = Mathf.Min(100f, oxygen + oxygenRecoveryPerSecond * deltaTime);
 
             if (isUnderwater && oxygen <= 0f)
-                TakeDamage(drowningDamagePerSecond * deltaTime);
+                TakeDamage(drowningDamagePerSecond * deltaTime, DamageCause.Drowning);
         }
 
         /// <summary>
@@ -124,7 +145,7 @@ namespace MakeGame.Player
             thirst = Mathf.Max(0f, thirst - thirstDecayPerSecond * deltaTime);
 
             if (hunger <= 0f || thirst <= 0f)
-                TakeDamage(starvationDamagePerSecond * deltaTime);
+                TakeDamage(starvationDamagePerSecond * deltaTime, DamageCause.Starvation);
         }
 
         /// <summary>
@@ -138,7 +159,7 @@ namespace MakeGame.Player
                 sunstroke = Mathf.Min(100f, sunstroke + sunstrokeGainPerSecond * deltaTime);
 
             if (sunstroke >= 100f)
-                TakeDamage(sunstrokeDamagePerSecond * deltaTime);
+                TakeDamage(sunstrokeDamagePerSecond * deltaTime, DamageCause.Sunstroke);
         }
 
         /// <summary>
@@ -147,18 +168,24 @@ namespace MakeGame.Player
         private void UpdateStatusEffectDamage(float deltaTime)
         {
             if (isPoisoned)
-                TakeDamage(poisonDamagePerSecond * deltaTime);
+                TakeDamage(poisonDamagePerSecond * deltaTime, DamageCause.Poison);
 
             if (isBleeding)
-                TakeDamage(bleedingDamagePerSecond * deltaTime);
+                TakeDamage(bleedingDamagePerSecond * deltaTime, DamageCause.Bleeding);
         }
 
         /// <summary>
         /// 지정한 양만큼 체력을 감소시킨다. 0 미만으로는 내려가지 않는다.
+        /// cause를 지정하면 lastDamageCause에 기록해, 사망 시 게임 오버 화면이 원인별 문구를 고를 수 있게 한다.
+        /// 여러 원인이 같은 프레임에 겹치면(예: 허기 0 + 중독 동시) 가장 마지막에 호출된 TakeDamage의 원인이
+        /// 남는다 - 완벽하진 않지만 사망 직전 상황을 대략적으로 알려주는 용도로는 충분하다.
         /// </summary>
-        public void TakeDamage(float amount)
+        public void TakeDamage(float amount, DamageCause cause = DamageCause.Unknown)
         {
             health = Mathf.Max(0f, health - amount);
+
+            if (amount > 0f && cause != DamageCause.Unknown)
+                lastDamageCause = cause;
         }
 
         /// <summary>
