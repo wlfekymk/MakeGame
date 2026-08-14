@@ -617,6 +617,16 @@
         "씬 와이어링: Managers 오브젝트에 SharkSpawner 컴포넌트를 새로 추가하고 Hazard Spawner 필드를 기존 HazardSpawner에 연결, WorldMapManager의 새 Shark Spawner 필드도 연결 후 씬 저장."
       ],
       "result": "컴파일 0 에러/0 경고. Play 모드에서 Hierarchy 검색으로 'Hazard_Shark' 오브젝트가 정확히 6개(sharkCount 기본값) 생성됨을 확인, 그중 하나를 선택해 Position Y=-2(해수면 2m 아래), Rotation X=90(눕혀짐), HazardSource의 Hazard Type=Shark/Direct Damage=18/Max Health=25/Current Health=25/Defeat Experience=15가 설계값과 정확히 일치함을 Inspector로 확인. 콘솔 0 에러(스포너 참조 누락 시 발생할 널 참조 예외 없음)."
+    },
+    "batch209to213SharkVerifyAndBalance": {
+      "summary": "상어 실측 접촉 테스트 및 전체 위험요소 밸런스/미니맵 노출 재점검 (batch209~213)",
+      "findings": [
+        "Play 모드에서 플레이어를 실제 Hazard_Shark 위치(-981.2, -2, 377.6)로 순간이동시켜 접촉을 실측: Health 100->73.5(직접 피해 반영), Is Bleeding 체크됨(ApplyBleeding 정상 동작), 화면 상단에 StatusEffectWarningUI 출혈 경고 배너까지 정상 표시됨을 확인.",
+        "Last Damage Cause가 SharkAttack이 아니라 Bleeding으로 표시된 것은 버그가 아니라 기존에도 곰/식인종처럼 출혈을 유발하는 모든 위험요소가 공유하는 동작(최초 피격 직후 발생한 출혈 상태의 지속 피해가 lastDamageCause를 다시 덮어씀) - 상어만의 새로운 문제가 아님을 코드로 확인.",
+        "MinimapUI.cs 전체를 검색한 결과 HazardSource/HazardType을 전혀 참조하지 않음 - 애초에 어떤 위험요소도 미니맵에 위치가 노출된 적이 없어(육지 위험요소도 동일), 상어 추가로 인한 신규 정보 노출(치팅) 문제는 없음을 확인.",
+        "전체 전투형 위험요소 스펙 비교: 벌떼(체력12/피해10) < 상어(체력25/피해18) < 식인종(체력35/피해10) < 곰(체력50/피해10). 상어만 유일하게 다른 위험요소보다 체력 대비 피해량이 높게 설계되어 있는데, 이는 '물속에서는 무기를 안정적으로 쓰기 어렵다'는 의도된 설계이며(코드 주석에 이미 명시) 기존 균형을 깨뜨리지 않는다고 판단."
+      ],
+      "result": "실측 검증 결과 상어 시스템이 기존 위험요소 프레임워크와 완전히 일관되게 동작함을 확인. 밸런스/미니맵 노출 모두 변경 불필요하다고 판단, 코드 변경 없음."
     }
   },
   "gameplaySystems": {
