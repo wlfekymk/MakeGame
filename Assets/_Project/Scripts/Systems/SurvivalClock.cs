@@ -18,6 +18,13 @@ namespace MakeGame.Systems
         public int ElapsedDays => Mathf.FloorToInt(elapsedSeconds / secondsPerDay);
 
         /// <summary>
+        /// 현재 하루 중 진행률(0~1). 0=하루의 시작(자정), 0.5=한낮 기준으로 DayNightCycle이
+        /// 태양 각도/밝기를 계산하는 데 사용한다. secondsPerDay로 나눈 나머지이므로 하루가 지나면
+        /// 다시 0으로 돌아온다.
+        /// </summary>
+        public float TimeOfDay01 => (elapsedSeconds % secondsPerDay) / secondsPerDay;
+
+        /// <summary>
         /// 매 프레임 경과 시간을 누적한다.
         /// </summary>
         private void Update()

@@ -20,6 +20,11 @@ namespace MakeGame.Player
         [Tooltip("해수면 높이. PlayerController.waterLevel과 같은 값을 사용해야 한다 (잠수/산소 판정 기준).")]
         public float waterLevel = 0f;
 
+        [Tooltip("발 위치(transform.position) 기준 머리/카메라까지의 높이. 산소 판정에 사용한다 " +
+            "(카메라 로컬 Y와 같은 값, 기본 1.6). 이 값이 없으면 발만 살짝 잠겨도(수면 위에서 헤엄치는 " +
+            "정상적인 상태) 머리는 물 밖에 있는데도 산소가 계속 줄어드는 문제가 생긴다.")]
+        public float headHeightOffset = 1.6f;
+
         /// <summary>
         /// 매 프레임 그늘 여부와 잠수 여부를 판정하고 SurvivalStats.Tick을 호출해 생존 수치를 갱신한다.
         /// </summary>
@@ -32,12 +37,16 @@ namespace MakeGame.Player
         }
 
         /// <summary>
-        /// 현재 발 위치(transform.position.y)가 해수면보다 낮으면 잠수 중인 것으로 판정한다.
-        /// 섬 지형은 항상 y=0 이상이므로, 이 값보다 낮다는 것은 섬을 벗어나 바다에 있다는 뜻이다.
+        /// 산소 판정 전용: 머리(발 위치 + headHeightOffset)가 해수면보다 낮을 때만 "잠수 중"으로 판정한다.
+        /// 버그 수정: 예전에는 발 위치(transform.position.y)만으로 판정해서, PlayerController의 수영
+        /// 모드 전환 기준(발이 수면 아래)과 똑같이 취급했다. 그런데 수영 모드는 부력/중력이 발 위치를
+        /// waterLevel 근처에서 계속 오르내리게 만들기 때문에, 머리는 물 위에 떠 있는 정상적인 수영
+        /// 상태에서도 발이 수면 아래로 자주 내려가 산소가 거의 항상 줄어들고 있었다. 실제로 잠수
+        /// 키(diveKey)를 눌러 머리까지 물에 담가야만 산소가 줄어들도록 머리 높이를 기준으로 고쳤다.
         /// </summary>
         private bool IsCurrentlyUnderwater()
         {
-            return transform.position.y < waterLevel;
+            return (transform.position.y + headHeightOffset) < waterLevel;
         }
 
         /// <summary>

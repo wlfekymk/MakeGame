@@ -1,6 +1,7 @@
 using UnityEngine;
 using MakeGame.Data;
 using MakeGame.Player;
+using MakeGame.UI;
 
 namespace MakeGame.Systems
 {
@@ -105,6 +106,11 @@ namespace MakeGame.Systems
         {
             if (target == null)
                 return;
+
+            // 전투/접촉 시각 피드백: 위험요소와 "접촉한 이 순간"에만 화면 테두리를 붉게 번쩍인다.
+            // SurvivalStats.TakeDamage 안에 걸면 굶주림/일사병 등 상시 피해에도 매번 발동해 버리므로,
+            // 반드시 이 접촉 진입점에서만 트리거해야 한다 (CombatFeedbackUI 클래스 주석 참고).
+            CombatFeedbackUI.Instance?.TriggerHit();
 
             switch (hazardType)
             {

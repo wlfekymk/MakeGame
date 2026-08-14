@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Item_손도끼
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
   itemName: 손도끼
-  description: "나뭇가지와 돌조각으로 만든 손도끼. 나무 채집 속도를 높여준다."
+  description: "나뭇가지와 돌조각으로 만든 손도끼. 위험 요소를 상대로 무기로 사용할 수 있다."
   maxUses: 20
   blockedFromLargeIslandsByCurrent: 0
   isWeapon: 1
