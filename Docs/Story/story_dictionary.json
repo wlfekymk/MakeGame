@@ -462,6 +462,22 @@
       "bugFound": "미니맵에서 '이동'을 눌러 성공 메시지가 떠도 화면상 플레이어는 원래 자리에 그대로 남아 있어, 목적지 섬의 도면/자원/위험요소에 실제로는 절대 다가갈 수 없었다. 코드 전체에서 currentIslandId 사용처를 검색해도 플레이어 위치를 옮기는 코드가 전혀 없었다 - 순수 북키핑 값이었을 뿐, 실제 3D 공간 이동은 처음부터 구현된 적이 없었다.",
       "fix": "IslandTravel에 TeleportPlayerToIsland() 메서드를 추가해 TryTravelTo() 성공 시 호출한다. 1차 구현(CharacterController를 켜 둔 채 transform.position만 대입)은 대입 직후 Debug.Log로는 값이 바뀐 것처럼 보였지만, 다음 프레임에 CharacterController가 내부적으로 캐싱해 둔 캡슐 위치를 기준으로 원래 위치로 되돌려버려 실제로는 반영되지 않았다 (Unity의 잘 알려진 함정: 먼 거리 순간이동은 CharacterController가 활성화된 상태에서는 씹힌다). 최종 수정은 텔레포트 직전에 characterController.enabled = false로 잠깐 끄고, position을 대입한 뒤, 다시 true로 켜는 방식.",
       "verified": "Unity Play 모드에서 실제로 재현/검증했다. 정지→Assets>Refresh(대기)→Play로 재컴파일 반영을 확실히 한 뒤, M키로 소형 섬(섬 1, 약 87m 거리)로 이동 - Player Transform Position이 (0, 2.58, 0)에서 (72.19, 1.65, 87.55)로 실제로 바뀌었고 목록 거리도 3m로 줄어 '발견함'으로 표시됨을 확인. 이어서 대형 섬(섬 7, 약 936m 거리)로 다시 이동 - Position이 (236.35, 2.43, -808.47)로 재차 실제 변경, 목록 거리 4m·발견함 확인. 텔레포트 후 W키로 이동해도 정상적으로 몇 걸음 전진(CharacterController가 텔레포트 후 정상 동작 상태로 복구됨)했고, 콘솔 에러/경고 0건이었다. 임시로 넣었던 디버그 Debug.Log는 확정 후 제거했다."
+    },
+    "batch109to117Review": {
+      "summary": "#109~117 배치: 사망 후 재시작, 설정 볼륨 저장, 크래프팅 UI 피드백, 인벤토리 용량, 위험요소 밸런스, 두 엔딩 경로 상호작용, 섬 재생성 성능, 한글 문자열, 컴파일 재검증을 훑었다.",
+      "findings": {
+        "볼륨설정영속성수정": "SettingsMenuController에서 슬라이더로 조절한 효과음/배경음 볼륨이 AudioManager 필드에만 남고 디스크에는 전혀 저장되지 않아, 게임을 다시 실행할 때마다 항상 기본값(0.7/0.3)으로 리셋되던 문제를 발견해 고쳤다. AudioManager.Awake()에서 PlayerPrefs로 저장된 값을 불러오고(LoadVolumePrefs), SetSfxVolume/SetBgmVolume 호출 시마다 PlayerPrefs에 즉시 저장하도록 했다.",
+        "사망후재시작": "RestartGame()은 씬만 재로드하고 디스크의 세이브 파일(F5로 저장한 것)은 건드리지 않는다(의도된 동작 - 수동 저장/불러오기 시스템과 일관됨, 죽기 직전 상태가 자동 저장되지 않으므로 '죽음을 되돌리는' 익스플로잇이 아니다). 버그 아님.",
+        "크래프팅UI피드백": "CraftingUI.RefreshRows()가 이미 제작 불가 시 버튼 비활성화+레시피 이름 빨간색, 재료 칩 개별 부족 시 빨간색/충분 시 초록색으로 표시하고 있어 별도 수정 불필요.",
+        "인벤토리용량": "PlayerInventory에 슬롯/무게 제한이 전혀 없음을 확인. 이 게임의 단순화된 설계상 의도적 생략으로 판단, 새 제한 시스템을 추가하지 않기로 결정 (반복적으로 발견된 소프트락 패턴을 고려할 때 무리하게 새 제약을 넣는 것이 더 위험하다고 판단).",
+        "위험요소밸런스": "곰 50HP/식인종 35HP/벌떼 12HP, 최고 무기(창) 18dmg 기준 각각 3/2/1회 타격으로 처치 가능. 접촉 피해 10dmg/1.5초 쿨다운과 대비했을 때 과도하게 그라인디하거나 트리비얼하지 않은 합리적인 균형으로 판단, 추가 조정 없음.",
+        "엔딩경로상호작용": "BoatConstructionSystem과 AircraftRepairSystem은 서로를 전혀 참조하지 않는 완전히 독립된 시스템이며, 둘 다 GameManager.CompleteEnding()을 호출하지만 HasCompletedFirstEnding이 1회성 플래그라 순서/중복 호출에 안전함을 코드로 확인.",
+        "섬재생성성능": "WorldMapManager.RegenerateWorld()가 재생성 전 기존 모든 자식 오브젝트를 Destroy로 정리하므로 메모리 누수나 중복 스폰 없음을 확인.",
+        "한글문자열": "UI 스크립트 전체와 아이템 이름 30여 종을 훑었으나 오타/불일치 없음."
+      },
+      "openIssue_settingsEscapeKey": [
+        "SettingsMenuController의 Escape 토글 로직을 Unity Play 모드에서 라이브로 재검증하려 했으나, 이 세션이 사용하는 원격 컴퓨터 자동화 도구로 보낸 Escape 키 입력이 Unity Game 뷰의 Input.GetKeyDown()에 전혀 도달하지 않는 현상을 발견했다 (Update()에 임시로 추가한 디버그 로그가 5회 연속 시도에서 단 한 번도 찍히지 않음, 반면 M/V/Tab 등 일반 키는 매번 정상 동작). GameOverController/MainMenuController와 동일한 'OnGUI + Time.timeScale' 패턴으로 코드 자체는 구조적으로 문제가 없어 보이며, Escape가 원격 입력 계층(RDP/VM)에서 예약된 키로 가로채지는 것으로 추정된다. 코드를 임의로 변경하지 않고 실제 원인 미상 상태로 남겨둠 - 다음 세션에서 다른 방식(예: 실제 빌드 실행 또는 다른 자동화 경로)으로 재검증이 필요하다."
+      ]
     }
   },
   "gameplaySystems": {
@@ -503,6 +519,7 @@
     "1~2단계 도면(대형 섬 50%)/3단계 도면(특대 섬 70%) 습득 확률은 1차 임시값으로 구현됨(BoatBlueprintSpawner.largeIslandSpawnChance/extraLargeIslandSpawnChance) - 실제 플레이 밸런스 테스트 후 조정 필요",
     "배 단계별 재료 수량(대나무/노끈/금속조각/부력통 등)은 1차 임시값으로 구현됨 - 실제 플레이 밸런스 테스트 후 조정 필요",
     "뗏목 이동 범위 확장은 '배 제작 1단계 완료'를 기준으로 구현됨(IslandTravel.stageRequiredToBypassCurrent=1) - 이 기준 단계가 적절한지 밸런스 검토 필요",
-    "쉼터/물 증류기 프리팹은 다중 프리미티브 조합으로 개선됨(v0.01.037) - 실제 3D 모델링/텍스처 에셋으로 교체할지는 여전히 미정 (현재 수준으로 충분한지 플레이테스트 피드백 필요)"
+    "쉼터/물 증류기 프리팹은 다중 프리미티브 조합으로 개선됨(v0.01.037) - 실제 3D 모델링/텍스처 에셋으로 교체할지는 여전히 미정 (현재 수준으로 충분한지 플레이테스트 피드백 필요)",
+    "설정 화면(Esc) 실제 키 입력 동작을 이번 세션의 원격 자동화 환경에서 재검증하지 못함 (Input.GetKeyDown(Escape)이 전혀 감지되지 않는 현상 - openIssue_settingsEscapeKey 참고). 다음 세션에서 실제 빌드나 다른 테스트 경로로 재확인 필요."
   ]
 }

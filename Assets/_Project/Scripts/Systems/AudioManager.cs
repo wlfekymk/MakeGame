@@ -6,6 +6,8 @@ namespace MakeGame.Systems
     /// 게임 전역 사운드(효과음/배경음)를 재생하는 싱글턴 매니저.
     /// 별도의 오디오 에셋 파일 없이, ProceduralAudioClipGenerator로 런타임에 생성한 절차적 사운드
     /// (사인파 비프음/화음/노이즈 버스트/파도 앰비언트)를 사용한다.
+    /// 효과음/배경음 볼륨은 PlayerPrefs에 저장되어 게임을 다시 실행해도 유지된다
+    /// (volumePersistenceFix 참고 - 예전에는 필드에만 남아 있어 매번 기본값으로 리셋됐다).
     /// </summary>
     public class AudioManager : MonoBehaviour
     {
@@ -56,7 +58,25 @@ namespace MakeGame.Systems
             bgmSource.loop = true;
             bgmSource.playOnAwake = false;
 
+            // 버그 수정: 설정 화면에서 조절한 볼륨이 AudioManager 필드에만 저장되고 디스크에는 전혀
+            // 저장되지 않아, 게임을 다시 실행할 때마다 항상 기본값(효과음 0.7 / 배경음 0.3)으로
+            // 리셋되던 문제. PlayerPrefs에 저장된 값이 있으면 그 값으로 덮어써 이전 설정을 이어간다.
+            LoadVolumePrefs();
+
             BuildClips();
+        }
+
+        private const string SfxVolumePrefKey = "MakeGame_SfxVolume";
+        private const string BgmVolumePrefKey = "MakeGame_BgmVolume";
+
+        /// <summary>PlayerPrefs에 저장된 볼륨 값이 있으면 불러와 현재 값을 덮어쓴다. 저장된 적이 없으면 기본값을 유지한다.</summary>
+        private void LoadVolumePrefs()
+        {
+            if (PlayerPrefs.HasKey(SfxVolumePrefKey))
+                sfxVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(SfxVolumePrefKey));
+
+            if (PlayerPrefs.HasKey(BgmVolumePrefKey))
+                bgmVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(BgmVolumePrefKey));
         }
 
         /// <summary>플레이 시작과 동시에 파도 배경음을 재생한다.</summary>
@@ -155,6 +175,10 @@ namespace MakeGame.Systems
             bgmVolume = Mathf.Clamp01(value);
             if (bgmSource != null)
                 bgmSource.volume = bgmVolume;
+
+            // 버그 수정: 값을 바꿀 때마다 PlayerPrefs에도 저장해, 다음 실행 시 LoadVolumePrefs()가
+            // 이 값을 다시 불러올 수 있게 한다.
+            PlayerPrefs.SetFloat(BgmVolumePrefKey, bgmVolume);
         }
 
         /// <summary>
@@ -165,6 +189,10 @@ namespace MakeGame.Systems
         public void SetSfxVolume(float value)
         {
             sfxVolume = Mathf.Clamp01(value);
+
+            // 버그 수정: 값을 바꿀 때마다 PlayerPrefs에도 저장해, 다음 실행 시 LoadVolumePrefs()가
+            // 이 값을 다시 불러올 수 있게 한다.
+            PlayerPrefs.SetFloat(SfxVolumePrefKey, sfxVolume);
         }
     }
 }
