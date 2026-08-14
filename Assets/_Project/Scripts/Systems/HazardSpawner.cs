@@ -90,6 +90,10 @@ namespace MakeGame.Systems
             if (renderer != null)
                 renderer.sharedMaterial = StructureVisualBuilder.CreateColorMaterial(config.color);
 
+            // 퀄리티 개선: 몸통 하나짜리 프리미티브만으로는 위험 요소가 밋밋해 보여, 종류별로
+            // 알아볼 수 있는 작은 보조 파츠(눈, 벌떼 무리 등)를 덧붙인다.
+            AddDetailParts(go, type, config);
+
             var col = go.GetComponent<Collider>();
             if (col != null)
                 col.isTrigger = true;
@@ -98,6 +102,75 @@ namespace MakeGame.Systems
             hazard.hazardType = type;
             hazard.ConfigureForType(); // 종류(곰/식인종/벌떼 등)에 맞춰 전투 가능 여부와 체력을 설정한다.
             return hazard;
+        }
+
+        /// <summary>
+        /// 종류별로 몸통 프리미티브 하나로는 표현할 수 없던 디테일(눈, 벌떼 무리)을 자식 오브젝트로 추가한다.
+        /// 자식의 localScale은 부모의 비균일 localScale(config.localScale)로 나눠 보정해, 몸통이
+        /// 눌리거나 늘어난 축(예: 상어의 길쭉한 몸통)에서도 눈이 타원으로 찌그러지지 않고 둥글게 보이게 한다.
+        /// </summary>
+        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config)
+        {
+            Vector3 s = config.localScale;
+            Color darkEye = new Color(0.05f, 0.05f, 0.05f);
+
+            switch (type)
+            {
+                case HazardType.Bear:
+                case HazardType.Cannibal:
+                    // 몸통 캡슐 위쪽(머리 부근)에 작은 눈 두 개를 붙인다.
+                    AddCompensatedSphere(go, new Vector3(0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeL");
+                    AddCompensatedSphere(go, new Vector3(-0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeR");
+                    break;
+
+                case HazardType.Shark:
+                    // 상어는 눕혀서 배치되므로(로컬 Y가 몸통 진행 방향) 머리 쪽에 눈을 붙인다.
+                    AddCompensatedSphere(go, new Vector3(0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeL");
+                    AddCompensatedSphere(go, new Vector3(-0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeR");
+                    // 등지느러미: 작은 원뿔 대신 얇은 큐브로 단순하게 표현.
+                    AddCompensatedBox(go, new Vector3(0f, 0.1f, 0.32f), new Vector3(0.06f, 0.22f, 0.18f), s, config.color * 0.8f, "Fin");
+                    break;
+
+                case HazardType.BeeSwarm:
+                    // 공 하나가 아니라 작은 벌 여러 마리가 뭉쳐 있는 것처럼 보이도록 주변에 작은 구체를 흩뿌린다.
+                    // 버그 수정: Object.GetInstanceID()가 이 Unity 버전에서 컴파일 에러가 나는 Obsolete API로
+                    // 바뀌어(대체: GetEntityId, 하지만 씬 오브젝트 인스턴스마다 다른 시드만 필요하므로
+                    // 굳이 그 API를 쓸 필요가 없다) UnityEngine.Random을 직접 써서 씨앗 없이 매번 다른
+                    // 배치로 흩뿌리도록 바꿨다.
+                    for (int i = 0; i < 5; i++)
+                    {
+                        Vector3 offset = new Vector3(
+                            UnityEngine.Random.Range(-0.8f, 0.8f),
+                            UnityEngine.Random.Range(-0.8f, 0.8f),
+                            UnityEngine.Random.Range(-0.8f, 0.8f));
+                        AddCompensatedSphere(go, offset, 0.22f, s, config.color, $"Bee{i}");
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 구체 파츠를 만든다(둥근 형태 유지용).
+        /// </summary>
+        private void AddCompensatedSphere(GameObject parent, Vector3 localPos, float worldRadius, Vector3 parentScale, Color color, string name)
+        {
+            Vector3 compScale = new Vector3(
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.x),
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.y),
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.z));
+            StructureVisualBuilder.CreateVisualPart(parent.transform, name, PrimitiveType.Sphere, localPos, compScale, color);
+        }
+
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 박스 파츠를 만든다(지느러미 등 납작한 형태용).
+        /// </summary>
+        private void AddCompensatedBox(GameObject parent, Vector3 localPos, Vector3 worldSize, Vector3 parentScale, Color color, string name)
+        {
+            Vector3 compScale = new Vector3(
+                worldSize.x / Mathf.Max(0.0001f, parentScale.x),
+                worldSize.y / Mathf.Max(0.0001f, parentScale.y),
+                worldSize.z / Mathf.Max(0.0001f, parentScale.z));
+            StructureVisualBuilder.CreateVisualPart(parent.transform, name, PrimitiveType.Cube, localPos, compScale, color);
         }
 
         /// <summary>

@@ -171,12 +171,26 @@ namespace MakeGame.UI
         /// 프로그레스 바를 생성한다. 반환되는 Fill Image의 fillAmount(0~1)를 매 프레임 갱신하면
         /// 막대가 늘고 줄어드는 것처럼 보인다. HUD처럼 raw 숫자보다 한눈에 들어오는 시각 표시가
         /// 필요한 곳에서 쓴다.
+        /// 퀄리티 개선: 예전엔 각진 사각형 막대라 밋밋했다. 배경에 둥근 캡슐 9-slice 스프라이트
+        /// (bar_rounded)를 씌우고 Mask 컴포넌트를 달아, 안쪽 Fill 이미지가 그 캡슐 모양 그대로
+        /// 잘려서 보이게 했다(Fill 자체는 Filled 타입이라 9-slice를 직접 지원하지 않기 때문).
         /// </summary>
         public static Image CreateProgressBar(Transform parent, string name, Color backgroundColor, Color fillColor)
         {
-            var bgGo = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var bgGo = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             bgGo.transform.SetParent(parent, false);
-            bgGo.GetComponent<Image>().color = backgroundColor;
+            var bgImage = bgGo.GetComponent<Image>();
+            bgImage.color = backgroundColor;
+
+            var barSprite = Resources.Load<Sprite>("Sprites/bar_rounded");
+            if (barSprite != null)
+            {
+                bgImage.sprite = barSprite;
+                bgImage.type = Image.Type.Sliced;
+            }
+
+            var mask = bgGo.GetComponent<Mask>();
+            mask.showMaskGraphic = true; // 배경(트랙)도 그대로 보이면서, 자식 Fill만 이 캡슐 모양으로 클리핑한다
 
             var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             fillGo.transform.SetParent(bgGo.transform, false);

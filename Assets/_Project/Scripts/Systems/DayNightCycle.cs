@@ -27,9 +27,33 @@ namespace MakeGame.Systems
         [Tooltip("한밤중의 조명 색상 (푸르스름한 달빛)")]
         public Color nightColor = new Color(0.4f, 0.5f, 0.7f);
 
+        [Header("하늘(스카이박스) 색조")]
+        [Tooltip("낮 하늘의 색조 (Skybox/Procedural의 _SkyTint)")]
+        public Color daySkyTint = new Color(0.45f, 0.65f, 0.85f);
+
+        [Tooltip("노을 무렵 하늘의 색조")]
+        public Color duskDawnSkyTint = new Color(0.85f, 0.5f, 0.35f);
+
+        [Tooltip("밤하늘의 색조 (짙은 남색)")]
+        public Color nightSkyTint = new Color(0.05f, 0.06f, 0.12f);
+
+        [Tooltip("낮 하늘의 노출(밝기)")]
+        public float daySkyExposure = 1.15f;
+
+        [Tooltip("밤하늘의 노출(밝기) - 별이 반짝일 정도로 어둡게")]
+        public float nightSkyExposure = 0.15f;
+
         private Light sunLight;
         private SurvivalClock clock;
         private WeatherSystem weather;
+
+        /// <summary>
+        /// 런타임에만 색을 바꾸기 위해 원본(Default-Skybox 등 공유 에셋)을 복제한 인스턴스.
+        /// 공유 머티리얼을 직접 건드리면 다른 씬/에디터 상태에도 영향을 줄 수 있어 항상 복제본을 쓴다.
+        /// </summary>
+        private Material skyboxInstance;
+        private static readonly int SkyTintId = Shader.PropertyToID("_SkyTint");
+        private static readonly int ExposureId = Shader.PropertyToID("_Exposure");
 
         /// <summary>
         /// 버그 수정: 처음에는 RuntimeInitializeLoadType.AfterSceneLoad로 한 번만 생성했는데, 이
@@ -60,6 +84,19 @@ namespace MakeGame.Systems
             sunLight = FindDirectionalLight();
             clock = FindAnyObjectByType<SurvivalClock>();
             weather = FindAnyObjectByType<WeatherSystem>();
+
+            // 버그 수정: 그동안 태양광 색상/밝기만 낮밤에 맞춰 바뀌고 하늘(스카이박스)은 항상 기본값
+            // 그대로라, 조명은 붉게 물드는데 하늘은 계속 낮처럼 파랗게 보이는 어색함이 있었다.
+            // RenderSettings.skybox(기본 Skybox/Procedural)를 복제해 _SkyTint/_Exposure를 매 프레임
+            // 태양광과 같은 리듬으로 보간하면 노을/밤하늘까지 자연스럽게 이어진다.
+            if (RenderSettings.skybox != null)
+            {
+                skyboxInstance = new Material(RenderSettings.skybox);
+                if (skyboxInstance.HasProperty(SkyTintId))
+                    RenderSettings.skybox = skyboxInstance;
+                else
+                    skyboxInstance = null; // 지원하지 않는 셰이더면 건드리지 않고 그대로 둔다
+            }
         }
 
         /// <summary>
@@ -101,6 +138,20 @@ namespace MakeGame.Systems
             Color baseColor = Color.Lerp(nightColor, dayColor, dayFactor);
             float duskDawnBlend = 1f - Mathf.Abs(dayFactor - 0.5f) * 2f; // dayFactor=0.5 부근(여명/노을)에서 1에 가까워짐
             sunLight.color = Color.Lerp(baseColor, duskDawnColor, Mathf.Clamp01(duskDawnBlend) * 0.6f);
+
+            // 하늘도 태양광과 같은 dayFactor/duskDawnBlend 리듬으로 색조와 노출을 보간한다.
+            if (skyboxInstance != null)
+            {
+                Color baseSky = Color.Lerp(nightSkyTint, daySkyTint, dayFactor);
+                Color sky = Color.Lerp(baseSky, duskDawnSkyTint, Mathf.Clamp01(duskDawnBlend) * 0.6f);
+                skyboxInstance.SetColor(SkyTintId, sky);
+
+                if (skyboxInstance.HasProperty(ExposureId))
+                {
+                    float exposure = Mathf.Lerp(nightSkyExposure, daySkyExposure, dayFactor);
+                    skyboxInstance.SetFloat(ExposureId, exposure);
+                }
+            }
         }
     }
 }

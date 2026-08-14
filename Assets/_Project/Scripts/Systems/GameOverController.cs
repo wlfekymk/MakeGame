@@ -91,7 +91,9 @@ namespace MakeGame.Systems
             if (!isGameOver)
                 return;
 
-            GUI.color = new Color(0f, 0f, 0f, 0.75f);
+            // 배경 아트(밝은 섬 사진)는 일부러 넣지 않는다 - 사망 화면은 어둡고 무거운 톤이 맞다고 판단해
+            // 순수 검정 대신 아주 어두운 핏빛을 살짝 섞어 분위기만 보강했다.
+            GUI.color = new Color(0.12f, 0.02f, 0.02f, 0.85f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
 

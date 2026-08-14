@@ -102,13 +102,27 @@ namespace MakeGame.Systems
                 go.name = $"Creature_{entry.yieldItem.itemName}";
             }
 
+            Color bodyColor = entry.preferShoreline
+                ? new Color(0.35f, 0.55f, 0.65f) // 물고기: 청회색
+                : new Color(0.55f, 0.4f, 0.25f); // 육상 동물: 갈색
+
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
+                renderer.sharedMaterial = StructureVisualBuilder.CreateColorMaterial(bodyColor);
+
+            // 퀄리티 개선: 몸통 프리미티브 하나뿐이라 "어떤 생물인지" 형태로는 전혀 구분되지 않던 문제를
+            // 완화하기 위해 눈/꼬리지느러미 같은 작은 보조 파츠를 붙인다. 부모의 비균일 스케일 때문에
+            // 파츠가 타원으로 찌그러지지 않도록 로컬 스케일을 부모 스케일로 나눠 보정한다.
+            Vector3 s = go.transform.localScale;
+            if (entry.preferShoreline)
             {
-                Color color = entry.preferShoreline
-                    ? new Color(0.35f, 0.55f, 0.65f) // 물고기: 청회색
-                    : new Color(0.55f, 0.4f, 0.25f); // 육상 동물: 갈색
-                renderer.sharedMaterial = StructureVisualBuilder.CreateColorMaterial(color);
+                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0f, 0.1f, 0.4f), new Vector3(0.12f, 0.12f, 0.12f), s, new Color(0.05f, 0.05f, 0.05f), "Eye");
+                AddCompensated(go, PrimitiveType.Cube, new Vector3(0f, 0f, -0.55f), new Vector3(0.15f, 0.3f, 0.2f), s, bodyColor * 0.8f, "TailFin");
+            }
+            else
+            {
+                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeL");
+                AddCompensated(go, PrimitiveType.Sphere, new Vector3(-0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeR");
             }
 
             var creature = go.AddComponent<HuntableCreature>();
@@ -117,6 +131,20 @@ namespace MakeGame.Systems
             creature.successChance = entry.successChance;
             creature.respawnSeconds = entry.respawnSeconds;
             return creature;
+        }
+
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 보조 파츠(눈, 꼬리지느러미 등)를 만든다.
+        /// worldSize를 부모 localScale로 나눠 자식의 localScale로 지정하면, 부모가 아무리
+        /// 눌리거나 늘어나 있어도(예: 납작한 물고기) 파츠가 세계 좌표 기준으로 의도한 크기로 보인다.
+        /// </summary>
+        private void AddCompensated(GameObject parent, PrimitiveType primitive, Vector3 localPos, Vector3 worldSize, Vector3 parentScale, Color color, string name)
+        {
+            Vector3 compScale = new Vector3(
+                worldSize.x / Mathf.Max(0.0001f, parentScale.x),
+                worldSize.y / Mathf.Max(0.0001f, parentScale.y),
+                worldSize.z / Mathf.Max(0.0001f, parentScale.z));
+            StructureVisualBuilder.CreateVisualPart(parent.transform, name, primitive, localPos, compScale, color);
         }
 
         /// <summary>

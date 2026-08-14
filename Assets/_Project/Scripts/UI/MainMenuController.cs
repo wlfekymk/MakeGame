@@ -31,6 +31,12 @@ namespace MakeGame.UI
         public bool isMenuOpen = true;
 
         /// <summary>
+        /// 타이틀 화면 배경 이미지 (Resources/UI/title_background.png, 섬 컨셉 아트).
+        /// 그동안 단색 배경만 써서 밋밋했던 문제를 개선한다. 로드 실패 시 기존 단색 배경으로 자동 대체된다.
+        /// </summary>
+        private Texture2D backgroundTexture;
+
+        /// <summary>
         /// 시작하자마자 조작을 막고 시간을 멈춰 타이틀 화면 상태로 진입한다.
         /// 섬/월드 생성(WorldMapManager 등)은 Time.timeScale과 무관하게 Awake/Start에서 그대로 진행되므로,
         /// 플레이어가 "시작하기"를 누르는 순간 이미 준비된 월드로 바로 들어갈 수 있다.
@@ -42,6 +48,9 @@ namespace MakeGame.UI
 
             SetGameplayEnabled(false);
             Time.timeScale = 0f;
+
+            // 타이틀 배경 이미지를 미리 한 번만 로드해둔다 (OnGUI에서 매 프레임 Resources.Load하지 않도록).
+            backgroundTexture = Resources.Load<Texture2D>("UI/title_background");
         }
 
         /// <summary>
@@ -87,9 +96,23 @@ namespace MakeGame.UI
             if (!isMenuOpen)
                 return;
 
-            GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.92f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
+            var fullScreen = new Rect(0, 0, Screen.width, Screen.height);
+            if (backgroundTexture != null)
+            {
+                // 섬 컨셉 아트를 화면 전체에 꽉 채워 그리고(ScaleAndCrop, 비율 유지하며 잘라내기),
+                // 그 위에 반투명 어두운 오버레이를 덮어 글자 가독성을 확보한다.
+                GUI.DrawTexture(fullScreen, backgroundTexture, ScaleMode.ScaleAndCrop);
+                GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.55f);
+                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
+            else
+            {
+                // 배경 이미지를 못 불러온 경우(임포트 실패 등) 기존처럼 단색 배경으로 대체한다.
+                GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.92f);
+                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
 
             if (settingsMenu != null && settingsMenu.isOpen)
             {

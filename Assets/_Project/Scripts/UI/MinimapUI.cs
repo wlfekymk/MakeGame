@@ -39,11 +39,15 @@ namespace MakeGame.UI
         [Tooltip("레이더 패널의 한 변 크기(픽셀)")]
         public float radarPanelSize = 160f;
 
-        /// <summary>섬 하나에 대응하는 레이더 위 점(dot) UI.</summary>
+        /// <summary>섬 하나에 대응하는 레이더 위 점(dot) UI.
+        /// 퀄리티 개선: 예전에는 sprite 없는 사각형 Image 하나뿐이라 배경 대비가 약하고 사각형으로 보였다.
+        /// 이제 원형 스프라이트(radar_dot)를 쓰고, 그 아래 흰 테두리 링(radar_ring)을 겹쳐 어떤 색 점이든
+        /// 배경과 또렷하게 구분되게 한다.</summary>
         private class RadarDot
         {
             public RectTransform rt;
             public Image image;
+            public RectTransform borderRt;
         }
 
         /// <summary>섬 목록 패널의 한 줄(정보 텍스트 + 이동 버튼)을 구성하는 UI 요소.</summary>
@@ -56,6 +60,9 @@ namespace MakeGame.UI
 
         private RectTransform radarDotsLayer;
         private readonly List<RadarDot> radarDotPool = new List<RadarDot>();
+
+        /// <summary>플레이어 자신을 나타내는 레이더 중심 화살표. 시선(Y축 회전)에 맞춰 매 프레임 돌아간다.</summary>
+        private RectTransform playerArrowRt;
 
         private GameObject listPanelRoot;
         private RectTransform listContainer;
@@ -111,11 +118,23 @@ namespace MakeGame.UI
             radarDotsLayer.anchoredPosition = Vector2.zero;
             radarDotsLayer.sizeDelta = Vector2.zero;
 
-            // 레이더 중심의 플레이어 표시(고정 점).
-            var playerDot = UIBuilder.CreateIcon(radarDotsLayer, "PlayerDot", 8f, Color.white, "");
+            // 레이더 중심의 플레이어 표시.
+            // 퀄리티 개선: 예전엔 방향 정보가 전혀 없는 흰 사각형이라 "어느 쪽을 보고 있는지" 알 수 없었다.
+            // 삼각 화살표 스프라이트(player_arrow)로 바꾸고, RefreshRadar에서 플레이어 Y축 회전에 맞춰
+            // 매 프레임 돌려서 현재 시선/이동 방향을 레이더에서도 바로 파악할 수 있게 한다.
+            var playerDot = UIBuilder.CreateIcon(radarDotsLayer, "PlayerDot", 14f, Color.white, "");
             playerDot.anchorMin = new Vector2(0.5f, 0.5f);
             playerDot.anchorMax = new Vector2(0.5f, 0.5f);
             playerDot.anchoredPosition = Vector2.zero;
+            var arrowSprite = Resources.Load<Sprite>("Sprites/player_arrow");
+            var playerImage = playerDot.GetComponent<Image>();
+            if (arrowSprite != null && playerImage != null)
+            {
+                playerImage.sprite = arrowSprite;
+                playerImage.type = Image.Type.Simple;
+                playerImage.preserveAspect = true;
+            }
+            playerArrowRt = playerDot;
         }
 
         /// <summary>
@@ -126,6 +145,12 @@ namespace MakeGame.UI
         {
             if (worldMapManager == null || player == null || radarDotsLayer == null)
                 return;
+
+            // 플레이어 화살표를 실제 시선 방향(Y축 회전)에 맞춰 돌린다.
+            // UI의 RectTransform Z축 회전은 반시계 방향이 양수라, 시계 방향으로 도는 Y축 오일러각과
+            // 부호가 반대라서 -player.eulerAngles.y를 넣어야 화면상 방향이 실제 회전과 일치한다.
+            if (playerArrowRt != null)
+                playerArrowRt.localEulerAngles = new Vector3(0f, 0f, -player.eulerAngles.y);
 
             var islands = worldMapManager.islands;
             EnsureRadarDotCount(islands.Count);
@@ -146,21 +171,59 @@ namespace MakeGame.UI
                 dot.rt.anchoredPosition = offset;
                 dot.rt.gameObject.SetActive(true);
                 dot.image.color = GetIslandDotColor(island);
+
+                // 테두리 링은 점과 같은 위치를 따라가되 항상 흰색으로 고정해, 어떤 점 색이든
+                // 어두운 레이더 배경과 대비되도록 한다.
+                if (dot.borderRt != null)
+                {
+                    dot.borderRt.anchoredPosition = offset;
+                    dot.borderRt.gameObject.SetActive(true);
+                }
             }
 
             for (int i = islands.Count; i < radarDotPool.Count; i++)
+            {
                 radarDotPool[i].rt.gameObject.SetActive(false);
+                if (radarDotPool[i].borderRt != null)
+                    radarDotPool[i].borderRt.gameObject.SetActive(false);
+            }
         }
 
-        /// <summary>레이더 점 풀의 개수가 부족하면 필요한 만큼 새로 만든다.</summary>
+        /// <summary>레이더 점 풀의 개수가 부족하면 필요한 만큼 새로 만든다.
+        /// 퀄리티 개선: 예전엔 sprite 없는 사각형 Image라 배경과 잘 구분되지 않았다. 이제 원형 스프라이트
+        /// (radar_dot)로 점을 그리고, 그 뒤에 한 단계 더 큰 흰 테두리 링(radar_ring)을 깔아 항상 또렷하게
+        /// 보이게 한다.</summary>
         private void EnsureRadarDotCount(int count)
         {
+            var dotSprite = Resources.Load<Sprite>("Sprites/radar_dot");
+            var ringSprite = Resources.Load<Sprite>("Sprites/radar_ring");
+
             while (radarDotPool.Count < count)
             {
+                // 테두리 링을 점보다 먼저 만들어 형제 순서상 뒤에 깔리게 한다(점이 그 위에 그려짐).
+                var borderRt = UIBuilder.CreateIcon(radarDotsLayer, $"DotBorder{radarDotPool.Count}", 9f, new Color(1f, 1f, 1f, 0.9f), "");
+                borderRt.anchorMin = new Vector2(0.5f, 0.5f);
+                borderRt.anchorMax = new Vector2(0.5f, 0.5f);
+                var borderImage = borderRt.GetComponent<Image>();
+                if (ringSprite != null && borderImage != null)
+                {
+                    borderImage.sprite = ringSprite;
+                    borderImage.type = Image.Type.Simple;
+                    borderImage.preserveAspect = true;
+                }
+
                 var iconRt = UIBuilder.CreateIcon(radarDotsLayer, $"Dot{radarDotPool.Count}", 6f, Color.gray, "");
                 iconRt.anchorMin = new Vector2(0.5f, 0.5f);
                 iconRt.anchorMax = new Vector2(0.5f, 0.5f);
-                radarDotPool.Add(new RadarDot { rt = iconRt, image = iconRt.GetComponent<Image>() });
+                var dotImage = iconRt.GetComponent<Image>();
+                if (dotSprite != null && dotImage != null)
+                {
+                    dotImage.sprite = dotSprite;
+                    dotImage.type = Image.Type.Simple;
+                    dotImage.preserveAspect = true;
+                }
+
+                radarDotPool.Add(new RadarDot { rt = iconRt, image = dotImage, borderRt = borderRt });
             }
         }
 

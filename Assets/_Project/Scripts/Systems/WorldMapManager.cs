@@ -171,13 +171,30 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 바다 평면에 사용할 기본 파란색 URP Lit 머티리얼을 만든다.
+        /// 바다 평면에 사용할 파란색 URP Lit 머티리얼을 만든다.
+        /// 버그 수정: 그동안 완전 단색 평면이라 거대한 바다가 하나의 색종이처럼 밋밋하게 보였다.
+        /// 물결 느낌의 흑백 그레인 텍스처(Resources/Textures/water.png)를 곱해 씌우고, 매끈하고
+        /// 살짝 금속성 있는 표면(Smoothness/Metallic)으로 설정해 햇빛이 비칠 때 반짝이는 느낌을 준다.
         /// </summary>
         private Material CreateOceanMaterial()
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = new Color(0.1f, 0.35f, 0.55f);
+
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.85f);
+            if (material.HasProperty("_Metallic"))
+                material.SetFloat("_Metallic", 0.15f);
+
+            var waterTexture = Resources.Load<Texture2D>("Textures/water");
+            if (waterTexture != null)
+            {
+                material.mainTexture = waterTexture;
+                // 바다 평면이 아주 크므로(oceanSize 단위) 촘촘하게 반복시켜야 잔물결처럼 보인다.
+                // 밉맵이 켜져 있어(streamingMipmaps 등) 이 정도 반복에서도 far distance 노이즈/모아레는 완화된다.
+                material.mainTextureScale = new Vector2(oceanSize / 10f, oceanSize / 10f);
+            }
             return material;
         }
 

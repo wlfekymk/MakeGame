@@ -37,10 +37,22 @@ namespace MakeGame.Systems
         /// <summary>현재 비가 오고 있는지 여부. DayNightCycle이 태양광 밝기 계산에 참고한다.</summary>
         public bool IsRaining { get; private set; }
 
+        [Header("퀄리티 개선: 비 오는 동안의 안개")]
+        [Tooltip("비가 올 때 켤 안개 색(축축하고 뿌연 느낌)")]
+        public Color rainFogColor = new Color(0.55f, 0.6f, 0.65f, 1f);
+
+        [Tooltip("비가 올 때 안개 밀도. 너무 높으면 시야가 답답해지므로 낮게 유지")]
+        public float rainFogDensity = 0.012f;
+
         private float phaseTimer;
         private float phaseDuration;
         private ParticleSystem rainParticles;
         private Transform followTarget;
+
+        // 맑은 날씨로 돌아왔을 때 원래 안개 설정을 복원하기 위한 캐시.
+        private bool originalFogEnabled;
+        private Color originalFogColor;
+        private float originalFogDensity;
 
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 WeatherSystem을 생성한다.
@@ -60,6 +72,11 @@ namespace MakeGame.Systems
         {
             var cam = Camera.main;
             followTarget = cam != null ? cam.transform : null;
+
+            // 비가 그친 뒤 원래 안개 상태로 정확히 되돌리기 위해, 게임 시작 시점의 안개 설정을 기억해 둔다.
+            originalFogEnabled = RenderSettings.fog;
+            originalFogColor = RenderSettings.fogColor;
+            originalFogDensity = RenderSettings.fogDensity;
 
             BuildRainParticles();
             StartClearPhase();
@@ -88,7 +105,9 @@ namespace MakeGame.Systems
             main.startLifetime = 1.5f;
             main.startSpeed = 2f;
             main.gravityModifier = 3f;
-            main.startSize = 0.05f;
+            // 퀄리티 개선: 입자 크기를 고정값 하나가 아니라 범위(Min-Max Curve)로 줘서
+            // 굵은 빗줄기/가는 빗줄기가 섞여 보이게 해 단조로움을 줄인다.
+            main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.09f);
             main.startColor = new Color(0.75f, 0.82f, 0.92f, 0.55f);
             main.maxParticles = 1500;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
@@ -108,6 +127,13 @@ namespace MakeGame.Systems
                     shader = Shader.Find("Sprites/Default"); // URP에서도 안전하게 동작하는 대체 셰이더
                 if (shader != null)
                     renderer.material = new Material(shader);
+
+                // 퀄리티 개선: 예전엔 둥근 점(Billboard)이라 정지된 빗방울처럼 보였다.
+                // Stretched Billboard로 바꾸면 낙하 속도에 비례해 입자가 세로로 길게 늘어나
+                // 실제 빗줄기처럼 보인다. lengthScale을 키워 속도감을 더 강조했다.
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.velocityScale = 0.12f;
+                renderer.lengthScale = 3.5f;
             }
 
             rainParticles.Stop();
@@ -144,6 +170,11 @@ namespace MakeGame.Systems
             if (rainParticles != null)
                 rainParticles.Stop();
 
+            // 퀄리티 개선: 비가 그치면 게임 시작 시점의 원래 안개 설정으로 정확히 되돌린다.
+            RenderSettings.fog = originalFogEnabled;
+            RenderSettings.fogColor = originalFogColor;
+            RenderSettings.fogDensity = originalFogDensity;
+
             AudioManager.Instance?.StopRainAmbient();
         }
 
@@ -159,6 +190,13 @@ namespace MakeGame.Systems
 
             if (rainParticles != null)
                 rainParticles.Play();
+
+            // 퀄리티 개선: 비가 오는 동안 얕은 안개를 깔아 습하고 흐린 분위기를 더한다.
+            // Exponential 모드를 써서 가까운 곳은 선명하고 먼 곳만 서서히 뿌옇게 가려지게 한다.
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Exponential;
+            RenderSettings.fogColor = rainFogColor;
+            RenderSettings.fogDensity = rainFogDensity;
 
             AudioManager.Instance?.StartRainAmbient();
         }

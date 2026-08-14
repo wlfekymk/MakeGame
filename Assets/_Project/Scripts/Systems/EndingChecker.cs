@@ -33,6 +33,13 @@ namespace MakeGame.Systems
         [Tooltip("엔딩 연출 화면에서 계속 진행하는 키")]
         public KeyCode continueKey = KeyCode.Space;
 
+        /// <summary>
+        /// 승리 화면 배경 이미지 (타이틀 화면과 동일한 섬 컨셉 아트, Resources/UI/title_background.png).
+        /// OnGUI에서 최초 1회만 로드해 캐싱한다(널이면 아직 안 불렀거나 로드 실패 - 이 경우 기존 단색 배경 유지).
+        /// </summary>
+        private Texture2D backgroundTexture;
+        private bool backgroundLoadAttempted;
+
         [Header("탈출에 필요한 비축 물자")]
         [Tooltip("상하지 않는 비축 식량 아이템 (없으면 식량 조건을 검사하지 않는다)")]
         public ItemData nonPerishableFoodItem;
@@ -152,9 +159,27 @@ namespace MakeGame.Systems
             if (!showEndingUI)
                 return;
 
-            GUI.color = new Color(0f, 0f, 0f, 0.75f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
+            if (!backgroundLoadAttempted)
+            {
+                backgroundTexture = Resources.Load<Texture2D>("UI/title_background");
+                backgroundLoadAttempted = true;
+            }
+
+            var fullScreen = new Rect(0, 0, Screen.width, Screen.height);
+            if (backgroundTexture != null)
+            {
+                // 탈출에 성공했으니 떠나온 섬을 배경으로 보여주고, 금색 톤 오버레이로 축하 분위기를 낸다.
+                GUI.DrawTexture(fullScreen, backgroundTexture, ScaleMode.ScaleAndCrop);
+                GUI.color = new Color(0.25f, 0.15f, 0f, 0.6f);
+                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
+            else
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.75f);
+                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
 
             var titleStyle = new GUIStyle(GUI.skin.label)
             {

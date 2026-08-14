@@ -104,11 +104,11 @@ namespace MakeGame.UI
             sunstrokeBaseColor = new Color(0.9f, 0.75f, 0.2f, 1f);
             oxygenBaseColor = new Color(0.3f, 0.85f, 0.8f, 1f);
 
-            healthFill = CreateStatBar(panel, "체력", healthBaseColor);
-            hungerFill = CreateStatBar(panel, "허기", hungerBaseColor);
-            thirstFill = CreateStatBar(panel, "갈증", thirstBaseColor);
-            sunstrokeFill = CreateStatBar(panel, "일사병", sunstrokeBaseColor);
-            oxygenFill = CreateStatBar(panel, "산소", oxygenBaseColor);
+            healthFill = CreateStatBar(panel, "체력", healthBaseColor, "stat_health");
+            hungerFill = CreateStatBar(panel, "허기", hungerBaseColor, "stat_hunger");
+            thirstFill = CreateStatBar(panel, "갈증", thirstBaseColor, "stat_thirst");
+            sunstrokeFill = CreateStatBar(panel, "일사병", sunstrokeBaseColor, "stat_sunstroke");
+            oxygenFill = CreateStatBar(panel, "산소", oxygenBaseColor, "stat_oxygen");
 
             // 상태 이상 아이콘 줄: 평소엔 숨겨져 있다가 중독/출혈/골절 상태일 때만 나타난다.
             var statusRowGo = new GameObject("StatusRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
@@ -120,9 +120,9 @@ namespace MakeGame.UI
             statusHlg.childForceExpandHeight = true;
             statusHlg.childAlignment = TextAnchor.MiddleLeft;
 
-            poisonIcon = CreateStatusIcon(statusRowGo.transform, "중독", new Color(0.5f, 0.85f, 0.2f, 1f));
-            bleedingIcon = CreateStatusIcon(statusRowGo.transform, "출혈", new Color(0.8f, 0.1f, 0.1f, 1f));
-            brokenBoneIcon = CreateStatusIcon(statusRowGo.transform, "골절", new Color(0.8f, 0.8f, 0.8f, 1f));
+            poisonIcon = CreateStatusIcon(statusRowGo.transform, "중독", new Color(0.5f, 0.85f, 0.2f, 1f), "status_poison");
+            bleedingIcon = CreateStatusIcon(statusRowGo.transform, "출혈", new Color(0.8f, 0.1f, 0.1f, 1f), "status_bleeding");
+            brokenBoneIcon = CreateStatusIcon(statusRowGo.transform, "골절", new Color(0.8f, 0.8f, 0.8f, 1f), "status_broken_bone");
 
             boatLabel = UIBuilder.CreateText(panel, "BoatLabel", "", 13, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
             boatLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
@@ -132,9 +132,12 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// "라벨 + 가로 막대"로 구성된 수치 한 줄을 만들고, 매 프레임 갱신할 Fill Image를 반환한다.
+        /// "글리프 아이콘 + 라벨 + 가로 막대"로 구성된 수치 한 줄을 만들고, 매 프레임 갱신할 Fill Image를 반환한다.
+        /// 퀄리티 개선: 예전엔 텍스트 라벨만 있어 한눈에 어떤 수치인지 알아보려면 글자를 읽어야 했다.
+        /// Resources/Sprites의 글리프 아이콘(스프라이트 이름은 iconSpriteName)을 막대 색으로 틴트해
+        /// 라벨 왼쪽에 붙이면, 색+아이콘 조합만으로도 바로 구분된다.
         /// </summary>
-        private Image CreateStatBar(Transform parent, string label, Color fillColor)
+        private Image CreateStatBar(Transform parent, string label, Color fillColor, string iconSpriteName)
         {
             var rowGo = new GameObject($"Row_{label}", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
             rowGo.transform.SetParent(parent, false);
@@ -145,8 +148,19 @@ namespace MakeGame.UI
             hlg.childForceExpandHeight = true;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
+            var iconRt = UIBuilder.CreateIcon(rowGo.transform, "Icon", 16f, Color.clear, "");
+            var iconImage = iconRt.GetComponent<Image>();
+            var iconSprite = Resources.Load<Sprite>($"Sprites/{iconSpriteName}");
+            if (iconSprite != null && iconImage != null)
+            {
+                iconImage.sprite = iconSprite;
+                iconImage.color = fillColor;
+                iconImage.type = Image.Type.Simple;
+                iconImage.preserveAspect = true;
+            }
+
             var labelText = UIBuilder.CreateText(rowGo.transform, "Label", label, 12, Color.white, TextAnchor.MiddleLeft);
-            labelText.gameObject.AddComponent<LayoutElement>().preferredWidth = 44f;
+            labelText.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
 
             var barFill = UIBuilder.CreateProgressBar(rowGo.transform, "Bar", new Color(1f, 1f, 1f, 0.15f), fillColor);
             var barLayout = barFill.transform.parent.gameObject.AddComponent<LayoutElement>();
@@ -174,10 +188,22 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 상태 이상 하나를 나타내는 작은 아이콘을 만들되, 기본적으로는 비활성화(숨김) 상태로 둔다.
+        /// 퀄리티 개선: 예전엔 색 배경 + 첫 글자(중/출/골) 조합이라 작은 크기에서 글자가 뭉개져 잘
+        /// 안 읽혔다. 해골/핏방울/뼈 글리프로 바꿔 글자 없이도 상태를 구분할 수 있게 했다.
         /// </summary>
-        private GameObject CreateStatusIcon(Transform parent, string label, Color color)
+        private GameObject CreateStatusIcon(Transform parent, string label, Color color, string iconSpriteName)
         {
-            var icon = UIBuilder.CreateIcon(parent, $"Status_{label}", 18f, color, label.Substring(0, 1));
+            var icon = UIBuilder.CreateIcon(parent, $"Status_{label}", 18f, color, "");
+            var iconSprite = Resources.Load<Sprite>($"Sprites/{iconSpriteName}");
+            var image = icon.GetComponent<Image>();
+            if (iconSprite != null && image != null)
+            {
+                // 알파가 있는 글리프라 배경은 자연히 투명해지고, color는 그대로 카테고리 색으로 유지해
+                // 해골(중독)/핏방울(출혈)/뼈(골절)가 각자 지정된 색으로 그려지게 한다.
+                image.sprite = iconSprite;
+                image.type = Image.Type.Simple;
+                image.preserveAspect = true;
+            }
             icon.gameObject.SetActive(false);
             return icon.gameObject;
         }
