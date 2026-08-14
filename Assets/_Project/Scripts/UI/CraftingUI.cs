@@ -118,7 +118,8 @@ namespace MakeGame.UI
         {
             var blockGo = new GameObject($"Row_{recipe.recipeName}", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
             blockGo.transform.SetParent(listContainer, false);
-            blockGo.GetComponent<LayoutElement>().minHeight = 58f;
+            bool hasDescription = !string.IsNullOrEmpty(recipe.description);
+            blockGo.GetComponent<LayoutElement>().minHeight = hasDescription ? 74f : 58f;
 
             var blockVlg = blockGo.GetComponent<VerticalLayoutGroup>();
             blockVlg.childForceExpandWidth = true;
@@ -147,6 +148,26 @@ namespace MakeGame.UI
             var row = new RecipeRow { recipe = recipe, nameLabel = nameLabel };
             row.button = UIBuilder.CreateButton(headerGo.transform, "CraftButton", "제작", () => craftingSystem?.TryCraft(recipe));
             row.button.gameObject.AddComponent<LayoutElement>().preferredWidth = 60f;
+
+            // 버그 수정: CraftingRecipe.description이 그동안 어떤 UI에도 표시되지 않는 죽은 데이터였다.
+            // 헤더(이름+버튼) 아래, 재료 칩 위에 작은 회색 글씨로 레시피 설명을 한 줄 보여준다.
+            // 설명이 없는 레시피는 이 줄 자체를 만들지 않아 불필요한 빈 공간이 생기지 않게 한다.
+            // 재료 줄(materialsHlg)과 동일하게, 패딩을 주는 HorizontalLayoutGroup으로 감싸 위 아이콘과
+            // 시작 위치를 맞춘다 (VerticalLayoutGroup 자식은 RectTransform을 직접 만지면 레이아웃이
+            // 다시 계산될 때 덮어써지므로, 패딩은 반드시 LayoutGroup의 padding으로 줘야 한다).
+            if (hasDescription)
+            {
+                var descRowGo = new GameObject("DescriptionRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+                descRowGo.transform.SetParent(blockGo.transform, false);
+                descRowGo.GetComponent<LayoutElement>().minHeight = 14f;
+                var descHlg = descRowGo.GetComponent<HorizontalLayoutGroup>();
+                descHlg.childForceExpandWidth = true;
+                descHlg.childForceExpandHeight = true;
+                descHlg.padding = new RectOffset(30, 0, 0, 0);
+
+                UIBuilder.CreateText(descRowGo.transform, "Description", recipe.description, 11,
+                    new Color(0.75f, 0.75f, 0.75f, 1f), TextAnchor.UpperLeft);
+            }
 
             // ② 재료 줄: 재료마다 작은 아이콘 + "이름x개수" 칩. 보유량이 부족하면 빨간색으로 표시된다.
             var materialsGo = new GameObject("Materials", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));

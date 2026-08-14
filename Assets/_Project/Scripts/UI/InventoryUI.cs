@@ -41,13 +41,14 @@ namespace MakeGame.UI
         // 필터 인덱스 0은 "전체"를 뜻하고, 1부터는 ItemCategory 값 + 1에 대응한다.
         private int currentFilterIndex = 0;
 
-        /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트)을 구성하는 UI 요소 묶음.</summary>
+        /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트 + 설명 텍스트)을 구성하는 UI 요소 묶음.</summary>
         private class ItemRow
         {
             public GameObject rowGo;
             public Image icon;
             public Text letterLabel;
             public Text nameCountLabel;
+            public Text descLabel;
         }
 
         private GameObject panelRoot;
@@ -231,6 +232,7 @@ namespace MakeGame.UI
                 rowPool[0].icon.gameObject.SetActive(false);
                 rowPool[0].nameCountLabel.text = filterActive ? "(이 카테고리에 해당하는 아이템 없음)" : "(비어 있음)";
                 rowPool[0].nameCountLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+                rowPool[0].descLabel.text = "";
                 rowPool[0].rowGo.SetActive(true);
                 for (int i = 1; i < rowPool.Count; i++)
                     rowPool[i].rowGo.SetActive(false);
@@ -250,6 +252,11 @@ namespace MakeGame.UI
                 string usesInfo = data.IsUnlimited ? "" : $" (최대 {data.maxUses}회 사용)";
                 row.nameCountLabel.text = $"{data.itemName}  x{count}{usesInfo}";
                 row.nameCountLabel.color = Color.white;
+
+                // 버그 수정: ItemData.description이 그동안 어떤 UI에도 표시되지 않는 죽은 데이터였다.
+                // 이름/개수 아래에 작은 회색 글씨로 설명을 함께 보여줘, 이미 작성해둔 아이템 설명이
+                // 실제로 플레이어에게 전달되게 한다.
+                row.descLabel.text = string.IsNullOrEmpty(data.description) ? "" : data.description;
                 row.rowGo.SetActive(true);
             }
             for (int i = orderBuffer.Count; i < rowPool.Count; i++)
@@ -266,14 +273,15 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 아이콘(카테고리 색상 + 이름 첫 글자) + "이름 x개수" 텍스트로 구성된 한 줄을 생성한다.
-        /// 짝수/홀수 행마다 배경을 살짝 다르게 칠해 가독성을 높인다(줄무늬 배경).
+        /// 아이콘(카테고리 색상 + 이름 첫 글자) + "이름 x개수" 텍스트 + 설명 텍스트(작은 회색 글씨)로
+        /// 구성된 한 줄을 생성한다. 짝수/홀수 행마다 배경을 살짝 다르게 칠해 가독성을 높인다(줄무늬 배경).
+        /// 이름/개수와 설명을 세로로 쌓기 위해, 아이콘 옆에 수직 레이아웃 컨테이너를 하나 더 둔다.
         /// </summary>
         private ItemRow CreateRow(int index)
         {
             var rowGo = new GameObject($"Row{index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
             rowGo.transform.SetParent(listContainer, false);
-            rowGo.GetComponent<LayoutElement>().minHeight = 28f;
+            rowGo.GetComponent<LayoutElement>().minHeight = 42f;
             rowGo.GetComponent<Image>().color = index % 2 == 0
                 ? new Color(1f, 1f, 1f, 0.04f)
                 : new Color(1f, 1f, 1f, 0f);
@@ -289,10 +297,23 @@ namespace MakeGame.UI
             var icon = iconRt.GetComponent<Image>();
             var letterLabel = iconRt.Find("Letter").GetComponent<Text>();
 
-            var nameCountLabel = UIBuilder.CreateText(rowGo.transform, "NameCount", "", 16, Color.white, TextAnchor.MiddleLeft);
-            nameCountLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            // 이름/개수(위) + 설명(아래)을 세로로 쌓는 컨테이너.
+            var textColGo = new GameObject("TextColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+            textColGo.transform.SetParent(rowGo.transform, false);
+            textColGo.GetComponent<LayoutElement>().flexibleWidth = 1f;
+            var vlg = textColGo.GetComponent<VerticalLayoutGroup>();
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.spacing = 1f;
+            vlg.childAlignment = TextAnchor.MiddleLeft;
 
-            return new ItemRow { rowGo = rowGo, icon = icon, letterLabel = letterLabel, nameCountLabel = nameCountLabel };
+            var nameCountLabel = UIBuilder.CreateText(textColGo.transform, "NameCount", "", 16, Color.white, TextAnchor.MiddleLeft);
+
+            // 버그 수정: ItemData.description이 지금까지 어떤 UI에도 노출되지 않던 죽은 데이터였다.
+            // 이름 아래에 작은 회색 글씨로 설명을 표시해, 이미 작성된 아이템 설명을 실제로 보여준다.
+            var descLabel = UIBuilder.CreateText(textColGo.transform, "Desc", "", 11, new Color(0.75f, 0.75f, 0.75f, 1f), TextAnchor.MiddleLeft);
+
+            return new ItemRow { rowGo = rowGo, icon = icon, letterLabel = letterLabel, nameCountLabel = nameCountLabel, descLabel = descLabel };
         }
     }
 }

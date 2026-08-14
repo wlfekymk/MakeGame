@@ -532,6 +532,15 @@
       "summary": "#139~146 배치에서 수정한 4개 스크립트(SurvivalStats, SurvivalTickDriver, DayNightCycle, SurvivalClock)의 최종 컴파일/와이어링 상태를 재검증했다.",
       "findings": "Assets>Refresh로 재컴파일한 뒤 Console 에러/경고/메시지 카운트가 모두 0임을 확인했다. Play 모드에서 타이틀 화면 → 시작하기까지 재실행해 새 일사병 로직/밤낮 주기가 예외 없이 동작함을 확인했다. 특히 '사망 → 재시작' 절차를 두 번(수정 전/후) 반복 실행해 DayNightCycle 소실 버그의 재현과 해결을 모두 라이브로 검증했다. git status로 이번 배치에서 실제로 건드린 파일이 의도한 4개 스크립트 + README + story_dictionary.json뿐임을 확인했다.",
       "result": "컴파일/와이어링 이상 없음. 커밋 준비 완료."
+    },
+    "batch149to150ItemDescriptionUI": {
+      "summary": "ItemData.description / CraftingRecipe.description이 어떤 UI에도 표시되지 않던 죽은 데이터 문제를 인벤토리/제작 UI에 표시를 추가해 해결",
+      "findings": [
+        "InventoryUI: ItemRow에 descLabel(회색, 11pt) 추가, 아이템명 아래 두 번째 줄로 표시. minHeight 28->42.",
+        "CraftingUI: 헤더(이름+버튼) 아래, 재료 칩 위에 DescriptionRow(HorizontalLayoutGroup padding=30,0,0,0)로 회색 11pt 텍스트 표시. 설명 없는 레시피는 행 자체를 생략. block minHeight 58->74(설명 있을 때만).",
+        "VerticalLayoutGroup 자식 RectTransform은 직접 offsetMin을 만지면 레이아웃 재계산 시 덮어써지므로, 들여쓰기는 반드시 LayoutGroup.padding으로 처리해야 함(기존 materialsHlg 패턴과 동일하게 통일)."
+      ],
+      "result": "Play 모드 라이브 검증 완료: 인벤토리(Tab)와 제작(V) UI 모두 설명 텍스트가 정상 렌더링됨을 확대 스크린샷으로 확인. 컴파일 0 에러/0 경고. 사망(Health=0 강제)->재시작(R) 후 CraftingCanvas/InventoryCanvas/DayNightCycle 모두 정확히 1개씩 재생성되어 중복/소실 없음을 재확인."
     }
   },
   "gameplaySystems": {
