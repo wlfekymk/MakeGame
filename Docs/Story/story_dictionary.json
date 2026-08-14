@@ -402,6 +402,18 @@
       "summary": "#89~95 배치(아이템 감사, 위험요소, 사운드, 엔딩 UI, 미니맵/섬 이동, 뗏목 이동범위)에서 수정한 6개 스크립트(PlayerInventory, Campfire, HuntableCreature, InteractionController, IslandTravel, MinimapUI, ItemData)의 최종 컴파일/와이어링 상태를 재검증했다.",
       "findings": "Unity 에디터에서 Assets>Refresh로 재컴파일한 뒤 Console 에러/경고 카운트가 모두 0임을 확인했다. 씬 파일 전체에서 m_Script fileID가 0인(스크립트 유실) MonoBehaviour가 없음을 grep으로 재확인했다. git status로 이번 배치에서 실제로 건드린 파일이 의도한 7개(.cs 6개 + story_dictionary.json)뿐임을 확인해 의도치 않은 변경이 없음을 검증했다.",
       "result": "컴파일/와이어링 이상 없음. 커밋 준비 완료."
+    },
+    "batch89to98Summary": {
+      "summary": "#89~98 배치(v0.01.044) 완료 요약.",
+      "headline": "이번 배치의 핵심은 치명적 순환 잠금(soft-lock) 버그 2건 발견/수정: islandTravelSoftlockFix(섬 이동 전체 불가), boatEndingSoftlockFix(배 엔딩 경로 전체 불가). 둘 다 Play 모드 라이브 테스트로 재현 후 해결을 직접 확인했다.",
+      "otherFindings": [
+        "itemOrphanAudit: 아이템 31종 전수 감사, 고아 아이템 없음",
+        "hazardSystemReview: 위험요소 배치/전투/재등장 정상",
+        "soundEventCompletenessAudit: 사운드 피드백 3건 추가(사냥·모닥불 점화·아이템 설치)",
+        "endingUiFlowReview: 엔딩 승리 UI 흐름 정상",
+        "settingsVolumeLiveCheck: 설정 볼륨 실시간 반영 라이브 검증 완료"
+      ],
+      "commit": "v0.01.044, 커밋 9e9568f, GitHub main 브랜치에 푸시 및 repo.bundle 갱신 완료."
     }
   },
   "gameplaySystems": {
