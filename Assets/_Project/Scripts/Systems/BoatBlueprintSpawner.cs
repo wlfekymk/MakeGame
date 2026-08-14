@@ -55,6 +55,14 @@ namespace MakeGame.Systems
             go.transform.position = position + Vector3.up * 0.4f; // 구체 피벗이 중심이므로 절반 높이만큼 띄워 지형 위에 놓이게 한다
             go.name = $"BoatBlueprint_{island.islandId}_{island.size}";
 
+            // 버그 수정: 그동안 머티리얼을 전혀 지정하지 않아 기본 흰색/회색 구체로만 보여, 다른 월드
+            // 오브젝트(자원 노드/사냥감 등)와 달리 눈에 띄지 않았다. 도면다운 금색 계열로 칠하고,
+            // StructureVisualBuilder.CreateColorMaterial을 거쳐 다른 프리미티브들과 동일한 표면
+            // 그레인 텍스처(noise)도 함께 적용해 일관성을 맞췄다.
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material = StructureVisualBuilder.CreateColorMaterial(new Color(0.9f, 0.75f, 0.35f, 1f));
+
             var pickup = go.AddComponent<BoatBlueprintPickup>();
             pickup.islandSize = island.size;
             pickup.boatConstruction = boatConstruction;

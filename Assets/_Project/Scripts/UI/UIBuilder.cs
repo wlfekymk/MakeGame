@@ -145,6 +145,12 @@ namespace MakeGame.UI
             if (item.isWeapon)
                 return new Color(0.8f, 0.25f, 0.25f, 1f); // 빨강: 무기
 
+            // 버그 수정: 붕대/부목/해독제 같은 치료 아이템이 별도 색 분기가 없어 전부 맨 아래
+            // "갈색: 일반 채집 재료"로 표시됐다. 새로 만든 아이콘(초록 배경)과 색이 어긋나던 문제라,
+            // 아이콘과 동일한 초록으로 맞춰 인벤토리 UI 카테고리 색상 점과 아이콘 배경이 일치하게 했다.
+            if (item.curesBleeding || item.curesPoison || item.curesBrokenBone)
+                return new Color(0.31f, 0.66f, 0.48f, 1f); // 초록: 의료 아이템
+
             if (item.hungerRestoreAmount > 0f)
                 return new Color(0.85f, 0.55f, 0.2f, 1f); // 주황: 음식
 

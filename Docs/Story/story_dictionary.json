@@ -732,7 +732,14 @@
       "islandConceptArt": {
         "description": "README/문서용 섬 전경 컨셉 일러스트(1600x900)를 아이콘과 동일한 플랫 디자인 스타일로 제작. Docs/ConceptArt/island_concept.png, Docs/ConceptArt/item_icons_sheet.png(아이콘 31종 검수용 시트)로 저장. 실제 인게임 에셋이 아니라 문서/README 삽입용 참고 이미지."
       },
-      "knownLimitation": "cairosvg/PIL 기반 절차적 아트라 실사 텍스처 대비 디테일은 제한적이다. Unity 에디터가 실행 중이 아니어서 라이브 Play 테스트로 스프라이트/텍스처가 실제로 씬에 올바르게 렌더링되는지는 확인하지 못했고, .meta 파일도 이번 세션에서 직접 손으로 작성한 것이라(Unity가 생성한 것이 아님) 다음 세션에서 Unity Editor를 열어 Assets>Refresh 후 반드시 1차 라이브 확인이 필요하다."
+      "knownLimitation": "2026-08-14 후속 세션에서 실제 Unity 에디터가 열려 있는 것을 확인하고 라이브 검증 완료: 스크립트 재컴파일 성공(콘솔 에러 0건), Project 창에서 Icon_*.png 31개가 실제 아트워크로 임포트됨을 확인(Texture Type=Sprite(2D and UI), Sprite Mode=Single, 512x512), Resources/Textures의 noise/sand/stone/wood 4종도 Default Texture로 정상 임포트됨을 확인. Play 모드에서 인벤토리(Tab)·제작(V) UI를 열어 아이템 아이콘이 실제로 표시되는 것을 스크린샷으로 확인. 손으로 작성한 .meta 파일들이 Unity 자체 포맷과 완전히 호환됨이 실증됨.",
+      "liveVerification2026_08_14": {
+        "unityState": "에디터가 이미 열려 있었음(SampleScene). Play 모드였던 것을 정지시켜 대기 중이던 스크립트 재컴파일을 트리거함 - 콘솔 에러/경고 0건.",
+        "spriteImportConfirmed": "Assets/_Project/Art/Sprites의 아이콘 31개 전부 Texture Type=Sprite(2D and UI), Single 모드, 512x512로 정상 임포트되어 Project 창 썸네일에 실제 그림이 보임(플레이스홀더 아님).",
+        "textureImportConfirmed": "Assets/_Project/Resources/Textures의 noise/sand/stone/wood 4개 전부 Default Texture Type으로 정상 임포트됨.",
+        "uiRuntimeConfirmed": "Play 모드에서 Tab(인벤토리)·V(제작) UI를 열어 아이템 아이콘이 카테고리 색상 배경과 함께 표시되는 것을 확인.",
+        "note": "섬 지형/자원 노드에 실제로 텍스처가 입혀지는 모습은 야간 시간대라 화면이 어두워 육안 확인은 못했으나, Resources.Load 경로가 실제 파일 위치와 정확히 일치하고 임포트 오류가 없어 정상 작동할 것으로 판단."
+      }
     }
   },
   "gameplaySystems": {
@@ -783,13 +790,8 @@
     "자원 노드(ResourceEntry)에 채집 도구 요구를 실제로 적용하려면, 해당 자원이 도구 레시피 자체의 재료로 쓰이지 않는지(순환 의존) 또는 시작 인벤토리에 충분한 초기 물량이 있는지 먼저 검증할 것 - 나뭇가지+손도끼 조합에서 실제로 순환 소프트락 직전까지 갔던 사례 있음(batch225).",
     "Play 모드에서 Game 뷰를 클릭하면 포커스 확보와 동시에 FPS 마우스룩 카메라 회전이 함께 발생해, 정확한 조준이 필요한 상호작용(E키)을 컴퓨터 사용 자동화로 재현하기 어렵다 - 필요 시 디버그 전용 '카메라 고정' 토글이나 상호작용 거리/각도를 넓히는 테스트 모드 도입을 고려.",
     "디버그/테스트 편의를 위해 InteractionController에 에디터 전용 강제 상호작용 훅(좌표/조준 무관하게 특정 대상 스크립트의 상호작용 메서드를 직접 호출)을 추가하면, 향후 정밀 조준이 필요한 라이브 검증(모닥불 점화, 채집 등)을 컴퓨터 사용 자동화로도 안정적으로 재현할 수 있다.",
-    {
-      "question": "UIBuilder.GetItemCategoryColor가 curesBleeding/curesPoison/curesBrokenBone(의료 아이템)을 별도 카테고리로 인식하지 않아, 새로 만든 의료 아이콘(초록)과 인벤토리 UI의 카테고리 색상 점(갈색)이 서로 다르게 표시되는 불일치가 있다. GetItemCategoryColor에 의료 카테고리(초록) 분기를 추가하면 해결된다.",
-      "addedInBatch": "batch268to286ItemIconsAndSurfaceTextures"
-    },
-    {
-      "question": "새로 추가한 Sprite(.meta)와 Texture(.meta) 파일들은 Unity Editor가 실행되지 않은 상태에서 스크립트로 직접 작성한 것이라, 다음 세션에서 Unity를 열어 Assets>Refresh 후 아이콘/텍스처가 정상적으로 임포트·렌더링되는지 반드시 라이브로 확인해야 한다.",
-      "addedInBatch": "batch268to286ItemIconsAndSurfaceTextures"
-    }
+    "UIBuilder.GetItemCategoryColor가 curesBleeding/curesPoison/curesBrokenBone(의료 아이템)을 별도 카테고리로 인식하지 않아, 새로 만든 의료 아이콘(초록)과 인벤토리 UI의 카테고리 색상 점(갈색)이 서로 다르게 표시되는 불일치가 있다. GetItemCategoryColor에 의료 카테고리(초록) 분기를 추가하면 해결된다. (batch268to286ItemIconsAndSurfaceTextures에서 발견)",
+    "2026-08-14: 아이템 아이콘/표면 텍스처 시스템 라이브 검증 완료(컴파일 에러 0, 스프라이트/텍스처 임포트 정상, 인벤토리·제작 UI 아이콘 표시 확인). 섬 지형 모래 텍스처가 실제로 화면에 보이는지는 낮 시간대에 재확인 권장.",
+    "다음 배치 후보: 자원 노드별 텍스처를 종류 세분화(현재 wood/stone/noise 3종)하거나, 사냥감/위험요소에도 종별 전용 텍스처 추가, 3D 캐릭터/자원 모델을 프리미티브 대신 실제 메시로 교체하는 것을 장기 과제로 고려."
   ]
 }
