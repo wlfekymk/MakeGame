@@ -58,7 +58,44 @@ namespace MakeGame.Systems
 
             worldMapManager.DiscoverIsland(destinationIslandId);
             currentIslandId = destinationIslandId;
+
+            // 치명적 버그 수정 (1/2): 이동 성공 처리(발견 상태 갱신, currentIslandId 갱신)만 하고 정작
+            // 플레이어 캐릭터의 실제 Transform은 한 번도 옮기지 않고 있었다. 그래서 미니맵에서 "이동"에
+            // 성공해도 화면상 플레이어는 원래 있던 자리(대부분 시작 섬 근처)에 그대로 남아, 목적지 섬의
+            // 도면/자원/위험요소에 실제로는 절대 다가갈 수 없었다 - 버튼은 눌리는데 게임플레이 상으로는
+            // 아무 데도 못 가는 또 다른 형태의 소프트락이었다.
+            TeleportPlayerToIsland(inventory.transform, destination);
+
             return true;
+        }
+
+        /// <summary>
+        /// 플레이어를 목적지 섬 중심에서 약간 벗어난 위치(해안 근처)로 텔레포트시키고, 지형 위에 놓이도록
+        /// TerrainSampler로 높이를 스냅한다. 섬 정중앙에 떨어뜨리면 자원 노드/도면 등과 겹쳐 어색하므로
+        /// 살짝 오프셋을 둔다.
+        /// 치명적 버그 수정 (2/2): 처음에는 CharacterController를 켜 둔 채로 transform.position만 바꿨는데,
+        /// 디버그 로그로 확인해보니 대입 직후에는 값이 바뀌었다가 다음 프레임에 원래 위치로 되돌아가 버렸다.
+        /// CharacterController가 매 프레임 내부적으로 캐시해 둔 캡슐 위치를 기준으로 다시 보정하기 때문에,
+        /// 먼 거리 순간이동처럼 큰 폭의 Transform 변경은 CharacterController가 활성화된 상태에서는 반영되지
+        /// 않고 도로 취소되는 Unity의 잘 알려진 함정이다. 그래서 텔레포트 직전에 CharacterController를
+        /// 잠깐 꺼서 위치 대입이 방해받지 않게 한 뒤 다시 켠다.
+        /// </summary>
+        private void TeleportPlayerToIsland(Transform player, IslandInstance destination)
+        {
+            if (player == null)
+                return;
+
+            Vector3 landingSpot = destination.mapPosition + new Vector3(2f, 0f, 2f);
+            Vector3 groundedSpot = TerrainSampler.SnapToGround(landingSpot);
+
+            var characterController = player.GetComponent<CharacterController>();
+            if (characterController != null)
+                characterController.enabled = false;
+
+            player.position = groundedSpot;
+
+            if (characterController != null)
+                characterController.enabled = true;
         }
     }
 }

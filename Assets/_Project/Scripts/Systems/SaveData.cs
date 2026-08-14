@@ -22,6 +22,11 @@ namespace MakeGame.Systems
         [Tooltip("플레이어가 현재 위치한 섬 번호")]
         public int currentIslandId;
 
+        [Tooltip("지금까지 발견한(방문한) 섬 번호 목록. worldSeed로 섬을 다시 만들면 IslandInstance가" +
+            " 전부 새로 생성되어 isDiscovered가 초기값(false)으로 리셋되므로, 불러올 때 이 목록으로" +
+            " 다시 발견 상태를 복원해야 미니맵 섬 목록이 방문 기록을 잃지 않는다.")]
+        public List<int> discoveredIslandIds = new List<int>();
+
         [Tooltip("첫 엔딩(배 제작 완성) 달성 여부")]
         public bool hasCompletedFirstEnding;
 

@@ -66,6 +66,17 @@ namespace MakeGame.Systems
                 hasCompletedFirstEnding = GameManager.Instance != null && GameManager.Instance.HasCompletedFirstEnding,
             };
 
+            // 발견한 섬 목록을 함께 저장한다. RegenerateWorld는 섬을 처음부터 다시 만들기 때문에
+            // 이 목록이 없으면 불러왔을 때 이미 가 봤던 섬도 전부 "미발견"으로 되돌아가 버린다.
+            if (worldMapManager != null)
+            {
+                foreach (var island in worldMapManager.islands)
+                {
+                    if (island.isDiscovered)
+                        data.discoveredIslandIds.Add(island.islandId);
+                }
+            }
+
             if (player != null)
             {
                 data.playerX = player.position.x;
@@ -162,7 +173,16 @@ namespace MakeGame.Systems
             // 동일한 섬 배치를 재현한다. (예전에는 필드 값만 갱신하고 실제로 재생성하지 않아 이 기능이
             // 이름만 있고 실제로는 아무 효과가 없는 죽은 기능이었다.)
             if (worldMapManager != null)
+            {
                 worldMapManager.RegenerateWorld(data.worldSeed);
+
+                // 방금 새로 만든 섬들은 전부 isDiscovered=false 상태이므로, 저장해 둔 발견 목록으로
+                // 다시 표시해 미니맵 섬 목록이 방문 기록을 잃지 않게 한다. 혹시 currentIslandId가
+                // 목록에 빠져 있어도(구버전 저장 파일 등) 최소한 지금 서 있는 섬은 발견 상태로 맞춰준다.
+                foreach (int islandId in data.discoveredIslandIds)
+                    worldMapManager.DiscoverIsland(islandId);
+                worldMapManager.DiscoverIsland(data.currentIslandId);
+            }
 
             if (player != null)
             {
