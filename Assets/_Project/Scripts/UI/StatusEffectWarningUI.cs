@@ -44,13 +44,20 @@ namespace MakeGame.UI
             float pulse = Mathf.PingPong(Time.time * pulseSpeed, 1f);
             float alpha = Mathf.Lerp(0.55f, 1f, pulse);
 
-            float bannerWidth = 520f;
+            // 상태 이상이 여러 개 겹치면 문구가 길어져 520px 고정폭에서는 줄바꿈으로 잘려 보이던 문제가 있었다.
+            // 화면 폭에 맞춰 최대 900px까지 넓히고, 화면이 더 좁으면 여백 40px만 남기고 줄인다.
+            float bannerWidth = Mathf.Min(900f, Screen.width - 40f);
             float bannerHeight = 46f;
             Rect bannerRect = new Rect((Screen.width - bannerWidth) / 2f, 14f, bannerWidth, bannerHeight);
 
             Color prevColor = GUI.color;
             GUI.color = new Color(warningColor.r, warningColor.g, warningColor.b, warningColor.a * alpha);
             GUI.DrawTexture(bannerRect, Texture2D.whiteTexture);
+
+            // 밝은 배경 위에서도 잘 읽히도록 그림자를 한 겹 먼저 그린 뒤 흰 글자를 덧그린다.
+            Rect shadowRect = new Rect(bannerRect.x + 1.5f, bannerRect.y + 1.5f, bannerRect.width, bannerRect.height);
+            GUI.color = new Color(0f, 0f, 0f, alpha * 0.6f);
+            GUI.Label(shadowRect, message, textStyle);
 
             GUI.color = new Color(1f, 1f, 1f, alpha);
             GUI.Label(bannerRect, message, textStyle);
@@ -87,7 +94,8 @@ namespace MakeGame.UI
             {
                 alignment = TextAnchor.MiddleCenter,
                 fontSize = 16,
-                fontStyle = FontStyle.Bold
+                fontStyle = FontStyle.Bold,
+                wordWrap = true // 화면이 좁아 배너 폭이 줄어들 때도 글자가 잘리지 않고 줄바꿈되게 한다.
             };
             textStyle.normal.textColor = Color.white;
         }

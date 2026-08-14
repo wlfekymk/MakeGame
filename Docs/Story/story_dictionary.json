@@ -330,6 +330,32 @@
       ],
       "result": "테스트 중 콘솔에 새로운 에러/예외가 발생하지 않았다. 6개 수정 사항 모두 회귀 없이 정상 동작.",
       "knownLimitation": "사냥 성공(아이템 획득) 케이스는 자동화된 카메라 조작의 한계로 이번 세션에서 육안으로 끝까지 재현하지 못했다. 다음 세션에서 사람이 직접 플레이하며 확인하거나, successChance를 임시로 1.0으로 올려 결정론적으로 테스트하는 것을 권장."
+    },
+    "huntSuccessDeterministicTest": {
+      "summary": "사냥 성공(아이템 획득) 케이스를 결정론적으로 재현하기 위해 CreatureSpawner의 생고기 항목 successChance를 임시로 1.0으로 올려 Play 모드에서 반복 테스트했다.",
+      "method": "씬 파일의 successChance를 1로 바꾸고, 창을 인벤토리에 추가한 뒤 플레이어를 사냥감 정면 가까이 배치해 E 상호작용을 여러 차례 시도했다.",
+      "result": "자동화된 카메라 조작(마우스 좌표 클릭)이 FPS 마우스룩 입력과 충돌해 조준을 안정적으로 재현하지 못했고, 이번 세션에서는 성공 케이스(아이템 획득)를 화면으로 직접 확인하지 못했다. 다만 InteractionController.InteractWithTarget()의 레이캐스트 → HuntableCreature.TryHunt() 호출 경로는 코드 검토로 재확인했고, 실패로 끝난 시도들에서도 콘솔 에러/예외는 발생하지 않았다.",
+      "conclusion": "테스트 완료 후 successChance는 원래 값(생고기 0.7, 생선 0.6)으로 되돌렸다. 사냥 성공 경로의 최종 육안 확인은 사람이 직접 플레이하며 진행하는 것을 권장한다."
+    },
+    "campfireDeadContentFix": {
+      "summary": "모닥불(Campfire) 시스템이 코드는 완성되어 있었지만 씬 어디에도 실제 모닥불 오브젝트/프리팹/획득 수단이 전혀 없어 요리(조리) 콘텐츠 전체가 플레이어가 절대 도달할 수 없는 죽은 콘텐츠였던 것을 발견하고 고쳤다.",
+      "bugFound": "Campfire.cs, InteractionController의 R키(CookFirstRawFoodAtTarget) 로직, 생고기/생선의 cookedResult 필드까지 전부 정상적으로 구현/연결되어 있었지만, 정작 씬(SampleScene.unity)에는 Campfire 컴포넌트가 붙은 오브젝트가 단 하나도 없었고, 어떤 ItemData에도 모닥불을 설치(placement)할 수 있는 키트가 존재하지 않았다. 물 증류기 키트/쉼터 키트와 달리 '모닥불 키트' 자체가 아예 없었던 것 — 이전 세션들의 CreatureSpawner 부재, worldSeed 재현 누락과 같은 패턴의 죽은 콘텐츠 버그.",
+      "fix": "Campfire.prefab을 새로 만들고(교차된 통나무 2개 + 발광 재질을 적용한 불꽃 구체, CapsuleCollider, Campfire 컴포넌트: fireStarterItem=파이어스타터, fuelItem=나뭇가지), Item_모닥불키트.asset(설치형 아이템, placementPrefab=Campfire)을 추가하고, Recipe_모닥불키트.asset(나뭇가지x4 + 돌조각x2 → 모닥불키트, 제작 스킬 레벨 1)을 추가한 뒤 CraftingUI.recipeBook 목록에 등록했다. 이제 플레이어가 제작(V) 메뉴에서 모닥불 키트를 만들고, G키로 설치하고, 불을 붙인 뒤(파이어스타터+나뭇가지 필요) R키로 생고기/생선을 조리할 수 있다.",
+      "verified": "Play 모드에서 제작(V) 창을 열어 '모닥불 키트' 레시피가 목록에 정상적으로 표시되고 필요 재료(나뭇가지, 돌조각)가 칩으로 렌더링되는 것을 확인했다. 콘솔에 컴파일 에러/임포트 에러가 없음을 확인했고, Item_모닥불키트의 Placement Prefab, Campfire 컴포넌트의 Fire Starter Item/Fuel Item, 생고기/생선의 cookedResult가 모두 'None'이 아닌 실제 에셋으로 정상 연결된 것을 Inspector에서 직접 확인했다.",
+      "knownLimitation": "설치 → 점화 → 실제 조리까지 이어지는 전체 흐름의 최종 육안 재현은 자동화된 카메라 조준의 한계로 이번 세션에서는 완료하지 못했다 (huntSuccessDeterministicTest와 동일한 제약). 구조적 배선은 코드/에셋 레벨에서 완전히 검증됨."
+    },
+    "batch79to87Review": {
+      "summary": "#79~87 배치: 사냥 성공 재현 시도, 조리/물증류기/쉼터/배제작/경비행기수리/사망 흐름 코드-와이어링 재점검, 생존 밸런스 재검토, 상태이상 경고 UI 가독성 개선을 진행했다.",
+      "findings": {
+        "campfire": "코드/아이템은 있었지만 씬에 실제 모닥불이 전혀 없어 요리가 죽은 콘텐츠였음 → Campfire 프리팹 + 모닥불키트 아이템/레시피 신규 추가로 해결 (huntSuccessDeterministicTest, campfireDeadContentFix 참고).",
+        "waterStill": "정상 배선 확인 (프리팹/키트/레시피/자가 Tick 모두 존재). 문제 없음.",
+        "shelter": "그늘 판정용 Shade 레이어(6번)와 SurvivalTickDriver.shadeLayerMask(비트 64=레이어6)가 정확히 일치하고, Shelter 프리팹의 지붕 BoxCollider도 레이어 6으로 배치되어 있음을 확인. 문제 없음.",
+        "boatConstruction": "BoatBlueprintSpawner.boatConstruction 참조 및 3단계 재료 요구치가 씬에 정상 직렬화되어 있음을 확인. 문제 없음.",
+        "aircraftRepair": "WorldMapManager가 시작 섬에 AircraftWreck을 스폰하며 repairSystem 참조를 정확히 주입하고, 여러 컴포넌트(GameManager 엔딩 판정, SaveLoadController)가 동일한 AircraftRepairSystem 인스턴스를 참조함을 확인. 문제 없음.",
+        "gameOver": "SurvivalStats.Tick()이 IsDead(health<=0)일 때 가장 먼저 return하므로 체력 자연회복 로직과 충돌하지 않음을 확인. RestartGame()의 싱글턴 정리 로직도 정상. 문제 없음.",
+        "balance": "healthRegenPerSecond(0.5)가 bleedingDamagePerSecond(1.2)/poisonDamagePerSecond(0.8)보다 낮고, 회복 조건(허기·갈증 50 이상 + 출혈/중독 없음)이 리소스 관리를 요구하므로 과도하게 쉬워지지 않음을 수치로 확인. 밸런스 변경 없음."
+      },
+      "uiPolish": "StatusEffectWarningUI: 상태 이상이 여러 개 겹칠 때 520px 고정폭에서 문구가 잘리던 문제를 발견해, 배너 폭을 화면 크기에 맞춰 최대 900px까지 늘리고 wordWrap을 켰다. 가독성을 위해 텍스트에 그림자를 한 겹 추가했다."
     }
   },
   "gameplaySystems": {
