@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
+using MakeGame.Systems;
 
 namespace MakeGame.Player
 {
@@ -45,7 +46,12 @@ namespace MakeGame.Player
 
             bool exhausted = item.Use();
             if (exhausted)
+            {
                 items.Remove(item);
+                // 버그 수정: 내구도가 다 닳아 아이템이 인벤토리에서 조용히 사라져도 아무 피드백이 없어
+                // 방금 손도끼/창/칼이 파손된 것을 플레이어가 알아채기 어려웠다. 파손 전용 효과음 재생.
+                AudioManager.Instance?.PlayBreak();
+            }
         }
 
         /// <summary>

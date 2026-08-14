@@ -72,6 +72,7 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.Campfire
   fireStarterItem: {fileID: 11400000, guid: 8883e182994d44b4bde936ddb9ff29f7, type: 2}
+  alternateFireStarterItem: {fileID: 11400000, guid: 1a4a40095456c6449952232cb9a583d2, type: 2}
   fuelItem: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
   secondsPerFuel: 30
   isLit: 0

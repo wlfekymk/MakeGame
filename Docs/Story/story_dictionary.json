@@ -669,6 +669,25 @@
       "analysis": "12개 자원 노드 중 크래프팅 레시피의 재료로 전혀 쓰이지 않는 항목(금속조각/부력통/비상식량/연료/엔진부품)을 레시피 데이터 전수 대조로 찾아냄 - 이들은 배/비행기 제작 시스템에 직접 쓰이는 최종재라 도구를 요구해도 순환 의존이 생기지 않음.",
       "applied": "금속조각(대형섬 전용 희귀 자원) 노드에 Requires Tool 활성화 + Required Tool = 손도끼로 씬 Inspector에서 설정, 저장 완료. batch225에서 나뭇가지에 잘못 적용했던 것과 달리 이번엔 순환 없음을 먼저 데이터로 확인한 뒤 적용.",
       "verification": "Play 모드 재진입 -> 9개 섬 정상 생성, 콘솔 0 에러/0 경고/0 정보로 리그레션 없음 확인 (batch226). batch236에서 금속조각 총수요(12개) 대비 대형섬 1곳의 채집 여력(최대 18회)과 손도끼 내구도(20회)를 비교해 병목이 없음도 확인."
+    },
+    "batch239RemainingToollessResourcesReview": {
+      "status": "완료 - 검토 결과 변경 없음(의도적 유지)",
+      "reasoning": "부력통/비상식량/연료/엔진부품 4종은 금속조각과 달리 '베거나 캐는' 자원이 아니라 난파선 잔해·표류물처럼 '주워서 얻는' 성격의 자원으로 설계상 자연스럽다(AircraftWreck 테마와 일치). 금속조각만 도구(손도끼)를 요구하도록 남겨두고 나머지 4종은 도구 없이 채집 가능한 상태를 유지하기로 결정.",
+      "conclusion": "코드/씬 변경 없음. 향후 새로운 '채굴/벌목'형 희귀 자원이 추가될 때만 이 패턴(레시피 재료 여부 우선 확인 후 도구 요구 적용)을 재사용하면 된다는 지침을 openQuestions에 남기지 않고 이 항목에 정리."
+    },
+    "batch241WeaponBreakFeedbackAndLighterFix": {
+      "status": "완료 - 두 가지 수정 (파손 피드백음 + 라이터 고아 아이템 버그)",
+      "breakFeedback": "PlayerInventory.UseItem이 내구도 소진으로 아이템을 조용히 제거하던 것에 AudioManager.PlayBreak()(신규 절차적 효과음, 420Hz->70Hz 하강음) 호출을 추가해 파손 순간을 인지할 수 있게 함.",
+      "lighterBugFound": "파손 피드백을 점검하다가 Campfire.TryLight를 읽어보니 fireStarterItem이 파이어스타터(무제한)에만 고정되어 있고, 플레이어가 불시착 직후 시작 아이템으로 들고 있는 라이터(유한 5회)는 어디에도 연결되어 있지 않아 인벤토리에 표시만 되고 실제로는 아무 기능이 없는 완전한 고아(orphan) 시작 아이템이었음을 발견 (batch089 아이템 사용처 감사에서도 놓쳤던 항목).",
+      "lighterFix": "Campfire에 alternateFireStarterItem 필드를 추가해 라이터를 연결하고, TryLight가 파이어스타터(무제한, 우선)가 없으면 라이터(유한)로도 점화할 수 있게 하며 실제 사용된 도구의 내구도를 PlayerInventory.UseItem으로 소모하도록 고침. 이제 파이어스타터를 아직 제작하지 못한 초반에도 라이터로 모닥불을 켤 수 있다.",
+      "verification": "Unity Assets>Refresh 재컴파일 콘솔 0 에러/0 경고 확인. 모닥불 키트 제작->설치->점화까지 이어지는 라이브 재현은 여러 단계가 필요해 이번 배치에서는 생략하고 코드 검토+컴파일 검증으로 갈음(FindItem+UseItem 패턴은 이미 무기 내구도 소모 경로에서 라이브 검증된 것과 동일)."
+    },
+    "batch243Playtest19LighterFieldWiring": {
+      "status": "부분 완료 - 필드 와이어링/타깃 로직은 라이브 확인, 실제 상호작용(E키) 재현은 에디터 UI 자동화 한계로 생략",
+      "whatWasVerified": "Play 모드에서 임시 GameObject에 Campfire 컴포넌트를 새로 추가(Add Component)한 뒤, Alternate Fire Starter Item 오브젝트 피커에서 검색창에 '라이터' 입력 -> Item_라이터 단독 필터링 -> 선택까지 라이브로 재현해, alternateFireStarterItem 필드가 인스펙터에서 정상적으로 직렬화/할당되는 것을 확인했다. Player Inventory의 Items 리스트에서 Item_라이터의 Remaining Uses=5(시작값)도 함께 확인.",
+      "whatWasNotVerified": "InteractionController.TryGetLookTarget은 Physics.Raycast 기반이라 타깃에 Collider가 필요함을 코드로 확인하고 Box Collider를 추가했으나, Play 모드에서 Game 뷰를 클릭해 포커스를 주는 동작 자체가 FPS 마우스룩과 겹쳐 즉시 카메라 요(yaw)가 흐트러지는 문제(Player Rotation Y가 0->-79.6으로 변경됨을 실측)로, 정확한 조준 상태에서 E키 상호작용을 재현하지 못했다. TryLight를 실제로 호출해 라이터 Remaining Uses가 5->4로 줄어드는 것까지는 확인하지 못함.",
+      "whyAcceptable": "FindAvailableFireStarter/UseItem이 재사용하는 PlayerInventory.FindItem + UseItem 경로는 batch220~225에서 손도끼 내구도 소모로 이미 라이브 검증된 동일 코드 경로이므로, 남은 미검증분은 신규 로직이 아니라 배선(wiring) 문제일 가능성이 낮다고 판단(batch241에서도 동일한 결론으로 코드 검토+컴파일 검증에 그침).",
+      "note": "Play 모드 종료 시 테스트용 GameObject/Player 회전 변경 등 모든 임시 변경은 Unity가 자동으로 되돌려 씬에는 아무 잔여물도 남지 않았다."
     }
   },
   "gameplaySystems": {
@@ -716,6 +735,7 @@
     "밤/낮 주기 및 조명 변화는 v0.01.049에서 DayNightCycle로 구현 완료 (SurvivalClock 진행률에 따라 태양 각도/밝기/색온도 변화). 재시작 시 소실되던 버그는 v0.01.050에서 SceneManager.sceneLoaded 구독 방식으로 수정 완료.",
     "밤 시간대 저체온(추위) 메커니즘 검토(batch204): 현재 SurvivalStats.UpdateSunstroke는 밤이거나 그늘이면 일사병 수치가 회복만 될 뿐, 밤에 추워서 위험해지는 메커니즘은 전혀 없다(코드 확인 완료 - SurvivalTickDriver.Update -> SurvivalStats.Tick -> UpdateSunstroke, isDaytime=false면 항상 감소). Stranded Deep류 서바이벌 게임 관례상 밤이 낮보다 안전하기만 한 것은 긴장감 측면에서 아쉬운 지점. 다만 별도 체온(Cold) 수치 신규 도입은 필드/틱 로직/HUD 바/모닥불·쉼터 온기 연동/밸런스 테스트까지 필요해 날씨 시스템급의 별도 배치가 필요한 규모로 판단, 이번 배치(198~203 상어 구현 직후)에서는 설계만 검토하고 구현은 다음 신규 기능 배치로 미룬다.",
     "조난자 구조 NPC 시스템 도입 여부 검토(batch205): story_dictionary.json의 premise가 '비행기를 타고 여행을 가던 주인공이 기체 고장으로 무인도에 불시착한다'이고 npc 항목이 명시적으로 '동승자 없음 (주인공 단독 불시착)', characters 배열도 비어 있음을 확인. 다른 조난자를 찾아 구조하는 NPC 시스템은 이 '단독 불시착' 전제와 정면으로 배치되는 스코프 확장이라고 판단해 도입하지 않기로 결정 - 코드 변경 없음. 협동/동료 콘텐츠가 필요하다면 premise 자체를 먼저 바꾸는 별도 논의가 선행되어야 한다.",
-    "자원 노드(ResourceEntry)에 채집 도구 요구를 실제로 적용하려면, 해당 자원이 도구 레시피 자체의 재료로 쓰이지 않는지(순환 의존) 또는 시작 인벤토리에 충분한 초기 물량이 있는지 먼저 검증할 것 - 나뭇가지+손도끼 조합에서 실제로 순환 소프트락 직전까지 갔던 사례 있음(batch225)."
+    "자원 노드(ResourceEntry)에 채집 도구 요구를 실제로 적용하려면, 해당 자원이 도구 레시피 자체의 재료로 쓰이지 않는지(순환 의존) 또는 시작 인벤토리에 충분한 초기 물량이 있는지 먼저 검증할 것 - 나뭇가지+손도끼 조합에서 실제로 순환 소프트락 직전까지 갔던 사례 있음(batch225).",
+    "Play 모드에서 Game 뷰를 클릭하면 포커스 확보와 동시에 FPS 마우스룩 카메라 회전이 함께 발생해, 정확한 조준이 필요한 상호작용(E키)을 컴퓨터 사용 자동화로 재현하기 어렵다 - 필요 시 디버그 전용 '카메라 고정' 토글이나 상호작용 거리/각도를 넓히는 테스트 모드 도입을 고려."
   ]
 }

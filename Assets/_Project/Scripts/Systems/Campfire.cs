@@ -10,8 +10,13 @@ namespace MakeGame.Systems
     /// </summary>
     public class Campfire : MonoBehaviour
     {
-        [Tooltip("점화에 필요한 발화 도구 (파이어스타터)")]
+        [Tooltip("점화에 필요한 발화 도구 (파이어스타터, 무제한 사용 가능)")]
         public ItemData fireStarterItem;
+
+        [Tooltip("대체 발화 도구 (라이터, 유한 사용 - 시작 아이템으로 지급됨). 버그 수정: 플레이어가 " +
+            "불시착 직후 라이터를 들고 시작하는데도 점화 판정이 파이어스타터만 확인해 실제로는 전혀 쓰이지 " +
+            "않는 죽은 시작 아이템이었다. 파이어스타터가 없으면 이 아이템으로도 점화할 수 있게 한다.")]
+        public ItemData alternateFireStarterItem;
 
         [Tooltip("연료로 사용하는 아이템 (나뭇가지)")]
         public ItemData fuelItem;
@@ -55,14 +60,21 @@ namespace MakeGame.Systems
         /// <summary>
         /// 인벤토리에서 발화 도구 보유 여부를 확인하고 연료 1개를 소모하여 모닥불을 켠다.
         /// 이미 켜져 있으면 연료를 추가로 소모해 유지 시간을 늘린다 (장작 추가).
+        /// 버그 수정: 파이어스타터(무제한)가 없으면 라이터(유한, 시작 아이템)로도 점화할 수 있다 -
+        /// 파이어스타터를 우선 사용해 유한 자원인 라이터를 최대한 아낀다. 실제로 소모되는 쪽만
+        /// PlayerInventory.UseItem으로 내구도를 1 줄인다(파이어스타터는 무제한이라 사실상 그대로 유지).
         /// </summary>
         public bool TryLight(PlayerInventory inventory)
         {
             if (inventory == null)
                 return false;
 
-            if (fireStarterItem != null && inventory.GetItemCount(fireStarterItem) <= 0)
-                return false;
+            InventoryItem starterItem = FindAvailableFireStarter(inventory);
+            if (fireStarterItem != null || alternateFireStarterItem != null)
+            {
+                if (starterItem == null)
+                    return false;
+            }
 
             if (fuelItem != null)
             {
@@ -70,6 +82,9 @@ namespace MakeGame.Systems
                     return false;
                 inventory.RemoveItems(fuelItem, 1);
             }
+
+            if (starterItem != null)
+                inventory.UseItem(starterItem);
 
             isLit = true;
             remainingFuelSeconds += secondsPerFuel;
@@ -79,6 +94,29 @@ namespace MakeGame.Systems
             AudioManager.Instance?.PlayCraftSuccess();
 
             return true;
+        }
+
+        /// <summary>
+        /// 보유한 발화 도구 중 실제로 사용할 인스턴스 하나를 찾는다. 무제한 도구(파이어스타터)를
+        /// 우선하고, 없으면 유한 도구(라이터)를 사용한다. 어느 쪽도 지정/보유하지 않았으면 null.
+        /// </summary>
+        private InventoryItem FindAvailableFireStarter(PlayerInventory inventory)
+        {
+            if (fireStarterItem != null)
+            {
+                var item = inventory.FindItem(fireStarterItem);
+                if (item != null)
+                    return item;
+            }
+
+            if (alternateFireStarterItem != null)
+            {
+                var item = inventory.FindItem(alternateFireStarterItem);
+                if (item != null)
+                    return item;
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -35,6 +35,7 @@ namespace MakeGame.Systems
         private AudioClip clipDamage;
         private AudioClip clipStageComplete;
         private AudioClip clipSaveOrLoad;
+        private AudioClip clipBreak;
         private AudioClip clipOceanAmbient;
         private AudioClip clipRainAmbient;
 
@@ -107,6 +108,7 @@ namespace MakeGame.Systems
             clipDamage = ProceduralAudioClipGenerator.CreateBeep(180f, 0.2f, 90f); // 피해를 입음: 낮게 떨어지는 경고음
             clipStageComplete = ProceduralAudioClipGenerator.CreateChord(new float[] { 523f, 659f, 784f }, 0.4f); // 배 제작 단계 완료: 3화음 팡파르
             clipSaveOrLoad = ProceduralAudioClipGenerator.CreateBeep(1046f, 0.06f); // 저장/불러오기: 짧은 확인음
+            clipBreak = ProceduralAudioClipGenerator.CreateBeep(420f, 0.16f, 70f); // 도구/무기 파손: 뚝 끊기듯 빠르게 떨어지는 저음
             clipOceanAmbient = ProceduralAudioClipGenerator.CreateOceanAmbientLoop(4f); // 파도 배경음 루프
             clipRainAmbient = ProceduralAudioClipGenerator.CreateRainAmbientLoop(4f); // 비 배경음 루프 (WeatherSystem이 비가 올 때만 재생)
         }
@@ -134,6 +136,12 @@ namespace MakeGame.Systems
 
         /// <summary>저장 또는 불러오기가 완료됐을 때 재생한다.</summary>
         public void PlaySaveOrLoadFeedback() => PlaySfx(clipSaveOrLoad);
+
+        /// <summary>
+        /// 버그 수정: 무기/도구가 내구도(remainingUses) 소진으로 인벤토리에서 조용히 사라져도 아무 피드백이
+        /// 없어, 전투 중 손도끼가 갑자기 없어진 이유를 플레이어가 알아채기 어려웠다. 파손 시 재생한다.
+        /// </summary>
+        public void PlayBreak() => PlaySfx(clipBreak);
 
         /// <summary>지정한 효과음 클립을 sfxVolume 크기로 한 번 재생한다. 클립이 없으면 아무 것도 하지 않는다.</summary>
         private void PlaySfx(AudioClip clip)
