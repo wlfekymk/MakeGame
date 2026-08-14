@@ -163,7 +163,43 @@ namespace MakeGame.UI
             if (item.blockedFromLargeIslandsByCurrent)
                 return new Color(0.6f, 0.5f, 0.85f, 1f); // 보라: 이동 수단(고무보트 등)
 
-            return new Color(0.55f, 0.45f, 0.35f, 1f); // 갈색: 일반 채집 재료
+            // 품질 개선(#327): 나뭇가지~엔진부품까지 8종이 넘는 "일반 재료"가 전부 똑같은 갈색
+            // 한 가지로만 표시돼, 인벤토리/제작 UI에서 실루엣 아이콘이 아니면 재료 계열을 구분할
+            // 방법이 없었다. 재질 계열(나무/돌/금속/식물·천/기계부품)별로 색조를 살짝 나눠서
+            // IslandResourceSpawner가 월드에 심는 실제 오브젝트 색상과 동일한 기준으로 일치시켰다.
+            return GetMaterialSubCategoryColor(item.itemName);
+        }
+
+        /// <summary>
+        /// "일반 재료" 대분류 안에서 재질 계열별로 세분화된 색상을 반환한다. 이름에 재질 키워드가
+        /// 없는 새 재료가 추가되면 기존 갈색으로 안전하게 폴백한다. IslandResourceSpawner의
+        /// GetSurfaceTextureName과 동일한 재질 그룹 기준(나무/돌/금속/식물)을 그대로 따라가되
+        /// 여기서는 색상만 담당한다(질감 텍스처는 스포너 쪽 책임).
+        /// </summary>
+        private static Color GetMaterialSubCategoryColor(string itemName)
+        {
+            if (string.IsNullOrEmpty(itemName))
+                return new Color(0.55f, 0.45f, 0.35f, 1f); // 갈색: 기본값
+
+            if (itemName.Contains("나뭇가지") || itemName.Contains("대나무"))
+                return new Color(0.55f, 0.4f, 0.25f, 1f); // 짙은 갈색: 목재 계열
+
+            if (itemName.Contains("돌조각") || itemName.Contains("부싯돌"))
+                return new Color(0.5f, 0.5f, 0.52f, 1f); // 회색: 석재 계열
+
+            if (itemName.Contains("금속조각") || itemName.Contains("엔진부품"))
+                return new Color(0.45f, 0.5f, 0.58f, 1f); // 강청회색: 금속/기계 부품 계열
+
+            if (itemName.Contains("야자잎") || itemName.Contains("천조각"))
+                return new Color(0.58f, 0.55f, 0.3f, 1f); // 올리브: 식물/섬유 계열
+
+            if (itemName.Contains("코코넛"))
+                return new Color(0.5f, 0.38f, 0.22f, 1f); // 갈색-크림: 열매 계열
+
+            if (itemName.Contains("부력통") || itemName.Contains("비상식량") || itemName.Contains("연료"))
+                return new Color(0.35f, 0.45f, 0.4f, 1f); // 군용 카키그린: 표류 보급품 계열
+
+            return new Color(0.55f, 0.45f, 0.35f, 1f); // 갈색: 그 외 미분류 재료 기본값
         }
 
         /// <summary>

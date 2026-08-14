@@ -90,16 +90,25 @@ namespace MakeGame.Systems
             GameObject go = GameObject.CreatePrimitive(primitiveType);
             go.transform.SetParent(parent);
 
+            // 퀄리티 개선(#324 재점검): 자원 노드와 같은 문제 - 같은 종류 개체가 완전히 동일한 크기로
+            // 찍혀 클론처럼 보이는 것을 막기 위해 개체마다 살짝 다른 크기 배율과 몸 방향(Y축 회전)을 준다.
+            // Object.GetInstanceID()는 이 프로젝트에서 컴파일 에러가 나는 Obsolete API라 시드 없는
+            // UnityEngine.Random을 그대로 쓴다.
+            float sizeJitter = UnityEngine.Random.Range(0.9f, 1.15f);
+            Quaternion facing = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+
             if (entry.preferShoreline)
             {
-                go.transform.localScale = new Vector3(0.35f, 0.2f, 0.5f); // 납작하고 길쭉한 물고기 형태
+                go.transform.localScale = new Vector3(0.35f, 0.2f, 0.5f) * sizeJitter; // 납작하고 길쭉한 물고기 형태
                 go.transform.position = position + Vector3.up * 0.15f;
+                go.transform.rotation = facing;
                 go.name = $"Fish_{entry.yieldItem.itemName}";
             }
             else
             {
-                go.transform.localScale = new Vector3(0.45f, 0.6f, 0.45f); // 작은 동물 크기의 캡슐
+                go.transform.localScale = new Vector3(0.45f, 0.6f, 0.45f) * sizeJitter; // 작은 동물 크기의 캡슐
                 go.transform.position = position + Vector3.up * 0.6f;
+                go.transform.rotation = facing;
                 go.name = $"Creature_{entry.yieldItem.itemName}";
             }
 

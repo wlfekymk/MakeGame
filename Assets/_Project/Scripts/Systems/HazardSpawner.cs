@@ -82,8 +82,16 @@ namespace MakeGame.Systems
 
             GameObject go = GameObject.CreatePrimitive(config.primitiveType);
             go.transform.SetParent(parent);
-            go.transform.localScale = config.localScale;
-            go.transform.rotation = Quaternion.Euler(config.rotationEuler);
+
+            // 퀄리티 개선(#325 재점검): 자원 노드/사냥감과 같은 문제 - 같은 종류의 위험 요소가 여러 섬에
+            // 걸쳐 완전히 동일한 크기/방향으로 찍히는 것을 막기 위해 개체마다 살짝 다른 크기 배율과
+            // 세워진 축(Y) 기준 방향을 추가로 준다. Trap처럼 대칭적인 원판은 시각적으로 티가 안 나지만
+            // 해를 끼치지도 않으므로 모든 타입에 공통 적용해 코드를 단순하게 유지한다.
+            float sizeJitter = UnityEngine.Random.Range(0.9f, 1.15f);
+            Quaternion yawJitter = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+
+            go.transform.localScale = config.localScale * sizeJitter;
+            go.transform.rotation = yawJitter * Quaternion.Euler(config.rotationEuler);
             go.transform.position = position + Vector3.up * config.groundOffset;
             go.name = $"Hazard_{type}";
 
@@ -93,7 +101,10 @@ namespace MakeGame.Systems
 
             // 퀄리티 개선: 몸통 하나짜리 프리미티브만으로는 위험 요소가 밋밋해 보여, 종류별로
             // 알아볼 수 있는 작은 보조 파츠(눈, 벌떼 무리 등)를 덧붙인다.
-            AddDetailParts(go, type, config);
+            // sizeJitter가 적용된 실제 스케일(go.transform.localScale)을 넘겨야 보정 계산이 실제 배치된
+            // 크기와 맞아떨어진다(config.localScale은 jitter 이전 원본값이라 그대로 쓰면 이후 유지보수 시
+            // 혼동의 여지가 있어 명시적으로 실제 값을 전달한다).
+            AddDetailParts(go, type, config, go.transform.localScale);
 
             var col = go.GetComponent<Collider>();
             if (col != null)
@@ -110,9 +121,9 @@ namespace MakeGame.Systems
         /// 자식의 localScale은 부모의 비균일 localScale(config.localScale)로 나눠 보정해, 몸통이
         /// 눌리거나 늘어난 축(예: 상어의 길쭉한 몸통)에서도 눈이 타원으로 찌그러지지 않고 둥글게 보이게 한다.
         /// </summary>
-        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config)
+        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config, Vector3 appliedScale)
         {
-            Vector3 s = config.localScale;
+            Vector3 s = appliedScale;
             Color darkEye = new Color(0.05f, 0.05f, 0.05f);
 
             switch (type)
