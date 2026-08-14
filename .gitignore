@@ -49,3 +49,7 @@ Thumbs.db
 .git-credentials
 .git-ssh/
 repo.bundle
+
+# Unity 크래시 복구 시 자동 생성되는 임시 씬 (프로젝트 콘텐츠 아님)
+Assets/_Recovery/
+Assets/_Recovery.meta
