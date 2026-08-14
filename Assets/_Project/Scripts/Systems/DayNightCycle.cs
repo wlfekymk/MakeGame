@@ -29,6 +29,7 @@ namespace MakeGame.Systems
 
         private Light sunLight;
         private SurvivalClock clock;
+        private WeatherSystem weather;
 
         /// <summary>
         /// 버그 수정: 처음에는 RuntimeInitializeLoadType.AfterSceneLoad로 한 번만 생성했는데, 이
@@ -58,6 +59,7 @@ namespace MakeGame.Systems
         {
             sunLight = FindDirectionalLight();
             clock = FindAnyObjectByType<SurvivalClock>();
+            weather = FindAnyObjectByType<WeatherSystem>();
         }
 
         /// <summary>
@@ -92,7 +94,8 @@ namespace MakeGame.Systems
 
             // 낮 강도(0~1): 정오에 1, 자정에 0이 되는 코사인 곡선. 태양이 지평선 아래일 때는 0으로 클램프.
             float dayFactor = Mathf.Clamp01(Mathf.Cos((t - 0.5f) * Mathf.PI * 2f) * 0.5f + 0.5f);
-            sunLight.intensity = Mathf.Lerp(nightIntensity, dayIntensity, dayFactor);
+            float rainMultiplier = (weather != null && weather.IsRaining) ? weather.rainDimFactor : 1f;
+            sunLight.intensity = Mathf.Lerp(nightIntensity, dayIntensity, dayFactor) * rainMultiplier;
 
             // 색상: 낮에는 백색광, 일출/일몰 무렵(dayFactor가 중간값)에는 노을빛, 밤에는 푸른 달빛으로 보간한다.
             Color baseColor = Color.Lerp(nightColor, dayColor, dayFactor);

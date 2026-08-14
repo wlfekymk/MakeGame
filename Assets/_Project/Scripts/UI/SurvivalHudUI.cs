@@ -31,6 +31,16 @@ namespace MakeGame.UI
         private Image sunstrokeFill;
         private Image oxygenFill;
 
+        // 각 막대의 평소 색상(경고 상태가 아닐 때로 되돌아갈 기준값). CreateStatBar에서 채워진다.
+        private Color healthBaseColor;
+        private Color hungerBaseColor;
+        private Color thirstBaseColor;
+        private Color sunstrokeBaseColor;
+        private Color oxygenBaseColor;
+
+        // 위험 수준일 때 막대가 이 색으로 깜빡인다 (선명한 경고색).
+        private static readonly Color WarningColor = new Color(1f, 0.15f, 0.15f, 1f);
+
         private Text dayLabel;
         private Text boatLabel;
         private Text aircraftLabel;
@@ -88,11 +98,17 @@ namespace MakeGame.UI
             dayLabel = UIBuilder.CreateText(panel, "DayLabel", "1일차", 16, Color.white, TextAnchor.MiddleLeft);
             dayLabel.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
 
-            healthFill = CreateStatBar(panel, "체력", new Color(0.85f, 0.2f, 0.2f, 1f));
-            hungerFill = CreateStatBar(panel, "허기", new Color(0.85f, 0.55f, 0.2f, 1f));
-            thirstFill = CreateStatBar(panel, "갈증", new Color(0.25f, 0.55f, 0.85f, 1f));
-            sunstrokeFill = CreateStatBar(panel, "일사병", new Color(0.9f, 0.75f, 0.2f, 1f));
-            oxygenFill = CreateStatBar(panel, "산소", new Color(0.3f, 0.85f, 0.8f, 1f));
+            healthBaseColor = new Color(0.85f, 0.2f, 0.2f, 1f);
+            hungerBaseColor = new Color(0.85f, 0.55f, 0.2f, 1f);
+            thirstBaseColor = new Color(0.25f, 0.55f, 0.85f, 1f);
+            sunstrokeBaseColor = new Color(0.9f, 0.75f, 0.2f, 1f);
+            oxygenBaseColor = new Color(0.3f, 0.85f, 0.8f, 1f);
+
+            healthFill = CreateStatBar(panel, "체력", healthBaseColor);
+            hungerFill = CreateStatBar(panel, "허기", hungerBaseColor);
+            thirstFill = CreateStatBar(panel, "갈증", thirstBaseColor);
+            sunstrokeFill = CreateStatBar(panel, "일사병", sunstrokeBaseColor);
+            oxygenFill = CreateStatBar(panel, "산소", oxygenBaseColor);
 
             // 상태 이상 아이콘 줄: 평소엔 숨겨져 있다가 중독/출혈/골절 상태일 때만 나타난다.
             var statusRowGo = new GameObject("StatusRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
@@ -141,6 +157,22 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// 막대의 색을 위험 여부에 따라 갱신한다. 위험하지 않으면 평소 색으로, 위험하면 평소 색과
+        /// 경고색(WarningColor) 사이를 Mathf.PingPong으로 오가며 깜빡이는 색으로 바꾼다.
+        /// </summary>
+        private void ApplyWarningPulse(Image fill, Color baseColor, bool isDanger)
+        {
+            if (!isDanger)
+            {
+                fill.color = baseColor;
+                return;
+            }
+
+            float pulse = Mathf.PingPong(Time.unscaledTime * 2.5f, 1f);
+            fill.color = Color.Lerp(baseColor, WarningColor, pulse);
+        }
+
+        /// <summary>
         /// 상태 이상 하나를 나타내는 작은 아이콘을 만들되, 기본적으로는 비활성화(숨김) 상태로 둔다.
         /// </summary>
         private GameObject CreateStatusIcon(Transform parent, string label, Color color)
@@ -160,13 +192,27 @@ namespace MakeGame.UI
 
             if (survivalStats != null)
             {
-                healthFill.fillAmount = survivalStats.maxHealth > 0f
+                float healthRatio = survivalStats.maxHealth > 0f
                     ? Mathf.Clamp01(survivalStats.health / survivalStats.maxHealth)
                     : 0f;
-                hungerFill.fillAmount = Mathf.Clamp01(survivalStats.hunger / 100f);
-                thirstFill.fillAmount = Mathf.Clamp01(survivalStats.thirst / 100f);
-                sunstrokeFill.fillAmount = Mathf.Clamp01(survivalStats.sunstroke / 100f);
-                oxygenFill.fillAmount = Mathf.Clamp01(survivalStats.oxygen / 100f);
+                float hungerRatio = Mathf.Clamp01(survivalStats.hunger / 100f);
+                float thirstRatio = Mathf.Clamp01(survivalStats.thirst / 100f);
+                float sunstrokeRatio = Mathf.Clamp01(survivalStats.sunstroke / 100f);
+                float oxygenRatio = Mathf.Clamp01(survivalStats.oxygen / 100f);
+
+                healthFill.fillAmount = healthRatio;
+                hungerFill.fillAmount = hungerRatio;
+                thirstFill.fillAmount = thirstRatio;
+                sunstrokeFill.fillAmount = sunstrokeRatio;
+                oxygenFill.fillAmount = oxygenRatio;
+
+                // 위험 수준(체력/허기/갈증/산소는 낮을 때, 일사병은 반대로 높을 때)일 때 막대 색을
+                // 평소 색과 경고색 사이로 깜빡이게 해 raw 숫자를 보지 않아도 한눈에 위험을 알 수 있게 한다.
+                ApplyWarningPulse(healthFill, healthBaseColor, healthRatio < 0.25f);
+                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerRatio < 0.2f);
+                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstRatio < 0.2f);
+                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeRatio > 0.8f);
+                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenRatio < 0.25f);
 
                 poisonIcon.SetActive(survivalStats.isPoisoned);
                 bleedingIcon.SetActive(survivalStats.isBleeding);

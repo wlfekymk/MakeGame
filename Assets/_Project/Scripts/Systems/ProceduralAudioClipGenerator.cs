@@ -105,6 +105,36 @@ namespace MakeGame.Systems
             return BuildClip("OceanAmbient", samples);
         }
 
+        /// <summary>
+        /// 고주파 백색 소음을 살짝 저역통과(이전 샘플과 섞기)해 날카로운 화이트노이즈보다 부드러운
+        /// "쏴아" 하는 빗소리 질감의 배경음 루프를 생성한다. 파도 앰비언트와 달리 밀물/썰물 같은
+        /// 느린 주기 없이 일정한 세기로 계속된다(비가 오는 동안 지속되는 소리이므로).
+        /// </summary>
+        public static AudioClip CreateRainAmbientLoop(float duration)
+        {
+            int sampleCount = Mathf.Max(1, Mathf.RoundToInt(SampleRate * duration));
+            float[] samples = new float[sampleCount];
+            var random = new System.Random(54321);
+
+            float prev = 0f;
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float noise = (float)random.NextDouble() * 2f - 1f;
+                prev = prev * 0.7f + noise * 0.3f; // 단순 저역통과 필터로 거친 노이즈를 부드럽게 다듬는다.
+                samples[i] = prev * 0.22f;
+            }
+
+            int fadeSamples = Mathf.Min(sampleCount / 10, SampleRate / 2);
+            for (int i = 0; i < fadeSamples; i++)
+            {
+                float fade = i / (float)fadeSamples;
+                samples[i] *= fade;
+                samples[sampleCount - 1 - i] *= fade;
+            }
+
+            return BuildClip("RainAmbient", samples);
+        }
+
         /// <summary>생성한 샘플 배열로 모노(1채널) AudioClip을 만들어 반환한다.</summary>
         private static AudioClip BuildClip(string name, float[] samples)
         {

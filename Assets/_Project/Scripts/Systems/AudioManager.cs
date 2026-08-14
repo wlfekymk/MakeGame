@@ -24,6 +24,7 @@ namespace MakeGame.Systems
 
         private AudioSource sfxSource;
         private AudioSource bgmSource;
+        private AudioSource rainSource;
 
         // 매 재생마다 새로 생성하지 않도록, Awake에서 한 번만 만들어 캐시해두는 절차적 효과음 클립들.
         private AudioClip clipPickup;
@@ -35,6 +36,7 @@ namespace MakeGame.Systems
         private AudioClip clipStageComplete;
         private AudioClip clipSaveOrLoad;
         private AudioClip clipOceanAmbient;
+        private AudioClip clipRainAmbient;
 
         /// <summary>
         /// 싱글턴 인스턴스를 초기화하고, 씬 전환에도 파괴되지 않게 한 뒤 재생용 AudioSource와
@@ -57,6 +59,12 @@ namespace MakeGame.Systems
             bgmSource = gameObject.AddComponent<AudioSource>();
             bgmSource.loop = true;
             bgmSource.playOnAwake = false;
+
+            // 날씨(비) 배경음 전용 소스. 파도 배경음(bgmSource)과 별도 채널로 둬서, 비가 오는 동안
+            // 두 소리가 동시에 자연스럽게 겹쳐 들리게 한다(파도 소리를 끄고 비 소리로 바꾸는 대신).
+            rainSource = gameObject.AddComponent<AudioSource>();
+            rainSource.loop = true;
+            rainSource.playOnAwake = false;
 
             // 버그 수정: 설정 화면에서 조절한 볼륨이 AudioManager 필드에만 저장되고 디스크에는 전혀
             // 저장되지 않아, 게임을 다시 실행할 때마다 항상 기본값(효과음 0.7 / 배경음 0.3)으로
@@ -100,6 +108,7 @@ namespace MakeGame.Systems
             clipStageComplete = ProceduralAudioClipGenerator.CreateChord(new float[] { 523f, 659f, 784f }, 0.4f); // 배 제작 단계 완료: 3화음 팡파르
             clipSaveOrLoad = ProceduralAudioClipGenerator.CreateBeep(1046f, 0.06f); // 저장/불러오기: 짧은 확인음
             clipOceanAmbient = ProceduralAudioClipGenerator.CreateOceanAmbientLoop(4f); // 파도 배경음 루프
+            clipRainAmbient = ProceduralAudioClipGenerator.CreateRainAmbientLoop(4f); // 비 배경음 루프 (WeatherSystem이 비가 올 때만 재생)
         }
 
         /// <summary>자원 채집 성공 시 재생한다.</summary>
@@ -146,6 +155,24 @@ namespace MakeGame.Systems
             bgmSource.Play();
         }
 
+        /// <summary>WeatherSystem이 비가 내리기 시작할 때 호출한다. 이미 재생 중이면 아무 것도 하지 않는다.</summary>
+        public void StartRainAmbient()
+        {
+            if (clipRainAmbient == null || rainSource == null || rainSource.isPlaying)
+                return;
+
+            rainSource.clip = clipRainAmbient;
+            rainSource.volume = bgmVolume;
+            rainSource.Play();
+        }
+
+        /// <summary>WeatherSystem이 비가 그칠 때 호출한다.</summary>
+        public void StopRainAmbient()
+        {
+            if (rainSource != null)
+                rainSource.Stop();
+        }
+
         /// <summary>
         /// 이 인스턴스가 파괴될 때 정적 참조가 죽은 오브젝트를 계속 가리키지 않도록 정리한다.
         /// </summary>
@@ -175,6 +202,8 @@ namespace MakeGame.Systems
             bgmVolume = Mathf.Clamp01(value);
             if (bgmSource != null)
                 bgmSource.volume = bgmVolume;
+            if (rainSource != null)
+                rainSource.volume = bgmVolume;
 
             // 버그 수정: 값을 바꿀 때마다 PlayerPrefs에도 저장해, 다음 실행 시 LoadVolumePrefs()가
             // 이 값을 다시 불러올 수 있게 한다.
