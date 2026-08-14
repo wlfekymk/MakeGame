@@ -15,6 +15,7 @@ namespace MakeGame.Player
         Bleeding,
         Drowning,
         Predator,
+        SharkAttack, // 수영/잠수 중 상어 습격 (Predator와 분리 - 육지 포식자와 다른 사망 문구를 보여주기 위함)
     }
 
     /// <summary>

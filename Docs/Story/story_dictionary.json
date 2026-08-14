@@ -606,6 +606,17 @@
         "버그 발견(라이브 플레이테스트): 비 파티클 시스템에 셰이더를 지정하지 않고 기본 파티클 머티리얼을 그대로 뒀더니, Game 뷰에서 비가 내리는 동안 화면에 마젠타색 점들이 흩뿌려지는 것을 실제로 확인 - URP 프로젝트가 내장 렌더 파이프라인 전용 기본 머티리얼의 셰이더를 인식하지 못해 '셰이더 없음'을 뜻하는 마젠타로 표시된 것. Universal Render Pipeline/Particles/Unlit 셰이더를 Shader.Find로 명시적으로 찾아 새 Material에 지정해 해결(해당 셰이더도 없는 극단적 환경을 대비해 Sprites/Default를 대체 셰이더로 둠). RainParticles의 ParticleSystemRenderer.material이 올바른 셰이더를 참조하는 것을 Inspector로 재확인."
       ],
       "result": "컴파일 0 에러/0 경고. Play 모드에서 WeatherSystem의 Min/Max Clear Seconds를 임시로 1~2초로 낮춰 비 전환을 강제 유도, RainParticles 자식 오브젝트와 그 Renderer가 Universal Render Pipeline/Particles/Unlit 머티리얼을 사용함을 Inspector로 확인(수정 전 재현했던 마젠타 문제가 해결됨). 비 전환 전후 콘솔 0 에러 유지. Health=0 강제 후 R 재시작 시 WeatherSystem이 정확히 1개만 재생성되어 중복 없음을 Hierarchy로 확인."
+    },
+    "batch198to203SharkHazard": {
+      "summary": "바다 위험요소(상어) 신규 구현 - 수영/잠수 시스템은 있었지만 바다 자체에 위험이 전혀 없던 공백을 메움",
+      "findings": [
+        "HazardType.Shark 신규 추가. HazardSource.ConfigureForType에 상어 전용 전투 설정(isCombatTarget=true, maxHealth=25, directDamage=18) 추가 - 곰(maxHealth=50)보다는 약하지만 다른 어떤 위험요소보다 직접 피해량이 높게 설계해 '물속에서는 무기를 안정적으로 쓰기 어렵다'는 전제를 반영. ApplyHazardEffect에 상어 케이스 추가(직접 피해+출혈, 사망 원인은 DamageCause.SharkAttack).",
+        "DamageCause.SharkAttack을 Predator와 별도로 신규 추가하고 GameOverController에 전용 사망 문구('바닷속에서 상어의 습격을 받아 목숨을 잃었습니다.') 추가 - 기존 '섬의 포식자에게 목숨을 잃었습니다' 문구는 '섬의'라는 표현이 바다 한가운데서의 죽음과 맞지 않아 분리.",
+        "HazardSpawner.GetVisualConfig에 상어 케이스 추가(길쭉한 캡슐을 눕혀서 배치, 어두운 청회색). HazardSpawner.SpawnSingleHazard를 SpawnHazardAtPosition으로 공개해 섬 기반이 아닌 다른 스포너도 형태/전투 설정 테이블을 재사용할 수 있게 함.",
+        "SharkSpawner 신규 클래스: 기존 HazardSpawner(섬 하나를 중심으로 반경 안에 배치)와 달리 전체 섬 목록을 참고해 모든 섬 중심으로부터 최소 35m(시작 섬은 60m 안전지대), 바다 크기의 70% 범위 안에서 무작위 위치를 찾아 해수면 2m 아래에 상어를 배치. WorldMapManager.Start()/RegenerateWorld() 양쪽에서 섬 생성 루프가 끝난 뒤 한 번 호출.",
+        "씬 와이어링: Managers 오브젝트에 SharkSpawner 컴포넌트를 새로 추가하고 Hazard Spawner 필드를 기존 HazardSpawner에 연결, WorldMapManager의 새 Shark Spawner 필드도 연결 후 씬 저장."
+      ],
+      "result": "컴파일 0 에러/0 경고. Play 모드에서 Hierarchy 검색으로 'Hazard_Shark' 오브젝트가 정확히 6개(sharkCount 기본값) 생성됨을 확인, 그중 하나를 선택해 Position Y=-2(해수면 2m 아래), Rotation X=90(눕혀짐), HazardSource의 Hazard Type=Shark/Direct Damage=18/Max Health=25/Current Health=25/Defeat Experience=15가 설계값과 정확히 일치함을 Inspector로 확인. 콘솔 0 에러(스포너 참조 누락 시 발생할 널 참조 예외 없음)."
     }
   },
   "gameplaySystems": {

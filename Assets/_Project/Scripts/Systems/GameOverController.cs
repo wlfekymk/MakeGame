@@ -139,6 +139,8 @@ namespace MakeGame.Systems
                     return "물속에서 숨을 쉬지 못하고 익사했습니다.";
                 case DamageCause.Predator:
                     return "섬의 포식자에게 목숨을 잃었습니다.";
+                case DamageCause.SharkAttack:
+                    return "바닷속에서 상어의 습격을 받아 목숨을 잃었습니다.";
                 default:
                     return "무인도에서 생존하지 못했습니다.";
             }

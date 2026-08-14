@@ -61,8 +61,19 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// SharkSpawner처럼 섬이 아닌 곳(바다 한가운데)에 위험 요소를 배치해야 하는 다른 스포너가
+        /// 이 클래스의 시각/전투 설정 테이블(GetVisualConfig, HazardSource.ConfigureForType)을 그대로
+        /// 재사용할 수 있도록 공개한 진입점. 섬 배치(SpawnHazardsForIsland)와 달리 확률/섬 규모 개념이
+        /// 없고, 호출자가 이미 정한 위치에 정확히 하나를 생성한다.
+        /// </summary>
+        public HazardSource SpawnHazardAtPosition(HazardType type, Vector3 position, Transform parent)
+        {
+            return SpawnSingleHazard(type, position, parent);
+        }
+
+        /// <summary>
         /// 위험 요소 하나를 실제로 생성한다. 종류별로 형태/크기/색상/회전이 다른 프리미티브를 사용해
-        /// 플레이어가 캡슐 하나로는 구분할 수 없던 곰/식인종/독사/전갈/벌떼/함정을 한눈에 구별할 수 있게 한다.
+        /// 플레이어가 캡슐 하나로는 구분할 수 없던 곰/식인종/독사/전갈/벌떼/함정/상어를 한눈에 구별할 수 있게 한다.
         /// </summary>
         private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent)
         {
@@ -168,6 +179,16 @@ namespace MakeGame.Systems
                         rotationEuler = Vector3.zero,
                         color = new Color(0.35f, 0.3f, 0.25f), // 어두운 회갈색
                         groundOffset = 0.04f
+                    };
+
+                case HazardType.Shark:
+                    return new HazardVisualConfig
+                    {
+                        primitiveType = PrimitiveType.Capsule,
+                        localScale = new Vector3(0.45f, 1.4f, 0.45f), // 길쭉하게 눕혀서 상어 몸통처럼 보이게
+                        rotationEuler = new Vector3(0f, 0f, 90f),
+                        color = new Color(0.28f, 0.35f, 0.42f), // 어두운 청회색
+                        groundOffset = 0f // SharkSpawner가 이미 해수면 아래 정확한 위치를 계산해 넘겨준다
                     };
 
                 default:

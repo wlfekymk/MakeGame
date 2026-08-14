@@ -68,6 +68,13 @@ namespace MakeGame.Systems
                     isCombatTarget = true;
                     maxHealth = 12f;
                     break;
+                case HazardType.Shark:
+                    // 상어: 체력 자체는 곰보다 낮지만, 물속에서는 무기를 안정적으로 쓰기 어렵다는 전제로
+                    // 직접 피해량(directDamage)을 다른 위험 요소보다 높게 잡아 위협적으로 만든다.
+                    isCombatTarget = true;
+                    maxHealth = 25f;
+                    directDamage = 18f;
+                    break;
                 default:
                     // 독사/전갈/함정: 전투 대상이 아니라 피하거나 감수해야 하는 위험 요소다.
                     isCombatTarget = false;
@@ -135,6 +142,13 @@ namespace MakeGame.Systems
                 case HazardType.Trap:
                     // 함정: 골절 상태로 만든다.
                     target.ApplyBrokenBone();
+                    break;
+
+                case HazardType.Shark:
+                    // 상어: 직접 피해 + 출혈. 사망 원인은 Predator와 구분되는 SharkAttack으로 기록해
+                    // 게임 오버 화면에 "바닷속에서 상어의 습격" 같은 정확한 문구가 뜨게 한다.
+                    target.TakeDamage(directDamage, DamageCause.SharkAttack);
+                    target.ApplyBleeding();
                     break;
 
                 case HazardType.FoodShortage:

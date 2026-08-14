@@ -472,6 +472,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.UI.InventoryUI
   inventory: {fileID: 1925945764}
   toggleKey: 9
+  cycleFilterKey: 102
 --- !u!1 &1886019770
 GameObject:
   m_ObjectHideFlags: 0
@@ -501,6 +502,7 @@ GameObject:
   - component: {fileID: 2000000019}
   - component: {fileID: 2000000020}
   - component: {fileID: 2000000021}
+  - component: {fileID: 2000000022}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -612,6 +614,7 @@ MonoBehaviour:
   hazardSpawner: {fileID: 2000000007}
   blueprintSpawner: {fileID: 2000000012}
   creatureSpawner: {fileID: 2000000021}
+  sharkSpawner: {fileID: 2000000022}
   aircraftRepair: {fileID: 2000000015}
   boatConstruction: {fileID: 1886019771}
   generateOnStart: 1
@@ -700,6 +703,7 @@ MonoBehaviour:
   oxygenRecoveryPerSecond: 25
   oxygenDrainPerSecond: 5
   drowningDamagePerSecond: 3
+  lastDamageCause: 0
 --- !u!4 &1925945766
 Transform:
   m_ObjectHideFlags: 0
@@ -827,6 +831,7 @@ MonoBehaviour:
     m_Bits: 64
   shadeCheckDistance: 20
   waterLevel: 0
+  headHeightOffset: 1.6
 --- !u!114 &2000000004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1214,6 +1219,25 @@ MonoBehaviour:
   largeMultiplier: 2
   extraLargeMultiplier: 2.5
   scatterRadius: 9
+--- !u!114 &2000000022
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886019770}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9fa14c4b33494144b68748d57c9a080, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SharkSpawner
+  hazardSpawner: {fileID: 2000000007}
+  sharkCount: 6
+  minDistanceFromIslands: 35
+  safeZoneRadiusFromStart: 60
+  placementRangeRatio: 0.7
+  depthBelowSeaLevel: 2
+  maxPlacementAttempts: 20
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

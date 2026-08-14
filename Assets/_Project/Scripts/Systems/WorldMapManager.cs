@@ -49,6 +49,10 @@ namespace MakeGame.Systems
                  "이게 없으면 생고기/생선 자체를 얻을 방법이 없어 사냥/낚시/조리 시스템이 전부 죽은 콘텐츠가 된다.")]
         public CreatureSpawner creatureSpawner;
 
+        [Tooltip("모든 섬 생성이 끝난 뒤 섬 사이 깊은 바다에 상어를 배치할 스포너 (비워두면 상어를 배치하지 않는다).\n" +
+                 "섬 위험요소와 달리 섬 하나가 아니라 전체 섬 목록을 참고해야 안전지대를 계산할 수 있으므로, 섬 생성 루프가 끝난 뒤 한 번만 호출한다.")]
+        public SharkSpawner sharkSpawner;
+
         [Header("경비행기 수리 엔딩")]
         [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
@@ -99,6 +103,8 @@ namespace MakeGame.Systems
             {
                 GenerateNextIsland(i, initialIslandCount);
             }
+
+            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform);
         }
 
         /// <summary>
@@ -125,6 +131,8 @@ namespace MakeGame.Systems
             {
                 GenerateNextIsland(i, initialIslandCount);
             }
+
+            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform);
         }
 
         [Header("바다")]
