@@ -289,11 +289,19 @@ namespace MakeGame.UI
             return new IslandRow { rowGo = rowGo, infoLabel = infoLabel, travelButton = travelButton };
         }
 
-        /// <summary>섬 하나의 표시용 정보 문자열("섬 3 - 대형 - 128m - 미발견")을 만든다.</summary>
+        /// <summary>
+        /// 섬 하나의 표시용 정보 문자열("섬 3 - 대형 - 128m - 미발견")을 만든다.
+        /// 버그 수정: 예전에는 미발견 섬에도 실제 규모(소/중/대/특대)를 그대로 보여줘서, 방문하지 않고도
+        /// 어느 먼 섬이 대형/특대(도면·희귀 재료가 나오는 섬)인지 목록만 보고 미리 알 수 있었다. 이는
+        /// "완전히 확정 짓지 않아 약간의 탐험 긴장감을 남긴다"는 배 도면 확률 설계 의도와 어긋나는
+        /// 정보 노출이라, 시작 섬이 아니고 아직 발견하지 못한 섬은 규모를 "미확인"으로 가려서
+        /// 실제로 배를 타고 가봐야만 규모를 알 수 있게 했다.
+        /// </summary>
         private string BuildIslandInfo(IslandInstance island)
         {
             float distance = Vector3.Distance(player.position, island.mapPosition);
-            string sizeText = GetSizeKoreanName(island.size);
+            bool revealSize = island.isStartingIsland || island.isDiscovered;
+            string sizeText = revealSize ? GetSizeKoreanName(island.size) : "미확인";
             string statusText = island.isStartingIsland ? "시작 섬" : (island.isDiscovered ? "발견함" : "미발견");
             return $"섬 {island.islandId}  -  {sizeText}  -  {distance:F0}m  -  {statusText}";
         }

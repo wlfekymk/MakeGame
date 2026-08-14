@@ -565,6 +565,17 @@
         "GameOverController.GetDeathMessage의 6개 case(Starvation/Sunstroke/Poison/Bleeding/Drowning/Predator)가 SurvivalStats.DamageCause enum(Unknown 포함 7개 값)과 정확히 매핑됨을 확인 - 누락 없음."
       ],
       "result": "코드 변경 없음(문서만 갱신). 컴파일 0/0/0, Play 세션에서 이동/소비(C)/미니맵(M)/저장/불러오기 모두 콘솔 에러 없이 정상 동작 확인."
+    },
+    "batch173to179ReviewAndFix": {
+      "summary": "UI/밸런스/치팅방지 재검토 배치. 미발견 섬 규모 노출 버그를 실제로 발견해 수정함",
+      "findings": [
+        "InventoryUI(좌측 anchor)와 CraftingUI(우측 anchor) 동시 오픈 시 겹침 없음을 라이브로 확인.",
+        "PlayerSkills.experiencePerLevel=100 고정, 최고 요구 레벨은 물증류기키트(레벨3)뿐 - 기본 제작 몇 번으로 도달 가능해 적정.",
+        "코코넛(thirstRestoreAmount=50)은 isCoconutWaterSource=true라 ConsumeCoconutWater의 기본 overdoseThreshold(40)를 항상 초과해 마실 때마다 설사 페널티(thirst*=0.5)가 발동함을 수식으로 확인. 갈증<50일 때 마시면 순이익, >=50일 때 마시면 순손실 - 아이템 설명 문구와 일치하는 의도된 리스크/리워드로 판단, 변경 없음.",
+        "EndingChecker.Update()는 배 엔딩을 먼저 검사해 트리거 시 즉시 return하고, endingTriggered 플래그가 이후 모든 체크(비행기 포함)를 차단하므로 두 엔딩이 동시에 조건을 만족해도 중복 트리거/UI 꼬임이 발생하지 않음을 확인.",
+        "**실제 버그 발견 및 수정**: MinimapUI.BuildIslandInfo가 미발견 섬에도 실제 규모(소/중/대/특대)를 그대로 노출해, 방문하지 않고도 어느 섬이 대형/특대(도면·희귀 재료 스폰 섬)인지 미리 알 수 있었음. 시작 섬이 아니고 미발견인 경우 규모를 '미확인'으로 가리도록 수정, 배 도면 확률 설계 의도(탐험 긴장감)와 일치시킴. Play 모드에서 미확인 표시 확인 완료."
+      ],
+      "result": "MinimapUI.cs 1개 파일 수정(미발견 섬 규모 정보 은폐). 컴파일 0/0/0, Play 모드에서 섬 목록 패널의 '미확인' 표시 라이브 검증 완료."
     }
   },
   "gameplaySystems": {
