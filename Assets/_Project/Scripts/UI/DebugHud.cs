@@ -32,11 +32,15 @@ namespace MakeGame.UI
         public bool showControlsHelp = true;
 
         /// <summary>
-        /// 매 프레임 화면 좌상단에 생존 수치와 진행 상황을 텍스트로 그린다.
+        /// 매 프레임 화면 우상단에 생존 수치와 진행 상황을 텍스트(raw 숫자)로 그린다.
+        /// 버그 수정: SurvivalHudUI(정식 UGUI 생존 바 HUD)가 추가되기 전에는 이 패널이 화면 좌상단
+        /// (10,10)을 차지하고 있었는데, SurvivalHudUI도 좌상단에 생기면서 두 패널이 서로 겹치게 됐다.
+        /// SurvivalHudUI는 플레이어가 보는 "정식" 화면이고 이 DebugHud는 QA/디버깅용 raw 숫자 확인
+        /// 용도로 계속 남겨두는 것이므로, 겹치지 않도록 이 패널만 화면 우상단으로 옮겼다.
         /// </summary>
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 340, 420), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(Screen.width - 350, 10, 340, 420), GUI.skin.box);
 
             if (survivalClock != null)
                 GUILayout.Label($"경과 일수: {survivalClock.ElapsedDays}일차");

@@ -136,6 +136,36 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// 체력/허기/갈증처럼 0~1 비율로 변하는 수치를 가로 막대(배경 + 채움 이미지)로 표시하는
+        /// 프로그레스 바를 생성한다. 반환되는 Fill Image의 fillAmount(0~1)를 매 프레임 갱신하면
+        /// 막대가 늘고 줄어드는 것처럼 보인다. HUD처럼 raw 숫자보다 한눈에 들어오는 시각 표시가
+        /// 필요한 곳에서 쓴다.
+        /// </summary>
+        public static Image CreateProgressBar(Transform parent, string name, Color backgroundColor, Color fillColor)
+        {
+            var bgGo = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            bgGo.transform.SetParent(parent, false);
+            bgGo.GetComponent<Image>().color = backgroundColor;
+
+            var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            fillGo.transform.SetParent(bgGo.transform, false);
+            var fillRt = fillGo.GetComponent<RectTransform>();
+            fillRt.anchorMin = Vector2.zero;
+            fillRt.anchorMax = Vector2.one;
+            fillRt.offsetMin = Vector2.zero;
+            fillRt.offsetMax = Vector2.zero;
+
+            var fillImage = fillGo.GetComponent<Image>();
+            fillImage.color = fillColor;
+            fillImage.type = Image.Type.Filled;
+            fillImage.fillMethod = Image.FillMethod.Horizontal;
+            fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
+            fillImage.fillAmount = 1f;
+
+            return fillImage;
+        }
+
+        /// <summary>
         /// 클릭 시 콜백을 실행하는 버튼을 생성한다 (배경 + 가운데 정렬 라벨 텍스트 포함).
         /// </summary>
         public static Button CreateButton(Transform parent, string name, string label, UnityEngine.Events.UnityAction onClick)

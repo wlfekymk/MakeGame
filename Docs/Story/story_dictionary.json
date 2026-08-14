@@ -586,6 +586,15 @@
         "BoatWorkbench 상호작용은 다른 모든 상호작용 대상과 동일한 InteractionController.interactionDistance(4m) 공용 레이캐스트를 사용 - 특이사항 없음."
       ],
       "result": "코드 변경 없음(문서만 갱신). 컴파일 0/0/0, Play 세션에서 이동/상호작용(E)/설치(G) 콘솔 에러 없이 정상 동작 확인."
+    },
+    "batch188to192SurvivalHudUI": {
+      "summary": "정식 UGUI 생존 HUD(SurvivalHudUI) 신규 구현 - DebugHud가 스스로 '임시'라고 밝혀온 부분을 실제 개발",
+      "findings": [
+        "UIBuilder.CreateProgressBar 신규 헬퍼 추가: 배경 Image + Image.Type.Filled/FillMethod.Horizontal Fill 자식으로 구성, fillAmount(0~1)를 매 프레임 갱신하면 막대가 늘고 줄어듦.",
+        "SurvivalHudUI: 화면 좌상단에 경과일수 + 체력/허기/갈증/일사병/산소 5개 막대 바 + 중독/출혈/골절 상태이상 아이콘(비활성 시 숨김) + 배/경비행기 진행도 텍스트를 표시. DayNightCycle과 동일하게 RuntimeInitializeLoadType.SubsystemRegistration + SceneManager.sceneLoaded 패턴을 써서 재시작 시에도 매번 새로 생성됨(DontDestroyOnLoad 아님, Player의 SurvivalStats 등 참조가 재시작마다 바뀌기 때문).",
+        "기존 DebugHud(OnGUI, 좌상단 Rect(10,10,340,420))와 신규 SurvivalHudUI(좌상단)가 겹치는 문제가 있어, DebugHud만 우상단(Screen.width-350, 10)으로 재배치. DebugHud는 QA/디버깅용 raw 숫자 확인 용도로 계속 남겨둠."
+      ],
+      "result": "컴파일 0/0/0. Play 모드에서 Health=40으로 강제 변경 시 체력 막대가 실시간으로 줄어듦, Is Poisoned 체크 시 중독 아이콘이 즉시 나타남을 라이브로 확인. 사망(Health=0)->재시작(R) 후 SurvivalHudCanvas가 정확히 1개만 재생성되어 중복 없음을 Hierarchy로 확인."
     }
   },
   "gameplaySystems": {
