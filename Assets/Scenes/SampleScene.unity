@@ -949,7 +949,6 @@ MonoBehaviour:
   mediumMultiplier: 2
   largeMultiplier: 3
   extraLargeMultiplier: 4
-  scatterRadius: 80
 --- !u!114 &2000000007
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -979,7 +978,6 @@ MonoBehaviour:
   mediumMultiplier: 1.75
   largeMultiplier: 2.5
   extraLargeMultiplier: 3.25
-  scatterRadius: 100
   balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
 --- !u!114 &2000000008
 MonoBehaviour:
@@ -1249,7 +1247,6 @@ MonoBehaviour:
   mediumMultiplier: 1.5
   largeMultiplier: 2
   extraLargeMultiplier: 2.5
-  scatterRadius: 90
 --- !u!114 &2000000022
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -58,40 +58,148 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 독사(HazardType.VenomousSnake) 전용 디테일. 몸통 캡슐은 이미 눕혀서 길고 얇게 배치되어
-        /// 형태만으로도 뱀임을 어느 정도 알 수 있으므로, 머리 쪽(로컬 +Z 끝)에 아주 작은 붉은 혀
-        /// 돌기 하나만 더해 "머리가 어느 쪽인지"와 뱀 특유의 느낌을 최소한으로 보강한다.
-        /// 과한 디테일(독립된 머리 형상 등)은 넣지 않는다.
+        /// 눕혀서 배치된 몸통(뱀/전갈처럼 rotationEuler(0,0,90)으로 세팅된 개체)에 붙일, "일어선"
+        /// 좌표계 피벗을 만든다. 이 피벗 아래에서는 로컬 축이 월드 축과 정확히 일치하고(+Y가 위),
+        /// 스케일이 1(=1로컬 단위가 1미터)이 되므로 파츠를 미터 단위로, 회전까지 자유롭게 배치할 수 있다.
+        ///
+        /// 왜 필요한가: 몸통이 Z축 +90도로 눕혀지면 로컬 +X가 월드 위, 로컬 +Y가 몸통 진행 방향,
+        /// 로컬 +Z가 좌우가 된다. 상어 등지느러미가 옆구리에 붙어 있던 사고(B4-3)와 아래에서 고친
+        /// 뱀 혀/전갈 꼬리·집게가 전부 이 축 뒤바뀜을 눈치채지 못해 생긴 같은 원인의 버그였다.
+        /// 매번 축을 손으로 뒤집는 대신 좌표계를 한 번 바로 세워두면 같은 실수가 구조적으로 막힌다.
+        ///
+        /// 계산 근거: 자식의 월드 변환은 (부모회전 R)·(부모스케일 S)·(자식회전 r)·(자식스케일 s) 순이다.
+        /// r = Euler(0,0,-90)을 주면 자식의 +X는 S를 거쳐 부모 Y축으로, +Y는 부모 X축으로 간다.
+        /// 따라서 s = (1/S.y, 1/S.x, 1/S.z)로 두면 세 축의 월드 길이가 정확히 1이 되어
+        /// 피벗 내부가 무회전·단위스케일 좌표계가 된다(90도 회전이라 전단은 발생하지 않는다).
+        /// 부모의 Y축 무작위 회전(yawJitter)은 그대로 상속되므로 개체 방향은 유지된다.
+        /// 피벗 기준 축: +Y = 위, +X = 머리 방향(몸통이 좌우 대칭이라 어느 끝을 머리로 볼지는 임의로
+        /// 정한 값이다), +Z = 좌우.
         /// </summary>
-        public static void AddSnakeDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        public static Transform CreateUprightPivot(GameObject body, Vector3 appliedScale, string name)
         {
-            AddCompensatedBox(body.transform, new Vector3(0f, 0f, 0.95f), new Vector3(0.04f, 0.04f, 0.16f), appliedScale,
-                new Color(0.85f, 0.15f, 0.15f), "Tongue"); // 붉은 혀 돌기
+            var pivot = new GameObject(name);
+            pivot.transform.SetParent(body.transform, false);
+            pivot.transform.localPosition = Vector3.zero;
+            pivot.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
+            pivot.transform.localScale = new Vector3(
+                1f / Mathf.Max(0.0001f, appliedScale.y),
+                1f / Mathf.Max(0.0001f, appliedScale.x),
+                1f / Mathf.Max(0.0001f, appliedScale.z));
+            return pivot.transform;
         }
 
         /// <summary>
-        /// 전갈(HazardType.Scorpion) 전용 디테일. 몸통 뒤쪽에서 위로 구부러져 올라간 꼬리 마디(캡슐 2개)와
-        /// 앞쪽 양옆의 작은 집게(박스 2개)를 붙여, 몸통 프리미티브 하나로는 나오지 않는 전갈 특유의
-        /// 실루엣(들린 꼬리 + 집게)을 최소한의 파츠로 표현한다.
+        /// CreateUprightPivot 아래에 미터 단위로 박스 파츠를 붙인다(로컬 스케일 = 실제 크기).
+        /// </summary>
+        private static GameObject AddUprightBox(Transform pivot, string name, Vector3 posMeters, Vector3 sizeMeters,
+            Color color, Quaternion? rotation = null)
+        {
+            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Cube, posMeters, sizeMeters, color, rotation);
+        }
+
+        /// <summary>
+        /// CreateUprightPivot 아래에 미터 단위로 구체 파츠를 붙인다(지름 = diameterMeters).
+        /// </summary>
+        private static GameObject AddUprightSphere(Transform pivot, string name, Vector3 posMeters, float diameterMeters, Color color)
+        {
+            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Sphere, posMeters,
+                new Vector3(diameterMeters, diameterMeters, diameterMeters), color);
+        }
+
+        /// <summary>
+        /// CreateUprightPivot 아래에 미터 단위로 캡슐/원기둥 파츠를 붙인다.
+        /// 주의: 유니티의 캡슐/원기둥 기본 메시는 높이가 2단위라, 전체 길이를 lengthMeters로 맞추려면
+        /// 로컬 Y 스케일에 그 절반을 넣어야 한다(이 계산을 빠뜨려 기존 파츠들이 의도의 2배로 커져 있었다).
+        /// </summary>
+        private static GameObject AddUprightCapsule(Transform pivot, string name, Vector3 posMeters,
+            float diameterMeters, float lengthMeters, Color color, Quaternion? rotation = null)
+        {
+            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Capsule, posMeters,
+                new Vector3(diameterMeters, lengthMeters * 0.5f, diameterMeters), color, rotation);
+        }
+
+        /// <summary>
+        /// 독사(HazardType.VenomousSnake) 전용 디테일.
+        ///
+        /// [B4 수정 - 상어 등지느러미와 완전히 같은 축 착각 버그였다] 기존 코드는 혀를 로컬 +Z로 0.95만큼
+        /// 밀었는데, 눕혀진 몸통에서 로컬 +Z는 "좌우"다. 즉 혀가 머리 끝이 아니라 몸통 옆구리에 0.17m
+        /// 튀어나온 돌기였다(몸통 반지름은 0.09m뿐이라 그냥 옆에 붙은 혹으로 보였다). 몸통의 진행
+        /// 방향은 로컬 +Y이고, 그 끝은 로컬 y=±1(월드 0.6m)이다.
+        ///
+        /// 이제 CreateUprightPivot으로 좌표계를 세운 뒤 미터 단위로 배치한다:
+        /// - 살짝 들어올린 머리(구체) — 지면에 붙은 초록 막대기가 20m 밖에서 전혀 식별되지 않던 문제를
+        ///   실루엣으로 보강한다(머리 꼭대기 0.275m vs 몸통 등 0.19m).
+        /// - 붉은 혀(Danger Red) — 머리가 어느 쪽인지, 그리고 이것이 위험 요소라는 신호.
+        /// - 어두운 띠 2개 — 색맹 대응과 야간 가독성을 위한 "무늬" 신호. 색이 아니라 패턴이라
+        ///   초록/갈색 구분이 안 되는 조건에서도 독사임이 읽힌다.
+        /// </summary>
+        public static void AddSnakeDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Transform pivot = CreateUprightPivot(body, appliedScale, "SnakeParts");
+
+            // 머리: 몸통 앞 끝(0.6m)에서 살짝 들려 올라간다.
+            AddUprightSphere(pivot, "Head", new Vector3(0.56f, 0.09f, 0f), 0.17f, bodyColor * 0.9f);
+
+            // 혀: 머리 앞으로 뻗은 가는 막대.
+            AddUprightBox(pivot, "Tongue", new Vector3(0.70f, 0.09f, 0f), new Vector3(0.10f, 0.015f, 0.015f),
+                StructureVisualBuilder.DangerRed);
+
+            // 몸통 무늬 띠 2개(원기둥을 몸통 축과 나란히 눕혀 감는다). 피벗 안은 단위 스케일이라
+            // 회전을 줘도 전단이 생기지 않는다.
+            Color bandColor = new Color(0.12f, 0.12f, 0.12f);
+            Quaternion aroundBody = Quaternion.Euler(0f, 0f, 90f);
+            StructureVisualBuilder.CreateVisualPart(pivot, "Band0", PrimitiveType.Cylinder,
+                new Vector3(0.10f, 0f, 0f), new Vector3(0.20f, 0.025f, 0.20f), bandColor, aroundBody);
+            StructureVisualBuilder.CreateVisualPart(pivot, "Band1", PrimitiveType.Cylinder,
+                new Vector3(-0.25f, 0f, 0f), new Vector3(0.20f, 0.025f, 0.20f), bandColor, aroundBody);
+        }
+
+        /// <summary>
+        /// 전갈(HazardType.Scorpion) 전용 디테일.
+        ///
+        /// [B4 수정 - 뱀과 동일한 축 착각 버그] 눕혀진 몸통에서 로컬 +X는 "월드 위쪽"인데, 기존 코드는
+        /// 집게를 로컬 x=±0.28에 놓았다. 즉 집게 두 개가 좌우가 아니라 위/아래로 한 개씩 붙어 있었다.
+        /// 꼬리도 마찬가지로 "위로 들린" 방향(로컬 +X)이 아니라 로컬 +Y(몸통 진행 방향)와 -Z(좌우)로
+        /// 밀려 있어서, 들린 꼬리 실루엣이 전혀 만들어지지 않았다. 게다가 캡슐 메시 높이가 2단위라는
+        /// 점을 감안하지 않아 꼬리 마디 길이가 의도(0.32/0.26m)의 2배(0.64/0.52m)로, 0.6m짜리 몸통보다
+        /// 긴 상태였다.
+        ///
+        /// 이제 CreateUprightPivot 좌표계에서 미터 단위로 배치한다 - 뒤쪽 위로 솟았다가 앞으로 휘어
+        /// 내려오는 꼬리 2마디(끝은 Danger Red 독침)와, 앞쪽 좌우로 벌린 집게 2개.
+        /// 전갈은 몸길이 0.6m·굵기 0.16m로 매우 작아, 들린 꼬리가 사실상 유일하게 원거리에서 읽히는
+        /// 실루엣 단서다(꼬리 끝 높이 지면 위 0.43m = 몸통 등의 2.3배).
         /// </summary>
         public static void AddScorpionDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
+            Transform pivot = CreateUprightPivot(body, appliedScale, "ScorpionParts");
             Color darker = bodyColor * 0.85f;
 
-            AddCompensatedCapsule(body.transform, new Vector3(0f, 0.28f, -0.5f), new Vector3(0.1f, 0.32f, 0.1f), appliedScale,
-                darker, "TailSegment1", Quaternion.Euler(35f, 0f, 0f));
-            AddCompensatedCapsule(body.transform, new Vector3(0f, 0.55f, -0.75f), new Vector3(0.08f, 0.26f, 0.08f), appliedScale,
-                darker, "TailSegment2", Quaternion.Euler(-25f, 0f, 0f));
+            // 꼬리 1마디: 몸통 뒤(-X)에서 위로 솟는다. +Z축 기준 +35도 = +Y(위)가 -X(뒤)쪽으로 기운다.
+            AddUprightCapsule(pivot, "TailSegment1", new Vector3(-0.297f, 0.142f, 0f), 0.055f, 0.20f, darker,
+                Quaternion.Euler(0f, 0f, 35f));
+            // 꼬리 2마디(독침): 1마디 끝에서 반대로 휘어 앞쪽 위를 향한다.
+            AddUprightCapsule(pivot, "TailSegment2", new Vector3(-0.295f, 0.284f, 0f), 0.045f, 0.17f,
+                StructureVisualBuilder.DangerRed, Quaternion.Euler(0f, 0f, -45f));
 
-            AddCompensatedBox(body.transform, new Vector3(0.28f, -0.08f, 0.55f), new Vector3(0.16f, 0.07f, 0.2f), appliedScale,
-                darker, "PincerL");
-            AddCompensatedBox(body.transform, new Vector3(-0.28f, -0.08f, 0.55f), new Vector3(0.16f, 0.07f, 0.2f), appliedScale,
-                darker, "PincerR");
+            // 집게: 몸통 앞 끝에서 좌우로. 몸통 반지름이 0.08m이므로 ±0.085m면 실루엣 밖으로 나온다.
+            AddUprightBox(pivot, "PincerL", new Vector3(0.30f, -0.02f, 0.085f), new Vector3(0.14f, 0.035f, 0.05f), darker);
+            AddUprightBox(pivot, "PincerR", new Vector3(0.30f, -0.02f, -0.085f), new Vector3(0.14f, 0.035f, 0.05f), darker);
         }
 
         /// <summary>
         /// 함정(HazardType.Trap) 전용 디테일. 얇은 원판 가장자리를 따라 뾰족한 가시(가는 캡슐)를
         /// 여러 개 둘러 박아, 밋밋한 원판이 아니라 "밟으면 위험한 것"이라는 실루엣을 만든다.
+        ///
+        /// [B4 수정 - 가시가 길이 3.9m짜리 바늘로 사방에 뻗어 있었다] 실측 계산:
+        /// 함정 몸통은 localScale (0.6, 0.04, 0.6)로 극단적으로 납작한 원판이다. 여기에 가시를
+        /// Euler(90,0,0)으로 눕혀 붙였는데, 90도 회전은 자식의 길이축(로컬 Y)을 부모의 Z축으로 옮긴다.
+        /// 그래서 스케일 보정값 0.13/0.04 = 3.25가 얇은 Y축(0.04) 대신 넓은 Z축(0.6)에 곱해져
+        /// 캡슐 길이가 2 × 3.25 × 0.6 = 3.9m가 됐다(의도는 0.13m). 두께도 반대로 0.0017m까지 눌려,
+        /// 지름 0.6m짜리 함정에서 종잇장 같은 3.9m 바늘 8개가 방사형으로 뻗어 나가는 상태였다.
+        /// 원인은 상어 등지느러미/뱀 혀와 같은 계열의 실수(회전과 비균일 스케일의 상호작용)다.
+        /// 수정: 가시를 회전 없이 위로 세운다(원판 몸통은 rotationEuler가 0이라 로컬 축 = 월드 축이고,
+        /// 회전이 없으면 축이 뒤바뀔 여지 자체가 사라진다). 캡슐 메시 높이가 2단위이므로 worldSize.y에는
+        /// 목표 길이의 절반(0.08 → 실제 0.16m)을 넣는다. 지면 위 0.17m까지 솟은 이빨 8개가 된다.
         /// </summary>
         public static void AddTrapDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
@@ -101,9 +209,10 @@ namespace MakeGame.Systems
             for (int i = 0; i < spikeCount; i++)
             {
                 float angle = i * (360f / spikeCount) * Mathf.Deg2Rad;
-                Vector3 localPos = new Vector3(Mathf.Cos(angle) * 0.42f, 0.05f, Mathf.Sin(angle) * 0.42f);
-                AddCompensatedCapsule(body.transform, localPos, new Vector3(0.025f, 0.13f, 0.025f), appliedScale,
-                    spikeColor, $"Spike{i}", Quaternion.Euler(90f, 0f, 0f));
+                // 로컬 Y 1.25 = 월드 0.05m (원판 몸통의 Y 스케일이 0.04이므로).
+                Vector3 localPos = new Vector3(Mathf.Cos(angle) * 0.42f, 1.25f, Mathf.Sin(angle) * 0.42f);
+                AddCompensatedCapsule(body.transform, localPos, new Vector3(0.03f, 0.08f, 0.03f), appliedScale,
+                    spikeColor, $"Spike{i}");
             }
         }
 
@@ -171,11 +280,22 @@ namespace MakeGame.Systems
         /// 몸통(사람 실루엣)은 그대로 두고, 옆에 세워 든 창 하나(회전 없는 세로 박스)만 더해
         /// "무장한 사람"이라는 실루엣을 만든다. 곰(동물 머리 단서)과 나란히 보면 한쪽은 동물,
         /// 한쪽은 무기를 든 사람으로 멀리서도 구분된다.
+        ///
+        /// [B4 수정 - 창이 몸통 안에 박혀 있어 보이지 않았다] 식인종 몸통은 localScale (0.55, 0.9, 0.55)
+        /// 캡슐이라 월드 반지름이 0.275m다. 그런데 창을 로컬 x=0.42(=월드 0.231m)에 두어, 두께
+        /// 0.05m를 더해도 최대 반경이 0.256m로 몸통 반지름 안이었다 - 즉 1.6m짜리 창이 통째로 몸통
+        /// 안에 묻혀 어느 각도에서도 보이지 않았고, "무장한 사람" 실루엣이라는 이 파츠의 존재 이유가
+        /// 통째로 무효였다(곰과 구분되는 유일한 단서였다). 로컬 x=0.62(=월드 0.341m)로 밀어내
+        /// 몸통 표면(0.275m) 밖으로 완전히 내놓고, 창 끝이 머리(월드 1.8m) 위로 나오도록 살짝 올렸다.
+        /// 돌촉을 하나 더해 멀리서도 막대기가 아니라 무기로 읽히게 한다.
+        /// 회전은 주지 않는다 - 부모 스케일이 비균일(0.55/0.9)이라 회전한 자식은 전단으로 찌그러진다.
         /// </summary>
         public static void AddCannibalDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
             Color woodColor = new Color(0.4f, 0.28f, 0.15f);
-            AddCompensatedBox(body.transform, new Vector3(0.42f, 0f, 0.05f), new Vector3(0.05f, 1.6f, 0.05f), appliedScale, woodColor, "Spear");
+            AddCompensatedBox(body.transform, new Vector3(0.62f, 0.15f, 0.05f), new Vector3(0.07f, 1.6f, 0.07f), appliedScale, woodColor, "Spear");
+            AddCompensatedBox(body.transform, new Vector3(0.62f, 1.06f, 0.05f), new Vector3(0.09f, 0.20f, 0.04f), appliedScale,
+                StructureVisualBuilder.WeatheredStone, "SpearHead");
         }
 
         /// <summary>
@@ -201,20 +321,33 @@ namespace MakeGame.Systems
         /// 수 있는 사냥감인지 위험 요소인지" 구분이 잘 안 됐다. 짧은 네 다리를 더하면 사족보행 동물
         /// 실루엣이 되어 사람 형태(위험 요소)와 한눈에 구분된다. 물고기(preferShoreline)에는 다리가
         /// 어울리지 않으므로 이 메서드는 육상 동물 쪽에서만 호출해야 한다.
+        ///
+        /// [B4 수정 - 다리가 몸통 안에 숨어 실제로는 하나도 보이지 않았다] 실측:
+        /// 몸통은 localScale (0.45, 0.6, 0.45) 캡슐이고 CreatureSpawner가 position + up*0.6에 놓으므로
+        /// 월드 반지름 0.225m, 몸통 바닥이 정확히 지면(중심 기준 -0.6m)이다. 기존 다리는
+        /// (a) 가로 위치가 로컬 ±0.18/±0.22 = 월드 ±0.081/±0.099로 몸통 반지름 0.225m 안쪽이었고,
+        /// (b) 캡슐 메시 높이가 2단위라는 점을 빠뜨려 worldSize.y=0.35가 실제로는 길이 0.7m가 되는 바람에
+        /// 다리가 아래로는 지면 밑 0.08m까지 파묻혔다. 결과적으로 네 다리 전부가 몸통 옆구리와 땅 사이에
+        /// 완전히 가려져, "다리 유무 = 잡을 수 있는 대상인가"(ArtDirection 2장 3번)라는 이 프로젝트의
+        /// 1차 시각 신호가 사실상 존재하지 않았다.
+        /// 수정: 길이를 0.42m로 정확히 맞춰 지면~몸통 아래를 채우고(월드 -0.6 ~ -0.18m), 네 다리를
+        /// 몸통 실루엣 밖(월드 반경 0.226m + 다리 반지름 0.045m = 0.271m > 0.225m)으로 벌려 어느
+        /// 방향에서 봐도 다리 4개가 보이게 했다. 몸통 위치/스케일/콜라이더는 건드리지 않는다(판정 불변).
         /// </summary>
         public static void AddQuadrupedLegs(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            Color legColor = bodyColor * 0.85f;
+            Color legColor = bodyColor * 0.7f; // 몸통보다 확실히 어둡게 - 실루엣 경계가 대비로도 읽히게
             Vector3[] legLocalPositions =
             {
-                new Vector3(0.18f, -0.55f, 0.22f),
-                new Vector3(-0.18f, -0.55f, 0.22f),
-                new Vector3(0.18f, -0.55f, -0.22f),
-                new Vector3(-0.18f, -0.55f, -0.22f),
+                new Vector3(0.356f, -0.65f, 0.356f),
+                new Vector3(-0.356f, -0.65f, 0.356f),
+                new Vector3(0.356f, -0.65f, -0.356f),
+                new Vector3(-0.356f, -0.65f, -0.356f),
             };
 
+            // worldSize.y는 캡슐 메시(높이 2단위) 특성상 "전체 길이의 절반"으로 들어간다 - 0.21 → 0.42m.
             for (int i = 0; i < legLocalPositions.Length; i++)
-                AddCompensatedCapsule(body.transform, legLocalPositions[i], new Vector3(0.08f, 0.35f, 0.08f), appliedScale, legColor, $"Leg{i}");
+                AddCompensatedCapsule(body.transform, legLocalPositions[i], new Vector3(0.09f, 0.21f, 0.09f), appliedScale, legColor, $"Leg{i}");
         }
     }
 }

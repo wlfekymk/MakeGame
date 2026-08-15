@@ -133,7 +133,11 @@ namespace MakeGame.Systems
             // 접촉 지점 근처(플레이어 가슴 높이)에 Danger Red 입자를 짧게 튀겨 위치 정보를 더한다.
             // 화면 전체 이펙트가 아니라 월드 공간 국소 이펙트이고, 상시 피해(굶주림/일사병)가 아니라
             // 이 접촉 진입점에서만 호출되므로 위 TriggerHit과 정확히 같은 조건에서만 발동한다.
-            EffectBuilder.PlayHitBurst(target.transform.position + Vector3.up * 1f);
+            // [B5 qa 지적] 원래 target(플레이어) 위치에서 터뜨려서, 곰이든 상어든 함정이든 항상 내 가슴에서만
+                // 입자가 튀었다. 화면 테두리 플래시와 정보량이 똑같아 이펙트의 존재 이유가 없었다.
+                // 위험요소와 플레이어의 중간점으로 옮겨 "어느 쪽에서 맞았는지"가 읽히게 한다.
+                Vector3 hitPoint = Vector3.Lerp(transform.position, target.transform.position, 0.5f) + Vector3.up * 1f;
+                EffectBuilder.PlayHitBurst(hitPoint);
 
             switch (hazardType)
             {

@@ -199,6 +199,46 @@ namespace MakeGame.Systems
         [Tooltip("해수면 높이. 섬 지형의 가장자리 높이(0)와 맞닿으며, PlayerController.waterLevel과 같아야 한다.")]
         public float seaLevel = 0f;
 
+        [Tooltip("바다 표면 텍스처가 흘러가는 속도(타일/초). 값이 크면 물살이 빨라 보인다.\n" +
+                 "mainTextureScale이 oceanSize/10이므로 1타일 = 월드 10미터다 - 0.02면 초당 0.2미터로 아주 완만하게 흐른다.")]
+        public Vector2 oceanScrollSpeed = new Vector2(0.02f, 0.013f);
+
+        [Tooltip("해안선 주변 얕은 물 띠의 색. Deep Ocean(#1A598C)을 밝기+청록 방향으로 민 파생색으로," +
+                 "\"여기부터 물이 얕다\"를 색만으로 알려주는 용도다. 알파는 아래 그라데이션 텍스처가 담당한다.")]
+        public Color shorelineBandColor = new Color(0.45f, 0.72f, 0.75f);
+
+        [Tooltip("해안선 띠가 섬 반지름의 몇 배까지 바깥으로 퍼지는지. 1.5면 반지름 50m 섬에서 25m 폭의 띠가 생긴다.")]
+        public float shorelineBandOuterScale = 1.5f;
+
+        [Tooltip("해안선 띠를 해수면보다 얼마나 위에 띄울지(미터). 바다 평면과의 z-파이팅만 막으면 되므로 아주 작게 둔다.")]
+        public float shorelineBandHeight = 0.05f;
+
+        /// <summary>
+        /// 바다 평면에 실제로 적용된 머티리얼 인스턴스. UV 스크롤(Update)에서 오프셋을 매 프레임 옮긴다.
+        /// CreateOceanMaterial()이 매번 new Material()을 만들어 돌려주므로 공유 에셋이 아니고,
+        /// 여기서 직접 수정해도 다른 오브젝트에 번지지 않는다.
+        /// </summary>
+        private Material oceanMaterial;
+
+        /// <summary>모든 섬이 공유하는 해안선 띠 머티리얼(색/텍스처가 같으므로 하나면 충분하다).</summary>
+        private Material shorelineBandMaterial;
+
+        /// <summary>
+        /// 퀄리티 개선(바다): 수면 텍스처의 UV를 아주 느리게 흘려보내 정지 화면 같던 바다에
+        /// 최소한의 움직임을 준다. 셰이더를 새로 만들 수 없는 파이프라인이라(3D/셰이더 에셋 0개)
+        /// 머티리얼 오프셋 애니메이션이 물살을 표현할 수 있는 유일한 수단이다.
+        /// Time.time을 쓰므로 타이틀 화면(Time.timeScale = 0)에서는 자연스럽게 멈춘다.
+        /// </summary>
+        private void Update()
+        {
+            if (oceanMaterial == null)
+                return;
+
+            oceanMaterial.mainTextureOffset = new Vector2(
+                Mathf.Repeat(oceanScrollSpeed.x * Time.time, 1f),
+                Mathf.Repeat(oceanScrollSpeed.y * Time.time, 1f));
+        }
+
         /// <summary>
         /// 섬들을 모두 감싸는 커다란 바다 평면을 한 번 만든다. 플레이어의 수영/잠수 판정은 y 좌표만으로
         /// 이뤄지므로, 이 평면의 콜라이더는 제거해 시각적 표시 용도로만 쓴다.
@@ -224,7 +264,10 @@ namespace MakeGame.Systems
 
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
-                renderer.sharedMaterial = CreateOceanMaterial();
+            {
+                oceanMaterial = CreateOceanMaterial();
+                renderer.sharedMaterial = oceanMaterial;
+            }
         }
 
         /// <summary>
@@ -487,7 +530,174 @@ namespace MakeGame.Systems
             var meshCollider = go.AddComponent<MeshCollider>();
             meshCollider.sharedMesh = mesh;
 
+            CreateShorelineBand(go.transform, radius, radialSegments);
+
             return go;
+        }
+
+        /// <summary>
+        /// 퀄리티 개선(바다): 섬을 두르는 얕은 물 띠(고리 메시)를 해수면 바로 위에 깐다.
+        /// 그동안 바다는 수평선까지 완전한 단색 평면이라, 물이 얕은 해안과 깊은 바다가 시각적으로
+        /// 전혀 구분되지 않았다(어디까지 걸어 들어가도 되는지 색으로 알 수 없었다).
+        /// 셰이더를 새로 만들 수 없으므로, 절차적 고리 메시 + 코드로 생성한 반경 방향 알파 그라데이션
+        /// 텍스처 조합으로 "안쪽은 밝고 바깥으로 갈수록 스르르 사라지는 띠"를 만든다.
+        /// 콜라이더가 없는 순수 시각 요소이고, 해수면(seaLevel) 판정은 PlayerController가 y좌표만으로
+        /// 하므로 수영/잠수 판정에는 아무 영향이 없다.
+        /// </summary>
+        private void CreateShorelineBand(Transform islandTransform, float radius, int radialSegments)
+        {
+            if (shorelineBandOuterScale <= 1f || radius <= 0f)
+                return;
+
+            var go = new GameObject("ShorelineBand");
+            go.transform.SetParent(islandTransform, false);
+            // 섬 중심의 XZ는 그대로 두고 높이만 해수면 바로 위로 올린다(바다 평면과의 z-파이팅 회피).
+            // localPosition이 아니라 월드 position으로 지정해, 부모 트랜스폼에 어떤 값이 들어 있어도 항상 해수면에 맞는다.
+            go.transform.position = new Vector3(
+                islandTransform.position.x, seaLevel + shorelineBandHeight, islandTransform.position.z);
+
+            var meshFilter = go.AddComponent<MeshFilter>();
+            meshFilter.sharedMesh = GenerateShorelineBandMesh(
+                radius * 0.95f, radius * shorelineBandOuterScale, radialSegments);
+
+            var meshRenderer = go.AddComponent<MeshRenderer>();
+            meshRenderer.sharedMaterial = GetShorelineBandMaterial();
+            // 얕은 물 띠가 그림자를 드리우거나 받으면 평평한 판때기가 도드라져 보인다.
+            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            meshRenderer.receiveShadows = false;
+        }
+
+        /// <summary>
+        /// 안쪽 반지름 innerRadius, 바깥 반지름 outerRadius인 납작한 고리(annulus) 메시를 만든다.
+        /// UV는 u = 반경 방향 진행도(0=안쪽, 1=바깥), v = 각도로 잡아, 알파 그라데이션 텍스처 한 장을
+        /// 반경 방향으로 그대로 입힐 수 있게 한다.
+        /// </summary>
+        private static Mesh GenerateShorelineBandMesh(float innerRadius, float outerRadius, int radialSegments)
+        {
+            radialSegments = Mathf.Clamp(radialSegments, 12, 120);
+
+            var mesh = new Mesh();
+            mesh.name = "ShorelineBand";
+
+            var vertices = new Vector3[radialSegments * 2];
+            var uvs = new Vector2[radialSegments * 2];
+            var triangles = new int[radialSegments * 6];
+
+            for (int seg = 0; seg < radialSegments; seg++)
+            {
+                float angle = (float)seg / radialSegments * Mathf.PI * 2f;
+                float cos = Mathf.Cos(angle);
+                float sin = Mathf.Sin(angle);
+                float v = (float)seg / radialSegments;
+
+                int inner = seg * 2;
+                int outer = inner + 1;
+
+                vertices[inner] = new Vector3(cos * innerRadius, 0f, sin * innerRadius);
+                vertices[outer] = new Vector3(cos * outerRadius, 0f, sin * outerRadius);
+                uvs[inner] = new Vector2(0f, v);
+                uvs[outer] = new Vector2(1f, v);
+            }
+
+            for (int seg = 0; seg < radialSegments; seg++)
+            {
+                int inner = seg * 2;
+                int outer = inner + 1;
+                int nextInner = ((seg + 1) % radialSegments) * 2;
+                int nextOuter = nextInner + 1;
+
+                int t = seg * 6;
+                // IslandMeshGenerator와 같은 이유로 감는 방향에 주의한다 - 반대로 감으면 위에서 봤을 때
+                // 뒷면 컬링으로 띠가 통째로 사라진다.
+                triangles[t + 0] = inner;
+                triangles[t + 1] = nextOuter;
+                triangles[t + 2] = outer;
+
+                triangles[t + 3] = inner;
+                triangles[t + 4] = nextInner;
+                triangles[t + 5] = nextOuter;
+            }
+
+            mesh.vertices = vertices;
+            mesh.uv = uvs;
+            mesh.triangles = triangles;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            return mesh;
+        }
+
+        /// <summary>
+        /// 해안선 띠용 반투명 머티리얼을 만들어 캐시한다. 모든 섬이 같은 색/텍스처를 쓰므로 하나만 만든다.
+        /// URP Lit은 기본이 Opaque라 알파가 무시되므로, EffectBuilder.GetParticleMaterial()이 실측으로
+        /// 검증해 둔 것과 같은 순서로 투명 모드 프로퍼티/키워드를 직접 세팅한다.
+        /// </summary>
+        private Material GetShorelineBandMaterial()
+        {
+            if (shorelineBandMaterial != null)
+                return shorelineBandMaterial;
+
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var material = new Material(shader != null ? shader : Shader.Find("Standard"));
+            material.color = shorelineBandColor;
+            material.mainTexture = CreateShorelineGradientTexture();
+
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.6f);
+            if (material.HasProperty("_Metallic"))
+                material.SetFloat("_Metallic", 0f);
+
+            if (material.HasProperty("_Surface"))
+                material.SetFloat("_Surface", 1f); // 0=Opaque, 1=Transparent
+            if (material.HasProperty("_Blend"))
+                material.SetFloat("_Blend", 0f); // Alpha 블렌드
+            if (material.HasProperty("_SrcBlend"))
+                material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (material.HasProperty("_DstBlend"))
+                material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (material.HasProperty("_ZWrite"))
+                material.SetFloat("_ZWrite", 0f);
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.DisableKeyword("_ALPHATEST_ON");
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
+            shorelineBandMaterial = material;
+            return shorelineBandMaterial;
+        }
+
+        /// <summary>
+        /// 가로(u) 방향으로만 알파가 변하는 그라데이션 텍스처를 코드로 생성한다.
+        /// u=0(해안 쪽)에서 가장 진하고 u=1(먼바다 쪽)에서 완전히 투명해지는 2차 감쇠 곡선이라,
+        /// 띠의 바깥 경계가 선으로 보이지 않고 깊은 바다색에 자연스럽게 녹아든다.
+        /// 세로(v) 방향으로는 변화가 없으므로 높이 2픽셀이면 충분하다.
+        /// </summary>
+        private static Texture2D CreateShorelineGradientTexture()
+        {
+            const int width = 64;
+            const int height = 2;
+            const float peakAlpha = 0.55f;
+
+            var texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            texture.name = "ShorelineGradient";
+            texture.wrapMode = TextureWrapMode.Clamp; // 반복시키면 u=1(투명)과 u=0(불투명)이 맞닿아 경계선이 생긴다.
+            texture.filterMode = FilterMode.Bilinear;
+            texture.hideFlags = HideFlags.HideAndDontSave;
+
+            var pixels = new Color32[width * height];
+            for (int x = 0; x < width; x++)
+            {
+                float u = (float)x / (width - 1);
+                float fade = (1f - u) * (1f - u);
+                byte alpha = (byte)Mathf.RoundToInt(Mathf.Clamp01(peakAlpha * fade) * 255f);
+                var pixel = new Color32(255, 255, 255, alpha);
+
+                for (int y = 0; y < height; y++)
+                    pixels[y * width + x] = pixel;
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            return texture;
         }
 
         /// <summary>

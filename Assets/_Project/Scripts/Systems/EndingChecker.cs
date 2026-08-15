@@ -130,7 +130,10 @@ namespace MakeGame.Systems
             if (requiredFoodCount <= 0) requiredFoodCount = balanceConfig.endingRequiredFoodCount;
             if (requiredWaterCount <= 0) requiredWaterCount = balanceConfig.endingRequiredWaterCount;
             if (requiredFuelCount <= 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
-            if (requiredElapsedDays <= 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
+            // [B5 qa 지적] 나머지 3개는 대응 ItemData를 비우면 조건을 끌 수 있지만, 경과 일수에는 대응
+            // 아이템이 없어서 0이 유일한 비활성화 수단이다. <=0 으로 폴백하면 인스펙터에 0을 넣어도
+            // 조용히 15로 되돌아가 테스트가 막힌다. 미설정은 음수로만 판정한다.
+            if (requiredElapsedDays < 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
         }
 
         /// <summary>

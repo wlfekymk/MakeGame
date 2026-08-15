@@ -25,7 +25,19 @@ namespace MakeGame.UI
         [Tooltip("피격 순간의 최대 테두리 불투명도 (0~1)")]
         public float maxAlpha = 0.45f;
 
+        [Tooltip("상태 이상이 시작된 순간에 보여줄 플래시의 세기 배수 (피격보다 약하게)")]
+        public float statusOnsetStrength = 0.55f;
+
+        [Tooltip("상태 이상 시작 플래시가 사라지기까지 걸리는 시간(초)")]
+        public float statusOnsetDuration = 0.5f;
+
         private float flashTimer = 0f;
+
+        // 지금 재생 중인 플래시의 총 길이/색/세기. TriggerHit(C단계 위협)과 TriggerStatusOnset(상태 이상
+        // 시작 순간)이 같은 비네트 연출을 공유하되 세기와 색만 다르게 쓰기 위해 필드로 뺐다.
+        private float currentFlashDuration = 0.35f;
+        private float currentFlashStrength = 1f;
+        private Color currentFlashColor = new Color(0.8f, 0f, 0f, 1f);
 
         private GameObject panelRoot;
         // 화면 가장자리 네 조각(상/하/좌/우)의 RectTransform과 Image. 플래시가 진행되는 동안 두께(edge)와
@@ -114,12 +126,40 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 위험요소와 접촉해 전투 피해를 입은 순간 호출한다. 타이머를 최대치로 되돌려
-        /// 다음 프레임부터 처음부터 다시 페이드아웃하는 비네트 플래시를 보여주게 한다.
+        /// [C단계 = 위협] 위험요소와 접촉해 전투 피해를 입은 순간 호출한다. 타이머를 최대치로 되돌려
+        /// 다음 프레임부터 처음부터 다시 페이드아웃하는 붉은 비네트 플래시를 보여준다.
+        ///
+        /// ArtDirection.md 4.2의 3단계 피드백에서 이 클래스가 담당하는 단계는 C(위협) 하나뿐이다:
+        /// - A단계(일상: 채집/이동/창 열기) → 화면 이펙트 금지, 짧은 효과음만(AudioManager.PlayPickup 등).
+        ///   이 클래스에는 A단계용 API를 일부러 두지 않는다 - API가 있으면 언젠가 누군가 쓰기 때문이다.
+        /// - B단계(성취: 제작/설치/조리/치료/취침) → 전용 효과음 + 버튼 자체 피드백. 역시 여기 없음.
+        /// - C단계(위협) → 아래 두 메서드. 반드시 "그 순간"에만 호출하고, 허기/일사병처럼 매 프레임
+        ///   반복되는 상시 피해에는 절대 걸지 않는다.
         /// </summary>
         public void TriggerHit()
         {
-            flashTimer = flashDuration;
+            currentFlashDuration = flashDuration;
+            currentFlashStrength = 1f;
+            currentFlashColor = new Color(0.8f, 0f, 0f, 1f);
+            flashTimer = currentFlashDuration;
+        }
+
+        /// <summary>
+        /// [C단계 = 위협, 약한 세기] 상태 이상(중독/출혈/일사병/익사)이 **시작된 그 순간**에만 호출한다.
+        /// 피격보다 약한 세기(statusOnsetStrength)로, 상태 이상 색(중독=연두, 출혈=빨강, 일사병=금색,
+        /// 익사=청록)으로 한 번만 번쩍인다 - "지금 뭔가 시작됐다"를 놓치지 않게 하되 피격과 혼동되지 않게
+        /// 색과 세기를 구분한다.
+        ///
+        /// 중요: 상태 이상이 지속되는 동안 매 프레임 호출하면 화면이 계속 번쩍여 피로해진다
+        /// (ArtDirection.md 4.2 규칙 위반). 호출부는 반드시 false→true로 바뀐 프레임에만 부른다
+        /// (StatusEffectWarningUI가 그렇게 부르고 있다).
+        /// </summary>
+        public void TriggerStatusOnset(Color effectColor)
+        {
+            currentFlashDuration = Mathf.Max(0.05f, statusOnsetDuration);
+            currentFlashStrength = Mathf.Clamp01(statusOnsetStrength);
+            currentFlashColor = effectColor;
+            flashTimer = currentFlashDuration;
         }
 
         /// <summary>
@@ -138,10 +178,11 @@ namespace MakeGame.UI
             if (!active)
                 return;
 
-            float t = Mathf.Clamp01(flashTimer / flashDuration);
-            float alpha = maxAlpha * t;
-            float edge = Mathf.Lerp(0f, Screen.height * 0.18f, t);
-            Color color = new Color(0.8f, 0f, 0f, alpha);
+            // 진행률 t는 "이번 플래시의 길이"(피격 0.35초 / 상태 이상 시작 0.5초)로 나눈다.
+            float t = Mathf.Clamp01(flashTimer / Mathf.Max(0.01f, currentFlashDuration));
+            float alpha = maxAlpha * currentFlashStrength * t;
+            float edge = Mathf.Lerp(0f, Screen.height * 0.18f * currentFlashStrength, t);
+            Color color = new Color(currentFlashColor.r, currentFlashColor.g, currentFlashColor.b, alpha);
 
             // 상/하/좌/우 네 개의 얇은 띠로 테두리 비네트를 그린다 (원본 OnGUI의 4개 GUI.DrawTexture와 동일한 배치).
             topImage.color = color;

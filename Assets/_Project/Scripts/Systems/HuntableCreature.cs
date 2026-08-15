@@ -38,9 +38,49 @@ namespace MakeGame.Systems
 
         private bool isCaught = false;
         private float respawnTimer = 0f;
+        private bool headBuilt = false;
 
         /// <summary>현재 사냥을 시도할 수 있는 상태인지(아직 잡히지 않았는지) 여부.</summary>
         public bool IsAvailable => !isCaught;
+
+        /// <summary>
+        /// 스포너가 몸통/다리를 만든 뒤 실행되는 시각 보강 단계(게임플레이 값은 건드리지 않는다).
+        /// </summary>
+        private void Start()
+        {
+            BuildHeadSilhouette();
+        }
+
+        /// <summary>
+        /// 육상 사냥감 몸통 앞위쪽에 머리 돌기 하나를 붙여 "어느 쪽이 앞인지"를 실루엣으로 드러낸다.
+        ///
+        /// 왜 필요한가: 육상 사냥감은 몸통 캡슐(0.45×0.6×0.45) 하나에 눈 2개가 전부인데, 그 눈이
+        /// 실제로는 몸통 안에 들어가 있어(로컬 (±0.12, 0.6, 0.28)은 캡슐 상단 반구 표면 0.5보다
+        /// 안쪽인 0.32 지점) 어느 각도에서도 보이지 않는다. 결과적으로 방향이 전혀 없는 매끈한
+        /// 알약 형태라, 다리를 보강해 "잡을 수 있는 사족보행 동물"까지는 읽혀도 앞뒤를 알 수 없었다.
+        /// 머리 돌기는 몸통 표면 밖으로 0.13m 튀어나오도록 배치해 확실히 실루엣에 잡히게 한다.
+        /// 파츠는 1개만 쓴다 - 개체 수가 섬당 4~8마리라 파츠 하나가 곧 드로우콜 4~8개다.
+        /// 물고기(구체 몸통)에는 붙이지 않는다: 머리 돌기는 사족보행 실루엣과 짝을 이루는 신호이고,
+        /// 물고기는 이미 꼬리지느러미로 앞뒤가 드러나 있다.
+        /// </summary>
+        private void BuildHeadSilhouette()
+        {
+            if (headBuilt)
+                return;
+            headBuilt = true;
+
+            var meshFilter = GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null || !meshFilter.sharedMesh.name.StartsWith("Capsule"))
+                return; // 육상 사냥감(캡슐 몸통)만 대상
+
+            var bodyRenderer = GetComponent<MeshRenderer>();
+            Color bodyColor = bodyRenderer != null && bodyRenderer.sharedMaterial != null
+                ? bodyRenderer.sharedMaterial.color
+                : new Color(0.55f, 0.4f, 0.25f);
+
+            CreatureVisualBuilder.AddCompensatedSphere(transform, new Vector3(0f, 0.72f, 0.42f), 0.14f,
+                transform.localScale, bodyColor * 0.85f, "Head");
+        }
 
         /// <summary>
         /// 매 프레임 자동으로 재생 타이머를 진행시킨다.

@@ -70,6 +70,11 @@ namespace MakeGame.Systems
         private Color originalFogColor;
         private float originalFogDensity;
 
+        // 맑은 날의 대기 안개(하늘색과 같은 색의 옅은 거리 안개)는 DayNightCycle이 매 프레임 시간대에
+        // 맞춰 직접 관리한다. 그쪽이 살아 있는데 여기서 "원래 설정"으로 되돌리면 비가 그치는 순간
+        // 한 프레임 동안 안개가 툭 꺼졌다 다시 켜지므로, 그럴 때는 복원을 건너뛰고 넘겨준다.
+        private DayNightCycle dayNight;
+
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 WeatherSystem을 생성한다.
         /// </summary>
@@ -218,9 +223,16 @@ namespace MakeGame.Systems
                 rainParticles.Stop();
 
             // 퀄리티 개선: 비가 그치면 게임 시작 시점의 원래 안개 설정으로 정확히 되돌린다.
-            RenderSettings.fog = originalFogEnabled;
-            RenderSettings.fogColor = originalFogColor;
-            RenderSettings.fogDensity = originalFogDensity;
+            // 단, DayNightCycle이 맑은 날 대기 안개를 직접 몰고 있으면 그쪽에 맡긴다(위 dayNight 주석 참고).
+            if (dayNight == null)
+                dayNight = FindAnyObjectByType<DayNightCycle>();
+
+            if (dayNight == null || !dayNight.enableAtmosphericFog)
+            {
+                RenderSettings.fog = originalFogEnabled;
+                RenderSettings.fogColor = originalFogColor;
+                RenderSettings.fogDensity = originalFogDensity;
+            }
 
             AudioManager.Instance?.StopRainAmbient();
         }

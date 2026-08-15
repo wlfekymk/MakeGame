@@ -33,14 +33,25 @@ namespace MakeGame.UI
         // 반영한 필터 인덱스를 기억해두고 그 값이 그대로면 UpdateTitle()에서 문자열을 다시 만들지 않는다.
         private int lastDisplayedFilterIndex = -1;
 
-        /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트 + 설명 텍스트)을 구성하는 UI 요소 묶음.</summary>
+        /// <summary>
+        /// 아이템 한 종류를 표시하는 한 묶음. 구성:
+        /// (1) 카테고리 헤더 텍스트 - 그 카테고리의 첫 줄에서만 보인다(도구·재료 사이 구분선 역할),
+        /// (2) 카테고리 색 띠 + 아이콘 + 이름/개수 + 설명 + 사용법 힌트로 이루어진 항목 줄.
+        /// </summary>
         private class ItemRow
         {
-            public GameObject rowGo;
+            public GameObject rowGo;          // 헤더 + 항목 줄을 함께 담는 바깥 컨테이너
+            public LayoutElement entryLayout; // 헤더 표시 여부에 따라 높이를 늘렸다 줄인다
+            public Text categoryHeader;
+            public Image categoryStrip;       // 왼쪽 세로 색 띠(무기=#CC3333 등 카테고리 색)
             public Image icon;
             public Text letterLabel;
             public Text nameCountLabel;
             public Text descLabel;
+            public Text usageLabel;           // "[C] 섭취" 처럼 지금 이 아이템을 어떻게 쓰는지
+
+            // 카테고리 헤더는 이웃한 행과의 관계(정렬 순서)로 결정되므로 아이템 캐시와 별도로 기억한다.
+            public string cachedHeaderText = null;
 
             // 성능 개선(#8): 이 행이 마지막으로 문자열을 다시 만들었을 때의 표시 대상 값들을 캐시해둔다.
             // 다음 프레임에 같은 위치(row)가 같은 아이템/같은 개수/같은 최소 잔여 사용횟수를 표시하는 경우
@@ -236,6 +247,11 @@ namespace MakeGame.UI
                 rowPool[0].nameCountLabel.text = filterActive ? "(이 카테고리에 해당하는 아이템 없음)" : "(비어 있음)";
                 rowPool[0].nameCountLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
                 rowPool[0].descLabel.text = "";
+                rowPool[0].usageLabel.text = "";
+                rowPool[0].categoryStrip.color = Color.clear;
+                rowPool[0].categoryHeader.gameObject.SetActive(false);
+                rowPool[0].cachedHeaderText = null;
+                rowPool[0].entryLayout.minHeight = 42f;
                 rowPool[0].rowGo.SetActive(true);
                 // 이 분기는 캐시를 거치지 않고 rowPool[0]에 직접 "비어 있음" 문구를 써버리므로,
                 // 캐시된 값(cachedData 등)을 그대로 두면 다음에 다시 실제 아이템이 이 행에 들어왔을 때
@@ -261,9 +277,28 @@ namespace MakeGame.UI
                 // 바뀌거나(정렬 순서 변경 포함) 개수·내구도가 바뀐 경우에는 반드시 다시 그린다.
                 bool needsRefresh = row.cachedData != data || row.cachedCount != count || row.cachedMinRemaining != minRemaining;
 
+                // 카테고리 헤더: 목록이 카테고리순으로 정렬돼 있으므로, 바로 위 행과 카테고리가 다른
+                // 지점(그리고 첫 행)에서만 헤더를 보여준다. 필터가 걸려 한 카테고리만 남았을 때도
+                // 헤더 한 줄이 "지금 무엇을 보고 있는지"를 그대로 알려준다.
+                UIBuilder.ItemCategory category = GetCategory(data);
+                bool showHeader = i == 0 || GetCategory(orderBuffer[i - 1]) != category;
+                string headerText = showHeader ? GetCategoryDisplayName(category) : null;
+                if (row.cachedHeaderText != headerText)
+                {
+                    row.categoryHeader.gameObject.SetActive(showHeader);
+                    if (showHeader)
+                        row.categoryHeader.text = headerText;
+                    row.entryLayout.minHeight = showHeader ? 60f : 42f;
+                    row.cachedHeaderText = headerText;
+                }
+
                 if (needsRefresh)
                 {
                     row.icon.gameObject.SetActive(true);
+                    // 아이콘 스프라이트 유무와 무관하게 왼쪽 색 띠는 항상 카테고리 색을 유지한다
+                    // (무기는 Danger Red #CC3333 - ArtDirection.md 1.1).
+                    row.categoryStrip.color = UIBuilder.GetItemCategoryColor(data);
+                    row.usageLabel.text = GetUsageHint(data);
                     // 아이템별 아이콘 스프라이트가 있으면 실제 그림을 보여주고, 없으면 기존처럼
                     // 카테고리 색상 배경 + 이름 첫 글자 placeholder로 대체 표시한다(하위 호환).
                     if (data.icon != null)
@@ -328,14 +363,33 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 아이콘(카테고리 색상 + 이름 첫 글자) + "이름 x개수" 텍스트 + 설명 텍스트(작은 회색 글씨)로
-        /// 구성된 한 줄을 생성한다. 짝수/홀수 행마다 배경을 살짝 다르게 칠해 가독성을 높인다(줄무늬 배경).
-        /// 이름/개수와 설명을 세로로 쌓기 위해, 아이콘 옆에 수직 레이아웃 컨테이너를 하나 더 둔다.
+        /// 카테고리 헤더(선택적) + [카테고리 색 띠 | 아이콘 | 이름·개수/설명 | 사용법 힌트] 한 줄을 생성한다.
+        /// 짝수/홀수 행마다 배경을 살짝 다르게 칠해 가독성을 높인다(줄무늬 배경).
+        /// 개선: 예전에는 도구/음식/재료/무기가 한 덩어리로 나열돼 정렬만 카테고리순일 뿐 시각적 구분이
+        /// 전혀 없었다. 이제 (1) 카테고리가 바뀌는 지점에 헤더 한 줄, (2) 모든 줄 왼쪽에 카테고리 색 띠를
+        /// 넣어, 목록을 훑기만 해도 무기(#CC3333)/음식/재료가 색으로 갈라져 보인다.
         /// </summary>
         private ItemRow CreateRow(int index)
         {
+            // 바깥 컨테이너: 카테고리 헤더(위) + 실제 항목 줄(아래).
+            var entryGo = new GameObject($"Entry{index}", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+            entryGo.transform.SetParent(listContainer, false);
+            var entryLayout = entryGo.GetComponent<LayoutElement>();
+            entryLayout.minHeight = 42f;
+
+            var entryVlg = entryGo.GetComponent<VerticalLayoutGroup>();
+            entryVlg.childForceExpandWidth = true;
+            entryVlg.childForceExpandHeight = false;
+            entryVlg.spacing = 2f;
+            entryVlg.childAlignment = TextAnchor.UpperLeft;
+
+            var categoryHeader = UIBuilder.CreateText(entryGo.transform, "CategoryHeader", "", 12,
+                new Color(0.7f, 0.7f, 0.7f, 1f), TextAnchor.MiddleLeft);
+            categoryHeader.gameObject.AddComponent<LayoutElement>().minHeight = 16f;
+            categoryHeader.gameObject.SetActive(false);
+
             var rowGo = new GameObject($"Row{index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-            rowGo.transform.SetParent(listContainer, false);
+            rowGo.transform.SetParent(entryGo.transform, false);
             rowGo.GetComponent<LayoutElement>().minHeight = 42f;
             rowGo.GetComponent<Image>().color = index % 2 == 0
                 ? new Color(1f, 1f, 1f, 0.04f)
@@ -347,6 +401,16 @@ namespace MakeGame.UI
             hlg.spacing = 8f;
             hlg.childAlignment = TextAnchor.MiddleLeft;
             hlg.padding = new RectOffset(4, 4, 2, 2);
+
+            // 카테고리 색 띠: 폭 4px, 줄 높이를 그대로 채운다. 아이템에 아이콘 스프라이트가 있어서
+            // 아이콘이 카테고리 색을 잃어버리는 경우에도 이 띠만은 항상 카테고리 색으로 남는다.
+            var stripGo = new GameObject("CategoryStrip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+            stripGo.transform.SetParent(rowGo.transform, false);
+            var stripLayout = stripGo.GetComponent<LayoutElement>();
+            stripLayout.minWidth = 4f;
+            stripLayout.preferredWidth = 4f;
+            var categoryStrip = stripGo.GetComponent<Image>();
+            categoryStrip.color = Color.gray;
 
             var iconRt = UIBuilder.CreateIcon(rowGo.transform, "Icon", 22f, Color.gray, "?");
             var icon = iconRt.GetComponent<Image>();
@@ -368,7 +432,61 @@ namespace MakeGame.UI
             // 이름 아래에 작은 회색 글씨로 설명을 표시해, 이미 작성된 아이템 설명을 실제로 보여준다.
             var descLabel = UIBuilder.CreateText(textColGo.transform, "Desc", "", 11, new Color(0.75f, 0.75f, 0.75f, 1f), TextAnchor.MiddleLeft);
 
-            return new ItemRow { rowGo = rowGo, icon = icon, letterLabel = letterLabel, nameCountLabel = nameCountLabel, descLabel = descLabel };
+            // 사용법 힌트: 이 아이템을 지금 어떤 키로 쓸 수 있는지("[C] 섭취" 등)를 오른쪽 끝에 표시한다.
+            // 개수만 보여주고 "쓸 수 있는지"는 알려주지 않던 문제를 이 한 칸으로 해결한다.
+            var usageLabel = UIBuilder.CreateText(rowGo.transform, "Usage", "", 11, new Color(0.7f, 0.7f, 0.7f, 1f), TextAnchor.MiddleRight);
+            usageLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 96f;
+
+            return new ItemRow
+            {
+                rowGo = entryGo,
+                entryLayout = entryLayout,
+                categoryHeader = categoryHeader,
+                categoryStrip = categoryStrip,
+                icon = icon,
+                letterLabel = letterLabel,
+                nameCountLabel = nameCountLabel,
+                descLabel = descLabel,
+                usageLabel = usageLabel,
+            };
+        }
+
+        /// <summary>
+        /// 카테고리별 표시 이름. 필터 이름 배열(CategoryFilterNames)의 인덱스 0("전체") 다음부터가
+        /// ItemCategory 값 순서와 1:1로 대응하므로 그 배열을 그대로 재사용한다(이름 정의를 두 곳에 두지 않는다).
+        /// </summary>
+        private static string GetCategoryDisplayName(UIBuilder.ItemCategory category)
+        {
+            int index = (int)category + 1;
+            return index >= 0 && index < CategoryFilterNames.Length ? CategoryFilterNames[index] : "기타";
+        }
+
+        /// <summary>
+        /// 이 아이템을 지금 어떤 키로 쓸 수 있는지 짧은 힌트를 만든다. 키 자체는 InteractionController가
+        /// 정하는 값이라(C=섭취/R=조리/G=설치) 여기서는 그 기본 키에 맞춘 표시 문자열만 담당한다.
+        /// 판정 기준은 ItemData가 이미 들고 있는 플래그(isRawFood/isPlaceable/IsConsumable/isWeapon) 그대로다.
+        /// </summary>
+        private static string GetUsageHint(ItemData data)
+        {
+            if (data == null)
+                return "";
+
+            if (data.isRawFood && data.cookedResult != null)
+                return "[R] 굽기";
+
+            if (data.isPlaceable && data.placementPrefab != null)
+                return "[G] 설치";
+
+            if (data.curesBleeding || data.curesPoison || data.curesBrokenBone)
+                return "[C] 치료";
+
+            if (data.IsConsumable)
+                return "[C] 섭취";
+
+            if (data.isWeapon)
+                return "[E] 공격";
+
+            return "재료";
         }
     }
 }

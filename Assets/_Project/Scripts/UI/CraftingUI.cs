@@ -22,13 +22,27 @@ namespace MakeGame.UI
         [Tooltip("제작 창을 여닫는 키")]
         public KeyCode toggleKey = KeyCode.V;
 
-        /// <summary>재료 하나를 표시하는 작은 칩(아이콘 + "이름x개수" 텍스트)을 나타낸다.</summary>
+        [Tooltip("탈출 목표(배 제작) 진행 상황을 읽어올 시스템. 비워두면 씬에서 자동으로 찾는다.")]
+        public BoatConstructionSystem boatConstruction;
+
+        [Tooltip("탈출 목표(경비행기 수리) 진행 상황을 읽어올 시스템. 비워두면 씬에서 자동으로 찾는다.")]
+        public AircraftRepairSystem aircraftRepair;
+
+        /// <summary>재료 하나를 표시하는 작은 칩(아이콘 + "이름 보유/필요" 텍스트)을 나타낸다.</summary>
         private class MaterialChip
         {
             public ItemData item;
             public int requiredQuantity;
             public Text label;
+
+            // 성능: 표시 결과가 실제로 달라진 프레임에만 문자열을 다시 만든다(보유 수량이 그대로면 같은 문자열).
+            public int cachedHave = -1;
         }
+
+        // 팔레트(ArtDirection.md 1.1/1.3): 부족한 재료는 Danger Red #CC3333, 충족된 재료는 Medic Green #4FA87A 계열.
+        private static readonly Color ShortageColor = new Color(0.8f, 0.2f, 0.2f, 1f);
+        private static readonly Color SatisfiedColor = new Color(0.55f, 0.85f, 0.7f, 1f);
+        private static readonly Color BodyGrayColor = new Color(0.75f, 0.75f, 0.75f, 1f);
 
         /// <summary>레시피 한 줄을 구성하는 UI 요소와 원본 레시피를 함께 담는다.</summary>
         private class RecipeRow
@@ -43,11 +57,24 @@ namespace MakeGame.UI
         private RectTransform listContainer;
         private readonly List<RecipeRow> rows = new List<RecipeRow>();
 
+        // 탈출 목표(배 3단계 / 경비행기 수리) 표시용. 요구 재료는 절대 하드코딩하지 않고
+        // BoatConstructionSystem/AircraftRepairSystem이 들고 있는 실제 설계값을 매번 읽어서 그린다.
+        private RectTransform goalContainer;
+        private readonly List<Text> goalRowPool = new List<Text>();
+        private float goalRefreshTimer = 0f;
+
         /// <summary>
         /// 시작 시 제작 UI 계층을 생성하고 기본적으로 닫힌 상태로 둔다.
         /// </summary>
         private void Start()
         {
+            // 인스펙터에서 연결되지 않았을 때를 대비한 자동 탐색(SurvivalHudUI와 동일한 방식).
+            // 씬 파일을 고칠 수 없는 상황에서도 탈출 목표 섹션이 동작하게 하기 위함이다.
+            if (boatConstruction == null)
+                boatConstruction = FindAnyObjectByType<BoatConstructionSystem>();
+            if (aircraftRepair == null)
+                aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
+
             BuildUI();
             SetOpen(false);
         }
@@ -61,7 +88,17 @@ namespace MakeGame.UI
                 SetOpen(!panelRoot.activeSelf);
 
             if (panelRoot != null && panelRoot.activeSelf)
+            {
                 RefreshRows();
+
+                // 탈출 목표는 초 단위로 천천히 변하는 정보라 매 프레임 다시 만들 이유가 없다.
+                goalRefreshTimer -= Time.unscaledDeltaTime;
+                if (goalRefreshTimer <= 0f)
+                {
+                    goalRefreshTimer = 0.25f;
+                    RefreshGoals();
+                }
+            }
         }
 
         /// <summary>
@@ -111,6 +148,31 @@ namespace MakeGame.UI
                     continue;
                 rows.Add(CreateRow(recipe));
             }
+
+            BuildGoalSection();
+        }
+
+        /// <summary>
+        /// 레시피 목록 아래에 "탈출 목표" 섹션(배 제작 단계 / 경비행기 수리)을 만든다.
+        /// 실제 문구와 필요 재료는 RefreshGoals()가 시스템에서 읽어 채우므로 여기서는 빈 틀만 만든다.
+        /// </summary>
+        private void BuildGoalSection()
+        {
+            var goalGo = new GameObject("EscapeGoals", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+            goalGo.transform.SetParent(listContainer, false);
+            goalContainer = goalGo.GetComponent<RectTransform>();
+            goalGo.GetComponent<LayoutElement>().minHeight = 24f;
+
+            var goalVlg = goalGo.GetComponent<VerticalLayoutGroup>();
+            goalVlg.childForceExpandWidth = true;
+            goalVlg.childForceExpandHeight = false;
+            goalVlg.spacing = 2f;
+            goalVlg.padding = new RectOffset(0, 0, 8, 0);
+            goalVlg.childAlignment = TextAnchor.UpperLeft;
+
+            // 섹션 제목은 항목명/강조 라벨(H2 15)로, 개별 목표 줄은 본문(Body 12)으로 표시한다.
+            var header = UIBuilder.CreateText(goalGo.transform, "GoalHeader", "탈출 목표", 15, Color.white, TextAnchor.MiddleLeft);
+            header.gameObject.AddComponent<LayoutElement>().minHeight = 20f;
         }
 
         /// <summary>
@@ -199,8 +261,10 @@ namespace MakeGame.UI
 
                 var chipIconRt = UIBuilder.CreateIcon(chipGo.transform, "Icon", 14f, UIBuilder.GetItemCategoryColor(req.item), "");
                 UIBuilder.ApplyItemIcon(chipIconRt, req.item);
-                var qtyLabel = UIBuilder.CreateText(chipGo.transform, "Qty", $"{req.item.itemName}x{req.quantity}", 12, Color.white, TextAnchor.MiddleLeft);
-                qtyLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 90f;
+                // 개선: 예전에는 "대나무x4"처럼 필요 수량만 보여줘서, 지금 몇 개 들고 있는지 확인하려면
+                // 인벤토리를 따로 열어봐야 했다. 이제 "보유/필요"를 나란히 적어 한 줄에서 바로 비교된다.
+                var qtyLabel = UIBuilder.CreateText(chipGo.transform, "Qty", $"{req.item.itemName} 0/{req.quantity}", 12, Color.white, TextAnchor.MiddleLeft);
+                qtyLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 110f;
 
                 row.materialChips.Add(new MaterialChip { item = req.item, requiredQuantity = req.quantity, label = qtyLabel });
             }
@@ -227,18 +291,120 @@ namespace MakeGame.UI
                 {
                     int have = craftingSystem.inventory.GetItemCount(chip.item);
                     bool enough = have >= chip.requiredQuantity;
-                    chip.label.color = enough ? new Color(0.6f, 1f, 0.6f, 1f) : new Color(1f, 0.45f, 0.45f, 1f);
+
+                    // 부족한 재료만 Danger Red(#CC3333)로 콕 집어 보여준다(ArtDirection.md 1.1/1.3).
+                    chip.label.color = enough ? SatisfiedColor : ShortageColor;
+
+                    // 보유 수량이 실제로 바뀐 프레임에만 "이름 보유/필요" 문자열을 다시 만든다.
+                    if (chip.cachedHave != have)
+                    {
+                        chip.label.text = $"{chip.item.itemName} {have}/{chip.requiredQuantity}";
+                        chip.cachedHave = have;
+                    }
                 }
             }
         }
 
         /// <summary>
-        /// 패널을 열거나 닫는다.
+        /// 탈출 목표 섹션을 최신 상태로 다시 그린다. 배 제작 단계별 재료와 경비행기 수리 재료는
+        /// 문서(Balance_SceneSnapshot.md)에 실측값이 있지만 **절대 하드코딩하지 않는다** - 씬/프리팹
+        /// 직렬화 값이 코드 기본값과 다른 프로젝트라, 화면에 적힌 숫자와 실제 판정이 어긋나면
+        /// 그 자체가 버그가 되기 때문이다. 항상 시스템이 들고 있는 설계값을 그대로 읽는다.
+        /// 표시 형식: "대나무  투입 2/6 (소지 3)" - 이미 작업대에 투입한 양과 지금 들고 있는 양을 함께 보여준다.
+        /// </summary>
+        private void RefreshGoals()
+        {
+            if (goalContainer == null)
+                return;
+
+            var inventory = craftingSystem != null ? craftingSystem.inventory : null;
+            int usedRows = 0;
+
+            if (boatConstruction != null)
+            {
+                string stageText = $"배: {boatConstruction.currentStage}/{BoatConstructionSystem.TotalStages}단계"
+                    + (boatConstruction.isFullyComplete ? " (완성)"
+                        : boatConstruction.hasCurrentStageBlueprint ? "" : " - 도면 필요");
+                SetGoalRow(usedRows++, stageText, Color.white);
+
+                if (!boatConstruction.isFullyComplete)
+                {
+                    foreach (var req in boatConstruction.GetCurrentStageRequirements())
+                    {
+                        if (req == null || req.item == null)
+                            continue;
+
+                        int contributed = boatConstruction.GetCollectedQuantity(req.item);
+                        int owned = inventory != null ? inventory.GetItemCount(req.item) : 0;
+                        bool enough = contributed + owned >= req.quantity;
+                        SetGoalRow(usedRows++,
+                            $"   {req.item.itemName}  투입 {contributed}/{req.quantity} (소지 {owned})",
+                            enough ? SatisfiedColor : ShortageColor);
+                    }
+                }
+            }
+
+            if (aircraftRepair != null)
+            {
+                int percent = Mathf.RoundToInt(aircraftRepair.GetOverallProgress() * 100f);
+                SetGoalRow(usedRows++,
+                    $"경비행기: {percent}%" + (aircraftRepair.isRepairComplete ? " (수리 완료)" : ""),
+                    Color.white);
+
+                if (!aircraftRepair.isRepairComplete)
+                {
+                    foreach (var req in aircraftRepair.requiredMaterials)
+                    {
+                        if (req == null || req.item == null)
+                            continue;
+
+                        int contributed = aircraftRepair.GetCollectedQuantity(req.item);
+                        int owned = inventory != null ? inventory.GetItemCount(req.item) : 0;
+                        bool enough = contributed + owned >= req.quantity;
+                        SetGoalRow(usedRows++,
+                            $"   {req.item.itemName}  투입 {contributed}/{req.quantity} (소지 {owned})",
+                            enough ? SatisfiedColor : ShortageColor);
+                    }
+                }
+            }
+
+            if (usedRows == 0)
+                SetGoalRow(usedRows++, "탈출 진행 정보 없음", BodyGrayColor);
+
+            for (int i = usedRows; i < goalRowPool.Count; i++)
+                goalRowPool[i].gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// 탈출 목표 섹션의 index번째 줄에 문구와 색을 채운다. 줄이 모자라면 새로 만들어 재사용 풀에 넣는다.
+        /// </summary>
+        private void SetGoalRow(int index, string text, Color color)
+        {
+            while (goalRowPool.Count <= index)
+            {
+                var line = UIBuilder.CreateText(goalContainer, $"Goal{goalRowPool.Count}", "", 12, Color.white, TextAnchor.MiddleLeft);
+                line.gameObject.AddComponent<LayoutElement>().minHeight = 16f;
+                goalRowPool.Add(line);
+            }
+
+            var row = goalRowPool[index];
+            if (!row.gameObject.activeSelf)
+                row.gameObject.SetActive(true);
+            if (row.text != text)
+                row.text = text;
+            row.color = color;
+        }
+
+        /// <summary>
+        /// 패널을 열거나 닫는다. 열리는 순간에는 탈출 목표를 곧바로 다시 계산하도록 타이머를 0으로 만든다.
         /// </summary>
         private void SetOpen(bool open)
         {
             if (panelRoot != null)
                 panelRoot.SetActive(open);
+
+            if (open)
+                goalRefreshTimer = 0f;
         }
     }
 }
