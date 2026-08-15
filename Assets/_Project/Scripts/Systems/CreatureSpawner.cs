@@ -148,6 +148,11 @@ namespace MakeGame.Systems
             {
                 AddCompensated(go, PrimitiveType.Sphere, new Vector3(0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeL");
                 AddCompensated(go, PrimitiveType.Sphere, new Vector3(-0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeR");
+
+                // 연결(A-2): tech-artist가 만든 CreatureVisualBuilder.AddQuadrupedLegs를 호출해 짧은 다리
+                // 4개를 붙인다. 몸통 캡슐 + 눈뿐이면 사람 형태(곰/식인종 HazardSource 캡슐)와 실루엣이
+                // 겹쳐 구분이 안 되던 문제를 보강한다. 물고기(preferShoreline) 분기에는 넣지 않는다.
+                CreatureVisualBuilder.AddQuadrupedLegs(go, s, bodyColor);
             }
 
             var creature = go.AddComponent<HuntableCreature>();

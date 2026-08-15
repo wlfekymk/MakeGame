@@ -88,7 +88,9 @@ namespace MakeGame.Systems
                 survivalStats.sunstroke = 0f; // 밤새 푹 쉬어 더위(일사병)가 완전히 가라앉는다.
             }
 
-            AudioManager.Instance?.PlayCraftSuccess(); // 전용 취침음이 없어 기존 "성공" 효과음을 재사용
+            // 연결(B-2): tech-artist가 AudioManager에 만들어 둔 전용 취침 성공음으로 교체.
+            // 예전에는 PlayCraftSuccess()를 재사용해 "제작"과 "취침"이 같은 소리로 구분이 안 됐다.
+            AudioManager.Instance?.PlaySleepSuccess();
             return true;
         }
     }

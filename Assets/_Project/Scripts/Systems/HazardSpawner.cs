@@ -174,6 +174,12 @@ namespace MakeGame.Systems
                     }
                     break;
             }
+
+            // 연결(A-1): tech-artist가 만든 CreatureVisualBuilder.AddHazardDetailsIfMissing을 호출해
+            // 독사(VenomousSnake)/전갈(Scorpion)/함정(Trap)에 보조 디테일(혀/꼬리·집게/가시)을 추가한다.
+            // 곰/식인종/상어/벌떼는 위 switch에서 이미 자체 디테일을 만들었고 CreatureVisualBuilder는
+            // 그 네 종류에는 아무 것도 하지 않으므로(직접 확인함) 중복 없이 안전하게 이어붙일 수 있다.
+            CreatureVisualBuilder.AddHazardDetailsIfMissing(go, type, s, config.color);
         }
 
         /// <summary>

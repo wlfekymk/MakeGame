@@ -89,9 +89,9 @@ namespace MakeGame.Systems
             isLit = true;
             remainingFuelSeconds += secondsPerFuel;
 
-            // 점화 성공 피드백음. 전용 효과음이 없어 제작 성공음을 재사용한다
-            // (ConsumptionSystem의 치료 성공 피드백과 동일한 재사용 패턴).
-            AudioManager.Instance?.PlayCraftSuccess();
+            // 연결(B-3): tech-artist가 AudioManager에 만들어 둔 전용 모닥불 점화 성공음으로 교체.
+            // 예전에는 PlayCraftSuccess()를 재사용해 "제작"과 "점화"가 같은 소리로 구분이 안 됐다.
+            AudioManager.Instance?.PlayCampfireLit();
 
             return true;
         }

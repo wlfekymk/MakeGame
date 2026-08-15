@@ -256,11 +256,14 @@ namespace MakeGame.UI
 
                 // 위험 수준(체력/허기/갈증/산소는 낮을 때, 일사병은 반대로 높을 때)일 때 막대 색을
                 // 평소 색과 경고색 사이로 깜빡이게 해 raw 숫자를 보지 않아도 한눈에 위험을 알 수 있게 한다.
-                ApplyWarningPulse(healthFill, healthBaseColor, healthRatio < 0.25f);
-                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerRatio < 0.2f);
-                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstRatio < 0.2f);
-                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeRatio > 0.8f);
-                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenRatio < 0.25f);
+                // 개선(#10): 위험 임계값(0.25f/0.2f/0.8f)을 UI에 하드코딩해두면 SurvivalStats의 밸런스가
+                // 바뀌어도 조용히 어긋날 수 있었다. SurvivalStats가 단일 소스로 노출한 public const를
+                // 그대로 참조해, 게임 규칙 값 자체는 항상 시스템 쪽에서만 정의되게 했다(값은 기존과 동일).
+                ApplyWarningPulse(healthFill, healthBaseColor, healthRatio < SurvivalStats.LowHealthRatio);
+                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerRatio < SurvivalStats.LowHungerRatio);
+                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstRatio < SurvivalStats.LowThirstRatio);
+                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeRatio > SurvivalStats.HighSunstrokeRatio);
+                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenRatio < SurvivalStats.LowOxygenRatio);
 
                 poisonIcon.SetActive(survivalStats.isPoisoned);
                 bleedingIcon.SetActive(survivalStats.isBleeding);

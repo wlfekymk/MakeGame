@@ -56,7 +56,9 @@ namespace MakeGame.Systems
             if (item.data.curesBleeding && survivalStats.isBleeding)
             {
                 survivalStats.BandageBleeding();
-                AudioManager.Instance?.PlayCraftSuccess(); // 치료 성공 피드백음 (전용 효과음이 없어 완성 효과음을 재사용)
+                // 연결(B-1): tech-artist가 AudioManager에 만들어 둔 전용 치료 성공음으로 교체.
+                // 예전에는 PlayCraftSuccess()를 재사용해 "제작"과 "치료"가 같은 소리로 구분이 안 됐다.
+                AudioManager.Instance?.PlayHealSuccess();
             }
 
             if (item.data.curesPoison && survivalStats.isPoisoned)
