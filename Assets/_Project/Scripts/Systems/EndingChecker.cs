@@ -45,18 +45,14 @@ namespace MakeGame.Systems
         [Tooltip("엔딩 연출 화면에서 계속 진행하는 키")]
         public KeyCode continueKey = KeyCode.Space;
 
-        /// <summary>
-        /// 승리 화면 배경 이미지 (타이틀 화면과 동일한 섬 컨셉 아트, Resources/UI/title_background.png).
-        /// OnGUI에서 최초 1회만 로드해 캐싱한다(널이면 아직 안 불렀거나 로드 실패 - 이 경우 기존 단색 배경 유지).
-        /// </summary>
-        private Texture2D backgroundTexture;
-        private bool backgroundLoadAttempted;
-
-        // 성능 개선(#5): OnGUI가 매 프레임 호출될 때마다 new GUIStyle(...)로 새 인스턴스를 만들고 있었다.
-        // UI/StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱 패턴을 적용해, 최초 1회만 만들고
-        // 이후에는 캐시된 스타일을 재사용한다.
-        private GUIStyle titleStyle;
-        private GUIStyle subStyle;
+        // 회귀 방지(B3 배치, GameOverController와 동일한 판단): 레거시 IMGUI(OnGUI)는 Unity 렌더링
+        // 순서상 항상 Screen Space-Overlay Canvas보다 나중에, 최상단에 그려져 UI/EndingUI(새 UGUI
+        // 엔딩 화면)를 완전히 가려버린다. 배치 2에서 GameOverController.OnGUI를 "검증 전까지 남겨두라"고
+        // 했다가 이 문제로 회귀가 났으므로, 이번에는 새 화면(EndingUI)을 만드는 같은 배치에서 곧바로
+        // OnGUI()/EnsureStyles()/titleStyle/subStyle과 그 배경 이미지 로딩 전용 필드
+        // (backgroundTexture/backgroundLoadAttempted, OnGUI 안에서만 쓰였음)를 전부 제거했다.
+        // 화면 표시는 전적으로 UI/EndingUI가 담당하며, 이 클래스는 상태(IsShowingEnding/EndingMessage/
+        // EndingTriggered)와 동작(DismissEndingUI)만 노출한다.
 
         [Header("탈출에 필요한 비축 물자")]
         [Tooltip("상하지 않는 비축 식량 아이템 (없으면 식량 조건을 검사하지 않는다)")]
@@ -81,6 +77,18 @@ namespace MakeGame.Systems
 
         /// <summary>엔딩이 이미 달성되었는지 여부.</summary>
         public bool EndingTriggered => endingTriggered;
+
+        /// <summary>
+        /// 컴파일 차단 해제: UI/EndingUI.cs(새 UGUI 엔딩 화면)가 연출 화면을 표시/유지할지 판단하려면
+        /// 이 상태를 직접 읽어야 해서 공개 접근자로 노출했다(GameOverController.isGameOver와 같은 목적).
+        /// </summary>
+        public bool IsShowingEnding => showEndingUI;
+
+        /// <summary>
+        /// 컴파일 차단 해제: UI/EndingUI.cs가 축하 문구를 표시하려면 이 값을 직접 읽어야 해서
+        /// 공개 접근자로 노출했다(GameOverController.GetDeathMessage()와 같은 목적).
+        /// </summary>
+        public string EndingMessage => endingMessage;
 
         /// <summary>
         /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 먼저 만족되는 쪽을 트리거한다.
@@ -188,8 +196,10 @@ namespace MakeGame.Systems
         /// <summary>
         /// 엔딩 연출 화면을 닫고 시간을 다시 흐르게 한 뒤, 이동/상호작용을 되돌려준다.
         /// 첫 엔딩을 본 이후에도 계속 자유롭게 플레이할 수 있도록 허용한다(멀티플레이 개방 규칙과 별개).
+        /// 컴파일 차단 해제: UI/EndingUI.cs가 계속하기 버튼에서 이 메서드를 직접 호출해야 해서
+        /// 접근제한자만 private→public으로 바꿨다(시그니처/본문은 그대로).
         /// </summary>
-        private void DismissEndingUI()
+        public void DismissEndingUI()
         {
             showEndingUI = false;
             Time.timeScale = 1f;
@@ -198,67 +208,6 @@ namespace MakeGame.Systems
                 playerController.enabled = true;
             if (interactionController != null)
                 interactionController.enabled = true;
-        }
-
-        /// <summary>
-        /// 엔딩 연출 화면일 때 화면 전체를 어둡게 덮고 중앙에 축하 문구를 표시한다.
-        /// </summary>
-        private void OnGUI()
-        {
-            if (!showEndingUI)
-                return;
-
-            if (!backgroundLoadAttempted)
-            {
-                backgroundTexture = Resources.Load<Texture2D>("UI/title_background");
-                backgroundLoadAttempted = true;
-            }
-
-            var fullScreen = new Rect(0, 0, Screen.width, Screen.height);
-            if (backgroundTexture != null)
-            {
-                // 탈출에 성공했으니 떠나온 섬을 배경으로 보여주고, 금색 톤 오버레이로 축하 분위기를 낸다.
-                GUI.DrawTexture(fullScreen, backgroundTexture, ScaleMode.ScaleAndCrop);
-                GUI.color = new Color(0.25f, 0.15f, 0f, 0.6f);
-                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
-                GUI.color = Color.white;
-            }
-            else
-            {
-                GUI.color = new Color(0f, 0f, 0f, 0.75f);
-                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
-                GUI.color = Color.white;
-            }
-
-            EnsureStyles();
-
-            GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "탈출 성공!", titleStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), endingMessage, subStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), $"[{continueKey}] 키를 눌러 계속하기", subStyle);
-        }
-
-        /// <summary>
-        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
-        /// 캐시해둔다(UI/StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
-        /// </summary>
-        private void EnsureStyles()
-        {
-            if (titleStyle != null)
-                return;
-
-            titleStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 48,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            titleStyle.normal.textColor = new Color(1f, 0.85f, 0.2f); // 금색: 승리 강조
-
-            subStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 20,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            subStyle.normal.textColor = Color.white;
         }
     }
 }

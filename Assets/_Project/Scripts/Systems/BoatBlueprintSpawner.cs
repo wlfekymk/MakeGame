@@ -46,8 +46,10 @@ namespace MakeGame.Systems
         /// <summary>
         /// 지정한 섬이 대형/특대 섬이면 확률적으로 배 도면 습득 지점을 하나 생성한다.
         /// 소형/중형 섬에는 절대 생성하지 않는다 (Stranded Deep 기준: 배 도면은 큰 섬에서만 발견됨).
+        /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림으로
+        /// 등장 확률 판정과 산포 위치를 뽑는다(재현성 근거는 IslandResourceSpawner 상단 주석과 동일).
         /// </summary>
-        public BoatBlueprintPickup SpawnBlueprintForIsland(IslandInstance island, Transform parent)
+        public BoatBlueprintPickup SpawnBlueprintForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
             if (island == null)
                 return null;
@@ -55,8 +57,10 @@ namespace MakeGame.Systems
             if (island.size != IslandSize.Large && island.size != IslandSize.ExtraLarge)
                 return null;
 
+            System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
+
             float chance = island.size == IslandSize.Large ? largeIslandSpawnChance : extraLargeIslandSpawnChance;
-            if (Random.value > chance)
+            if (rng.NextValue01() > chance)
                 return null;
 
             // 기획 확정(B2-8): 섬 규모별 전용 반경을 우선 사용하고, 아직 설정되지 않았으면(0 이하)
@@ -65,7 +69,7 @@ namespace MakeGame.Systems
                 ? (largePlacementOffset > 0f ? largePlacementOffset : placementOffset)
                 : (extraLargePlacementOffset > 0f ? extraLargePlacementOffset : placementOffset);
 
-            Vector2 offset = Random.insideUnitCircle * scatterRadius;
+            Vector2 offset = rng.NextInsideUnitCircle() * scatterRadius;
             Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
             position = TerrainSampler.SnapToGround(position);
 

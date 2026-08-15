@@ -80,12 +80,21 @@ namespace MakeGame.Systems
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.
         /// 각 노드는 섬 위치를 중심으로 scatterRadius 반경 안에 무작위 배치된다.
+        /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림을
+        /// 만들어 쓴다. 같은 worldSeed로 다시 호출하면(WorldMapManager.RegenerateWorld) 이 섬에서
+        /// 생성되는 노드의 위치·모양(스케일/회전 지터 포함)·개수·순서가 정확히 그대로 재현된다 -
+        /// 다른 섬이 그 사이에 몇 개를 뽑았는지와 완전히 무관하다(섬마다 독립된 스트림이므로).
+        /// 각 노드에는 (island.islandId, spawnOrder) 쌍으로 이뤄진 안정적인 식별자를 부여한다
+        /// (ResourceNode.islandIndex/spawnOrder 참고) - B3-4에서 이 쌍을 세이브 키로 그대로 쓴다.
         /// </summary>
-        public List<ResourceNode> SpawnResourcesForIsland(IslandInstance island, Transform parent)
+        public List<ResourceNode> SpawnResourcesForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
             var spawned = new List<ResourceNode>();
             if (island == null)
                 return spawned;
+
+            System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
+            int spawnOrder = 0;
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
@@ -102,10 +111,11 @@ namespace MakeGame.Systems
                 int count = Mathf.RoundToInt(entry.baseCount * multiplier);
                 for (int i = 0; i < count; i++)
                 {
-                    Vector2 offset = Random.insideUnitCircle * radius;
+                    Vector2 offset = rng.NextInsideUnitCircle() * radius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleNode(entry, position, parent));
+                    spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                    spawnOrder++;
                 }
             }
 
@@ -122,7 +132,7 @@ namespace MakeGame.Systems
         /// GetNodeShape로 자원 종류별 실제 프리미티브/크기를 다르게 하고, AddResourceDetailParts로
         /// 보조 파츠(대나무 마디, 야자잎 부채꼴 등)를 덧붙여 실루엣만 보고도 구분되게 했다.
         /// </summary>
-        private ResourceNode SpawnSingleNode(ResourceEntry entry, Vector3 position, Transform parent)
+        private ResourceNode SpawnSingleNode(ResourceEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
             ItemData yieldItem = entry.yieldItem;
             string itemName = yieldItem.itemName;
@@ -131,15 +141,15 @@ namespace MakeGame.Systems
 
             // 퀄리티 개선: 사용자 피드백("같은 종류 자원이라도 보여지는 모양이 다양했으면 좋겠다")을 반영해,
             // 자원 하나하나가 완전히 같은 크기/방향으로 찍히지 않도록 스폰마다 축별로 살짝 다른 배율을 곱하고
-            // Y축(위아래 축) 기준으로 무작위 회전을 더한다. GetInstanceID()는 이 Unity 버전에서 컴파일
-            // 에러가 나는 Obsolete API라(HazardSpawner에서 겪은 것과 동일한 문제) 시드 없는
-            // UnityEngine.Random을 그대로 써서 매 스폰마다 다른 값이 나오게 한다.
+            // Y축(위아래 축) 기준으로 무작위 회전을 더한다.
+            // B3-3: 시드 없는 UnityEngine.Random 대신 이 섬 전용 rng(System.Random)를 쓰도록 바꿔, 같은
+            // worldSeed면 이 스케일/회전 지터까지도 정확히 재현되게 했다(SpawnResourcesForIsland 주석 참고).
             Vector3 scaleJitter = new Vector3(
-                UnityEngine.Random.Range(0.85f, 1.18f),
-                UnityEngine.Random.Range(0.85f, 1.25f),
-                UnityEngine.Random.Range(0.85f, 1.18f));
+                rng.NextFloat(0.85f, 1.18f),
+                rng.NextFloat(0.85f, 1.25f),
+                rng.NextFloat(0.85f, 1.18f));
             scale = Vector3.Scale(scale, scaleJitter);
-            rotation = rotation * Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+            rotation = rotation * Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
 
             GameObject go = GameObject.CreatePrimitive(primitive);
             go.transform.SetParent(parent);
@@ -168,13 +178,15 @@ namespace MakeGame.Systems
                 }
             }
 
-            AddResourceDetailParts(go, itemName, scale, color, textureName);
+            AddResourceDetailParts(go, itemName, scale, color, textureName, rng);
 
             var node = go.AddComponent<ResourceNode>();
             node.yieldItem = yieldItem;
             node.remainingHarvestCount = node.maxHarvestCount;
             node.requiresTool = entry.requiresTool;
             node.requiredTool = entry.requiredTool;
+            node.islandIndex = islandIndex;
+            node.spawnOrder = spawnOrder;
             return node;
         }
 
@@ -262,7 +274,7 @@ namespace MakeGame.Systems
         /// 더한다. 파츠는 순수 시각용이라 콜라이더를 만들지 않고(AddPart에서 제거), 부모의 상호작용용
         /// 콜라이더와 절대 간섭하지 않는다.
         /// </summary>
-        private void AddResourceDetailParts(GameObject go, string itemName, Vector3 parentScale, Color color, string textureName)
+        private void AddResourceDetailParts(GameObject go, string itemName, Vector3 parentScale, Color color, string textureName, System.Random rng)
         {
             switch (itemName)
             {
@@ -270,13 +282,13 @@ namespace MakeGame.Systems
                     // 퀄리티 개선: 곁가지 개수(1~3개)와 각도를 스폰마다 무작위로 바꿔, 같은 나뭇가지라도
                     // 어떤 건 가지가 많고 어떤 건 홑가지처럼 보이게 해서 클론처럼 보이지 않게 했다.
                     {
-                        int twigCount = UnityEngine.Random.Range(1, 4);
+                        int twigCount = rng.NextInt(1, 4);
                         for (int i = 0; i < twigCount; i++)
                         {
                             float baseAngle = 55f + i * 40f;
-                            float jitter = UnityEngine.Random.Range(-15f, 15f);
-                            Vector3 pos = new Vector3(UnityEngine.Random.Range(-0.06f, 0.06f), UnityEngine.Random.Range(-0.02f, 0.05f), UnityEngine.Random.Range(-0.04f, 0.04f));
-                            AddPart(go, $"Twig{i}", PrimitiveType.Cylinder, pos, new Vector3(0.07f, UnityEngine.Random.Range(0.22f, 0.32f), 0.07f), parentScale, Quaternion.Euler(15f, 0f, (i % 2 == 0 ? 1f : -1f) * baseAngle + jitter), color, textureName);
+                            float jitter = rng.NextFloat(-15f, 15f);
+                            Vector3 pos = new Vector3(rng.NextFloat(-0.06f, 0.06f), rng.NextFloat(-0.02f, 0.05f), rng.NextFloat(-0.04f, 0.04f));
+                            AddPart(go, $"Twig{i}", PrimitiveType.Cylinder, pos, new Vector3(0.07f, rng.NextFloat(0.22f, 0.32f), 0.07f), parentScale, Quaternion.Euler(15f, 0f, (i % 2 == 0 ? 1f : -1f) * baseAngle + jitter), color, textureName);
                         }
                         break;
                     }
@@ -284,7 +296,7 @@ namespace MakeGame.Systems
                 case "대나무":
                     // 퀄리티 개선: 마디 개수(2~4개)를 무작위로 바꿔 대나무 길이감이 다양해 보이게 했다.
                     {
-                        int jointCount = UnityEngine.Random.Range(2, 5);
+                        int jointCount = rng.NextInt(2, 5);
                         for (int i = 0; i < jointCount; i++)
                         {
                             float t = (float)i / Mathf.Max(1, jointCount - 1); // 0~1
@@ -297,11 +309,11 @@ namespace MakeGame.Systems
                 case "돌조각":
                     // 퀄리티 개선: 곁돌 개수(0~3개)를 무작위로 바꿔 돌무더기 크기가 다양해 보이게 했다.
                     {
-                        int rockCount = UnityEngine.Random.Range(0, 4);
+                        int rockCount = rng.NextInt(0, 4);
                         Vector3[] offsets = { new Vector3(0.35f, -0.15f, 0.1f), new Vector3(-0.3f, -0.18f, -0.15f), new Vector3(0.1f, -0.12f, -0.32f) };
                         for (int i = 0; i < rockCount && i < offsets.Length; i++)
                         {
-                            float size = UnityEngine.Random.Range(0.16f, 0.28f);
+                            float size = rng.NextFloat(0.16f, 0.28f);
                             AddPart(go, $"Rock{i + 2}", PrimitiveType.Sphere, offsets[i], new Vector3(size, size * 0.75f, size), parentScale, Quaternion.identity, color, textureName);
                         }
                         break;
@@ -310,7 +322,7 @@ namespace MakeGame.Systems
                 case "코코넛":
                     // 퀄리티 개선: 열매가 1개짜리 노드도, 3개까지 뭉친 노드도 나오게 해서 다발 크기가 다양해 보이게 했다.
                     {
-                        int extraCount = UnityEngine.Random.Range(0, 3);
+                        int extraCount = rng.NextInt(0, 3);
                         Vector3[] offsets = { new Vector3(0.4f, -0.05f, 0.1f), new Vector3(-0.35f, -0.08f, 0.25f) };
                         for (int i = 0; i < extraCount && i < offsets.Length; i++)
                             AddPart(go, $"Coconut{i + 2}", PrimitiveType.Sphere, offsets[i], new Vector3(0.38f, 0.38f, 0.38f), parentScale, Quaternion.identity, color, textureName);
@@ -319,21 +331,21 @@ namespace MakeGame.Systems
 
                 case "천조각":
                     // 퀄리티 개선: 접힌 주름이 있을 때도(70% 확률) 없을 때도 있게 해 밋밋한 조각과 구겨진 조각이 섞여 보이게 했다.
-                    if (UnityEngine.Random.value < 0.7f)
-                        AddPart(go, "Fold", PrimitiveType.Cube, new Vector3(0.05f, 0.3f, -0.05f), new Vector3(0.4f, 0.05f, 0.3f), parentScale, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 36f), 3f), color * 0.92f, textureName);
+                    if (rng.NextValue01() < 0.7f)
+                        AddPart(go, "Fold", PrimitiveType.Cube, new Vector3(0.05f, 0.3f, -0.05f), new Vector3(0.4f, 0.05f, 0.3f), parentScale, Quaternion.Euler(0f, rng.NextFloat(0f, 36f), 3f), color * 0.92f, textureName);
                     break;
 
                 case "야자잎":
                     {
                         // 퀄리티 개선: 잎사귀 개수(4~6장)와 부채꼴 각도 간격, 개별 잎 길이를 무작위로 바꿔
                         // 같은 야자잎이라도 풍성해 보이는 것과 성긴 것이 섞여 보이게 했다.
-                        int leafCount = UnityEngine.Random.Range(4, 7);
-                        float spread = UnityEngine.Random.Range(100f, 140f); // 부채꼴 전체 펼침 각도
+                        int leafCount = rng.NextInt(4, 7);
+                        float spread = rng.NextFloat(100f, 140f); // 부채꼴 전체 펼침 각도
                         for (int i = 0; i < leafCount; i++)
                         {
                             float angle = -spread * 0.5f + spread * i / Mathf.Max(1, leafCount - 1);
                             float rad = angle * Mathf.Deg2Rad;
-                            float leafLength = UnityEngine.Random.Range(0.45f, 0.62f);
+                            float leafLength = rng.NextFloat(0.45f, 0.62f);
                             Vector3 localPos = new Vector3(Mathf.Sin(rad) * 0.26f, 0.1f, Mathf.Cos(rad) * 0.26f);
                             Quaternion rot = Quaternion.Euler(-20f, angle, 0f);
                             AddPart(go, $"Leaf{i}", PrimitiveType.Cube, localPos, new Vector3(0.05f, 0.02f, leafLength), parentScale, rot, color, textureName);
@@ -343,7 +355,7 @@ namespace MakeGame.Systems
 
                 case "금속조각":
                     // 퀄리티 개선: 구부러진 정도(각도)를 무작위로 바꿔 찌그러진 모양이 조금씩 다르게 보이게 했다.
-                    AddPart(go, "Bend", PrimitiveType.Cube, new Vector3(-0.05f, 0.4f, 0.05f), new Vector3(0.32f, 0.06f, 0.22f), parentScale, Quaternion.Euler(0f, UnityEngine.Random.Range(-50f, -20f), 8f), color * 0.85f, textureName);
+                    AddPart(go, "Bend", PrimitiveType.Cube, new Vector3(-0.05f, 0.4f, 0.05f), new Vector3(0.32f, 0.06f, 0.22f), parentScale, Quaternion.Euler(0f, rng.NextFloat(-50f, -20f), 8f), color * 0.85f, textureName);
                     break;
 
                 case "부력통":
@@ -361,7 +373,7 @@ namespace MakeGame.Systems
                 case "엔진부품":
                     // 퀄리티 개선: 볼트 개수(3~6개)를 무작위로 바꿔 부품마다 조립 상태가 달라 보이게 했다.
                     {
-                        int boltCount = UnityEngine.Random.Range(3, 7);
+                        int boltCount = rng.NextInt(3, 7);
                         for (int i = 0; i < boltCount; i++)
                         {
                             float rad = i * (360f / boltCount) * Mathf.Deg2Rad;

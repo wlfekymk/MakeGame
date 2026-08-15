@@ -51,12 +51,18 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 지정한 섬에 규모와 확률에 따라 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.
+        /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림으로
+        /// 등장 확률 판정·산포 위치·크기/회전 지터를 전부 뽑는다(재현성 근거는 IslandResourceSpawner
+        /// 상단 주석과 동일). 실제로 등장한 위험 요소마다 (island.islandId, spawnOrder) 식별자를 부여한다.
         /// </summary>
-        public List<HazardSource> SpawnHazardsForIsland(IslandInstance island, Transform parent)
+        public List<HazardSource> SpawnHazardsForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
             var spawned = new List<HazardSource>();
             if (island == null || island.isStartingIsland)
                 return spawned;
+
+            System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
+            int spawnOrder = 0;
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
@@ -64,12 +70,13 @@ namespace MakeGame.Systems
             foreach (var entry in hazardEntries)
             {
                 float chance = Mathf.Clamp01(entry.baseChance * multiplier);
-                if (Random.value <= chance)
+                if (rng.NextValue01() <= chance)
                 {
-                    Vector2 offset = Random.insideUnitCircle * radius;
+                    Vector2 offset = rng.NextInsideUnitCircle() * radius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleHazard(entry.type, position, parent));
+                    spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder));
+                    spawnOrder++;
                 }
             }
 
@@ -81,17 +88,19 @@ namespace MakeGame.Systems
         /// 이 클래스의 시각/전투 설정 테이블(GetVisualConfig, HazardSource.ConfigureForType)을 그대로
         /// 재사용할 수 있도록 공개한 진입점. 섬 배치(SpawnHazardsForIsland)와 달리 확률/섬 규모 개념이
         /// 없고, 호출자가 이미 정한 위치에 정확히 하나를 생성한다.
+        /// B3-3: 호출자(SharkSpawner)가 자신만의 독립된 결정적 rng와 spawnOrder를 넘겨야 한다 - 섬에
+        /// 속하지 않는 스폰이므로 islandIndex는 호출자가 판단해 넘긴다(SharkSpawner는 -1을 쓴다).
         /// </summary>
-        public HazardSource SpawnHazardAtPosition(HazardType type, Vector3 position, Transform parent)
+        public HazardSource SpawnHazardAtPosition(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
-            return SpawnSingleHazard(type, position, parent);
+            return SpawnSingleHazard(type, position, parent, rng, islandIndex, spawnOrder);
         }
 
         /// <summary>
         /// 위험 요소 하나를 실제로 생성한다. 종류별로 형태/크기/색상/회전이 다른 프리미티브를 사용해
         /// 플레이어가 캡슐 하나로는 구분할 수 없던 곰/식인종/독사/전갈/벌떼/함정/상어를 한눈에 구별할 수 있게 한다.
         /// </summary>
-        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent)
+        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
             HazardVisualConfig config = GetVisualConfig(type);
 
@@ -102,8 +111,9 @@ namespace MakeGame.Systems
             // 걸쳐 완전히 동일한 크기/방향으로 찍히는 것을 막기 위해 개체마다 살짝 다른 크기 배율과
             // 세워진 축(Y) 기준 방향을 추가로 준다. Trap처럼 대칭적인 원판은 시각적으로 티가 안 나지만
             // 해를 끼치지도 않으므로 모든 타입에 공통 적용해 코드를 단순하게 유지한다.
-            float sizeJitter = UnityEngine.Random.Range(0.9f, 1.15f);
-            Quaternion yawJitter = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+            // B3-3: 시드 없는 UnityEngine.Random 대신 호출자가 넘긴 결정적 rng를 쓴다.
+            float sizeJitter = rng.NextFloat(0.9f, 1.15f);
+            Quaternion yawJitter = Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
 
             go.transform.localScale = config.localScale * sizeJitter;
             go.transform.rotation = yawJitter * Quaternion.Euler(config.rotationEuler);
@@ -119,7 +129,7 @@ namespace MakeGame.Systems
             // sizeJitter가 적용된 실제 스케일(go.transform.localScale)을 넘겨야 보정 계산이 실제 배치된
             // 크기와 맞아떨어진다(config.localScale은 jitter 이전 원본값이라 그대로 쓰면 이후 유지보수 시
             // 혼동의 여지가 있어 명시적으로 실제 값을 전달한다).
-            AddDetailParts(go, type, config, go.transform.localScale);
+            AddDetailParts(go, type, config, go.transform.localScale, rng);
 
             var col = go.GetComponent<Collider>();
             if (col != null)
@@ -128,6 +138,8 @@ namespace MakeGame.Systems
             var hazard = go.AddComponent<HazardSource>();
             hazard.hazardType = type;
             hazard.ConfigureForType(); // 종류(곰/식인종/벌떼 등)에 맞춰 전투 가능 여부와 체력을 설정한다.
+            hazard.islandIndex = islandIndex;
+            hazard.spawnOrder = spawnOrder;
             return hazard;
         }
 
@@ -136,7 +148,7 @@ namespace MakeGame.Systems
         /// 자식의 localScale은 부모의 비균일 localScale(config.localScale)로 나눠 보정해, 몸통이
         /// 눌리거나 늘어난 축(예: 상어의 길쭉한 몸통)에서도 눈이 타원으로 찌그러지지 않고 둥글게 보이게 한다.
         /// </summary>
-        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config, Vector3 appliedScale)
+        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config, Vector3 appliedScale, System.Random rng)
         {
             Vector3 s = appliedScale;
             Color darkEye = new Color(0.05f, 0.05f, 0.05f);
@@ -160,16 +172,13 @@ namespace MakeGame.Systems
 
                 case HazardType.BeeSwarm:
                     // 공 하나가 아니라 작은 벌 여러 마리가 뭉쳐 있는 것처럼 보이도록 주변에 작은 구체를 흩뿌린다.
-                    // 버그 수정: Object.GetInstanceID()가 이 Unity 버전에서 컴파일 에러가 나는 Obsolete API로
-                    // 바뀌어(대체: GetEntityId, 하지만 씬 오브젝트 인스턴스마다 다른 시드만 필요하므로
-                    // 굳이 그 API를 쓸 필요가 없다) UnityEngine.Random을 직접 써서 씨앗 없이 매번 다른
-                    // 배치로 흩뿌리도록 바꿨다.
+                    // B3-3: 시드 없는 UnityEngine.Random 대신 호출자가 넘긴 결정적 rng를 쓴다.
                     for (int i = 0; i < 5; i++)
                     {
                         Vector3 offset = new Vector3(
-                            UnityEngine.Random.Range(-0.8f, 0.8f),
-                            UnityEngine.Random.Range(-0.8f, 0.8f),
-                            UnityEngine.Random.Range(-0.8f, 0.8f));
+                            rng.NextFloat(-0.8f, 0.8f),
+                            rng.NextFloat(-0.8f, 0.8f),
+                            rng.NextFloat(-0.8f, 0.8f));
                         AddCompensatedSphere(go, offset, 0.22f, s, config.color, $"Bee{i}");
                     }
                     break;

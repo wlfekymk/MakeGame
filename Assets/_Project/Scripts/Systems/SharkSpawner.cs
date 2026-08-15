@@ -39,23 +39,39 @@ namespace MakeGame.Systems
         [Tooltip("겹치지 않는 위치를 찾기 위한 섬 하나당 최대 시도 횟수")]
         public int maxPlacementAttempts = 20;
 
+        // B3-3: 상어는 특정 섬 하나에 속하지 않고 바다 전체에 걸쳐 배치되므로, 섬 인덱스 대신 이 전용
+        // salt로 결정적 System.Random 스트림을 만든다. 실제 섬 islandId(0부터 시작)와 절대 겹치지 않도록
+        // 아주 작은(음수) 값을 골랐다 - 혹시라도 같은 salt를 실수로 섬 스폰에도 쓰는 사고를 방지하기 위해
+        // 식별하기 쉬운 값으로 정했다.
+        private const int SharkSeedSalt = -1000000;
+
         /// <summary>
         /// 지정한 섬 목록을 참고해 바다 위 무작위 위치에 상어들을 배치한다. 모든 섬 생성이 끝난 뒤
         /// (WorldMapManager.Start/RegenerateWorld) 한 번 호출해야 섬 위치를 정확히 피할 수 있다.
+        /// B3-3: worldSeed를 추가로 받아, 상어 배치 전용 결정적 System.Random 스트림(SharkSeedSalt)으로
+        /// 위치를 뽑는다. 이 스트림은 섬 콘텐츠 생성에 쓰이는 섬별 스트림과 완전히 분리돼 있어, 섬이
+        /// 몇 개든 몇 번째로 생성됐든 상어 배치 결과에 영향을 주지 않는다.
         /// </summary>
-        public List<HazardSource> SpawnSharks(List<IslandInstance> islands, float oceanSize, float seaLevel, Transform parent)
+        public List<HazardSource> SpawnSharks(List<IslandInstance> islands, float oceanSize, float seaLevel, Transform parent, int worldSeed)
         {
             var spawned = new List<HazardSource>();
             if (hazardSpawner == null || islands == null)
                 return spawned;
 
+            System.Random rng = SeededRandomExtensions.CreateForSalt(worldSeed, SharkSeedSalt);
+            int spawnOrder = 0;
+
             float halfRange = oceanSize * 0.5f * placementRangeRatio;
 
             for (int i = 0; i < sharkCount; i++)
             {
-                Vector3? position = FindValidOceanPosition(islands, halfRange, seaLevel);
+                Vector3? position = FindValidOceanPosition(islands, halfRange, seaLevel, rng);
                 if (position.HasValue)
-                    spawned.Add(hazardSpawner.SpawnHazardAtPosition(HazardType.Shark, position.Value, parent));
+                {
+                    // 상어는 특정 섬에 속하지 않으므로 islandIndex는 -1(섬에 속하지 않음)로 둔다.
+                    spawned.Add(hazardSpawner.SpawnHazardAtPosition(HazardType.Shark, position.Value, parent, rng, -1, spawnOrder));
+                    spawnOrder++;
+                }
             }
 
             return spawned;
@@ -66,14 +82,14 @@ namespace MakeGame.Systems
         /// 정해진 시도 횟수 안에 조건을 만족하는 위치를 못 찾으면 null을 반환해 그 상어는 건너뛴다
         /// (섬이 매우 빽빽한 예외적인 경우에도 무한 루프에 빠지지 않도록).
         /// </summary>
-        private Vector3? FindValidOceanPosition(List<IslandInstance> islands, float halfRange, float seaLevel)
+        private Vector3? FindValidOceanPosition(List<IslandInstance> islands, float halfRange, float seaLevel, System.Random rng)
         {
             for (int attempt = 0; attempt < maxPlacementAttempts; attempt++)
             {
                 Vector3 candidate = new Vector3(
-                    Random.Range(-halfRange, halfRange),
+                    rng.NextFloat(-halfRange, halfRange),
                     seaLevel - depthBelowSeaLevel,
-                    Random.Range(-halfRange, halfRange));
+                    rng.NextFloat(-halfRange, halfRange));
 
                 if (IsFarEnoughFromAllIslands(candidate, islands))
                     return candidate;

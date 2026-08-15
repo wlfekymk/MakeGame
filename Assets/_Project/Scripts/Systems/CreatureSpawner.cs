@@ -65,12 +65,18 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 지정한 섬에 규모에 맞는 개체 수만큼 사냥감/물고기를 배치한다.
+        /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림으로
+        /// 배치 위치·크기/방향 지터를 전부 뽑는다(재현성 근거는 IslandResourceSpawner 상단 주석과 동일).
+        /// 각 개체마다 (island.islandId, spawnOrder) 식별자를 부여한다.
         /// </summary>
-        public List<HuntableCreature> SpawnCreaturesForIsland(IslandInstance island, Transform parent)
+        public List<HuntableCreature> SpawnCreaturesForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
             var spawned = new List<HuntableCreature>();
             if (island == null)
                 return spawned;
+
+            System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
+            int spawnOrder = 0;
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
@@ -84,11 +90,12 @@ namespace MakeGame.Systems
                 for (int i = 0; i < count; i++)
                 {
                     // preferShoreline이면 반경의 바깥쪽 80~100% 지점에 배치해 해안에 가깝게 흉내낸다.
-                    float radiusScale = entry.preferShoreline ? Random.Range(0.8f, 1f) : Random.value;
-                    Vector2 offset = Random.insideUnitCircle.normalized * radius * radiusScale;
+                    float radiusScale = entry.preferShoreline ? rng.NextFloat(0.8f, 1f) : rng.NextValue01();
+                    Vector2 offset = rng.NextInsideUnitCircle().normalized * radius * radiusScale;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleCreature(entry, position, parent));
+                    spawned.Add(SpawnSingleCreature(entry, position, parent, rng, island.islandId, spawnOrder));
+                    spawnOrder++;
                 }
             }
 
@@ -99,7 +106,7 @@ namespace MakeGame.Systems
         /// 사냥감/물고기 개체 하나를 실제로 생성한다. 시각화용 캡슐(육상 동물) 또는 구체(물고기) 프리미티브에
         /// HuntableCreature 컴포넌트를 붙인다.
         /// </summary>
-        private HuntableCreature SpawnSingleCreature(CreatureEntry entry, Vector3 position, Transform parent)
+        private HuntableCreature SpawnSingleCreature(CreatureEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
             PrimitiveType primitiveType = entry.preferShoreline ? PrimitiveType.Sphere : PrimitiveType.Capsule;
             GameObject go = GameObject.CreatePrimitive(primitiveType);
@@ -107,10 +114,9 @@ namespace MakeGame.Systems
 
             // 퀄리티 개선(#324 재점검): 자원 노드와 같은 문제 - 같은 종류 개체가 완전히 동일한 크기로
             // 찍혀 클론처럼 보이는 것을 막기 위해 개체마다 살짝 다른 크기 배율과 몸 방향(Y축 회전)을 준다.
-            // Object.GetInstanceID()는 이 프로젝트에서 컴파일 에러가 나는 Obsolete API라 시드 없는
-            // UnityEngine.Random을 그대로 쓴다.
-            float sizeJitter = UnityEngine.Random.Range(0.9f, 1.15f);
-            Quaternion facing = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+            // B3-3: 시드 없는 UnityEngine.Random 대신 이 섬 전용 rng(System.Random)를 쓴다.
+            float sizeJitter = rng.NextFloat(0.9f, 1.15f);
+            Quaternion facing = Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
 
             if (entry.preferShoreline)
             {
@@ -160,6 +166,8 @@ namespace MakeGame.Systems
             creature.requiredTool = entry.requiredTool;
             creature.successChance = entry.successChance;
             creature.respawnSeconds = entry.respawnSeconds;
+            creature.islandIndex = islandIndex;
+            creature.spawnOrder = spawnOrder;
             return creature;
         }
 

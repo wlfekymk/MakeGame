@@ -35,6 +35,19 @@ namespace MakeGame.Systems
         [Tooltip("채집에 필요한 도구 아이템 (requiresTool이 true일 때만 사용, 예: 손도끼)")]
         public ItemData requiredTool;
 
+        // B3-3: 이 노드를 배치한 섬 번호와, 그 섬 안에서 몇 번째로 생성됐는지(생성 순번). 절차적으로
+        // 생성되는 노드라 고유한 프리팹/에셋 식별자가 없으므로, 이 두 값의 조합이 세이브 파일에서 노드
+        // 하나를 다시 가리킬 수 있는 유일한 안정적인 키가 된다 - 같은 worldSeed로 재생성하면 항상 같은
+        // (islandIndex, spawnOrder)에 같은 노드가 나온다는 전제가 있어야 성립하며, 이 전제는
+        // IslandResourceSpawner가 섬별 결정적 System.Random을 쓰도록 바뀐 뒤에야 보장된다. B3-4(자원
+        // 노드 채집 상태 저장)에서 이 값을 그대로 세이브 키로 쓴다. -1은 "아직 스포너가 설정하지 않음"을
+        // 뜻하는 안전한 기본값(스포너 밖에서 수동으로 생성된 노드가 있어도 크래시하지 않도록).
+        [Tooltip("이 노드를 배치한 섬 번호(IslandInstance.islandId). B3-4 세이브 키로 쓰인다.")]
+        public int islandIndex = -1;
+
+        [Tooltip("이 섬 안에서 몇 번째로 생성된 노드인지(생성 순번, 0부터). B3-4 세이브 키로 쓰인다.")]
+        public int spawnOrder = -1;
+
         private float respawnTimer = 0f;
 
         /// <summary>현재 채집이 가능한 상태인지 여부(남은 횟수가 있는지).</summary>

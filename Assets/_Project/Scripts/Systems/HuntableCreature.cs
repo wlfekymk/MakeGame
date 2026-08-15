@@ -27,6 +27,15 @@ namespace MakeGame.Systems
         [Tooltip("잡히거나 도망친 뒤 다시 나타나기까지 걸리는 시간(초)")]
         public float respawnSeconds = 90f;
 
+        // B3-3: ResourceNode/HazardSource와 동일한 목적의 안정적 식별자. CreatureSpawner가 섬별 결정적
+        // System.Random을 쓰게 되어, 같은 worldSeed면 항상 같은 (islandIndex, spawnOrder)에 같은
+        // 사냥감/물고기가 나온다는 전제가 성립한다.
+        [Tooltip("이 개체를 배치한 섬 번호(IslandInstance.islandId).")]
+        public int islandIndex = -1;
+
+        [Tooltip("이 섬 안에서 몇 번째로 생성된 개체인지(생성 순번, 0부터).")]
+        public int spawnOrder = -1;
+
         private bool isCaught = false;
         private float respawnTimer = 0f;
 

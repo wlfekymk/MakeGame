@@ -106,7 +106,7 @@ namespace MakeGame.Systems
                 GenerateNextIsland(i, initialIslandCount);
             }
 
-            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform);
+            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
         }
 
         /// <summary>
@@ -134,7 +134,7 @@ namespace MakeGame.Systems
                 GenerateNextIsland(i, initialIslandCount);
             }
 
-            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform);
+            sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
         }
 
         [Header("바다")]
@@ -326,13 +326,15 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원, 위험 요소, 배 도면 습득 지점을 함께 배치한다.
+        /// B3-3: 각 스포너가 이 섬 전용 결정적 System.Random 스트림을 만들 수 있도록 worldSeed를 함께
+        /// 넘긴다(스포너 내부에서 island.islandId와 조합해 시드를 만든다 - SeededRandomExtensions 참고).
         /// </summary>
         private void SpawnIslandContent(IslandInstance island)
         {
-            resourceSpawner?.SpawnResourcesForIsland(island, transform);
-            hazardSpawner?.SpawnHazardsForIsland(island, transform);
-            blueprintSpawner?.SpawnBlueprintForIsland(island, transform);
-            creatureSpawner?.SpawnCreaturesForIsland(island, transform);
+            resourceSpawner?.SpawnResourcesForIsland(island, transform, worldSeed);
+            hazardSpawner?.SpawnHazardsForIsland(island, transform, worldSeed);
+            blueprintSpawner?.SpawnBlueprintForIsland(island, transform, worldSeed);
+            creatureSpawner?.SpawnCreaturesForIsland(island, transform, worldSeed);
         }
 
         /// <summary>
