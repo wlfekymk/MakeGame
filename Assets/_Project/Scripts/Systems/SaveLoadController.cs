@@ -385,7 +385,7 @@ namespace MakeGame.Systems
         /// </summary>
         private void SaveStructures(SaveData data)
         {
-            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Exclude))
             {
                 data.structures.Add(new StructureSaveEntry
                 {
@@ -399,7 +399,7 @@ namespace MakeGame.Systems
                 });
             }
 
-            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Exclude))
             {
                 data.structures.Add(new StructureSaveEntry
                 {
@@ -411,7 +411,7 @@ namespace MakeGame.Systems
                 });
             }
 
-            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Exclude))
             {
                 data.structures.Add(new StructureSaveEntry
                 {
@@ -473,13 +473,13 @@ namespace MakeGame.Systems
         /// </summary>
         private void ClearExistingStructures()
         {
-            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Include))
                 Destroy(cf.gameObject);
 
-            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Include))
                 Destroy(sh.gameObject);
 
-            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Include))
                 Destroy(ws.gameObject);
         }
 
