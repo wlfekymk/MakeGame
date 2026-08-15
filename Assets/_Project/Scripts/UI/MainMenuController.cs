@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 using MakeGame.Player;
 using MakeGame.Systems;
 
@@ -8,7 +9,13 @@ namespace MakeGame.UI
     /// 게임 시작 시 표시되는 타이틀(메인 메뉴) 화면을 담당한다.
     /// 씬은 바로 로드되어 섬/월드가 생성되지만, 플레이어가 "시작하기"를 누르기 전까지는
     /// 시간을 멈추고 이동/상호작용 조작을 막아 준비되지 않은 상태에서 조작이 들어가지 않게 한다.
-    /// GameOverController/EndingChecker와 동일하게 OnGUI + Time.timeScale 패턴을 사용한다.
+    /// 개선(B2-13): OnGUI(레거시 IMGUI)로 직접 그리던 것을 UIBuilder 기반 UGUI로 옮겼다. IMGUI는
+    /// Screen Space Overlay Canvas보다 항상 나중에(최상단에) 그려져 다른 UGUI 화면을 가려버리는 문제가
+    /// 있었기 때문에(GameOverController.OnGUI 사례 참고) OnGUI를 완전히 제거했다. Time.timeScale = 0인
+    /// 동안에도 UGUI 버튼 클릭은 EventSystem이 Time.deltaTime과 무관하게 처리하므로 정상 동작한다
+    /// (GameOverUI에서 이미 검증된 패턴과 동일).
+    /// SettingsMenuController도 이제 스스로 자기 캔버스를 갖고 있어, 예전처럼 이 클래스가 설정 화면을
+    /// 대신 그려줄 필요가 없다 - "설정" 버튼은 그냥 settingsMenu.Open()만 호출한다.
     /// </summary>
     public class MainMenuController : MonoBehaviour
     {
@@ -36,12 +43,7 @@ namespace MakeGame.UI
         /// </summary>
         private Texture2D backgroundTexture;
 
-        // 성능 개선(#6): OnGUI는 매 프레임 호출되는데, 그때마다 new GUIStyle(...)로 스타일 객체를
-        // 새로 만들면 타이틀 화면이 오래 켜져 있을 때 불필요한 GC 부담이 누적된다. StatusEffectWarningUI.
-        // EnsureStyles()와 동일하게 최초 1회만 만들고 이후에는 캐시된 스타일을 재사용한다.
-        private GUIStyle titleStyle;
-        private GUIStyle subStyle;
-        private GUIStyle buttonStyle;
+        private GameObject panelRoot;
 
         /// <summary>
         /// 시작하자마자 조작을 막고 시간을 멈춰 타이틀 화면 상태로 진입한다.
@@ -56,8 +58,10 @@ namespace MakeGame.UI
             SetGameplayEnabled(false);
             Time.timeScale = 0f;
 
-            // 타이틀 배경 이미지를 미리 한 번만 로드해둔다 (OnGUI에서 매 프레임 Resources.Load하지 않도록).
+            // 타이틀 배경 이미지를 미리 한 번만 로드해둔다.
             backgroundTexture = Resources.Load<Texture2D>("UI/title_background");
+
+            BuildUI();
         }
 
         /// <summary>
@@ -80,6 +84,9 @@ namespace MakeGame.UI
             isMenuOpen = false;
             Time.timeScale = 1f;
             SetGameplayEnabled(true);
+
+            if (panelRoot != null)
+                panelRoot.SetActive(false);
         }
 
         /// <summary>
@@ -95,87 +102,93 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 타이틀 화면이 열려 있는 동안 화면 중앙에 제목/부제목과 시작/설정/종료 버튼을 그린다.
-        /// 설정 화면이 열려 있으면 타이틀 버튼 대신 설정 화면을 그리도록 SettingsMenuController에 위임한다.
+        /// 캔버스, 배경(섬 컨셉 아트 + 어두운 오버레이, 또는 이미지가 없으면 단색 배경), 제목/부제목,
+        /// 시작/설정/종료 버튼을 생성한다. 설정 화면은 이제 SettingsMenuController가 스스로 그리므로
+        /// 여기서는 "설정" 버튼을 누르면 그쪽을 열어주기만 하면 된다.
         /// </summary>
-        private void OnGUI()
+        private void BuildUI()
         {
-            if (!isMenuOpen)
-                return;
+            // SettingsCanvas(16)보다 아래에 있어야, 설정 화면이 열렸을 때 그 뒤로 자연스럽게 가려진다.
+            var canvas = UIBuilder.CreateCanvas("MainMenuCanvas", sortOrder: 15);
 
-            var fullScreen = new Rect(0, 0, Screen.width, Screen.height);
+            var root = UIBuilder.CreatePanel(
+                canvas.transform, "MainMenuPanel",
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: Color.clear);
+            panelRoot = root.gameObject;
+
             if (backgroundTexture != null)
             {
-                // 섬 컨셉 아트를 화면 전체에 꽉 채워 그리고(ScaleAndCrop, 비율 유지하며 잘라내기),
-                // 그 위에 반투명 어두운 오버레이를 덮어 글자 가독성을 확보한다.
-                GUI.DrawTexture(fullScreen, backgroundTexture, ScaleMode.ScaleAndCrop);
-                GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.55f);
-                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
-                GUI.color = Color.white;
+                // 섬 컨셉 아트를 화면 전체에 꽉 채워 보여준다. AspectRatioFitter의 EnvelopeParent 모드가
+                // 원본 GUI.DrawTexture(..., ScaleMode.ScaleAndCrop)와 동일하게 "비율을 유지한 채 잘라내며
+                // 채우기"를 해준다.
+                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(RawImage), typeof(AspectRatioFitter));
+                bgGo.transform.SetParent(root, false);
+                var bgRt = bgGo.GetComponent<RectTransform>();
+                bgRt.anchorMin = Vector2.zero;
+                bgRt.anchorMax = Vector2.one;
+                bgRt.offsetMin = Vector2.zero;
+                bgRt.offsetMax = Vector2.zero;
+
+                var rawImage = bgGo.GetComponent<RawImage>();
+                rawImage.texture = backgroundTexture;
+
+                var fitter = bgGo.GetComponent<AspectRatioFitter>();
+                fitter.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
+                fitter.aspectRatio = (float)backgroundTexture.width / backgroundTexture.height;
+
+                // 배경 위에 반투명 어두운 오버레이를 덮어 글자 가독성을 확보한다.
+                UIBuilder.CreatePanel(root, "BackgroundOverlay", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero,
+                    new Color(0.05f, 0.08f, 0.12f, 0.55f));
             }
             else
             {
                 // 배경 이미지를 못 불러온 경우(임포트 실패 등) 기존처럼 단색 배경으로 대체한다.
-                GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.92f);
-                GUI.DrawTexture(fullScreen, Texture2D.whiteTexture);
-                GUI.color = Color.white;
+                UIBuilder.CreatePanel(root, "BackgroundOverlay", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero,
+                    new Color(0.05f, 0.08f, 0.12f, 0.92f));
             }
 
-            if (settingsMenu != null && settingsMenu.isOpen)
-            {
-                settingsMenu.DrawSettingsPanel();
-                return;
-            }
+            var title = UIBuilder.CreateText(root, "Title", gameTitle, 52, new Color(0.95f, 0.85f, 0.55f), TextAnchor.MiddleCenter);
+            PositionCentered(title.rectTransform, yOffset: 150f, width: 0f, height: 70f);
 
-            EnsureStyles();
+            var subtitle = UIBuilder.CreateText(root, "Subtitle", gameSubtitle, 18, new Color(0.8f, 0.8f, 0.8f), TextAnchor.MiddleCenter);
+            PositionCentered(subtitle.rectTransform, yOffset: 95f, width: 0f, height: 30f);
 
-            float centerX = Screen.width / 2f;
-            float centerY = Screen.height / 2f;
-
-            GUI.Label(new Rect(0, centerY - 180, Screen.width, 70), gameTitle, titleStyle);
-            GUI.Label(new Rect(0, centerY - 120, Screen.width, 30), gameSubtitle, subStyle);
-
-            float buttonWidth = 240f;
-            float buttonHeight = 48f;
-            float buttonX = centerX - buttonWidth / 2f;
-
-            if (GUI.Button(new Rect(buttonX, centerY - 40, buttonWidth, buttonHeight), "시작하기", buttonStyle))
-                StartGame();
+            var startButton = UIBuilder.CreateButton(root, "StartButton", "시작하기", StartGame);
+            PositionCentered(startButton.GetComponent<RectTransform>(), yOffset: 20f, width: 240f, height: 48f);
 
             if (settingsMenu != null)
             {
-                if (GUI.Button(new Rect(buttonX, centerY + 20, buttonWidth, buttonHeight), "설정", buttonStyle))
-                    settingsMenu.Open();
+                var settingsButton = UIBuilder.CreateButton(root, "SettingsButton", "설정", settingsMenu.Open);
+                PositionCentered(settingsButton.GetComponent<RectTransform>(), yOffset: -40f, width: 240f, height: 48f);
             }
 
-            if (GUI.Button(new Rect(buttonX, centerY + 80, buttonWidth, buttonHeight), "종료", buttonStyle))
-                QuitGame();
+            var quitButton = UIBuilder.CreateButton(root, "QuitButton", "종료", QuitGame);
+            PositionCentered(quitButton.GetComponent<RectTransform>(), yOffset: -100f, width: 240f, height: 48f);
         }
 
         /// <summary>
-        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
-        /// 필드에 캐시해두고 이후에는 재사용한다(StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
+        /// 화면 가로 중앙(width가 0이면 좌우로 꽉 채움) 기준, 수직 중심에서 yOffset만큼 위/아래로
+        /// 떨어진 위치에 지정한 크기로 배치한다. 타이틀/버튼들을 세로로 나란히 쌓기 위한 공통 헬퍼.
         /// </summary>
-        private void EnsureStyles()
+        private void PositionCentered(RectTransform rt, float yOffset, float width, float height)
         {
-            if (titleStyle != null)
-                return;
-
-            titleStyle = new GUIStyle(GUI.skin.label)
+            if (width <= 0f)
             {
-                fontSize = 52,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            titleStyle.normal.textColor = new Color(0.95f, 0.85f, 0.55f);
-
-            subStyle = new GUIStyle(GUI.skin.label)
+                rt.anchorMin = new Vector2(0f, 0.5f);
+                rt.anchorMax = new Vector2(1f, 0.5f);
+                rt.sizeDelta = new Vector2(0f, height);
+            }
+            else
             {
-                fontSize = 18,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            subStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(width, height);
+            }
 
-            buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 22 };
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = new Vector2(0f, yOffset);
         }
     }
 }

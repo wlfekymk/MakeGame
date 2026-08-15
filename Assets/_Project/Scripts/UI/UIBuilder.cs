@@ -323,5 +323,62 @@ namespace MakeGame.UI
 
             return button;
         }
+
+        /// <summary>
+        /// 가로형 슬라이더(배경 트랙 + 채움 + 핸들)를 생성한다. 개선(B2-13): SettingsMenuController가
+        /// OnGUI의 GUI.HorizontalSlider 대신 쓸 정식 UGUI Slider가 필요해 추가했다. Unity 기본 UI 프리팹의
+        /// Slider 구조(Background/Fill Area/Fill, Handle Slide Area/Handle)를 코드로 그대로 재현한다.
+        /// 반환된 Slider의 value를 그대로 읽거나 onValueChanged를 구독해서 쓴다.
+        /// </summary>
+        public static Slider CreateSlider(Transform parent, string name, float minValue, float maxValue, float value,
+            Color trackColor, Color fillColor, Color handleColor)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Slider));
+            go.transform.SetParent(parent, false);
+
+            var slider = go.GetComponent<Slider>();
+            slider.minValue = minValue;
+            slider.maxValue = maxValue;
+            slider.wholeNumbers = false;
+            slider.direction = Slider.Direction.LeftToRight;
+
+            // 배경(트랙): 슬라이더 세로 중앙에 얇게 깔린다.
+            var bgRt = CreatePanel(go.transform, "Background",
+                new Vector2(0f, 0.25f), new Vector2(1f, 0.75f), Vector2.zero, Vector2.zero, trackColor);
+
+            // Fill Area: 안쪽 여백을 살짝 두고, 그 안의 Fill을 Slider 컴포넌트가 값에 따라 자동으로 늘였다 줄인다.
+            var fillAreaGo = new GameObject("Fill Area", typeof(RectTransform));
+            fillAreaGo.transform.SetParent(go.transform, false);
+            var fillAreaRt = fillAreaGo.GetComponent<RectTransform>();
+            fillAreaRt.anchorMin = new Vector2(0f, 0.25f);
+            fillAreaRt.anchorMax = new Vector2(1f, 0.75f);
+            fillAreaRt.offsetMin = new Vector2(5f, 0f);
+            fillAreaRt.offsetMax = new Vector2(-5f, 0f);
+
+            var fillRt = CreatePanel(fillAreaRt, "Fill", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, fillColor);
+
+            // Handle Slide Area: 핸들이 좌우로 오갈 수 있는 전체 폭. Handle은 고정 너비로 세로만 꽉 채운다.
+            var handleAreaGo = new GameObject("Handle Slide Area", typeof(RectTransform));
+            handleAreaGo.transform.SetParent(go.transform, false);
+            var handleAreaRt = handleAreaGo.GetComponent<RectTransform>();
+            handleAreaRt.anchorMin = Vector2.zero;
+            handleAreaRt.anchorMax = Vector2.one;
+            handleAreaRt.offsetMin = new Vector2(10f, 0f);
+            handleAreaRt.offsetMax = new Vector2(-10f, 0f);
+
+            var handleRt = CreatePanel(handleAreaGo.transform, "Handle",
+                new Vector2(0f, 0f), new Vector2(0f, 1f), Vector2.zero, Vector2.zero, handleColor);
+            handleRt.sizeDelta = new Vector2(16f, 0f);
+            handleRt.pivot = new Vector2(0.5f, 0.5f);
+
+            slider.fillRect = fillRt;
+            slider.handleRect = handleRt;
+            slider.targetGraphic = handleRt.GetComponent<Image>();
+
+            // value는 fillRect/handleRect를 다 연결한 뒤에 설정해야 슬라이더가 시각적으로도 올바른 위치에서 시작한다.
+            slider.value = value;
+
+            return slider;
+        }
     }
 }

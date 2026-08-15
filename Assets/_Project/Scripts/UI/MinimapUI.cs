@@ -193,7 +193,11 @@ namespace MakeGame.UI
 
             // effectiveRadarWorldRadius는 Start()에서 ResolveRadarWorldRadius()로 한 번만 계산해둔 값이다
             // (radarWorldRadius를 그대로 쓰거나, 0 이하면 WorldMapManager 배치 설정에서 유도).
-            float scale = (radarPanelSize / 2f) / effectiveRadarWorldRadius;
+            // qa 지적: 유도값이 0 이하가 되는 극단적인 경우(예: worldMapManager 설정이 전부 0으로 잘못
+            // 들어간 경우) scale이 Infinity가 되고, 플레이어와 좌표가 겹친 섬(rel=(0,0))에서 0*Infinity=NaN이
+            // 나와 RectTransform이 깨질 수 있다. 스포너들(IslandResourceSpawner 등)이 쓰는 것과 동일한
+            // Mathf.Max(0.0001f, ...) 패턴으로 분모가 0 이하로 내려가지 않게 방어한다.
+            float scale = (radarPanelSize / 2f) / Mathf.Max(0.0001f, effectiveRadarWorldRadius);
             float maxOffset = radarPanelSize / 2f - 6f;
 
             for (int i = 0; i < islands.Count; i++)

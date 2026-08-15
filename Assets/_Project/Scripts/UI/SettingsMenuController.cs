@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 using MakeGame.Systems;
 
 namespace MakeGame.UI
@@ -7,6 +8,13 @@ namespace MakeGame.UI
     /// 음량(효과음/배경음) 설정을 조절하는 화면.
     /// 타이틀 화면(MainMenuController)의 "설정" 버튼으로 열 수도 있고, 플레이 중에는 toggleKey(기본 Esc)로
     /// 직접 열고 닫아 간이 일시정지 메뉴처럼 쓸 수도 있다.
+    /// 개선(B2-13): OnGUI(레거시 IMGUI)로 직접 그리던 것을 UIBuilder 기반 UGUI로 옮겼다. IMGUI는
+    /// Screen Space Overlay Canvas보다 항상 나중에(최상단에) 그려져 다른 UGUI 화면을 가려버리는 문제가
+    /// 있었기 때문에(GameOverController.OnGUI 사례 참고) OnGUI를 완전히 제거했다. UGUI로 바뀌면서
+    /// "MainMenuController가 이 컴포넌트의 DrawSettingsPanel()을 대신 호출해서 그려주는" 방식이 더 이상
+    /// 필요 없어졌다 - 이 컴포넌트가 스스로 자기 캔버스를 갖고 isOpen에 따라 보이고 숨는다. 설정 캔버스가
+    /// 타이틀 캔버스보다 항상 위(sortOrder 높음)에 있고 화면 전체를 덮는 불투명 배경을 깔기 때문에,
+    /// 열려 있는 동안은 자연히 타이틀 화면의 버튼 클릭도 가로막는다(레이캐스트가 앞쪽 그래픽에서 멈춤).
     /// </summary>
     public class SettingsMenuController : MonoBehaviour
     {
@@ -24,12 +32,20 @@ namespace MakeGame.UI
 
         private float timeScaleBeforeOpen = 1f;
 
-        // 성능 개선(#6): DrawSettingsPanel()이 매 프레임(OnGUI) 호출될 때마다 new GUIStyle(...)로
-        // 스타일 객체를 새로 만들던 것을 StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱
-        // 패턴으로 바꿔, 최초 1회만 생성하고 이후에는 재사용한다.
-        private GUIStyle titleStyle;
-        private GUIStyle labelStyle;
-        private GUIStyle buttonStyle;
+        private GameObject panelRoot;
+        private Slider sfxSlider;
+        private Slider bgmSlider;
+        private Text sfxValueLabel;
+        private Text bgmValueLabel;
+
+        /// <summary>
+        /// 시작 시 설정 UI 계층을 생성하고 기본적으로 닫힌 상태로 둔다.
+        /// </summary>
+        private void Start()
+        {
+            BuildUI();
+            SetPanelActive(false);
+        }
 
         /// <summary>
         /// 플레이 중에는 toggleKey로 직접 열고 닫을 수 있다.
@@ -55,6 +71,7 @@ namespace MakeGame.UI
         {
             isOpen = true;
             openedStandalone = false;
+            ShowPanel();
         }
 
         /// <summary>
@@ -70,6 +87,8 @@ namespace MakeGame.UI
                 timeScaleBeforeOpen = Time.timeScale;
                 Time.timeScale = 0f;
             }
+
+            ShowPanel();
         }
 
         /// <summary>
@@ -83,81 +102,122 @@ namespace MakeGame.UI
                 Time.timeScale = timeScaleBeforeOpen;
 
             openedStandalone = false;
+            SetPanelActive(false);
         }
 
         /// <summary>
-        /// 플레이 중 toggleKey로 직접 열렸을 때만 이 컴포넌트가 스스로 배경+패널을 그린다.
-        /// 타이틀 화면을 거쳐 열린 경우(openedStandalone == false)는 MainMenuController가 배경을 그린 뒤
-        /// DrawSettingsPanel()을 직접 호출하므로, 여기서 또 그리면 배경이 겹쳐 그려지는 것을 막기 위해 건너뛴다.
+        /// 캔버스와 반투명 전체화면 배경, 중앙의 설정 박스(제목/효과음·배경음 슬라이더/닫기 버튼)를 생성한다.
+        /// Time.timeScale이 0인 상태(타이틀/일시정지)에서도 UGUI 버튼·슬라이더 클릭은 EventSystem이
+        /// Time.deltaTime과 무관하게 매 프레임 처리하므로 정상 동작한다(GameOverUI에서 확인된 패턴과 동일).
         /// </summary>
-        private void OnGUI()
+        private void BuildUI()
         {
-            if (!isOpen || !openedStandalone)
-                return;
+            // MainMenuCanvas(15)보다 항상 위에 그려져야 타이틀 화면을 가리는 배경 역할을 할 수 있다.
+            var canvas = UIBuilder.CreateCanvas("SettingsCanvas", sortOrder: 16);
 
-            GUI.color = new Color(0.05f, 0.08f, 0.12f, 0.85f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
+            var backdrop = UIBuilder.CreatePanel(
+                canvas.transform, "SettingsBackdrop",
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: new Color(0.05f, 0.08f, 0.12f, 0.85f));
 
-            DrawSettingsPanel();
+            panelRoot = backdrop.gameObject;
+
+            var box = UIBuilder.CreatePanel(
+                backdrop, "SettingsBox",
+                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
+                offsetMin: new Vector2(-210f, -130f), offsetMax: new Vector2(210f, 130f),
+                color: new Color(0f, 0f, 0f, 0.85f));
+
+            var vlg = box.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(24, 24, 20, 20);
+            vlg.spacing = 10f;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+
+            var title = UIBuilder.CreateText(box, "Title", "설정", 26, Color.white, TextAnchor.MiddleCenter);
+            title.gameObject.AddComponent<LayoutElement>().minHeight = 40f;
+
+            sfxValueLabel = UIBuilder.CreateText(box, "SfxLabel", "", 16, Color.white, TextAnchor.MiddleLeft);
+            sfxValueLabel.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
+
+            sfxSlider = UIBuilder.CreateSlider(box, "SfxSlider", 0f, 1f, 0f,
+                trackColor: new Color(1f, 1f, 1f, 0.15f),
+                fillColor: new Color(0.35f, 0.65f, 0.4f, 1f),
+                handleColor: Color.white);
+            sfxSlider.gameObject.AddComponent<LayoutElement>().minHeight = 24f;
+            sfxSlider.onValueChanged.AddListener(OnSfxSliderChanged);
+
+            bgmValueLabel = UIBuilder.CreateText(box, "BgmLabel", "", 16, Color.white, TextAnchor.MiddleLeft);
+            bgmValueLabel.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
+
+            bgmSlider = UIBuilder.CreateSlider(box, "BgmSlider", 0f, 1f, 0f,
+                trackColor: new Color(1f, 1f, 1f, 0.15f),
+                fillColor: new Color(0.35f, 0.65f, 0.4f, 1f),
+                handleColor: Color.white);
+            bgmSlider.gameObject.AddComponent<LayoutElement>().minHeight = 24f;
+            bgmSlider.onValueChanged.AddListener(OnBgmSliderChanged);
+
+            var closeButton = UIBuilder.CreateButton(box, "CloseButton", "닫기", Close);
+            var closeLayout = closeButton.gameObject.AddComponent<LayoutElement>();
+            closeLayout.minHeight = 36f;
+            closeLayout.preferredWidth = 160f;
         }
 
         /// <summary>
-        /// 설정 패널(제목 + 효과음/배경음 볼륨 슬라이더 + 닫기 버튼)을 그린다.
-        /// AudioManager.Instance의 SetSfxVolume/SetBgmVolume을 호출해 슬라이더 값을 실시간으로 반영한다.
-        /// MainMenuController에서도 이 메서드를 직접 호출해 같은 패널을 그린다.
+        /// 패널을 화면에 보이게 하고, AudioManager의 현재 볼륨 값으로 슬라이더/라벨을 동기화한다.
+        /// (기존 OnGUI는 매 프레임 GUI.HorizontalSlider를 그리며 현재 값을 다시 읽었지만, 이 값은
+        /// 이 UI를 통해서만 바뀌므로 패널이 열리는 시점에 한 번만 동기화해도 결과는 동일하다.)
         /// </summary>
-        public void DrawSettingsPanel()
+        private void ShowPanel()
         {
-            float panelWidth = 420f;
-            float panelHeight = 260f;
-            float panelX = (Screen.width - panelWidth) / 2f;
-            float panelY = (Screen.height - panelHeight) / 2f;
+            SetPanelActive(true);
+            RefreshVolumeDisplay();
+        }
 
-            GUI.Box(new Rect(panelX, panelY, panelWidth, panelHeight), string.Empty);
+        /// <summary>
+        /// 패널을 활성/비활성화한다.
+        /// </summary>
+        private void SetPanelActive(bool active)
+        {
+            if (panelRoot != null)
+                panelRoot.SetActive(active);
+        }
 
-            EnsureStyles();
-            GUI.Label(new Rect(panelX, panelY + 10, panelWidth, 40), "설정", titleStyle);
-
-            float sliderX = panelX + 30f;
-            float sliderWidth = panelWidth - 60f;
-
+        /// <summary>
+        /// AudioManager.Instance의 현재 효과음/배경음 볼륨을 읽어 슬라이더와 라벨에 반영한다.
+        /// SetValueWithoutNotify를 써서, 여기서 값을 맞추는 동작 자체가 OnSfxSliderChanged 등을 다시
+        /// 불러 AudioManager.SetXxxVolume을 불필요하게 재호출하지 않게 한다.
+        /// </summary>
+        private void RefreshVolumeDisplay()
+        {
             var audio = AudioManager.Instance;
             float currentSfx = audio != null ? audio.sfxVolume : 0f;
             float currentBgm = audio != null ? audio.bgmVolume : 0f;
 
-            GUI.Label(new Rect(sliderX, panelY + 70, sliderWidth, 24), $"효과음 볼륨: {currentSfx:P0}", labelStyle);
-            float sfx = GUI.HorizontalSlider(new Rect(sliderX, panelY + 96, sliderWidth, 24), currentSfx, 0f, 1f);
-            if (audio != null && !Mathf.Approximately(sfx, currentSfx))
-                audio.SetSfxVolume(sfx);
-
-            GUI.Label(new Rect(sliderX, panelY + 130, sliderWidth, 24), $"배경음 볼륨: {currentBgm:P0}", labelStyle);
-            float bgm = GUI.HorizontalSlider(new Rect(sliderX, panelY + 156, sliderWidth, 24), currentBgm, 0f, 1f);
-            if (audio != null && !Mathf.Approximately(bgm, currentBgm))
-                audio.SetBgmVolume(bgm);
-
-            if (GUI.Button(new Rect(panelX + panelWidth / 2f - 80f, panelY + panelHeight - 50f, 160f, 36f), "닫기", buttonStyle))
-                Close();
+            sfxSlider.SetValueWithoutNotify(currentSfx);
+            bgmSlider.SetValueWithoutNotify(currentBgm);
+            sfxValueLabel.text = $"효과음 볼륨: {currentSfx:P0}";
+            bgmValueLabel.text = $"배경음 볼륨: {currentBgm:P0}";
         }
 
         /// <summary>
-        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
-        /// 필드에 캐시해두고 이후에는 재사용한다(StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
-        /// DrawSettingsPanel은 자체 OnGUI와 MainMenuController.OnGUI 양쪽에서 호출될 수 있지만
-        /// 둘 다 유효한 GUI 컨텍스트이므로 이 안에서 지연 생성해도 안전하다.
+        /// 효과음 슬라이더를 드래그할 때마다 호출된다. AudioManager에 즉시 반영하고 라벨을 갱신한다.
         /// </summary>
-        private void EnsureStyles()
+        private void OnSfxSliderChanged(float value)
         {
-            if (titleStyle != null)
-                return;
+            AudioManager.Instance?.SetSfxVolume(value);
+            sfxValueLabel.text = $"효과음 볼륨: {value:P0}";
+        }
 
-            titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, alignment = TextAnchor.MiddleCenter };
-            titleStyle.normal.textColor = Color.white;
-
-            labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 16 };
-            labelStyle.normal.textColor = Color.white;
-
-            buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 18 };
+        /// <summary>
+        /// 배경음 슬라이더를 드래그할 때마다 호출된다. AudioManager에 즉시 반영하고 라벨을 갱신한다.
+        /// </summary>
+        private void OnBgmSliderChanged(float value)
+        {
+            AudioManager.Instance?.SetBgmVolume(value);
+            bgmValueLabel.text = $"배경음 볼륨: {value:P0}";
         }
     }
 }

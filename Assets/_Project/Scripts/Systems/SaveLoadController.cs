@@ -12,9 +12,11 @@ namespace MakeGame.Systems
     /// SaveData를 JsonUtility로 직렬화해 Application.persistentDataPath에 파일로 기록하고,
     /// 불러올 때는 씬을 재시작하지 않고 현재 오브젝트들의 값을 저장된 상태로 되돌려 적용한다.
     /// 섬/자원/위험요소/사냥감 배치는 저장된 worldSeed로 WorldMapManager.RegenerateWorld를 호출해
-    /// 저장 시점과 동일하게 다시 만들어낸다 (재현 가능). 다만 개별 자원 노드의 채집 여부, 위험 요소
-    /// 처치 여부, 플레이어가 설치한 구조물(물 증류기/쉼터)은 이번 1차 구현 범위에서는 저장하지
-    /// 않으므로, 불러오면 섬 배치는 동일하지만 자원/위험요소는 다시 미채집/생존 상태로 리셋된다.
+    /// 저장 시점과 동일하게 다시 만들어낸다 (재현 가능).
+    /// B2-15 1단계: 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기)의 위치·상태를 저장·복원한다
+    /// (SaveStructures/RestoreStructures 참고). 개별 자원 노드의 채집 여부와 위험 요소·사냥감의
+    /// 처치 여부는 여전히 저장하지 않으므로, 불러오면 섬 배치는 동일하지만 자원/위험요소는 다시
+    /// 미채집/생존 상태로 리셋된다(다음 배치 예정, 이유는 RestoreStructures 근처 주석 참고).
     /// </summary>
     public class SaveLoadController : MonoBehaviour
     {
@@ -28,6 +30,19 @@ namespace MakeGame.Systems
         public SurvivalClock survivalClock;
         public IslandTravel islandTravel;
         public WorldMapManager worldMapManager;
+
+        [Header("설치 구조물 프리팹 (B2-15 1단계)")]
+        [Tooltip("불러오기 시 저장된 모닥불을 재생성할 프리팹. ItemData(모닥불키트).placementPrefab과" +
+            " 같은 프리팹을 연결해야 한다. 비워두면 저장된 모닥불을 복원하지 못하고 경고만 남긴다.")]
+        public GameObject campfirePrefab;
+
+        [Tooltip("불러오기 시 저장된 쉼터를 재생성할 프리팹. ItemData(쉼터키트).placementPrefab과" +
+            " 같은 프리팹을 연결해야 한다. 비워두면 저장된 쉼터를 복원하지 못하고 경고만 남긴다.")]
+        public GameObject shelterPrefab;
+
+        [Tooltip("불러오기 시 저장된 물 증류기를 재생성할 프리팹. ItemData(물증류기키트).placementPrefab과" +
+            " 같은 프리팹을 연결해야 한다. 비워두면 저장된 물 증류기를 복원하지 못하고 경고만 남긴다.")]
+        public GameObject waterStillPrefab;
 
         [Header("단축키")]
         [Tooltip("빠른 저장 단축키")]
@@ -141,6 +156,8 @@ namespace MakeGame.Systems
                     data.aircraftCollectedMaterials.Add(new ItemCountEntry { itemName = entry.item.itemName, count = entry.quantity });
                 }
             }
+
+            SaveStructures(data);
 
             string json = JsonUtility.ToJson(data, true);
             File.WriteAllText(SavePath, json);
@@ -277,6 +294,8 @@ namespace MakeGame.Systems
             if (data.hasCompletedFirstEnding && GameManager.Instance != null)
                 GameManager.Instance.CompleteEnding();
 
+            RestoreStructures(data);
+
             lastStatusMessage = $"불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 불러오기 완료 확인음
             Debug.Log("[SaveLoadController] 게임을 불러왔습니다.");
@@ -356,6 +375,190 @@ namespace MakeGame.Systems
             }
 
             itemDataByName.Add(item.itemName, item);
+        }
+
+        /// <summary>
+        /// B2-15 1단계: 씬에 현재 설치돼 있는 모닥불/쉼터/물 증류기를 전부 찾아 위치·회전·상태를
+        /// data.structures에 기록한다. 구조물은 InteractionController.PlaceFirstPlaceableItem이
+        /// Instantiate(prefab, pos, rot) 로 부모 없이(루트로) 생성하므로, WorldMapManager 자식만 찾는
+        /// 방식으로는 찾을 수 없어 FindObjectsByType으로 씬 전체에서 직접 찾는다.
+        /// </summary>
+        private void SaveStructures(SaveData data)
+        {
+            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            {
+                data.structures.Add(new StructureSaveEntry
+                {
+                    type = StructureType.Campfire,
+                    posX = cf.transform.position.x,
+                    posY = cf.transform.position.y,
+                    posZ = cf.transform.position.z,
+                    rotY = cf.transform.eulerAngles.y,
+                    isLit = cf.isLit,
+                    remainingFuelSeconds = cf.remainingFuelSeconds,
+                });
+            }
+
+            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            {
+                data.structures.Add(new StructureSaveEntry
+                {
+                    type = StructureType.Shelter,
+                    posX = sh.transform.position.x,
+                    posY = sh.transform.position.y,
+                    posZ = sh.transform.position.z,
+                    rotY = sh.transform.eulerAngles.y,
+                });
+            }
+
+            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            {
+                data.structures.Add(new StructureSaveEntry
+                {
+                    type = StructureType.WaterStill,
+                    posX = ws.transform.position.x,
+                    posY = ws.transform.position.y,
+                    posZ = ws.transform.position.z,
+                    rotY = ws.transform.eulerAngles.y,
+                    storedWater = ws.storedWater,
+                });
+            }
+        }
+
+        /// <summary>
+        /// B2-15 1단계: 저장된 구조물 목록을 복원한다.
+        /// [주의] RegenerateWorld는 WorldMapManager 자신의 자식만 지우므로(WorldMapManager.cs의 for문 참고), 부모 없이
+        /// 루트로 생성되는 구조물은 그 청소 대상에 포함되지 않는다. 그래서 복원 전에 먼저
+        /// ClearExistingStructures로 "불러오기 시점에 씬에 이미 남아있던" 구조물을 명시적으로 지워야,
+        /// 불러온 뒤 옛 구조물과 복원된 구조물이 겹쳐 남는 중복 생성을 막을 수 있다.
+        /// [다음 배치로 미룬 것] 자원 노드 채집 상태·위험 요소/사냥감 처치 상태는 이번에 포함하지
+        /// 않았다 - 둘 다 절차적 생성(IslandResourceSpawner/HazardSpawner/CreatureSpawner)이 섬마다
+        /// "규모별 배율 → 자원/확률 목록 순회 → UnityEngine.Random 호출"로 정해지는 순서에 의존하는데,
+        /// 개별 채집/처치 상태를 안정적인 키로 저장하려면 "같은 worldSeed로 다시 생성했을 때 정확히
+        /// 같은 순번으로 같은 노드/위험요소가 나온다"는 가정이 100% 보장돼야 한다. 지금 생성 코드에는
+        /// 위치 지터·크기 지터처럼 시드 없는 UnityEngine.Random을 함께 쓰는 곳이 섞여 있어(예:
+        /// IslandResourceSpawner.SpawnSingleNode의 scaleJitter), 그 순서 보장을 검증 없이 확신할 수
+        /// 없었다. 절반만 맞는 인덱싱으로 엉뚱한 노드가 "이미 채집됨" 처리되는 것이 안 하느니만 못한
+        /// 결과라고 판단해, 이번 배치에서는 검증 가능한 범위(구조물)만 완성하고 자원/위험요소는
+        /// 다음 배치로 넘겼다(코디네이터 보고 참고).
+        /// </summary>
+        private void RestoreStructures(SaveData data)
+        {
+            ClearExistingStructures();
+
+            if (data.structures == null)
+                return;
+
+            foreach (var entry in data.structures)
+            {
+                switch (entry.type)
+                {
+                    case StructureType.Campfire:
+                        RestoreCampfire(entry);
+                        break;
+                    case StructureType.Shelter:
+                        RestoreShelter(entry);
+                        break;
+                    case StructureType.WaterStill:
+                        RestoreWaterStill(entry);
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 불러오기 시작 시점에 씬에 이미 설치돼 있던 모닥불/쉼터/물 증류기를 전부 제거한다.
+        /// RegenerateWorld가 지우지 못하는 대상이라(위 RestoreStructures 주석 참고) 여기서 직접
+        /// 정리해야, 복원된 구조물과 기존 구조물이 겹쳐서 이중으로 남지 않는다.
+        /// </summary>
+        private void ClearExistingStructures()
+        {
+            foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                Destroy(cf.gameObject);
+
+            foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                Destroy(sh.gameObject);
+
+            foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                Destroy(ws.gameObject);
+        }
+
+        private bool campfirePrefabMissingWarned = false;
+        private bool shelterPrefabMissingWarned = false;
+        private bool waterStillPrefabMissingWarned = false;
+
+        /// <summary>저장된 모닥불 한 채를 campfirePrefab으로 재생성하고 점화 상태/남은 연료를 되돌린다.</summary>
+        private void RestoreCampfire(StructureSaveEntry entry)
+        {
+            if (campfirePrefab == null)
+            {
+                if (!campfirePrefabMissingWarned)
+                {
+                    Debug.LogError("[SaveLoadController] campfirePrefab이 연결되지 않아 저장된 모닥불을 복원할 수 없습니다. " +
+                        "Inspector에서 ItemData(모닥불키트)와 같은 프리팹을 연결하세요.");
+                    campfirePrefabMissingWarned = true;
+                }
+                return;
+            }
+
+            Vector3 position = new Vector3(entry.posX, entry.posY, entry.posZ);
+            GameObject go = Instantiate(campfirePrefab, position, Quaternion.Euler(0f, entry.rotY, 0f));
+            var campfire = go.GetComponent<Campfire>();
+            if (campfire != null)
+            {
+                campfire.isLit = entry.isLit;
+                campfire.remainingFuelSeconds = entry.remainingFuelSeconds;
+            }
+        }
+
+        /// <summary>
+        /// 저장된 쉼터 한 채를 shelterPrefab으로 재생성한다.
+        /// 주의: Shelter.Awake()가 인스턴스화 직후 스스로 transform.position을 roofHeight만큼 위로
+        /// 이동시킨다(지붕을 바닥에서 띄우기 위함). 저장해 둔 위치는 이미 그 보정이 끝난 "최종 위치"이므로,
+        /// 그대로 다시 Instantiate하면 Awake가 또 한 번 roofHeight를 더해 저장/불러오기를 반복할 때마다
+        /// 지붕이 계속 위로 떠오르는 누적 버그가 생긴다. 프리팹의 roofHeight 값을 미리 읽어 스폰 위치에서
+        /// 빼 둠으로써, Awake 보정 후 정확히 저장된 위치로 돌아오게 한다.
+        /// </summary>
+        private void RestoreShelter(StructureSaveEntry entry)
+        {
+            if (shelterPrefab == null)
+            {
+                if (!shelterPrefabMissingWarned)
+                {
+                    Debug.LogError("[SaveLoadController] shelterPrefab이 연결되지 않아 저장된 쉼터를 복원할 수 없습니다. " +
+                        "Inspector에서 ItemData(쉼터키트)와 같은 프리팹을 연결하세요.");
+                    shelterPrefabMissingWarned = true;
+                }
+                return;
+            }
+
+            var prefabShelter = shelterPrefab.GetComponent<Shelter>();
+            float roofHeight = prefabShelter != null ? prefabShelter.roofHeight : 0f;
+
+            Vector3 savedPosition = new Vector3(entry.posX, entry.posY, entry.posZ);
+            Vector3 spawnPosition = savedPosition - Vector3.up * roofHeight;
+            Instantiate(shelterPrefab, spawnPosition, Quaternion.Euler(0f, entry.rotY, 0f));
+        }
+
+        /// <summary>저장된 물 증류기 한 대를 waterStillPrefab으로 재생성하고 저장된 물의 양을 되돌린다.</summary>
+        private void RestoreWaterStill(StructureSaveEntry entry)
+        {
+            if (waterStillPrefab == null)
+            {
+                if (!waterStillPrefabMissingWarned)
+                {
+                    Debug.LogError("[SaveLoadController] waterStillPrefab이 연결되지 않아 저장된 물 증류기를 복원할 수 없습니다. " +
+                        "Inspector에서 ItemData(물증류기키트)와 같은 프리팹을 연결하세요.");
+                    waterStillPrefabMissingWarned = true;
+                }
+                return;
+            }
+
+            Vector3 position = new Vector3(entry.posX, entry.posY, entry.posZ);
+            GameObject go = Instantiate(waterStillPrefab, position, Quaternion.Euler(0f, entry.rotY, 0f));
+            var waterStill = go.GetComponent<WaterStill>();
+            if (waterStill != null)
+                waterStill.storedWater = entry.storedWater;
         }
     }
 }

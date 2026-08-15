@@ -7,8 +7,19 @@ namespace MakeGame.Systems
     /// <summary>
     /// 저장 파일 하나에 담기는 전체 게임 상태.
     /// JsonUtility로 직렬화되므로 모든 필드가 값 타입이거나 [System.Serializable] 클래스여야 한다.
-    /// 자원 노드 채집 상태, 위험 요소 처치/재등장 타이머, 플레이어가 설치한 구조물(물 증류기/쉼터)은
-    /// 1차 구현 범위에서 의도적으로 제외한다 (섬/자원/위험요소 배치는 worldSeed로 다시 생성됨).
+    /// B2-15 1단계: 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기)의 위치·상태를 저장·복원 대상에
+    /// 추가했다(structures 필드, 아래 StructureSaveEntry). 자원 노드 채집 상태와 위험 요소·사냥감의
+    /// 처치/재등장 상태는 여전히 이번 범위에서 제외한다 - 둘 다 시드 기반 절차적 생성 순서에 의존하는
+    /// "섬 인덱스 + 생성 순번" 키가 필요해 설계 난이도가 높고, 절반만 동작하는 상태로 남기는 위험을
+    /// 피하기 위해 다음 배치로 미뤘다(자세한 내용은 SaveLoadController 보고 참고). 섬/자원/위험요소
+    /// "배치"(위치) 자체는 worldSeed로 다시 생성되어 동일하게 재현되지만, 그 중 무엇을 이미
+    /// 채집/처치했는지는 아직 기억하지 못한다.
+    /// 하위호환: JsonUtility.FromJson은 대상 타입을 필드 초기값으로 먼저 만든 뒤 JSON에 있는 필드만
+    /// 덮어쓰므로, structures처럼 나중에 추가된 필드가 없는 옛 세이브 파일을 불러와도 초기화 구문
+    /// (= new List&lt;...&gt;())대로 빈 리스트가 되어 NullReferenceException 없이 안전하게 동작한다 -
+    /// discoveredIslandIds/skills/inventory 등 기존 리스트 필드들도 이미 동일한 방식에 의존하고 있어
+    /// (이 프로젝트에는 세이브 버전 필드가 없다) 별도 버전 필드/마이그레이션 없이 이 관례를 그대로
+    /// 따랐다.
     /// </summary>
     [System.Serializable]
     public class SaveData
@@ -63,6 +74,10 @@ namespace MakeGame.Systems
         [Header("경비행기 수리 진행")]
         public bool aircraftRepairComplete;
         public List<ItemCountEntry> aircraftCollectedMaterials = new List<ItemCountEntry>();
+
+        [Header("설치 구조물 (B2-15 1단계)")]
+        [Tooltip("플레이어가 설치한 모닥불/쉼터/물 증류기 각각의 위치·회전·상태 목록.")]
+        public List<StructureSaveEntry> structures = new List<StructureSaveEntry>();
     }
 
     /// <summary>스킬 하나의 저장 항목(종류, 레벨, 경험치).</summary>
@@ -89,5 +104,33 @@ namespace MakeGame.Systems
     {
         public string itemName;
         public int count;
+    }
+
+    /// <summary>
+    /// 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기) 하나의 저장 항목.
+    /// 세 종류 모두 필요한 필드가 조금씩 달라(Campfire는 점화 상태, WaterStill은 저장된 물), 종류별로
+    /// 클래스를 나누는 대신 하나의 평평한(flat) 구조체에 전부 담고 type으로 구분한다 - JsonUtility는
+    /// 다형성(상속 기반 직렬화)을 지원하지 않으므로, 이 프로젝트의 기존 저장 항목들(SkillSaveEntry,
+    /// InventorySaveEntry, ItemCountEntry)과 동일하게 평평한 구조를 따랐다. 해당 없는 필드는 기본값
+    /// (false/0)으로 남는다(예: Shelter 항목의 isLit/remainingFuelSeconds/storedWater는 항상 무시됨).
+    /// </summary>
+    [System.Serializable]
+    public class StructureSaveEntry
+    {
+        [Tooltip("구조물 종류")]
+        public StructureType type;
+
+        [Header("위치/회전")]
+        public float posX;
+        public float posY;
+        public float posZ;
+        public float rotY;
+
+        [Header("모닥불 전용")]
+        public bool isLit;
+        public float remainingFuelSeconds;
+
+        [Header("물 증류기 전용")]
+        public float storedWater;
     }
 }
