@@ -20,5 +20,6 @@ MonoBehaviour:
   icon: {fileID: 21300000, guid: 394ac2a9eb802d16960524ee0cedb339, type: 3}
   maxUses: 10
   blockedFromLargeIslandsByCurrent: 0
+  materialFamily: 0
   isWeapon: 1
   weaponDamage: 8

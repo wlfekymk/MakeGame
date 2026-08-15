@@ -17,6 +17,7 @@ MonoBehaviour:
   icon: {fileID: 21300000, guid: f54a78ed0b778b89cf6277b19a131433, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
+  materialFamily: 0
   hungerRestoreAmount: 0
   thirstRestoreAmount: 0
   isRawFood: 0

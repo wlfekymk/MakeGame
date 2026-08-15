@@ -976,9 +976,9 @@ MonoBehaviour:
   - type: 6
     baseChance: 0.1
   smallMultiplier: 1
-  mediumMultiplier: 1.5
-  largeMultiplier: 2
-  extraLargeMultiplier: 2.5
+  mediumMultiplier: 1.75
+  largeMultiplier: 2.5
+  extraLargeMultiplier: 3.25
   scatterRadius: 100
 --- !u!114 &2000000008
 MonoBehaviour:
@@ -1269,7 +1269,7 @@ MonoBehaviour:
   minDistanceFromIslands: 350
   safeZoneRadiusFromStart: 600
   placementRangeRatio: 0.7
-  depthBelowSeaLevel: 2
+  depthBelowSeaLevel: 0.6
   maxPlacementAttempts: 20
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

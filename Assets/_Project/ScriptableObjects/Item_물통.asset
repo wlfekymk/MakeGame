@@ -17,3 +17,4 @@ MonoBehaviour:
   icon: {fileID: 21300000, guid: 2eb385d6732136e1525e16dff9285e8e, type: 3}
   maxUses: -1
   blockedFromLargeIslandsByCurrent: 0
+  materialFamily: 0

@@ -17,4 +17,5 @@ MonoBehaviour:
   icon: {fileID: 21300000, guid: ccb5114b290e2572e2a73ae283f0dffb, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
+  materialFamily: 0
   curesPoison: 1

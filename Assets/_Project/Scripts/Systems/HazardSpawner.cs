@@ -33,11 +33,20 @@ namespace MakeGame.Systems
         // 원래(리팩터링 이전) 그대로 복원해 씬 직렬화 값이 다시 정상적으로 바인딩되도록 되돌렸다.
         // IslandSizeMetrics는 삭제하지 않고, 이 필드가 의미 있게 설정되지 않았을 때(0 이하)만 쓰는
         // "폴백 단일 소스"로 역할을 낮췄다 (GetMultiplier/GetScatterRadius 참고).
+        // B3-7: 기획 결정으로 1/1.5/2/2.5 → 1/1.75/2.5/3.25로 상향한다. 자원 배율(IslandResourceSpawner,
+        // 씬 실측 1/2/3/4)과 비교했을 때 기존 위험 배율은 대형 섬 기준 보상÷위험 비율이 1.5배가 되어
+        // 소형/중형 섬을 굳이 찾아갈 이유가 사라진다는 문제가 있었다. 그렇다고 자원과 같은 배율(4배)로
+        // 올리면 배 제작 재료를 구하러 반드시 가야 하는 후반 동선(대형/특대 섬)이 지나치게 가혹해진다.
+        // 절충안으로 자원 곡선(1/2/3/4)과 기존 위험 곡선(1/1.5/2/2.5)의 산술 평균을 택했다:
+        // (1+1)/2=1, (2+1.5)/2=1.75, (3+2)/2=2.5, (4+2.5)/2=3.25.
+        // 씬(SampleScene.unity)에도 1/1.5/2/2.5가 직렬화돼 있어 코드 기본값만으로는 반영되지 않는다 -
+        // 디렉터가 씬 값을 직접 맞춘다(코디네이터 보고 [디렉터 조치 요청] 항목 참고). 자원 배율
+        // (IslandResourceSpawner의 smallMultiplier 등)은 이번 변경 대상이 아니므로 손대지 않았다.
         [Header("섬 규모별 등장 확률 배율")]
         public float smallMultiplier = 1f;
-        public float mediumMultiplier = 1.5f;
-        public float largeMultiplier = 2f;
-        public float extraLargeMultiplier = 2.5f;
+        public float mediumMultiplier = 1.75f;
+        public float largeMultiplier = 2.5f;
+        public float extraLargeMultiplier = 3.25f;
 
         [Header("섬 규모별 산포 반경")]
         // 버그 수정 (#1006 - 섬 크기별 밀도 공식 정립 연장선): 예전에는 scatterRadius가 섬 규모와 무관한

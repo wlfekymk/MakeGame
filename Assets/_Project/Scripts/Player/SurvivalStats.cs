@@ -1,4 +1,5 @@
 using UnityEngine;
+using MakeGame.Data;
 
 namespace MakeGame.Player
 {
@@ -24,6 +25,57 @@ namespace MakeGame.Player
     /// </summary>
     public class SurvivalStats : MonoBehaviour
     {
+        // B3-11 (2단계 배선, Spec_15 5단계 절차 중 3단계): SurvivalBalanceConfig를 선택적(nullable)
+        // 참조로 추가한다. 핵심 원칙(코디네이터 지시) - "씬 직렬화 값이 항상 우선이고, config는 값이
+        // 미설정일 때의 단일 소스다" - 이는 GetMultiplier/GetScatterRadius(HazardSpawner/
+        // IslandResourceSpawner)에서 이미 쓰던 "필드값이 0 이하면 폴백"과 완전히 동일한 패턴이다.
+        // balanceConfig가 비어 있으면(에셋이 아직 없거나 연결 안 됨) ApplyBalanceConfigFallback이
+        // 아무 일도 하지 않으므로 기존 동작이 100% 그대로 유지된다.
+        [Header("밸런스 config (선택, B3-11)")]
+        [Tooltip("연결하면, 아래 각 수치 필드가 0 이하로(미설정) 남아있는 경우에 한해 이 config의 값을 대신 쓴다." +
+            " 씬/프리팹에 이미 의미 있는(양수) 값이 직렬화돼 있으면 이 config는 절대 그 값을 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
+        /// <summary>
+        /// Awake 시점에 balanceConfig가 연결돼 있으면, 아직 의미 있게 설정되지 않은(0 이하) 밸런스
+        /// 필드에 한해 config 값을 채운다. 씬에 이미 양수 값이 직렬화된 필드는 절대 건드리지 않는다 -
+        /// "긴급 정정(#2 회귀 수정)"에서 확립된, 씬 실측값을 최우선하는 원칙을 그대로 따른다.
+        /// </summary>
+        private void Awake()
+        {
+            ApplyBalanceConfigFallback();
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 필드만 골라 config 값으로 채운다.
+        /// hungerDecayPerSecond 등은 정상적인 밸런스 값이라면 0이 될 일이 없으므로(0이면 그 효과가
+        /// 완전히 꺼지는 것과 같다), 0 이하를 "아직 설정되지 않음"의 안전한 신호로 삼는다 - 이 프로젝트
+        /// 전역에서 이미 쓰고 있는 관례(GetMultiplier/GetScatterRadius)와 동일한 판단 기준이다.
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            if (balanceConfig == null)
+                return;
+
+            if (hungerDecayPerSecond <= 0f) hungerDecayPerSecond = balanceConfig.hungerDecayPerSecond;
+            if (thirstDecayPerSecond <= 0f) thirstDecayPerSecond = balanceConfig.thirstDecayPerSecond;
+            if (starvationDamagePerSecond <= 0f) starvationDamagePerSecond = balanceConfig.starvationDamagePerSecond;
+
+            if (sunstrokeGainPerSecond <= 0f) sunstrokeGainPerSecond = balanceConfig.sunstrokeGainPerSecond;
+            if (sunstrokeRecoveryPerSecond <= 0f) sunstrokeRecoveryPerSecond = balanceConfig.sunstrokeRecoveryPerSecond;
+            if (sunstrokeDamagePerSecond <= 0f) sunstrokeDamagePerSecond = balanceConfig.sunstrokeDamagePerSecond;
+
+            if (poisonDamagePerSecond <= 0f) poisonDamagePerSecond = balanceConfig.poisonDamagePerSecond;
+            if (bleedingDamagePerSecond <= 0f) bleedingDamagePerSecond = balanceConfig.bleedingDamagePerSecond;
+
+            if (healthRegenThreshold <= 0f) healthRegenThreshold = balanceConfig.healthRegenThreshold;
+            if (healthRegenPerSecond <= 0f) healthRegenPerSecond = balanceConfig.healthRegenPerSecond;
+
+            if (oxygenRecoveryPerSecond <= 0f) oxygenRecoveryPerSecond = balanceConfig.oxygenRecoveryPerSecond;
+            if (oxygenDrainPerSecond <= 0f) oxygenDrainPerSecond = balanceConfig.oxygenDrainPerSecond;
+            if (drowningDamagePerSecond <= 0f) drowningDamagePerSecond = balanceConfig.drowningDamagePerSecond;
+        }
+
         // 추가 작업(#10 준비): SurvivalHudUI가 위험 경고(빨간 경고색 깜빡임)를 띄우는 임계값(0.25f/0.2f/0.8f)을
         // UI 쪽에 하드코딩해서 쓰고 있어, 이 시스템의 밸런스(감소/회복 속도 등)가 바뀌어도 UI 경고 시점은
         // 조용히 안 맞게 어긋날 위험이 있었다. 게임 규칙에 속하는 값이므로 SurvivalStats가 단일 소스로

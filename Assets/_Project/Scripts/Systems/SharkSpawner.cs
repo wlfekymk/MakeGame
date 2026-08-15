@@ -33,8 +33,14 @@ namespace MakeGame.Systems
         [Range(0.1f, 1f)]
         public float placementRangeRatio = 0.7f;
 
-        [Tooltip("해수면보다 이만큼 아래에 상어를 배치한다 (수면 위로 등이 튀어나오지 않도록)")]
-        public float depthBelowSeaLevel = 2f;
+        // B3-6: 기획 결정으로 2f → 0.6f로 낮춘다. 곰/식인종은 사전에 시각적으로 식별 가능하고 날씨도
+        // 예고되는데, 상어만 완전히 수면 아래 은신해 있으면 이 게임의 "위험은 미리 알아챌 수 있어야
+        // 한다"는 디자인 언어와 어긋난다는 지적이다. 상어는 직접피해 18 + 출혈이 동시에 들어가는 만큼,
+        // 등지느러미(AddDetailParts의 Fin 파츠)가 수면 위로 살짝 드러나 회피할 기회를 줘야 한다는 것이
+        // 근거. 씬(SampleScene.unity)에도 2가 직렬화돼 있어 코드 기본값만으로는 반영되지 않는다 -
+        // 디렉터가 씬 값을 직접 0.6으로 맞춘다(코디네이터 보고 [디렉터 조치 요청] 항목 참고).
+        [Tooltip("해수면보다 이만큼 아래에 상어를 배치한다 (B3-6: 등지느러미가 수면 위로 살짝 드러나 미리 식별할 수 있도록 낮춤)")]
+        public float depthBelowSeaLevel = 0.6f;
 
         [Tooltip("겹치지 않는 위치를 찾기 위한 섬 하나당 최대 시도 횟수")]
         public int maxPlacementAttempts = 20;
