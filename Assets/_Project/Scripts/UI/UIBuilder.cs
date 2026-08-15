@@ -42,8 +42,14 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 지정한 앵커/오프셋 범위에 단색 배경 패널(Image)을 생성한다.
+        /// 개선(B4-14, ArtDirection.md 4.3): addTopBorder를 true로 주면 패널 상단에 두께 2px, 흰색
+        /// 알파 12%인 얇은 선을 추가해 "이것은 카드형 패널이다"라는 시각적 신호를 준다. 기본값은
+        /// false로 두어(하위 호환), 슬라이더 트랙/핸들처럼 CreatePanel을 내부 부품 조립에 재사용하는
+        /// 곳이나 화면 전체를 덮는 투명/반투명 배경 오버레이(카드가 아닌 배경 그 자체)에는 실수로
+        /// 테두리가 그려지지 않게 했다 - 실제 "카드형" 패널(HUD/레이더/목록/인벤토리/제작 패널 등)을
+        /// 만드는 호출부에서만 명시적으로 true를 넘긴다.
         /// </summary>
-        public static RectTransform CreatePanel(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, Color color)
+        public static RectTransform CreatePanel(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, Color color, bool addTopBorder = false)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -55,7 +61,30 @@ namespace MakeGame.UI
             rt.offsetMax = offsetMax;
 
             go.GetComponent<Image>().color = color;
+
+            if (addTopBorder)
+                CreateTopBorder(rt);
+
             return rt;
+        }
+
+        /// <summary>
+        /// 패널 상단에 두께 2px, 색 #FFFFFF 알파 12%인 얇은 선을 하나 붙인다(ArtDirection.md 4.3).
+        /// 패널마다 다른 강조색을 넣지 않고 이 값 하나로 고정해, 화면 전체의 "카드형 패널" 신호를 통일한다.
+        /// </summary>
+        private static void CreateTopBorder(RectTransform panelRt)
+        {
+            var borderGo = new GameObject("TopBorder", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            borderGo.transform.SetParent(panelRt, false);
+
+            var borderRt = borderGo.GetComponent<RectTransform>();
+            borderRt.anchorMin = new Vector2(0f, 1f);
+            borderRt.anchorMax = new Vector2(1f, 1f);
+            borderRt.pivot = new Vector2(0.5f, 1f);
+            borderRt.sizeDelta = new Vector2(0f, 2f);
+            borderRt.anchoredPosition = Vector2.zero;
+
+            borderGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.12f);
         }
 
         /// <summary>
@@ -198,7 +227,9 @@ namespace MakeGame.UI
             switch (GetItemCategory(item))
             {
                 case ItemCategory.Weapon:
-                    return new Color(0.8f, 0.25f, 0.25f, 1f); // 빨강: 무기
+                    // 개선(ArtDirection.md 1.3): "위급/전투"를 뜻하는 빨강이 코드 곳곳에서 4종
+                    // (#CC4040/#D93333/#CC1A1A/#FF2626)으로 흩어져 있던 것을 Danger Red #CC3333로 통일.
+                    return new Color(0.8f, 0.2f, 0.2f, 1f); // Danger Red #CC3333: 무기
 
                 case ItemCategory.Cure:
                     return new Color(0.31f, 0.66f, 0.48f, 1f); // 초록: 의료 아이템
@@ -302,17 +333,28 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 클릭 시 콜백을 실행하는 버튼을 생성한다 (배경 + 가운데 정렬 라벨 텍스트 포함).
+        /// 개선(B4-14, ArtDirection.md 4.3): interactable=false일 때 Unity 기본 ColorBlock이 회색
+        /// disabledColor로 자동 전환하던 것을, 우리 팔레트 안에 머물도록 버튼 기본색의 알파 40%로
+        /// 명시 설정했다. normal/highlighted/pressed 등 나머지 상태색은 Button 기본값(흰 배경 곱연산)을
+        /// 그대로 두고 disabledColor만 바꾼다.
         /// </summary>
         public static Button CreateButton(Transform parent, string name, string label, UnityEngine.Events.UnityAction onClick)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
             go.transform.SetParent(parent, false);
 
-            go.GetComponent<Image>().color = new Color(0.25f, 0.55f, 0.3f, 1f);
+            Color baseColor = new Color(0.25f, 0.55f, 0.3f, 1f);
+            go.GetComponent<Image>().color = baseColor;
 
             var button = go.GetComponent<Button>();
             if (onClick != null)
                 button.onClick.AddListener(onClick);
+
+            var colors = button.colors;
+            Color disabledColor = baseColor;
+            disabledColor.a = 0.4f;
+            colors.disabledColor = disabledColor;
+            button.colors = colors;
 
             var labelText = CreateText(go.transform, "Label", label, 16, Color.white, TextAnchor.MiddleCenter);
             var labelRt = labelText.rectTransform;

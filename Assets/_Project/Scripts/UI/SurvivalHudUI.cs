@@ -95,11 +95,13 @@ namespace MakeGame.UI
         {
             var canvas = UIBuilder.CreateCanvas("SurvivalHudCanvas", sortOrder: 5);
 
+            // 개선(B4-14, ArtDirection.md 4.3): 카드형 패널임을 알려주는 상단 테두리(2px, 흰색 알파 12%)를 추가.
             var panel = UIBuilder.CreatePanel(
                 canvas.transform, "SurvivalHudPanel",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
                 offsetMin: new Vector2(20f, -272f), offsetMax: new Vector2(300f, -20f),
-                color: new Color(0f, 0f, 0f, 0.55f));
+                color: new Color(0f, 0f, 0f, 0.55f),
+                addTopBorder: true);
 
             var vlg = panel.gameObject.AddComponent<VerticalLayoutGroup>();
             vlg.padding = new RectOffset(12, 12, 10, 10);
@@ -111,15 +113,24 @@ namespace MakeGame.UI
             dayLabel = UIBuilder.CreateText(panel, "DayLabel", "1일차", 16, Color.white, TextAnchor.MiddleLeft);
             dayLabel.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
 
-            healthBaseColor = new Color(0.85f, 0.2f, 0.2f, 1f);
+            // 개선(ArtDirection.md 1.3/1.1): "위급/전투" 의미의 빨강이 #CC4040/#D93333/#CC1A1A/#FF2626로
+            // 흩어져 있던 것 중, 체력 평상시 색을 Danger Red #CC3333로 통일한다. WarningColor(펄스
+            // 목표값, #FF2626)만 의도적으로 더 밝게 유지해 "평상시"와 "지금 위험" 깜빡임을 밝기로 구분한다.
+            healthBaseColor = new Color(0.8f, 0.2f, 0.2f, 1f); // Danger Red #CC3333
             hungerBaseColor = new Color(0.85f, 0.55f, 0.2f, 1f);
             thirstBaseColor = new Color(0.25f, 0.55f, 0.85f, 1f);
             sunstrokeBaseColor = new Color(0.9f, 0.75f, 0.2f, 1f);
             oxygenBaseColor = new Color(0.3f, 0.85f, 0.8f, 1f);
 
-            healthFill = CreateStatBar(panel, "체력", healthBaseColor, "stat_health");
+            // 개선(B4-12, ArtDirection.md 4.1): 정보 위계 3단.
+            // Tier 1(체력, 상시 강조): 바 높이 1.4배(14→20), 라벨 폰트 14 - 0이 되면 사망하는 유일한
+            // 최종 지표라 항상 가장 크게 보여준다.
+            healthFill = CreateStatBar(panel, "체력", healthBaseColor, "stat_health", barHeight: 20f, labelFontSize: 14);
+            // Tier 2(허기·갈증, 상시 표시): 기존 크기(14/12) 그대로, 항상 완전 불투명.
             hungerFill = CreateStatBar(panel, "허기", hungerBaseColor, "stat_hunger");
             thirstFill = CreateStatBar(panel, "갈증", thirstBaseColor, "stat_thirst");
+            // Tier 3(일사병·산소, 조건부 흐림): 바 자체 크기는 Tier 2와 동일하고, 대신 Update()에서
+            // 안전 구간일 때 알파 0.4로 흐리게 하고 위험 구간 진입 시 1.0 + 경고 펄스로 전환한다.
             sunstrokeFill = CreateStatBar(panel, "일사병", sunstrokeBaseColor, "stat_sunstroke");
             oxygenFill = CreateStatBar(panel, "산소", oxygenBaseColor, "stat_oxygen");
 
@@ -134,13 +145,16 @@ namespace MakeGame.UI
             statusHlg.childAlignment = TextAnchor.MiddleLeft;
 
             poisonIcon = CreateStatusIcon(statusRowGo.transform, "중독", new Color(0.5f, 0.85f, 0.2f, 1f), "status_poison");
-            bleedingIcon = CreateStatusIcon(statusRowGo.transform, "출혈", new Color(0.8f, 0.1f, 0.1f, 1f), "status_bleeding");
+            // 개선(ArtDirection.md 1.3): 출혈 아이콘 색도 체력 바와 동일하게 Danger Red #CC3333로 통일.
+            bleedingIcon = CreateStatusIcon(statusRowGo.transform, "출혈", new Color(0.8f, 0.2f, 0.2f, 1f), "status_bleeding");
             brokenBoneIcon = CreateStatusIcon(statusRowGo.transform, "골절", new Color(0.8f, 0.8f, 0.8f, 1f), "status_broken_bone");
 
-            boatLabel = UIBuilder.CreateText(panel, "BoatLabel", "", 13, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
+            // 개선(B4-14, ArtDirection.md 4.3): 폰트 4단계(20/15~16/11~12/16) 밖이었던 13pt를
+            // Body 단계(11~12)로 스냅했다(보조 진행도 문구라 본문 취급이 맞다).
+            boatLabel = UIBuilder.CreateText(panel, "BoatLabel", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
             boatLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
 
-            aircraftLabel = UIBuilder.CreateText(panel, "AircraftLabel", "", 13, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
+            aircraftLabel = UIBuilder.CreateText(panel, "AircraftLabel", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
             aircraftLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
         }
 
@@ -149,12 +163,17 @@ namespace MakeGame.UI
         /// 퀄리티 개선: 예전엔 텍스트 라벨만 있어 한눈에 어떤 수치인지 알아보려면 글자를 읽어야 했다.
         /// Resources/Sprites의 글리프 아이콘(스프라이트 이름은 iconSpriteName)을 막대 색으로 틴트해
         /// 라벨 왼쪽에 붙이면, 색+아이콘 조합만으로도 바로 구분된다.
+        /// 개선(B4-12, ArtDirection.md 4.1): barHeight/labelFontSize를 매개변수화해 Tier별로 크기를
+        /// 다르게 줄 수 있게 했다. 기본값(14/12)은 기존 Tier 2/3 크기와 동일해, 호출부를 안 바꾸면
+        /// 기존과 완전히 같은 결과가 나온다(Tier 1인 체력만 호출부에서 20/14를 명시로 넘긴다).
         /// </summary>
-        private Image CreateStatBar(Transform parent, string label, Color fillColor, string iconSpriteName)
+        private Image CreateStatBar(Transform parent, string label, Color fillColor, string iconSpriteName, float barHeight = 14f, int labelFontSize = 12)
         {
             var rowGo = new GameObject($"Row_{label}", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
             rowGo.transform.SetParent(parent, false);
-            rowGo.GetComponent<LayoutElement>().minHeight = 20f;
+            // 바 높이가 기존 기본 행 높이(20)보다 커질 수 있으므로(Tier 1), 행 자체의 최소 높이도
+            // 바 높이에 맞춰 늘려 아이콘/라벨/바가 서로 겹치지 않게 한다.
+            rowGo.GetComponent<LayoutElement>().minHeight = Mathf.Max(20f, barHeight);
             var hlg = rowGo.GetComponent<HorizontalLayoutGroup>();
             hlg.spacing = 6f;
             hlg.childForceExpandWidth = false;
@@ -172,13 +191,13 @@ namespace MakeGame.UI
                 iconImage.preserveAspect = true;
             }
 
-            var labelText = UIBuilder.CreateText(rowGo.transform, "Label", label, 12, Color.white, TextAnchor.MiddleLeft);
+            var labelText = UIBuilder.CreateText(rowGo.transform, "Label", label, labelFontSize, Color.white, TextAnchor.MiddleLeft);
             labelText.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
 
             var barFill = UIBuilder.CreateProgressBar(rowGo.transform, "Bar", new Color(1f, 1f, 1f, 0.15f), fillColor);
             var barLayout = barFill.transform.parent.gameObject.AddComponent<LayoutElement>();
             barLayout.flexibleWidth = 1f;
-            barLayout.minHeight = 14f;
+            barLayout.minHeight = barHeight;
 
             return barFill;
         }
@@ -186,17 +205,26 @@ namespace MakeGame.UI
         /// <summary>
         /// 막대의 색을 위험 여부에 따라 갱신한다. 위험하지 않으면 평소 색으로, 위험하면 평소 색과
         /// 경고색(WarningColor) 사이를 Mathf.PingPong으로 오가며 깜빡이는 색으로 바꾼다.
+        /// 개선(B4-12, ArtDirection.md 4.1): safeAlpha 매개변수를 추가했다. Tier 3(일사병/산소)처럼
+        /// "안전할 때는 흐리게" 표시해야 하는 막대는 safeAlpha를 0.4로 넘긴다 - 기본값 1f는 기존
+        /// Tier 1/2 호출부(체력/허기/갈증)의 동작을 그대로 유지한다. 위험 상태 진입 시(isDanger=true)는
+        /// Tier와 무관하게 항상 알파 1.0으로 펄스한다 - 안전 구간의 흐림과 위험 경고가 같은 임계값에서
+        /// 전환되므로(Update() 참고), 흐림 때문에 위험 신호를 놓치는 프레임이 생기지 않는다.
         /// </summary>
-        private void ApplyWarningPulse(Image fill, Color baseColor, bool isDanger)
+        private void ApplyWarningPulse(Image fill, Color baseColor, bool isDanger, float safeAlpha = 1f)
         {
             if (!isDanger)
             {
-                fill.color = baseColor;
+                Color dimmed = baseColor;
+                dimmed.a = safeAlpha;
+                fill.color = dimmed;
                 return;
             }
 
             float pulse = Mathf.PingPong(Time.unscaledTime * 2.5f, 1f);
-            fill.color = Color.Lerp(baseColor, WarningColor, pulse);
+            Color pulsedColor = Color.Lerp(baseColor, WarningColor, pulse);
+            pulsedColor.a = 1f;
+            fill.color = pulsedColor;
         }
 
         /// <summary>
@@ -262,11 +290,24 @@ namespace MakeGame.UI
                 // 개선(#10): 위험 임계값(0.25f/0.2f/0.8f)을 UI에 하드코딩해두면 SurvivalStats의 밸런스가
                 // 바뀌어도 조용히 어긋날 수 있었다. SurvivalStats가 단일 소스로 노출한 public const를
                 // 그대로 참조해, 게임 규칙 값 자체는 항상 시스템 쪽에서만 정의되게 했다(값은 기존과 동일).
-                ApplyWarningPulse(healthFill, healthBaseColor, healthRatio < SurvivalStats.LowHealthRatio);
-                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerRatio < SurvivalStats.LowHungerRatio);
-                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstRatio < SurvivalStats.LowThirstRatio);
-                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeRatio > SurvivalStats.HighSunstrokeRatio);
-                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenRatio < SurvivalStats.LowOxygenRatio);
+                // 개선(B4-12, ArtDirection.md 4.1): Tier 3(일사병/산소)는 danger 판정과 같은 프레임에
+                // safeAlpha(0.4)→1.0 전환이 함께 일어나도록 동일한 bool을 그대로 재사용한다(아래 참고).
+                bool healthDanger = healthRatio < SurvivalStats.LowHealthRatio;
+                bool hungerDanger = hungerRatio < SurvivalStats.LowHungerRatio;
+                bool thirstDanger = thirstRatio < SurvivalStats.LowThirstRatio;
+                bool sunstrokeDanger = sunstrokeRatio > SurvivalStats.HighSunstrokeRatio;
+                bool oxygenDanger = oxygenRatio < SurvivalStats.LowOxygenRatio;
+
+                ApplyWarningPulse(healthFill, healthBaseColor, healthDanger);
+                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerDanger);
+                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstDanger);
+                // Tier 3: 안전 구간(danger가 아닐 때)엔 알파 0.4로 흐리게, 위험 구간 진입 시 알파 1.0 +
+                // 경고 펄스로 전환한다. safeAlpha와 danger 판정 임계값을 SurvivalStats의 기존 위험 상수
+                // (HighSunstrokeRatio/LowOxygenRatio)로 완전히 일치시켜, "흐린 상태에서 위험해지는
+                // 순간"과 "펄스가 시작되는 순간"이 정확히 같은 프레임에 겹치게 했다 - 흐림 때문에
+                // 위험 진입을 한 프레임이라도 놓칠 여지를 원천 차단한다(코디네이터 지시 사항).
+                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeDanger, safeAlpha: 0.4f);
+                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenDanger, safeAlpha: 0.4f);
 
                 poisonIcon.SetActive(survivalStats.isPoisoned);
                 bleedingIcon.SetActive(survivalStats.isBleeding);

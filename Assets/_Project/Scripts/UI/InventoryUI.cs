@@ -133,11 +133,13 @@ namespace MakeGame.UI
         {
             var canvas = UIBuilder.CreateCanvas("InventoryCanvas", sortOrder: 10);
 
+            // 개선(B4-14, ArtDirection.md 4.3): 카드형 패널임을 알려주는 상단 테두리(2px, 흰색 알파 12%)를 추가.
             var panel = UIBuilder.CreatePanel(
                 canvas.transform, "InventoryPanel",
                 anchorMin: new Vector2(0f, 0.3f), anchorMax: new Vector2(0f, 1f),
                 offsetMin: new Vector2(20f, -20f), offsetMax: new Vector2(340f, -20f),
-                color: new Color(0f, 0f, 0f, 0.75f));
+                color: new Color(0f, 0f, 0f, 0.75f),
+                addTopBorder: true);
 
             panelRoot = panel.gameObject;
 

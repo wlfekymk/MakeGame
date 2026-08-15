@@ -137,7 +137,7 @@ namespace MakeGame.UI
                 anchorMin: new Vector2(1f, 1f), anchorMax: new Vector2(1f, 1f),
                 offsetMin: new Vector2(-radarPanelSize - 20f, -radarPanelSize - 20f),
                 offsetMax: new Vector2(-20f, -20f),
-                color: new Color(0f, 0f, 0f, 0.5f));
+                color: new Color(0f, 0f, 0f, 0.5f), addTopBorder: true)
 
             var border = UIBuilder.CreateText(panel, "Hint", "[M] 지도", 12, new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerCenter);
             border.rectTransform.anchorMin = new Vector2(0f, 0f);
@@ -291,7 +291,7 @@ namespace MakeGame.UI
                 canvas.transform, "IslandListPanel",
                 anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
                 offsetMin: new Vector2(-260f, -220f), offsetMax: new Vector2(260f, 220f),
-                color: new Color(0f, 0f, 0f, 0.85f));
+                color: new Color(0f, 0f, 0f, 0.85f), addTopBorder: true)
 
             listPanelRoot = panel.gameObject;
 
