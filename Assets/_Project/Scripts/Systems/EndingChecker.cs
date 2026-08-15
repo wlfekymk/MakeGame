@@ -12,9 +12,22 @@ namespace MakeGame.Systems
     ///    자원을 모으는 정공법 경로.
     /// 2) 경비행기 수리 엔딩: 시작 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
     ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete가 true가 되는 순간 확정된다.
+    ///
+    /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
+    /// 폴백으로 읽는 config 필드 — requiredFoodCount ← endingRequiredFoodCount,
+    /// requiredWaterCount ← endingRequiredWaterCount, requiredFuelCount ← endingRequiredFuelCount,
+    /// requiredElapsedDays ← endingRequiredElapsedDays.
+    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용된다. 씬 실측값(30/30/1, Balance_SceneSnapshot.md
+    /// 2장)이 전부 양수이므로 현재 씬에서는 폴백이 한 번도 실행되지 않는다 = 동작 변화 없음.
     /// </summary>
     public class EndingChecker : MonoBehaviour
     {
+        [Header("밸런스 config (선택, B4-1)")]
+        [Tooltip("연결하면, 아래 requiredFoodCount/requiredWaterCount/requiredFuelCount/" +
+            "requiredElapsedDays가 0 이하로(미설정) 남아있는 경우에 한해 config의 ending* 값을 대신 쓴다." +
+            " 씬에 이미 의미 있는(양수) 값이 직렬화돼 있으면 절대 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
         [Tooltip("완성 여부를 확인할 배 제작 시스템")]
         public BoatConstructionSystem boatConstruction;
 
@@ -89,6 +102,36 @@ namespace MakeGame.Systems
         /// 공개 접근자로 노출했다(GameOverController.GetDeathMessage()와 같은 목적).
         /// </summary>
         public string EndingMessage => endingMessage;
+
+        /// <summary>
+        /// 초기화 시점에 balanceConfig 폴백을 적용한다.
+        /// </summary>
+        private void Awake()
+        {
+            ApplyBalanceConfigFallback();
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 필드만 골라 config 값으로 채운다.
+        /// 필요 수량이 0 이하이면 그 조건이 사실상 꺼지는 것과 같으므로(항상 만족), 0 이하를 "아직
+        /// 설정되지 않음"의 안전한 신호로 삼는다 - SurvivalStats.ApplyBalanceConfigFallback과 동일한 판단 기준.
+        /// balanceConfig가 비어 있으면 아무 것도 하지 않는다(기존 동작 100% 유지, NRE 없음).
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+            if (balanceConfig == null)
+                return;
+
+            if (requiredFoodCount <= 0) requiredFoodCount = balanceConfig.endingRequiredFoodCount;
+            if (requiredWaterCount <= 0) requiredWaterCount = balanceConfig.endingRequiredWaterCount;
+            if (requiredFuelCount <= 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
+            if (requiredElapsedDays <= 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
+        }
 
         /// <summary>
         /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 먼저 만족되는 쪽을 트리거한다.

@@ -668,7 +668,6 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
   - {fileID: 11400000, guid: 1a4a40095456c6449952232cb9a583d2, type: 2}
   - {fileID: 11400000, guid: 57c8b75b1a78d9b45ae04aaa7355d08a, type: 2}
-  - {fileID: 11400000, guid: 3e5f88728e114bd689d243715c2450b0, type: 2}
   items: []
 --- !u!114 &1925945765
 MonoBehaviour:
@@ -705,6 +704,7 @@ MonoBehaviour:
   oxygenDrainPerSecond: 5
   drowningDamagePerSecond: 3
   lastDamageCause: 0
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
 --- !u!4 &1925945766
 Transform:
   m_ObjectHideFlags: 0
@@ -980,6 +980,7 @@ MonoBehaviour:
   largeMultiplier: 2.5
   extraLargeMultiplier: 3.25
   scatterRadius: 100
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
 --- !u!114 &2000000008
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1011,6 +1012,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SurvivalClock
   secondsPerDay: 600
   elapsedSeconds: 0
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
 --- !u!114 &2000000010
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1035,6 +1037,7 @@ MonoBehaviour:
   requiredWaterCount: 30
   fuelItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
   requiredFuelCount: 1
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
   survivalClock: {fileID: 2000000009}
   requiredElapsedDays: 15
 --- !u!114 &2000000011
@@ -1072,8 +1075,6 @@ MonoBehaviour:
   largeIslandSpawnChance: 0.9
   extraLargeIslandSpawnChance: 0.95
   placementOffset: 4
-  largePlacementOffset: 30
-  extraLargePlacementOffset: 45
 --- !u!114 &2000000013
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1095,9 +1096,6 @@ MonoBehaviour:
   survivalClock: {fileID: 2000000009}
   islandTravel: {fileID: 2000000008}
   worldMapManager: {fileID: 1886019775}
-  campfirePrefab: {fileID: 500000100, guid: c7d2b8a94e6f4d3ab1f0e9c6a5d8b3f2, type: 3}
-  shelterPrefab: {fileID: 5421002868401471053, guid: 60ec241f8f0048548aff55b5ac6526e9, type: 3}
-  waterStillPrefab: {fileID: 9207985716762942123, guid: 313230279933cee49a30fa72ed1aea5d, type: 3}
   saveKey: 286
   loadKey: 290
   lastStatusMessage: 
@@ -1269,7 +1267,7 @@ MonoBehaviour:
   minDistanceFromIslands: 350
   safeZoneRadiusFromStart: 600
   placementRangeRatio: 0.7
-  depthBelowSeaLevel: 0.6
+  depthBelowSeaLevel: 0.3
   maxPlacementAttempts: 20
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

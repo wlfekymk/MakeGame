@@ -1,4 +1,5 @@
 using UnityEngine;
+using MakeGame.Data;
 using MakeGame.Player;
 
 namespace MakeGame.Systems
@@ -6,9 +7,20 @@ namespace MakeGame.Systems
     /// <summary>
     /// 물 증류기 (Stranded Deep 기준: 나뭇잎 증발/빗물 등으로 시간이 지나면 담수를 생산하는 제작 구조물).
     /// 코코넛 워터로 임시 해갈하다가, 이 구조물을 제작하면 지속적으로 담수를 확보할 수 있게 된다.
+    ///
+    /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
+    /// 폴백으로 읽는 config 필드 — waterPerSecond ← waterStillPerSecond, maxStorage ← waterStillMaxStorage.
+    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로, 프리팹(Prefabs/WaterStill.prefab: 0.3/20)에
+    /// 직렬화된 값이 항상 이긴다 — SurvivalStats.ApplyBalanceConfigFallback과 완전히 동일한 규칙이다.
     /// </summary>
     public class WaterStill : MonoBehaviour
     {
+        [Header("밸런스 config (선택, B4-1)")]
+        [Tooltip("연결하면, 아래 waterPerSecond/maxStorage가 0 이하로(미설정) 남아있는 경우에 한해" +
+            " config의 waterStillPerSecond/waterStillMaxStorage 값을 대신 쓴다. 씬/프리팹에 이미" +
+            " 의미 있는(양수) 값이 직렬화돼 있으면 이 config는 절대 그 값을 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
         // 밸런스 하향(B2-1, Spec_13): 물 증류기가 담수 확보를 지나치게 손쉽게 만들어 갈증 관리 긴장감을
         // 떨어뜨린다는 판단으로 생산 속도와 저장량을 낮췄다. [디렉터 조치 요청] 실측 결과 실제 오버라이드가
         // Prefabs/WaterStill.prefab에 있으므로(0.3f/20f), 이 코드 기본값만으로는 게임에 반영되지 않는다 -
@@ -28,7 +40,28 @@ namespace MakeGame.Systems
         /// </summary>
         private void Awake()
         {
+            ApplyBalanceConfigFallback();
             BuildVisual();
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 필드만 골라 config 값으로 채운다.
+        /// waterPerSecond/maxStorage는 정상적인 밸런스 값이라면 0이 될 일이 없으므로(0이면 증류기가
+        /// 아무 일도 하지 않는 것과 같다), 0 이하를 "아직 설정되지 않음"의 안전한 신호로 삼는다.
+        /// balanceConfig가 비어 있으면 아무 것도 하지 않는다(기존 동작 100% 유지, NRE 없음).
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+            if (balanceConfig == null)
+                return;
+
+            if (waterPerSecond <= 0f) waterPerSecond = balanceConfig.waterStillPerSecond;
+            if (maxStorage <= 0f) maxStorage = balanceConfig.waterStillMaxStorage;
         }
 
         /// <summary>

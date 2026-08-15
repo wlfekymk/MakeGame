@@ -90,5 +90,32 @@ namespace MakeGame.Data
         public int endingRequiredWaterCount = 30;
         public int endingRequiredFuelCount = 1;
         public int endingRequiredElapsedDays = 15;
+
+        /// <summary>
+        /// B4-2: Resources 폴더의 공용 인스턴스. 인스펙터 연결이 불가능한 런타임 생성 컴포넌트
+        /// (WeatherSystem은 Bootstrap이 new GameObject로 만들고, Campfire/WaterStill은 플레이어가
+        /// 설치할 때 생성된다)가 balanceConfig를 얻을 수 있는 유일한 경로다. ItemDataRegistry의
+        /// LoadFromResources와 같은 방식이며, 에셋이 없으면 조용히 null을 반환한다 - 이 경우 각
+        /// 컴포넌트는 기존 필드 기본값으로 100% 동일하게 동작한다(NRE 없음).
+        /// 씬/프리팹에서 명시적으로 연결한 config가 항상 이 공용 인스턴스보다 우선한다.
+        /// </summary>
+        public static SurvivalBalanceConfig Active
+        {
+            get
+            {
+                if (cachedActive == null)
+                    cachedActive = Resources.Load<SurvivalBalanceConfig>(ResourceName);
+
+                return cachedActive;
+            }
+        }
+
+        /// <summary>Resources 폴더 기준 에셋 이름(확장자 없음).</summary>
+        public const string ResourceName = "SurvivalBalanceConfig";
+
+        // Resources.Load는 내부 캐시가 있지만 매 컴포넌트 Awake마다 호출하면 불필요한 조회가 쌓인다.
+        // 에셋이 없을 때(null)는 캐시가 성립하지 않아 매번 재시도하는데, 그 편이 안전하다 -
+        // 에디터에서 에셋을 새로 만든 직후 Play를 눌러도 곧바로 잡힌다.
+        private static SurvivalBalanceConfig cachedActive;
     }
 }

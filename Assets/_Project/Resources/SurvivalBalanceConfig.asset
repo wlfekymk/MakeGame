@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bea01f8695204c9aa4bac8cb16d32e90, type: 3}
+  m_Name: SurvivalBalanceConfig
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.SurvivalBalanceConfig
+  hungerDecayPerSecond: 0.05
+  thirstDecayPerSecond: 0.08
+  starvationDamagePerSecond: 1
+  sunstrokeGainPerSecond: 0.1
+  sunstrokeRecoveryPerSecond: 0.2
+  sunstrokeDamagePerSecond: 0.5
+  poisonDamagePerSecond: 0.8
+  bleedingDamagePerSecond: 1.2
+  healthRegenThreshold: 50
+  healthRegenPerSecond: 0.5
+  oxygenRecoveryPerSecond: 25
+  oxygenDrainPerSecond: 5
+  drowningDamagePerSecond: 3
+  coconutOverdoseThreshold: 40
+  rawFoodPoisonChance: 0.3
+  campfireSecondsPerFuel: 30
+  campfireCookingExperience: 8
+  waterStillPerSecond: 0.1
+  waterStillMaxStorage: 12
+  secondsPerDay: 600
+  weatherMinClearSeconds: 90
+  weatherMaxClearSeconds: 240
+  weatherMinRainSeconds: 40
+  weatherMaxRainSeconds: 100
+  rainDimFactor: 0.55
+  hazardSmallMultiplier: 1
+  hazardMediumMultiplier: 1.75
+  hazardLargeMultiplier: 2.5
+  hazardExtraLargeMultiplier: 3.25
+  endingRequiredFoodCount: 30
+  endingRequiredWaterCount: 30
+  endingRequiredFuelCount: 1
+  endingRequiredElapsedDays: 15

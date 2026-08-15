@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using MakeGame.Data;
 
 namespace MakeGame.Systems
 {
@@ -12,9 +13,24 @@ namespace MakeGame.Systems
     /// 읽어서 자기 계산 결과에 곱하는 단방향 의존 구조로 설계했다).
     /// DayNightCycle과 동일하게 SubsystemRegistration + SceneManager.sceneLoaded 패턴으로
     /// 재시작 시에도 매번 새로 생성된다.
+    ///
+    /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
+    /// 폴백으로 읽는 config 필드 — minClearSeconds ← weatherMinClearSeconds,
+    /// maxClearSeconds ← weatherMaxClearSeconds, minRainSeconds ← weatherMinRainSeconds,
+    /// maxRainSeconds ← weatherMaxRainSeconds, rainDimFactor ← rainDimFactor.
+    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로 인스펙터 값이 항상 이긴다.
+    /// [주의] 이 컴포넌트는 Bootstrap()이 런타임에 new GameObject로 생성하므로 그 인스턴스에는
+    /// balanceConfig를 인스펙터에서 연결할 수 없다(항상 null → 폴백 미적용 = 코드 기본값 그대로).
+    /// 씬에 WeatherSystem을 직접 배치해 config를 연결하는 경우에만 폴백이 의미를 갖는다.
     /// </summary>
     public class WeatherSystem : MonoBehaviour
     {
+        [Header("밸런스 config (선택, B4-1)")]
+        [Tooltip("연결하면, 아래 날씨 타이머/우천 감광 계수가 0 이하로(미설정) 남아있는 경우에 한해" +
+            " config의 weather*Seconds / rainDimFactor 값을 대신 쓴다. 인스펙터에 이미 의미 있는" +
+            "(양수) 값이 들어 있으면 절대 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
         [Tooltip("맑은 날씨가 지속되는 최소 시간(초, 실시간)")]
         public float minClearSeconds = 90f;
 
@@ -65,6 +81,37 @@ namespace MakeGame.Systems
                 var go = new GameObject("WeatherSystem");
                 go.AddComponent<WeatherSystem>();
             };
+        }
+
+        /// <summary>
+        /// Start()에서 첫 맑음 단계 길이를 뽑기 전에 balanceConfig 폴백을 적용한다.
+        /// </summary>
+        private void Awake()
+        {
+            ApplyBalanceConfigFallback();
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 필드만 골라 config 값으로 채운다.
+        /// 날씨 지속 시간이 0이면 맑음/비가 매 프레임 뒤집히고 rainDimFactor가 0이면 비 올 때 화면이
+        /// 완전히 캄캄해지므로, 0 이하를 "아직 설정되지 않음"의 안전한 신호로 삼는다.
+        /// balanceConfig가 비어 있으면 아무 것도 하지 않는다(기존 동작 100% 유지, NRE 없음).
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+            if (balanceConfig == null)
+                return;
+
+            if (minClearSeconds <= 0f) minClearSeconds = balanceConfig.weatherMinClearSeconds;
+            if (maxClearSeconds <= 0f) maxClearSeconds = balanceConfig.weatherMaxClearSeconds;
+            if (minRainSeconds <= 0f) minRainSeconds = balanceConfig.weatherMinRainSeconds;
+            if (maxRainSeconds <= 0f) maxRainSeconds = balanceConfig.weatherMaxRainSeconds;
+            if (rainDimFactor <= 0f) rainDimFactor = balanceConfig.rainDimFactor;
         }
 
         /// <summary>비 파티클을 만들고, 항상 맑은 날씨로 시작한다(플레이어가 스폰되자마자 비를 맞지 않도록).</summary>

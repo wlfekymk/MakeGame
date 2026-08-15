@@ -54,6 +54,11 @@ namespace MakeGame.Player
         /// </summary>
         private void ApplyBalanceConfigFallback()
         {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
             if (balanceConfig == null)
                 return;
 

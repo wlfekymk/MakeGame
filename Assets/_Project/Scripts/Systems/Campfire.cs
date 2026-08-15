@@ -7,9 +7,21 @@ namespace MakeGame.Systems
     /// <summary>
     /// 모닥불. 발화 도구와 나뭇가지를 소모해 불을 붙이고, 불이 켜져 있는 동안 생음식을 조리할 수 있다.
     /// Stranded Deep 기준: 조리하지 않은 음식을 먹으면 식중독 위험이 있으므로, 요리(Cooking) 스킬 진행의 핵심 시설이다.
+    ///
+    /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
+    /// 폴백으로 읽는 config 필드 — secondsPerFuel ← campfireSecondsPerFuel,
+    /// cookingExperience ← campfireCookingExperience.
+    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로 씬/프리팹 직렬화 값이 항상 이긴다
+    /// (SurvivalStats.ApplyBalanceConfigFallback과 동일한 규칙).
     /// </summary>
     public class Campfire : MonoBehaviour
     {
+        [Header("밸런스 config (선택, B4-1)")]
+        [Tooltip("연결하면, 아래 secondsPerFuel/cookingExperience가 0 이하로(미설정) 남아있는 경우에" +
+            " 한해 config의 campfireSecondsPerFuel/campfireCookingExperience 값을 대신 쓴다." +
+            " 씬/프리팹에 이미 의미 있는(양수) 값이 직렬화돼 있으면 절대 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
         [Tooltip("점화에 필요한 발화 도구 (파이어스타터, 무제한 사용 가능)")]
         public ItemData fireStarterItem;
 
@@ -32,6 +44,39 @@ namespace MakeGame.Systems
 
         [Tooltip("조리 성공 시 지급할 요리(Cooking) 스킬 경험치")]
         public float cookingExperience = 8f;
+
+        /// <summary>
+        /// 초기화 시점에 balanceConfig 폴백을 적용한다.
+        /// </summary>
+        private void Awake()
+        {
+            ApplyBalanceConfigFallback();
+
+            // B4-11: 불꽃/연기/불빛 이펙트를 코드로 붙인다. CampfireEffect는 isLit을 읽기만 하는
+            // 시각 전용 컴포넌트라 연료/조리 로직에는 아무 영향이 없다(이 한 줄을 지우면 이펙트만
+            // 사라지고 게임플레이는 그대로다).
+            CampfireEffect.EnsureAttached(gameObject);
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 필드만 골라 config 값으로 채운다.
+        /// secondsPerFuel이 0이면 불이 붙자마자 꺼지고 cookingExperience가 0이면 요리 스킬이 전혀
+        /// 오르지 않으므로, 0 이하를 "아직 설정되지 않음"의 안전한 신호로 삼는다.
+        /// balanceConfig가 비어 있으면 아무 것도 하지 않는다(기존 동작 100% 유지, NRE 없음).
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+            if (balanceConfig == null)
+                return;
+
+            if (secondsPerFuel <= 0f) secondsPerFuel = balanceConfig.campfireSecondsPerFuel;
+            if (cookingExperience <= 0f) cookingExperience = balanceConfig.campfireCookingExperience;
+        }
 
         /// <summary>
         /// 매 프레임 자동으로 남은 연료 시간을 줄인다.

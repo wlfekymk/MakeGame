@@ -129,6 +129,12 @@ namespace MakeGame.Systems
             // 반드시 이 접촉 진입점에서만 트리거해야 한다 (CombatFeedbackUI 클래스 주석 참고).
             CombatFeedbackUI.Instance?.TriggerHit();
 
+            // B4-11: 화면 테두리 플래시(2D)는 "맞았다"만 알려줄 뿐 어디서 맞았는지는 알려주지 못한다.
+            // 접촉 지점 근처(플레이어 가슴 높이)에 Danger Red 입자를 짧게 튀겨 위치 정보를 더한다.
+            // 화면 전체 이펙트가 아니라 월드 공간 국소 이펙트이고, 상시 피해(굶주림/일사병)가 아니라
+            // 이 접촉 진입점에서만 호출되므로 위 TriggerHit과 정확히 같은 조건에서만 발동한다.
+            EffectBuilder.PlayHitBurst(target.transform.position + Vector3.up * 1f);
+
             switch (hazardType)
             {
                 case HazardType.VenomousSnake:

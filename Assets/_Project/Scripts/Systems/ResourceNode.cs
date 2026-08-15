@@ -108,6 +108,12 @@ namespace MakeGame.Systems
 
             remainingHarvestCount--;
             AudioManager.Instance?.PlayPickup(); // 채집 성공 효과음
+
+            // B4-11: 채집이 성공한 그 순간, 노드 위치에 짧은 파티클 팝을 터뜨린다. 지금까지 채집 성공의
+            // 유일한 신호가 효과음뿐이라 소리를 껐거나 여러 노드를 연달아 칠 때 "방금 게 먹혔는지"가
+            // 보이지 않았다. 입자 색은 EffectBuilder가 노드 표면 색을 그대로 읽어 쓴다.
+            EffectBuilder.PlayHarvestPop(gameObject);
+
             return true;
         }
     }

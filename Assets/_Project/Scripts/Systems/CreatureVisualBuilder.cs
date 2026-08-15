@@ -183,9 +183,11 @@ namespace MakeGame.Systems
         /// 등지느러미(Fin, 로컬 y=0.1 부근)와 짝을 이루는 꼬리지느러미를 몸통 뒤쪽 끝(눈이 있는 +Y
         /// 반대편, -Y)에 붙여 몸의 앞/뒤가 실루엣만으로 구분되게 한다. 회전 없는 박스라 상어 몸통의
         /// 기존 회전(Quaternion.Euler(0,0,90))에 대해서도 로컬 축 기준으로 동일하게 동작한다.
-        /// 참고: 상어 전체가 SharkSpawner.depthBelowSeaLevel(기본 2m)만큼 해수면 아래에 배치되므로,
-        /// 지느러미를 아무리 키워도 수면 위로는 드러나지 않는다 - 이건 스포너 배치 문제라 이 메서드로
-        /// 해결할 수 없다(아래 [확인요청] 참고).
+        /// 참고(B4-3 갱신): 상어 전체가 SharkSpawner.depthBelowSeaLevel만큼 해수면 아래에 배치된다.
+        /// 몸통 캡슐의 수직 반경은 0.225m이고, 1.9배로 키운 등지느러미 꼭대기는 몸통 중심 위 0.39m다.
+        /// 따라서 배치 깊이가 0.39m보다 얕아야 지느러미가 수면을 뚫는다. B4-2에서 코드 기본값과 씬
+        /// 직렬화 값을 모두 0.3으로 맞춰(이전: 코드 0.6 / 씬 2) 약 0.09m가 수면 위로 드러난다.
+        /// 지느러미 크기를 다시 조정하려면 SharkSpawner.depthBelowSeaLevel과 반드시 함께 계산할 것.
         /// </summary>
         public static void AddSharkTailDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {

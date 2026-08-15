@@ -8,9 +8,29 @@ namespace MakeGame.Systems
     /// 섬 하나에 위험 요소(HazardSource)들을 배치하는 스포너.
     /// 섬 규모가 클수록 위험 요소 등장 확률이 높아진다 (Stranded Deep 기준: 큰 섬일수록 위험도 큼).
     /// 플레이어가 불시착하는 시작 섬(isStartingIsland)에는 안전을 위해 위험 요소를 배치하지 않는다.
+    ///
+    /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
+    /// 폴백으로 읽는 config 필드 — smallMultiplier ← hazardSmallMultiplier,
+    /// mediumMultiplier ← hazardMediumMultiplier, largeMultiplier ← hazardLargeMultiplier,
+    /// extraLargeMultiplier ← hazardExtraLargeMultiplier.
+    /// 산포 반경(*ScatterRadius)은 Spec_15가 의도적으로 config에서 제외한 값이라 배선하지 않았다
+    /// (밸런스가 아니라 월드 지형 스케일 종속값).
+    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로 씬 직렬화 값이 항상 이긴다. 즉 이 배선은
+    /// GetMultiplier의 기존 3단 우선순위에 중간 단계를 하나 끼워 넣는 것과 같다:
+    /// 씬/인스펙터 값 > balanceConfig > IslandSizeMetrics(최후 폴백).
+    /// [주의/실측 대조] Balance_SceneSnapshot.md 기준 씬 직렬화 값은 1/1.5/2/2.5인 반면, 이 스크립트의
+    /// 코드 기본값과 SurvivalBalanceConfig는 B3-7 상향안(1/1.75/2.5/3.25)을 담고 있어 서로 다르다.
+    /// 씬 값이 전부 양수라 폴백이 실행되지 않으므로 이 배선 자체는 실동작을 바꾸지 않지만, 어느 쪽이
+    /// 최종 밸런스인지는 기획 결정 사항이다(씬 값 갱신은 디렉터 담당).
     /// </summary>
     public class HazardSpawner : MonoBehaviour
     {
+        [Header("밸런스 config (선택, B4-1)")]
+        [Tooltip("연결하면, 아래 섬 규모별 배율이 0 이하로(미설정) 남아있는 경우에 한해 config의" +
+            " hazard*Multiplier 값을 대신 쓴다. 씬에 이미 의미 있는(양수) 값이 직렬화돼 있으면" +
+            " 절대 덮어쓰지 않는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
         [System.Serializable]
         public class HazardEntry
         {
@@ -57,6 +77,37 @@ namespace MakeGame.Systems
         public float mediumScatterRadius = 100f;
         public float largeScatterRadius = 100f;
         public float extraLargeScatterRadius = 100f;
+
+        /// <summary>
+        /// 초기화 시점에 balanceConfig 폴백을 적용한다. SpawnHazardsForIsland는 월드 생성 흐름에서
+        /// 호출되므로, 그 전에 배율이 확정돼 있어야 한다.
+        /// </summary>
+        private void Awake()
+        {
+            ApplyBalanceConfigFallback();
+        }
+
+        /// <summary>
+        /// balanceConfig가 있을 때, 0 이하로 남아있는(=미설정) 배율만 골라 config 값으로 채운다.
+        /// 판정 기준(0 이하 = 미설정)은 GetMultiplier/GetScatterRadius가 이미 쓰던 것과 동일하며,
+        /// 폴백이 채운 뒤에도 여전히 0 이하로 남는 배율은 기존대로 IslandSizeMetrics가 처리한다.
+        /// balanceConfig가 비어 있으면 아무 것도 하지 않는다(기존 동작 100% 유지, NRE 없음).
+        /// </summary>
+        private void ApplyBalanceConfigFallback()
+        {
+            // B4-2: 인스펙터에서 연결되지 않았으면 Resources의 공용 에셋을 자동으로 집는다.
+            // 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill 등)는 인스펙터 연결 수단이
+            // 아예 없어서, 이 경로가 없으면 balanceConfig가 영원히 null로 남는다.
+            if (balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+            if (balanceConfig == null)
+                return;
+
+            if (smallMultiplier <= 0f) smallMultiplier = balanceConfig.hazardSmallMultiplier;
+            if (mediumMultiplier <= 0f) mediumMultiplier = balanceConfig.hazardMediumMultiplier;
+            if (largeMultiplier <= 0f) largeMultiplier = balanceConfig.hazardLargeMultiplier;
+            if (extraLargeMultiplier <= 0f) extraLargeMultiplier = balanceConfig.hazardExtraLargeMultiplier;
+        }
 
         /// <summary>
         /// 지정한 섬에 규모와 확률에 따라 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.
@@ -176,7 +227,23 @@ namespace MakeGame.Systems
                     AddCompensatedSphere(go, new Vector3(0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeL");
                     AddCompensatedSphere(go, new Vector3(-0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeR");
                     // 등지느러미: 작은 원뿔 대신 얇은 큐브로 단순하게 표현.
-                    AddCompensatedBox(go, new Vector3(0f, 0.1f, 0.32f), new Vector3(0.06f, 0.22f, 0.18f), s, config.color * 0.8f, "Fin");
+                    //
+                    // B4-3(축 정정 + 확대 + 색): 세 가지를 함께 고쳤다.
+                    // (1) 축 — 상어 몸통은 rotationEuler(0,0,90)으로 눕혀져 있어서 "로컬 +X가 월드 위쪽,
+                    //     로컬 +Y가 몸통 진행 방향, 로컬 +Z가 좌우"가 된다(Unity의 Z축 +90도 회전은
+                    //     +X→+Y, +Y→-X). 기존 값은 로컬 +Z로 0.32 밀고 두께 0.06을 로컬 X(=월드 수직)에
+                    //     줬기 때문에, 등지느러미가 아니라 옆구리에 붙은 납작한 판이었고 수직 높이가
+                    //     사실상 0이었다. 그래서 "지느러미가 작아 안 보인다"는 지적은 크기 이전에
+                    //     방향 문제였다. 이제 로컬 +X(월드 위)로 세운다.
+                    // (2) 크기 — 최대 치수 0.22 → 0.42(약 1.9배), 두께 0.06 → 0.10(약 1.7배)로
+                    //     지시받은 1.5~2배 범위 안에서 키웠다.
+                    // (3) 색 — Danger Red #CC3333(ArtDirection 1.1). 근거는 아래 finColor 주석 참고.
+                    //
+                    // 주의: 이 파츠는 CreateVisualPart가 콜라이더를 제거한 순수 시각 오브젝트다.
+                    // 판정은 몸통 캡슐의 트리거 콜라이더 하나뿐이라 지느러미를 키워도 공격 범위는
+                    // 1mm도 변하지 않는다(시각/판정이 이미 분리되어 있음을 확인함).
+                    Color finColor = new Color(0.8f, 0.2f, 0.2f); // Danger Red #CC3333
+                    AddCompensatedBox(go, new Vector3(0.4f, 0.12f, 0f), new Vector3(0.42f, 0.42f, 0.1f), s, finColor, "Fin");
                     break;
 
                 case HazardType.BeeSwarm:

@@ -15,8 +15,14 @@ namespace MakeGame.Systems
         [Tooltip("낮 동안(정오)의 최대 조명 강도")]
         public float dayIntensity = 1.2f;
 
+        // B4(ArtDirection 3장): 0.05 → 0.10으로 올린다. 0.05는 사실상 완전 암흑이라, 곰/식인종처럼
+        // 색과 실루엣으로 미리 알아볼 수 있게 만들어 둔 위험 요소조차 밤에는 형체가 보이지 않았다.
+        // "위험은 사전에 식별 가능해야 한다"(B3-6)는 원칙과 조명 값이 정면으로 모순되던 상태다.
+        // 0.10은 "밤은 여전히 어둡고 위험하지만 실루엣은 최소한 읽히는" 수준을 목표로 한 값이다.
+        // 이 값은 씬에 직렬화돼 있지 않다 - DayNightCycle은 RuntimeInitializeOnLoadMethod로 매번 새로
+        // 생성되므로(아래 Bootstrap 참고) 이 코드 기본값이 곧 실제 게임에 적용되는 값이다.
         [Tooltip("밤 동안의 최소 조명 강도 (완전한 암흑은 아니고 은은하게 남겨둔다)")]
-        public float nightIntensity = 0.05f;
+        public float nightIntensity = 0.10f;
 
         [Tooltip("한낮의 조명 색상 (밝은 백색광)")]
         public Color dayColor = new Color(1f, 0.98f, 0.92f);
