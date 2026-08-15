@@ -274,9 +274,28 @@ namespace MakeGame.Systems
             go.transform.SetParent(transform);
             go.transform.position = new Vector3(0f, seaLevel, 0f);
 
-            // 기본 Plane 메시는 10x10 크기이므로, oceanSize에 맞춰 스케일한다.
-            float scale = oceanSize / 10f;
-            go.transform.localScale = new Vector3(scale, 1f, scale);
+            // [B10 "화면 정중앙 흰 세로선" 조치] 예전에는 내장 Plane(10×10 격자, 200삼각형)을
+            // oceanSize/10 = 4000배로 스케일했다. 그 결과 삼각형 하나가 한 변 4000m·대각선 5657m가 되고,
+            // 격자 정점이 4000m 간격, 즉 **정확히 월드 원점에 정점이 하나 놓였다**. 플레이어 시작 위치는
+            // 씬 값으로 (0,14,0) — 즉 카메라 바로 아래 지점이 그 정점이다. 카메라가 수평을 보면 바로
+            // 아래 지점의 뷰 공간 z ≈ 0 → 클립 공간 w ≈ 0 이라, 그 한 점에서 만나는 최대 28km짜리
+            // 삼각형 8장이 전부 근평면(w=0) 클리핑을 거친다. 인접 삼각형의 클립 교점은 같은 두 정점에서
+            // 계산되지만 순서가 다르면 마지막 ulp가 갈리고, 좌표 크기가 2만을 넘으면 그 ulp가
+            // 서브픽셀 틈이 된다 - 이 틈으로 뒤의 스카이박스(수평선 부근이 가장 밝다)가 비쳐
+            // **카메라 바로 아래에서 수평선까지 이어지는 얇은 흰 선**이 된다. 하늘 쪽에 없고, 수평선에서
+            // 끊기고, 화면 정중앙에 오는 신고 내용이 전부 이 하나로 설명된다.
+            // 조치는 두 가지이고 둘 다 이 메시 안에서 끝난다(콜라이더/레이어 로직은 손대지 않는다):
+            //   (1) 격자를 64×64(칸 625m)로 잘게 나눈다. 카메라 주변 정점 좌표가 2만대 → 1천대로 줄어
+            //       클립 정밀도가 약 35배 좋아지고, 칸 대각선 884m가 far clip 1000m보다 짧아
+            //       "삼각형 하나가 발밑부터 수평선까지 덮는" 상황 자체가 사라진다.
+            //   (2) 격자 위상을 x/z에 **서로 다른 비율**로 어긋나게 깔아, 월드 원점이 정점 위에도
+            //       대각선 위에도 놓이지 않게 한다. 시작 지점과 격자의 우연한 일치를 제거하는 것이다.
+            // 비용: 삼각형 200 → 8,192(섬 하나 초목 8,016과 비슷한 수준), 정점 4,225, 드로우콜은 1로 동일.
+            var oceanFilter = go.GetComponent<MeshFilter>();
+            if (oceanFilter != null)
+                oceanFilter.sharedMesh = GenerateOceanMesh(oceanSize, OceanGridCells);
+            // 메시에 실제 크기를 구웠으므로 스케일은 1이다(머티리얼 타일링은 예전 그대로 oceanSize/10).
+            go.transform.localScale = Vector3.one;
 
             int waterLayer = LayerMask.NameToLayer("Water");
             if (waterLayer >= 0)
@@ -291,7 +310,86 @@ namespace MakeGame.Systems
             {
                 oceanMaterial = CreateOceanMaterial();
                 renderer.sharedMaterial = oceanMaterial;
+                // 40km짜리 평면은 그림자를 드리울 대상이 아래에 없는데도 지향광 섀도맵의 캐스터 바운즈를
+                // 통째로 부풀려 섬/초목 그림자 품질을 깎는다. ShorelineBand가 같은 이유로 이미 끄고 있다.
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             }
+        }
+
+        /// <summary>바다 평면을 나누는 한 변당 칸 수. 64칸 = oceanSize 40000 기준 한 칸 625m.</summary>
+        private const int OceanGridCells = 64;
+
+        /// <summary>
+        /// 한 변이 size인 수평 격자 평면 메시를 만든다(y = 0, 위를 향한 법선).
+        ///
+        /// UV는 내장 Plane과 동일하게 평면 전체에 0~1로 정규화한다 - CreateOceanMaterial의
+        /// mainTextureScale(oceanSize/10)과 Update의 스크롤 오프셋 의미가 한 글자도 바뀌지 않게 하기
+        /// 위해서다("1타일 = 월드 10미터"라는 인스펙터 툴팁이 계속 사실이어야 한다).
+        ///
+        /// 격자 위상: 정점이 x = -size/2 + (i + 0.37)·cell, z = -size/2 + (j + 0.23)·cell 에 놓인다.
+        /// x/z에 서로 다른 비율을 쓰는 것이 핵심이다 - 같은 비율이면 칸의 대각선이 z = x 직선이 되어
+        /// 월드 원점(플레이어 시작 지점)을 그대로 지나간다. 두 값이 다르면 원점은 정점도 모서리도
+        /// 대각선도 아닌 칸 내부의 한 점이 된다(CreateOcean의 흰 세로선 주석 참고).
+        /// </summary>
+        private static Mesh GenerateOceanMesh(float size, int cells)
+        {
+            cells = Mathf.Clamp(cells, 2, 200);
+            float cell = size / cells;
+            float half = size * 0.5f;
+            const float phaseX = 0.37f;
+            const float phaseZ = 0.23f;
+
+            int lineCount = cells + 1;
+            var vertices = new Vector3[lineCount * lineCount];
+            var normals = new Vector3[vertices.Length];
+            var uvs = new Vector2[vertices.Length];
+            var triangles = new int[cells * cells * 6];
+
+            for (int j = 0; j < lineCount; j++)
+            {
+                float z = -half + (j + phaseZ) * cell;
+                for (int i = 0; i < lineCount; i++)
+                {
+                    float x = -half + (i + phaseX) * cell;
+                    int index = j * lineCount + i;
+                    vertices[index] = new Vector3(x, 0f, z);
+                    normals[index] = Vector3.up;
+                    uvs[index] = new Vector2(x / size + 0.5f, z / size + 0.5f);
+                }
+            }
+
+            int t = 0;
+            for (int j = 0; j < cells; j++)
+            {
+                for (int i = 0; i < cells; i++)
+                {
+                    int a = j * lineCount + i;          // (i,   j)
+                    int b = a + 1;                      // (i+1, j)
+                    int c = a + lineCount;              // (i,   j+1)
+                    int d = c + 1;                      // (i+1, j+1)
+
+                    // 왼손 좌표계에서 위를 향한 면의 감김. 반대로 감으면 바다가 통째로 사라진다
+                    // (IslandMeshGenerator / GenerateShorelineBandMesh와 같은 함정).
+                    triangles[t++] = a;
+                    triangles[t++] = c;
+                    triangles[t++] = b;
+
+                    triangles[t++] = b;
+                    triangles[t++] = c;
+                    triangles[t++] = d;
+                }
+            }
+
+            var mesh = new Mesh();
+            mesh.name = "OceanGrid";
+            // 65,535 정점을 넘길 일은 없지만(64칸 = 4,225), cells 상한이 바뀌어도 안전하게 32비트로 둔다.
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.vertices = vertices;
+            mesh.normals = normals;
+            mesh.uv = uvs;
+            mesh.triangles = triangles;
+            mesh.RecalculateBounds();
+            return mesh;
         }
 
         /// <summary>

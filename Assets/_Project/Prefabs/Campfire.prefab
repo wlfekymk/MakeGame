@@ -77,7 +77,7 @@ MonoBehaviour:
   secondsPerFuel: 90
   isLit: 0
   remainingFuelSeconds: 0
-  cookingExperience: 8
+  cookingExperience: 20
 --- !u!1 &500000110
 GameObject:
   m_ObjectHideFlags: 0

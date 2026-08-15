@@ -58,6 +58,12 @@ namespace MakeGame.Systems
         /// <summary>저장 파일의 전체 경로 (플랫폼별 영구 저장 폴더 아래).</summary>
         private string SavePath => Path.Combine(Application.persistentDataPath, SaveFileName);
 
+        /// <summary>기록 중인 임시 파일. 다 쓰고 나서야 SavePath로 이름이 바뀐다(WriteSaveFileSafely 참고).</summary>
+        private string TempSavePath => SavePath + ".tmp";
+
+        /// <summary>직전 저장본. 본 파일이 깨졌을 때 Load가 여기로 폴백한다.</summary>
+        private string BackupSavePath => SavePath + ".bak";
+
         /// <summary>가장 최근 저장/불러오기 결과 메시지 (디버그 HUD 등에서 표시할 수 있도록 보관).</summary>
         public string lastStatusMessage = "";
 
@@ -165,10 +171,82 @@ namespace MakeGame.Systems
             SaveHazardsAndCreatures(data);
 
             string json = JsonUtility.ToJson(data, true);
-            File.WriteAllText(SavePath, json);
+            if (!WriteSaveFileSafely(json))
+            {
+                lastStatusMessage = "저장에 실패했습니다(파일 기록 오류).";
+                return;
+            }
+
             lastStatusMessage = $"저장 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 저장 완료 확인음
             Debug.Log($"[SaveLoadController] 게임을 저장했습니다: {SavePath}");
+        }
+
+        /// <summary>
+        /// 저장 파일을 "임시 파일에 전부 쓰고 → 기존 파일을 .bak으로 물린 뒤 → 임시 파일의 이름을 바꾼다"
+        /// 순서로 기록한다. 성공하면 true.
+        /// 예전에는 File.WriteAllText가 기존 파일을 먼저 잘라내고 그 자리에 바로 썼기 때문에, 쓰는 도중에
+        /// 게임이 죽거나(크래시/강제 종료) 디스크가 꽉 차면 하나뿐인 세이브 파일이 반쯤 잘린 채 남아
+        /// 그 판이 통째로 사라졌다. 이 순서라면 어느 순간에 멈추더라도 SavePath 또는 BackupSavePath 중
+        /// 최소 한 쪽은 항상 온전한 파일이다(Load가 본 파일 → .bak 순으로 시도한다).
+        /// [세이브 호환성] 파일의 "내용" 형식은 1비트도 바뀌지 않는다 - 기존 makegame_save.json을 그대로
+        /// 읽고 그대로 쓴다. 늘어나는 것은 옆에 생기는 .bak/.tmp 파일뿐이다.
+        /// </summary>
+        private bool WriteSaveFileSafely(string json)
+        {
+            try
+            {
+                File.WriteAllText(TempSavePath, json);
+
+                if (File.Exists(SavePath))
+                {
+                    // File.Replace가 가장 깔끔하지만 플랫폼/파일시스템에 따라 지원되지 않을 수 있어
+                    // 실패하면 "기존 파일을 .bak으로 옮기고 임시 파일을 본 파일로 옮기는" 방식으로 떨어진다.
+                    try
+                    {
+                        File.Replace(TempSavePath, SavePath, BackupSavePath);
+                        return true;
+                    }
+                    // [B12 qa 지적] IOException 한정이면 File.Replace가 UnauthorizedAccessException /
+                    // PlatformNotSupportedException을 던지는 플랫폼에서 폴백 경로를 못 타고 바깥 catch로
+                    // 빠져 매번 저장 실패한다. 본 파일은 안 깨지지만 .tmp 잔여물만 쌓인다.
+                    catch (System.Exception)
+                    {
+                        if (File.Exists(BackupSavePath))
+                            File.Delete(BackupSavePath);
+                        File.Move(SavePath, BackupSavePath);
+                    }
+                }
+
+                File.Move(TempSavePath, SavePath);
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[SaveLoadController] 저장 파일을 기록하지 못했습니다: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 저장 파일 하나를 읽어 SaveData로 되돌린다. 파일이 없거나 내용이 깨져 있으면 null을 반환한다.
+        /// JsonUtility.FromJson은 잘린/망가진 JSON에 대해 null이 아니라 예외를 던지므로, 예전 코드의
+        /// "null이면 실패" 검사만으로는 걸러지지 않고 F9를 누를 때마다 예외가 그대로 터져 나왔다.
+        /// </summary>
+        private SaveData ReadSaveData(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                return null;
+
+            try
+            {
+                return JsonUtility.FromJson<SaveData>(File.ReadAllText(path));
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[SaveLoadController] 저장 파일을 읽지 못했습니다({path}): {e.Message}");
+                return null;
+            }
         }
 
         /// <summary>
@@ -177,18 +255,21 @@ namespace MakeGame.Systems
         /// </summary>
         public void Load()
         {
-            if (!File.Exists(SavePath))
-            {
-                lastStatusMessage = "저장 파일이 없습니다.";
-                Debug.LogWarning("[SaveLoadController] 저장 파일이 없습니다.");
-                return;
-            }
+            SaveData data = ReadSaveData(SavePath);
 
-            string json = File.ReadAllText(SavePath);
-            var data = JsonUtility.FromJson<SaveData>(json);
+            // 본 파일이 없거나 깨졌으면 직전 저장본(.bak)으로 되살려 본다. 저장이 쓰다 만 채로 중단돼도
+            // 한 판이 통째로 날아가지 않게 하는 마지막 방어선이다(WriteSaveFileSafely 참고).
             if (data == null)
             {
-                lastStatusMessage = "저장 파일을 읽는 데 실패했습니다.";
+                data = ReadSaveData(BackupSavePath);
+                if (data != null)
+                    Debug.LogWarning("[SaveLoadController] 본 저장 파일을 읽지 못해 직전 백업(.bak)으로 불러옵니다.");
+            }
+
+            if (data == null)
+            {
+                lastStatusMessage = File.Exists(SavePath) ? "저장 파일을 읽는 데 실패했습니다." : "저장 파일이 없습니다.";
+                Debug.LogWarning($"[SaveLoadController] {lastStatusMessage}");
                 return;
             }
 
@@ -208,10 +289,7 @@ namespace MakeGame.Systems
             }
 
             if (player != null)
-            {
-                player.position = new Vector3(data.playerX, data.playerY, data.playerZ);
-                player.eulerAngles = new Vector3(0f, data.playerRotY, 0f);
-            }
+                TeleportPlayer(new Vector3(data.playerX, data.playerY, data.playerZ), data.playerRotY);
 
             if (survivalStats != null)
             {
@@ -306,6 +384,32 @@ namespace MakeGame.Systems
             lastStatusMessage = $"불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 불러오기 완료 확인음
             Debug.Log("[SaveLoadController] 게임을 불러왔습니다.");
+        }
+
+        /// <summary>
+        /// 저장된 위치/시선으로 플레이어를 순간이동시킨다.
+        /// CharacterController가 붙어 있으면 잠깐 껐다가 다시 켠다 - CharacterController는 PhysX 쪽에
+        /// 자기 위치를 따로 들고 있어서, 켜진 채로 transform.position만 대입하면 다음 Move()에서 옛
+        /// 위치로 되돌아갈 수 있다(이 프로젝트는 Physics.autoSyncTransforms가 기본 false라 더 잘 걸린다 -
+        /// AGENT_BRIEF 4장). 껐다 켜면 활성화 시점의 transform 값으로 내부 위치가 다시 잡힌다.
+        /// 컨트롤러는 이 메서드 안에서 동기적으로 다시 켜지므로 PlayerController.Update가 끼어들 틈이 없다.
+        /// 마지막에 Physics.SyncTransforms를 불러, 같은 프레임 안에서 이어지는 구조물/자원 복원이 옛
+        /// 위치의 콜라이더를 보지 않게 한다.
+        /// </summary>
+        private void TeleportPlayer(Vector3 position, float rotationY)
+        {
+            var controller = player.GetComponent<CharacterController>();
+            bool wasEnabled = controller != null && controller.enabled;
+            if (wasEnabled)
+                controller.enabled = false;
+
+            player.position = position;
+            player.eulerAngles = new Vector3(0f, rotationY, 0f);
+
+            if (wasEnabled)
+                controller.enabled = true;
+
+            Physics.SyncTransforms();
         }
 
         /// <summary>

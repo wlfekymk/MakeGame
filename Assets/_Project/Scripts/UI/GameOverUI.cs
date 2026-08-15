@@ -48,6 +48,28 @@ namespace MakeGame.UI
         // 한 번 그려 넣는다(#7/#8과 동일하게, 바뀌지 않는 상태에서 매 프레임 다시 그리지 않기 위함).
         private bool shown = false;
 
+        // ── 개발 전용 미리보기 상태 ────────────────────────────────────────────────────────────
+        // 사망 화면은 실기로 띄우려면 실제로 죽어야 하고, 엔딩 화면은 15일(실질 74분)이 걸려 아예
+        // 도달할 수가 없다. 디렉터가 화면만 확인할 수 있는 경로를 QA 도구(DebugHud)에 붙이기 위한 상태다.
+        // **게임 상태는 바꾸지 않는다** - GameOverController.isGameOver를 건드리지 않고 shown도 세우지
+        // 않아, 미리보기를 닫은 뒤에 진짜 사망이 오면 정상적으로 다시 뜬다.
+        // previewMode를 true로 만드는 유일한 입구(DebugPreviewGameOver)가 #if로 출시 빌드에서 사라진다.
+        private bool previewMode = false;
+        private float previewTimeScaleBackup = 1f;
+
+        /// <summary>
+        /// ClosePreview가 timeScale을 되돌려도 되는지 판정할 때 쓰는 엔딩 상태 출처.
+        /// 이 UI는 EndingChecker를 원래 참조하지 않지만, **진짜 엔딩 화면이 떠 있는 동안 백업값을
+        /// 복원하면 정지해야 할 엔딩 연출이 정속으로 흐른다.** EndingUI.ClosePreview는 이미 반대편
+        /// (IsShowingEnding)만 보고 GameOverController.isGameOver를 안 보는 비대칭 상태였다 -
+        /// 양쪽 모두 "진짜 결말 화면이 하나라도 떠 있으면 복원하지 않는다"로 통일한다.
+        /// 실제로 닫을 때만 지연 탐색한다(EndingUI/EndingChecker 모두 이 컴포넌트보다 늦게 생길 수 있다).
+        /// </summary>
+        private EndingChecker cachedEndingChecker;
+
+        /// <summary>지금 개발용 미리보기로 화면이 떠 있는지(QA 도구가 토글 상태를 알기 위해 읽는다).</summary>
+        public bool IsPreviewing => previewMode;
+
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 GameOverUI를 생성한다.
         /// </summary>
@@ -133,7 +155,11 @@ namespace MakeGame.UI
             PositionCentered(statsLabel.rectTransform, yOffset: 6f, height: 80f);
 
             // R 키로도 여전히 재시작할 수 있지만(아래 참고), 클릭으로도 재시작할 수 있도록 버튼을 둔다.
-            var restartButton = UIBuilder.CreateButton(panel, "RestartButton", "다시 시작 (R)", OnRestartClicked);
+            // 키는 박아두지 않고 GameOverController가 실제로 들고 있는 값을 읽는다(EndingUI의
+            // 계속하기 버튼이 endingChecker.continueKey를 읽는 것과 같은 규칙). Start()에서
+            // gameOverController를 먼저 찾은 뒤 BuildUI를 부르므로 이 시점에 값이 확정돼 있다.
+            KeyCode restartKey = gameOverController != null ? gameOverController.restartKey : KeyCode.R;
+            var restartButton = UIBuilder.CreateButton(panel, "RestartButton", $"다시 시작 ({restartKey})", OnRestartClicked);
             var buttonRt = restartButton.GetComponent<RectTransform>();
             buttonRt.anchorMin = new Vector2(0.5f, 0.5f);
             buttonRt.anchorMax = new Vector2(0.5f, 0.5f);
@@ -163,9 +189,20 @@ namespace MakeGame.UI
         private string GetAvoidanceHint()
         {
             if (survivalStats == null)
-                return "허기와 갈증을 먼저 관리하라.";
+                return GetAvoidanceHint(DamageCause.Unknown);
 
-            switch (survivalStats.lastDamageCause)
+            return GetAvoidanceHint(survivalStats.lastDamageCause);
+        }
+
+        /// <summary>
+        /// 사인을 인자로 받아 힌트만 돌려주는 순수 버전(GameOverController.GetDeathMessage(DamageCause)와
+        /// 같은 구조다). 이 컴포넌트의 상태를 전혀 읽지 않으므로 미리보기가 게임 상태를 건드리지 않고
+        /// 사인 7종의 힌트를 전부 확인할 수 있다. 문구는 이 한 곳에만 존재한다 - 미리보기용 표를 따로
+        /// 복사하면 조용히 갈라진다.
+        /// </summary>
+        private static string GetAvoidanceHint(DamageCause cause)
+        {
+            switch (cause)
             {
                 case DamageCause.Starvation:
                     return "코코넛과 생선은 도구 없이도 구할 수 있다.";
@@ -263,6 +300,11 @@ namespace MakeGame.UI
             if (!gameOverController.isGameOver)
                 return;
 
+            // 미리보기가 떠 있는 동안 진짜 사망이 성립했다면, 미리보기를 먼저 정리하고 진짜 화면으로
+            // 넘어간다. 정리하지 않으면 아래에서 패널을 다시 채우는 동안 previewMode가 남아
+            // 재시작 버튼이 "미리보기 닫기"로 동작하는 상태가 된다.
+            ClosePreview();
+
             messageLabel.text = gameOverController.GetDeathMessage();
             hintLabel.text = GetAvoidanceHint();
             RefreshStats();
@@ -278,7 +320,140 @@ namespace MakeGame.UI
         /// </summary>
         private void OnRestartClicked()
         {
+            // 미리보기 중에는 재시작(씬 리로드)을 절대 실행하지 않는다. 화면 확인이 목적인데
+            // 버튼 하나로 진행 중인 세션이 날아가면 그게 사고다.
+            if (previewMode)
+            {
+                ClosePreview();
+                return;
+            }
+
             gameOverController?.RestartGame();
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// 미리보기에서 순회할 사망 원인 7종. DamageCause.Unknown(원인 불명 기본 문구)은 빼둔다 -
+        /// 확인하고 싶은 것은 "사인마다 다른 문구가 실제로 다 들어 있는가"이기 때문이다.
+        /// 순서는 SurvivalStats.DamageCause 선언 순서 그대로다(굶주림·일사병·중독·출혈·익사·포식자·상어).
+        /// </summary>
+        private static readonly DamageCause[] PreviewCauses =
+        {
+            DamageCause.Starvation,
+            DamageCause.Sunstroke,
+            DamageCause.Poison,
+            DamageCause.Bleeding,
+            DamageCause.Drowning,
+            DamageCause.Predator,
+            DamageCause.SharkAttack,
+        };
+
+        /// <summary>지금 미리보기로 보여주고 있는 사인의 PreviewCauses 인덱스.</summary>
+        private int previewCauseIndex = -1;
+
+        /// <summary>미리보기 도중 다른 미리보기(엔딩)를 닫기 위한 참조. 실제로 열 때만 지연 탐색한다.</summary>
+        private EndingUI cachedEndingUI;
+
+        /// <summary>
+        /// [개발 전용] 실제로 죽지 않은 채로 사망 화면만 띄운다(QA/실기 확인용).
+        /// GameOverController.isGameOver를 건드리지 않으므로 게임은 계속 진행 가능한 상태로 남는다.
+        ///
+        /// 사인 7종 순회: 처음 부르면 첫 사인(굶주림)으로 열고, 미리보기가 떠 있는 상태에서 다시
+        /// 부르면 다음 사인으로 넘어간다. 마지막 사인(상어) 다음 호출이 닫기다. 문구는
+        /// GameOverController.GetDeathMessage(DamageCause) **순수 오버로드**(이미 존재한다)로 얻으므로
+        /// survivalStats.lastDamageCause를 쓰지도 바꾸지도 않는다 - 그것을 건드리면 그것이야말로
+        /// 게임 상태 변경이다. 회피 힌트도 같은 사인으로 함께 바뀐다.
+        ///
+        /// 이중 격리: (1) #if로 출시 빌드에서 컴파일되지 않는다. (2) Debug.isDebugBuild를 한 번 더 본다.
+        /// 호출부(DebugHud)도 F3 패널이 열려 있을 때만 키를 받는다.
+        /// </summary>
+        public void DebugPreviewGameOver()
+        {
+            if (!Debug.isDebugBuild)
+                return;
+
+            // 진짜 사망 화면이 이미 떠 있으면 끼어들지 않는다.
+            if (shown || (gameOverController != null && gameOverController.isGameOver))
+                return;
+
+            // BuildUI 전에 불릴 일은 없지만(호출부가 이 컴포넌트를 씬에서 찾은 뒤에 부른다),
+            // 라벨이 없으면 조용히 아무것도 하지 않는다.
+            if (messageLabel == null || hintLabel == null)
+                return;
+
+            // 떠 있으면 다음 사인, 아니면 처음부터. 마지막 사인을 지나면 닫는다.
+            int nextIndex = previewMode ? previewCauseIndex + 1 : 0;
+            if (nextIndex >= PreviewCauses.Length)
+            {
+                ClosePreview();
+                return;
+            }
+
+            previewCauseIndex = nextIndex;
+            DamageCause cause = PreviewCauses[previewCauseIndex];
+
+            messageLabel.text = gameOverController != null
+                ? gameOverController.GetDeathMessage(cause)
+                : "무인도에서 생존하지 못했습니다.";
+            hintLabel.text = GetAvoidanceHint(cause);
+            RefreshStats();
+            SetOpen(true);
+
+            // 이미 미리보기 중이었다면 timeScale은 이미 0이고 백업도 잡혀 있다. 여기서 다시 백업하면
+            // 0을 백업하게 되어 닫아도 0에서 못 빠져나온다(이번 배치에서 고친 사고의 본체다).
+            if (previewMode)
+                return;
+
+            // ── 미리보기는 한 번에 하나만 ──────────────────────────────────────────────────
+            // 엔딩 미리보기가 열려 있으면 **timeScale을 백업하기 전에** 먼저 닫는다. 둘 다 열려
+            // 있으면 각자 백업을 뜬 뒤 나중에 연 쪽이 0을 백업하게 되어, 어떤 순서로 닫아도
+            // timeScale이 0으로 고정된다(화면엔 아무것도 없는데 게임이 멈춘 상태 - Esc 설정 화면도
+            // 0을 백업하고 0을 되돌리므로 복구가 불가능했다).
+            if (cachedEndingUI == null)
+                cachedEndingUI = FindAnyObjectByType<EndingUI>();
+            if (cachedEndingUI != null)
+                cachedEndingUI.ClosePreview();
+
+            previewMode = true;
+
+            // 진짜 사망과 같은 조건(GameOverController가 timeScale 0을 건다)을 재현한다.
+            previewTimeScaleBackup = Time.timeScale;
+            Time.timeScale = 0f;
+        }
+#endif
+
+        /// <summary>
+        /// 개발용 미리보기를 닫고 timeScale을 되돌린다. 미리보기가 아니면 아무 일도 하지 않는다.
+        /// </summary>
+        public void ClosePreview()
+        {
+            if (!previewMode)
+                return;
+
+            previewMode = false;
+            SetOpen(false);
+
+            // 미리보기 도중 진짜 사망/엔딩이 성립했다면 그쪽이 이미 timeScale 0을 걸어둔 상태다.
+            // 그때 백업값(보통 1)을 복원하면 멈춰야 할 화면에서 게임이 계속 흐른다.
+            if (!IsRealEndScreenActive())
+                Time.timeScale = previewTimeScaleBackup;
+        }
+
+        /// <summary>
+        /// 진짜 결말 화면(사망 또는 엔딩)이 지금 떠 있는지. 둘 중 하나라도 떠 있으면 그쪽이 이미
+        /// timeScale 0을 걸어둔 상태이므로 미리보기 백업값을 복원해서는 안 된다.
+        /// EndingUI.ClosePreview의 같은 이름 메서드와 판정 내용이 동일하다(비대칭 가드가 이번
+        /// 배치의 지적 사항이었다 - 한쪽만 고치면 반대 순서에서 같은 사고가 난다).
+        /// </summary>
+        private bool IsRealEndScreenActive()
+        {
+            if (gameOverController != null && gameOverController.isGameOver)
+                return true;
+
+            if (cachedEndingChecker == null)
+                cachedEndingChecker = FindAnyObjectByType<EndingChecker>();
+
+            return cachedEndingChecker != null && cachedEndingChecker.IsShowingEnding;
         }
 
         /// <summary>

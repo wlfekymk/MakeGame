@@ -28,8 +28,11 @@ namespace MakeGame.Systems
         //   · [Range(0,1)]가 붙어 있어 음수 센티널(-1 = 미설정)도 쓸 수 없다 - 인스펙터 슬라이더가
         //     음수를 입력할 방법을 주지 않고, 값을 넣어도 클램프된다.
         // 그래서 "값의 크기"가 아니라 "명시적 토글"로 출처를 고른다. 기본값 false = 씬 동작 불변이며,
-        // 씬 실측값(SampleScene.unity:874 rawFoodPoisonChance: 0.3)과 config 값(0.3)이 지금은 같아서
-        // 토글을 켜도 당장은 아무 것도 바뀌지 않는다 - 회귀 위험 0인 타이밍에 배선만 해 둔다.
+        // [B12 정정] 예전 주석은 "씬 0.3 = config 0.3이라 토글을 켜도 안 바뀐다"였는데 둘 다 0.15로
+        // 내려갔다(밤에 30분 안에 죽는 유일한 실질 사인이었다). 여전히 두 값이 같아 토글의 효과는 0이지만,
+        // **값이 갈리는 순간 조용히 달라진다** - 이 프로젝트에서 가장 자주 사고가 난 지점이다.
+        // 지금 씬에는 balanceConfig가 비어 있고 useConfigPoisonChance도 false라, config의
+        // rawFoodPoisonChance는 실제로 한 번도 읽히지 않는다. config만 고치고 반영됐다고 착각하지 말 것.
         [Header("밸런스 config (선택)")]
         [Tooltip("식중독 확률을 config에서 읽고 싶을 때 연결한다. 비워두면 useConfigPoisonChance가 켜진 " +
             "경우에 한해 Resources의 공용 SurvivalBalanceConfig를 자동으로 집는다.")]

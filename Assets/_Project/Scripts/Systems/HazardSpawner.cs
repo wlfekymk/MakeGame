@@ -6,8 +6,18 @@ namespace MakeGame.Systems
 {
     /// <summary>
     /// 섬 하나에 위험 요소(HazardSource)들을 배치하는 스포너.
-    /// 섬 규모가 클수록 위험 요소 등장 확률이 높아진다 (Stranded Deep 기준: 큰 섬일수록 위험도 큼).
+    /// 섬 규모가 클수록 위험 요소가 많아진다 (Stranded Deep 기준: 큰 섬일수록 위험도 큼).
     /// 플레이어가 불시착하는 시작 섬(isStartingIsland)에는 안전을 위해 위험 요소를 배치하지 않는다.
+    ///
+    /// [B8 구조 변경 — "확률 굴림"에서 "면적 기준 마릿수"로]
+    /// 예전 구조는 hazardEntries의 엔트리마다 확률을 정확히 1회 굴렸다. 그래서 엔트리가 6종인 이상
+    /// **섬 하나에 최대 6마리**가 구조적 상한이었고, 배율(1/1.75/2.5/3.25)은 그 상한 안에서만 움직였다.
+    /// 반면 산포 면적(π·산포반경²)은 5,027 / 16,286 / 39,408 / 80,425 m²로 1 : 3.24 : 7.84 : 16 으로 커진다.
+    /// 결과적으로 밀도(마리/만m²)가 2.19 / 1.18 / 0.70 / 0.44 로 **단조 감소**했다 —
+    /// 즉 큰 섬일수록 안전해져서 "큰 섬 = 위험하지만 보상이 큰 곳"이라는 설계 의도와 정반대였다
+    /// (game-designer 실측: Docs/Design_MidGame.md 5장).
+    /// 이제는 마릿수를 면적에 비례해 먼저 정하고(ComputeHazardCount), 그 마릿수를 엔트리 가중치로
+    /// 분배한다(PickWeightedEntry). 밀도가 규모와 무관하게 hazardsPerTenThousandSquareMeters로 고정된다.
     ///
     /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
     /// 폴백으로 읽는 config 필드 — smallMultiplier ← hazardSmallMultiplier,
@@ -37,13 +47,34 @@ namespace MakeGame.Systems
             [Tooltip("위험 요소 종류")]
             public HazardType type;
 
-            [Tooltip("소형 섬 기준 기본 등장 확률(0~1). 규모가 커질수록 배율이 곱해진다.")]
+            // [B8 의미 변경 — 필드는 그대로, 뜻만 바뀌었다]
+            // 예전: "이 엔트리가 등장할 확률"(엔트리마다 1회 굴림 → 섬당 최대 6마리 상한의 원인).
+            // 지금: "이 섬에 배치될 마릿수를 종류별로 나눌 때 쓰는 **상대 가중치**".
+            // 절대값이 아니라 비율만 의미가 있다. 씬(SampleScene.unity:972-984)에 6개 엔트리가
+            // 0.25/0.20/0.15/0.20/0.20/0.10(합 1.10)으로 직렬화돼 있으므로 필드명·타입·[Range]를
+            // 절대 바꾸지 않는다. 예컨대 독사(0.25)는 전체 마릿수의 0.25/1.10 = 22.7%를 차지한다.
+            // [Range(0,1)]이 남아 있는 것도 의도된 것이다 — 비율만 쓰므로 0~1 안에서도 표현에 제약이 없다.
+            [Tooltip("이 위험 요소가 섬 전체 마릿수에서 차지하는 상대 가중치. 절대값이 아니라 다른" +
+                " 엔트리와의 비율만 의미가 있다(예: 0.25와 0.10이면 2.5배 더 자주 나온다).")]
             [Range(0f, 1f)]
             public float baseChance = 0.2f;
         }
 
-        [Tooltip("섬에 등장 가능한 위험 요소 종류와 기본 확률 목록")]
+        [Tooltip("섬에 등장 가능한 위험 요소 종류와 종류별 상대 가중치 목록")]
         public List<HazardEntry> hazardEntries = new List<HazardEntry>();
+
+        // [B8] 마릿수를 정하는 새 단일 기준. 산포 면적 1만m²당 몇 마리를 놓을지다.
+        // 2.0인 근거(game-designer 목표 + systems-engineer 전투 검산):
+        //  - 대형 섬 산포 반경 112 → 면적 39,408m² → 2.0 × 3.9408 = 7.88 → 8마리(목표 7.9와 일치).
+        //  - 소형 섬은 1마리로 떨어져 기존 기댓값 1.10과 사실상 같다(초반 난이도 그대로 유지).
+        //  - 위험요소는 이동/추격 코드가 없는 정적 오브젝트라(HazardSource.Update는 쿨다운/재등장
+        //    타이머만 돈다) 마릿수가 곧 조우 빈도이고, 8마리여도 대형 섬 조우 기대시간이 약 14분이다.
+        // 이 필드는 씬에 아직 직렬화된 키가 없다 → 씬의 기존 HazardSpawner는 이 코드 기본값 2.0을 쓴다.
+        // 값을 바꾸고 싶으면 씬 값이 이기므로 반드시 디렉터에게 YAML 키 추가를 요청할 것.
+        [Header("면적 기준 밀도 (B8)")]
+        [Tooltip("산포 면적 1만m²당 배치할 위험 요소 마릿수. 섬 규모와 무관하게 이 밀도가 유지되도록" +
+            " 마릿수를 면적에 비례해 계산한다. 0 이하면 위험 요소를 배치하지 않는다.")]
+        public float hazardsPerTenThousandSquareMeters = 2f;
 
         // 긴급 정정(#2 회귀 수정): 이 필드들을 한 차례 제거하고 IslandSizeMetrics 직접 호출로 바꿨었는데,
         // 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 이 필드들에 코드 기본값과 다른
@@ -62,7 +93,15 @@ namespace MakeGame.Systems
         // 씬(SampleScene.unity)에도 1/1.5/2/2.5가 직렬화돼 있어 코드 기본값만으로는 반영되지 않는다 -
         // 디렉터가 씬 값을 직접 맞춘다(코디네이터 보고 [디렉터 조치 요청] 항목 참고). 자원 배율
         // (IslandResourceSpawner의 smallMultiplier 등)은 이번 변경 대상이 아니므로 손대지 않았다.
-        [Header("섬 규모별 등장 확률 배율")]
+        // [B8 의미 변경] 이 배율은 더 이상 "등장 확률에 곱하는 값"이 아니다. 마릿수는 이제 면적이 정하고,
+        // 이 배율은 그 위에 얹는 **규모별 위험도 트림**으로 남는다(GetSizeDangerWeight 참고):
+        //   가중치 = 이 필드 값 / 같은 규모의 기준값(NominalMultiplier, 아래 GetNominalMultiplier).
+        // 씬(SampleScene.unity:985-988)과 SurvivalBalanceConfig.asset(40-43줄)에 직렬화된 현재 값
+        // 1/1.75/2.5/3.25가 곧 기준값이므로 **오늘 기준 가중치는 네 규모 모두 정확히 1.0**이다.
+        // 즉 이 배선은 지금 당장 아무 것도 바꾸지 않으면서, 디렉터가 씬 값을 예컨대 largeMultiplier
+        // 2.5 → 5로 올리면 대형 섬 위험요소가 2배가 되는 튜닝 손잡이로 계속 살아 있다.
+        // 필드를 제거하지 않는 이유는 이 프로젝트가 이미 한 번 사고를 낸 그것이다(위 #2 회귀 수정 주석).
+        [Header("섬 규모별 위험도 트림 (B8부터 기준값 대비 상대값)")]
         public float smallMultiplier = 1f;
         public float mediumMultiplier = 1.75f;
         public float largeMultiplier = 2.5f;
@@ -121,10 +160,17 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 지정한 섬에 규모와 확률에 따라 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.
+        /// 지정한 섬에 규모(면적)에 맞는 마릿수만큼 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.
         /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림으로
-        /// 등장 확률 판정·산포 위치·크기/회전 지터를 전부 뽑는다(재현성 근거는 IslandResourceSpawner
+        /// 종류 추첨·산포 위치·크기/회전 지터를 전부 뽑는다(재현성 근거는 IslandResourceSpawner
         /// 상단 주석과 동일). 실제로 등장한 위험 요소마다 (island.islandId, spawnOrder) 식별자를 부여한다.
+        ///
+        /// [B8] 루프의 축이 "엔트리"에서 "마릿수"로 바뀌었다. 예전에는 엔트리 6개를 한 번씩 훑으며
+        /// 확률을 굴려서 섬당 최대 6마리가 상한이었다. 이제는 ComputeHazardCount가 면적으로 마릿수를
+        /// 먼저 정하고, 매 마리마다 PickWeightedEntry가 baseChance 비율대로 종류를 뽑는다.
+        /// spawnOrder는 예전과 똑같이 "실제로 생성된 개체의 0부터 시작하는 러닝 카운터"다 —
+        /// 부여 방식 자체는 손대지 않았다(SaveLoadController가 (islandIndex, spawnOrder)를 세이브 키로
+        /// 쓰기 때문. 세이브 영향 분석은 이 변경의 보고서 참고).
         /// </summary>
         public List<HazardSource> SpawnHazardsForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
@@ -132,29 +178,103 @@ namespace MakeGame.Systems
             if (island == null)
                 return spawned;
 
+            // 시작 섬 면제: 불시착 지점에서 바로 죽지 않도록 위험 요소를 하나도 놓지 않는다.
+            // 이 조기 반환은 B8 구조 변경에서도 그대로 유지한다.
             if (island.isStartingIsland)
+                return spawned;
+
+            // 가중치 합. 엔트리가 비어 있거나 전부 0 이하면 배치할 종류가 없으므로 그대로 끝낸다
+            // (예전 구조에서도 baseChance가 0이면 절대 등장하지 않았다 — 동작이 같다).
+            float totalWeight = 0f;
+            foreach (var entry in hazardEntries)
+            {
+                if (entry != null && entry.baseChance > 0f)
+                    totalWeight += entry.baseChance;
+            }
+            if (totalWeight <= 0f)
                 return spawned;
 
             System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
             int spawnOrder = 0;
 
-            float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
+            int hazardCount = ComputeHazardCount(island.size);
 
-            foreach (var entry in hazardEntries)
+            for (int i = 0; i < hazardCount; i++)
             {
-                float chance = Mathf.Clamp01(entry.baseChance * multiplier);
-                if (rng.NextValue01() <= chance)
-                {
-                    Vector2 offset = rng.NextInsideUnitCircle() * radius;
-                    Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
-                    position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder));
-                    spawnOrder++;
-                }
+                HazardEntry entry = PickWeightedEntry(rng, totalWeight);
+                if (entry == null)
+                    continue;
+
+                Vector2 offset = rng.NextInsideUnitCircle() * radius;
+                Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
+                position = TerrainSampler.SnapToGround(position);
+                spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder));
+                spawnOrder++;
             }
 
             return spawned;
+        }
+
+        /// <summary>
+        /// [B8] 이 섬 규모에 배치할 위험 요소 총 마릿수를 산포 면적에 비례해 계산한다.
+        /// 면적 = π · 산포반경², 마릿수 = 밀도 × (면적 / 10,000) × 규모별 위험도 트림.
+        /// 씬 실측값 기준 결과(밀도 2.0, 트림 1.0):
+        ///   소형  r=40  → 5,027m²  → 1.01 → 1마리  (밀도 1.99/만m²)
+        ///   중형  r=72  → 16,286m² → 3.26 → 3마리  (밀도 1.84/만m²)
+        ///   대형  r=112 → 39,408m² → 7.88 → 8마리  (밀도 2.03/만m²)
+        ///   특대  r=160 → 80,425m² → 16.08 → 16마리 (밀도 1.99/만m²)
+        /// 예전 구조(2.19 / 1.18 / 0.70 / 0.44)와 달리 밀도가 규모에 따라 떨어지지 않는다.
+        /// 밀도가 양수인데 반올림 결과가 0이 되는 경우(아주 작은 섬)에는 최소 1마리를 보장한다 —
+        /// 위험 요소가 아예 없는 섬은 "면제"가 아니라 버그로 읽히기 때문이다.
+        /// 밀도 자체가 0 이하면(디자이너가 의도적으로 끈 경우) 0을 그대로 돌려준다.
+        /// </summary>
+        private int ComputeHazardCount(IslandSize size)
+        {
+            if (hazardsPerTenThousandSquareMeters <= 0f)
+                return 0;
+
+            float radius = GetScatterRadius(size);
+            if (radius <= 0f)
+                return 0;
+
+            float areaInTenThousandSqm = Mathf.PI * radius * radius / 10000f;
+            int count = Mathf.RoundToInt(hazardsPerTenThousandSquareMeters * areaInTenThousandSqm * GetSizeDangerWeight(size));
+            if (count < 1)
+                count = 1;
+            return count;
+        }
+
+        /// <summary>
+        /// [B8] baseChance를 상대 가중치로 보고 종류 하나를 뽑는다. rng를 정확히 1회만 소비한다
+        /// (마릿수 루프의 난수 소비량을 일정하게 유지해 시퀀스 추적을 단순하게 만든다).
+        /// totalWeight는 호출자가 미리 계산해 넘긴다 — 매 마리마다 리스트를 다시 합산하지 않기 위함이다.
+        /// </summary>
+        private HazardEntry PickWeightedEntry(System.Random rng, float totalWeight)
+        {
+            float roll = rng.NextValue01() * totalWeight;
+            float accumulated = 0f;
+
+            for (int i = 0; i < hazardEntries.Count; i++)
+            {
+                HazardEntry entry = hazardEntries[i];
+                if (entry == null || entry.baseChance <= 0f)
+                    continue;
+
+                accumulated += entry.baseChance;
+                if (roll < accumulated)
+                    return entry;
+            }
+
+            // 부동소수 누적 오차로 마지막 구간을 넘어간 경우의 안전망: 가중치가 있는 마지막 엔트리.
+            for (int i = hazardEntries.Count - 1; i >= 0; i--)
+            {
+                HazardEntry entry = hazardEntries[i];
+                if (entry != null && entry.baseChance > 0f)
+                    return entry;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -440,7 +560,46 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 섬 규모에 대응하는 위험 요소 등장 확률 배율을 반환한다.
+        /// [B8] 규모별 위험도 트림. 씬/config에 설정된 배율을 "기준값 대비 상대값"으로 환산해 돌려준다.
+        /// 배율이 기준값과 같으면 1.0이 나오므로, 오늘의 씬 값(1/1.75/2.5/3.25)에서는 마릿수가 순수하게
+        /// 면적×밀도로만 결정된다. 디렉터가 씬 값을 올리거나 내리면 그 비율만큼 마릿수가 움직인다.
+        /// 극단적인 오설정으로 섬 하나가 통째로 도살장이 되지 않도록 0.25~4배로 묶는다.
+        /// </summary>
+        private float GetSizeDangerWeight(IslandSize size)
+        {
+            float nominal = GetNominalMultiplier(size);
+            if (nominal <= 0f)
+                return 1f;
+
+            float actual = GetMultiplier(size);
+            if (actual <= 0f)
+                return 1f;
+
+            return Mathf.Clamp(actual / nominal, 0.25f, 4f);
+        }
+
+        /// <summary>
+        /// [B8] "트림 없음(가중치 1.0)"을 뜻하는 규모별 기준 배율.
+        /// ⚠️ 이 값은 SampleScene.unity의 HazardSpawner 배율(985-988줄)과 SurvivalBalanceConfig.asset
+        /// (hazardSmallMultiplier 등, 40-43줄)에 직렬화된 B3-7 상향안과 **같은 숫자여야 한다**.
+        /// 한쪽만 바꾸면 트림이 조용히 1.0에서 벗어나 마릿수가 의도 없이 변한다 —
+        /// 이 프로젝트가 반복해서 낸 "코드 기본값과 씬 값이 갈라진다" 사고와 정확히 같은 형태다.
+        /// 세 곳(코드/씬/config)을 함께 바꾸거나, 아예 셋 다 그대로 두는 것만 허용된다.
+        /// </summary>
+        private static float GetNominalMultiplier(IslandSize size)
+        {
+            switch (size)
+            {
+                case IslandSize.Small: return 1f;
+                case IslandSize.Medium: return 1.75f;
+                case IslandSize.Large: return 2.5f;
+                case IslandSize.ExtraLarge: return 3.25f;
+                default: return 1f;
+            }
+        }
+
+        /// <summary>
+        /// 섬 규모에 대응하는 위험 요소 배율(B8부터는 위험도 트림의 원본값)을 반환한다.
         /// 긴급 정정(#2 회귀 수정): 인스펙터(씬 직렬화)에 설정된 필드 값을 항상 우선한다. 필드가 0
         /// 이하로 남아있어(설정 실수/아직 배치 안 된 새 컴포넌트 등) 의미 있게 설정되지 않은 경우에만
         /// IslandSizeMetrics.GetLinearDensityMultiplier를 안전한 기본값 폴백으로 사용한다.

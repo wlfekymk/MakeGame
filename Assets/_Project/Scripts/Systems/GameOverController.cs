@@ -158,7 +158,20 @@ namespace MakeGame.Systems
             if (survivalStats == null)
                 return "무인도에서 생존하지 못했습니다.";
 
-            switch (survivalStats.lastDamageCause)
+            return GetDeathMessage(survivalStats.lastDamageCause);
+        }
+
+        /// <summary>
+        /// [ui-engineer 요청] 사인을 인자로 받아 문구만 돌려주는 순수 오버로드.
+        /// **이 컴포넌트의 상태를 전혀 읽지 않는다**(survivalStats도 보지 않는다) - 그래서
+        /// GameOverUI.DebugPreviewGameOver가 게임 상태를 건드리지 않고 사인 7종 문구를 전부 미리
+        /// 확인할 수 있다. 위 무인자 버전이 이 메서드에 위임하므로 문구는 한 곳에만 존재한다
+        /// (예전처럼 미리보기용 문구표가 UI에 복사되면 조용히 갈라진다).
+        /// </summary>
+        /// <param name="cause">표시할 사망 원인. Unknown이면 원인을 특정하지 않는 기본 문구를 돌려준다.</param>
+        public string GetDeathMessage(DamageCause cause)
+        {
+            switch (cause)
             {
                 case DamageCause.Starvation:
                     return "굶주림과 갈증을 이기지 못하고 쓰러졌습니다.";

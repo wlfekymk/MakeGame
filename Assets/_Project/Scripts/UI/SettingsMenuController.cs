@@ -1,5 +1,7 @@
+using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
+using MakeGame.Player;
 using MakeGame.Systems;
 
 namespace MakeGame.UI
@@ -37,6 +39,22 @@ namespace MakeGame.UI
         private Slider bgmSlider;
         private Text sfxValueLabel;
         private Text bgmValueLabel;
+
+        // ── 조작키 안내 ────────────────────────────────────────────────────────────────────────
+        // [game-designer 지적] 이 게임의 키는 9개가 넘는데(E/R/C/G/Tab/V/M/F/LCtrl/Space/Esc)
+        // 화면에서 발견 가능한 것은 사실상 [M](레이더 하단)과 [E](조준 프롬프트)뿐이다. DebugHud에
+        // 전체 목록이 있었지만 그건 F3로 여는 QA 도구이고 기본이 꺼짐이라 플레이어의 경로가 아니다.
+        //
+        // 새 도움말 패널을 만들지 않는다. 이 설정 화면이 (1) 타이틀에서 "설정" 버튼으로,
+        // (2) 플레이 중 Esc로 열리는 유일한 상시 메뉴이고, 조작 안내는 관례적으로 여기 있다.
+        // 이 화면 자체의 발견 경로는 MinimapUI 레이더 하단 상시 힌트가 담당한다([Esc] 조작키).
+        //
+        // **키 문자열을 여기에 적어두지 않는다.** 이 프로젝트는 코드/씬 값이 갈라지는 것이 사고의
+        // 유일한 원인이고(AGENT_BRIEF 0장), 주석과 값이 어긋난 전력이 여러 번 있다. 각 컴포넌트가
+        // 인스펙터/씬에서 실제로 들고 있는 KeyCode 필드를 화면이 열릴 때마다 직접 읽어 조립한다.
+        // 씬에서 키를 바꾸면 이 목록도 자동으로 따라간다.
+        private Text controlsLabel;
+        private readonly StringBuilder controlsBuilder = new StringBuilder(320);
 
         /// <summary>
         /// 시작 시 설정 UI 계층을 생성하고 기본적으로 닫힌 상태로 둔다.
@@ -123,10 +141,13 @@ namespace MakeGame.UI
 
             panelRoot = backdrop.gameObject;
 
+            // 조작키 안내 6줄이 들어가면서 박스를 420x260 → 520x480으로 키웠다.
+            // (내용 합계: 제목 40 + 음량 4줄 92 + 조작 제목 22 + 조작 본문 150 + 닫기 36 = 340,
+            //  spacing 10 x 7 = 70, padding 상하 40 → 450. 480 안에 들어간다.)
             var box = UIBuilder.CreatePanel(
                 backdrop, "SettingsBox",
                 anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                offsetMin: new Vector2(-210f, -130f), offsetMax: new Vector2(210f, 130f),
+                offsetMin: new Vector2(-260f, -240f), offsetMax: new Vector2(260f, 240f),
                 color: new Color(0f, 0f, 0f, 0.85f));
 
             var vlg = box.gameObject.AddComponent<VerticalLayoutGroup>();
@@ -159,6 +180,15 @@ namespace MakeGame.UI
             bgmSlider.gameObject.AddComponent<LayoutElement>().minHeight = 24f;
             bgmSlider.onValueChanged.AddListener(OnBgmSliderChanged);
 
+            // 조작 안내. 섹션 제목은 항목 라벨(H2 15), 본문은 Body 12(ArtDirection.md 4.3).
+            var controlsTitle = UIBuilder.CreateText(box, "ControlsTitle", "조작", 15, Color.white, TextAnchor.MiddleLeft);
+            controlsTitle.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
+
+            controlsLabel = UIBuilder.CreateText(box, "ControlsBody", "", 12,
+                new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.UpperLeft);
+            controlsLabel.lineSpacing = 1.25f;
+            controlsLabel.gameObject.AddComponent<LayoutElement>().minHeight = 150f;
+
             var closeButton = UIBuilder.CreateButton(box, "CloseButton", "닫기", Close);
             var closeLayout = closeButton.gameObject.AddComponent<LayoutElement>();
             closeLayout.minHeight = 36f;
@@ -174,6 +204,57 @@ namespace MakeGame.UI
         {
             SetPanelActive(true);
             RefreshVolumeDisplay();
+            RefreshControlsDisplay();
+        }
+
+        /// <summary>
+        /// 조작키 목록을 씬의 실제 KeyCode 필드에서 읽어 다시 만든다. 화면이 열리는 순간에만 부르므로
+        /// (FindAnyObjectByType가 여러 번 돌지만) 비용은 무시할 수 있고, 대신 씬에서 키를 바꾸면
+        /// 다음에 이 화면을 열 때 곧바로 반영된다 - 문자열을 여기 박아두면 어긋나는 날이 온다.
+        ///
+        /// 컴포넌트를 못 찾은 항목은 각 컴포넌트의 코드 기본값으로 대체한다. 이 화면은 타이틀에서도
+        /// 열리는데, 그때 플레이 오브젝트가 아직 없을 수 있기 때문이다.
+        /// </summary>
+        private void RefreshControlsDisplay()
+        {
+            if (controlsLabel == null)
+                return;
+
+            var interaction = FindAnyObjectByType<InteractionController>();
+            var inventoryUI = FindAnyObjectByType<InventoryUI>();
+            var craftingUI = FindAnyObjectByType<CraftingUI>();
+            var minimapUI = FindAnyObjectByType<MinimapUI>();
+            var playerController = FindAnyObjectByType<PlayerController>();
+            var saveLoad = FindAnyObjectByType<SaveLoadController>();
+
+            KeyCode interact = interaction != null ? interaction.interactKey : KeyCode.E;
+            KeyCode cook = interaction != null ? interaction.cookKey : KeyCode.R;
+            KeyCode consume = interaction != null ? interaction.consumeKey : KeyCode.C;
+            KeyCode place = interaction != null ? interaction.placeKey : KeyCode.G;
+            KeyCode inventory = inventoryUI != null ? inventoryUI.toggleKey : KeyCode.Tab;
+            KeyCode filter = inventoryUI != null ? inventoryUI.cycleFilterKey : KeyCode.F;
+            KeyCode craft = craftingUI != null ? craftingUI.toggleKey : KeyCode.V;
+            KeyCode map = minimapUI != null ? minimapUI.toggleKey : KeyCode.M;
+            KeyCode dive = playerController != null ? playerController.diveKey : KeyCode.LeftControl;
+
+            controlsBuilder.Clear();
+            controlsBuilder.Append("이동 WASD · 시점 마우스 · 점프 Space\n");
+            controlsBuilder.Append('[').Append(interact.ToString()).Append("] 상호작용 / 공격(무기 필요)\n");
+            controlsBuilder.Append('[').Append(consume.ToString()).Append("] 섭취 · 치료    [")
+                .Append(cook.ToString()).Append("] 조리    [").Append(place.ToString()).Append("] 설치\n");
+            controlsBuilder.Append('[').Append(inventory.ToString()).Append("] 인벤토리 (열린 상태에서 [")
+                .Append(filter.ToString()).Append("] 분류 전환)\n");
+            controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 섬 목록 / 이동\n");
+            // 수영은 지상 조작과 키가 겹쳐(Space) 따로 묶어주지 않으면 오해를 산다.
+            controlsBuilder.Append("수영 중 — Space 떠오르기 · [").Append(dive.ToString()).Append("] 잠수\n");
+
+            if (saveLoad != null)
+                controlsBuilder.Append('[').Append(saveLoad.saveKey.ToString()).Append("] 저장    [")
+                    .Append(saveLoad.loadKey.ToString()).Append("] 불러오기\n");
+
+            controlsBuilder.Append('[').Append(toggleKey.ToString()).Append("] 이 화면 열기 / 닫기");
+
+            controlsLabel.text = controlsBuilder.ToString();
         }
 
         /// <summary>

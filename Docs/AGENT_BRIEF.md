@@ -1,6 +1,6 @@
 # 에이전트 필독 브리핑 (단일 진실 파일)
 
-> 갱신: v0.01.091 · **커밋할 때마다 디렉터가 갱신한다.**
+> 갱신: v0.01.092 · **커밋할 때마다 디렉터가 갱신한다.**
 > 이 파일 하나만 읽고 시작하면 된다. 다른 문서보다 이 파일이 항상 최신이다.
 > 여기 적힌 값과 다른 것을 발견하면 **먼저 이 파일을 의심하지 말고 씬 YAML을 파싱해서 확인한 뒤**
 > 보고서에 `[요청] 디렉터: AGENT_BRIEF 갱신` 으로 올려라.
@@ -57,7 +57,7 @@
 
 ---
 
-## 3. 씬 실측값 (v0.01.091 기준)
+## 3. 씬 실측값 (v0.01.092 기준)
 
 ### 생존 수치 (SurvivalStats)
 health/maxHealth 100 · hunger/thirst 시작 100
@@ -67,9 +67,16 @@ health/maxHealth 100 · hunger/thirst 시작 100
 `healthRegenThreshold 50` · `healthRegenPerSecond 0.5`
 `oxygenRecovery 25` · `oxygenDrain 5` · `drowningDamage 3`
 
+### ⚠️ 씬에 **없는** 컴포넌트 (이 절에서 가장 자주 오판하는 지점)
+`RuntimeInitializeOnLoadMethod` 로 매 씬 로드마다 스스로 생성되는 것들은 **씬에 인스턴스가 없다.**
+즉 **코드 기본값이 유일한 소스**이고, "씬 값이 이긴다"는 대원칙이 적용되지 않는다.
+`DayNightCycle` · `WeatherSystem` · `Campfire` · `WaterStill` · `SurvivalHudUI` · `EndingUI` ·
+`GameOverUI` · `CombatFeedbackUI` · `InteractionPromptUI`
+→ 이들의 값을 바꾸려면 **코드를 고쳐야 한다. 씬을 뒤져도 없다.**
+
 ### 시간 / 월드
 `SurvivalClock.secondsPerDay 600` (실시간 10분 = 게임 1일)
-새 게임은 `DayNightCycle.newGameStartTimeOfDay 0.3`(아침)에 시작한다.
+새 게임은 `DayNightCycle.newGameStartTimeOfDay 0.3`(아침)에 시작한다. **(씬 아님 — 코드 기본값)**
 **0(자정)이면 게임 시작 2분 30초가 새까맣다** — 예전에 "검은 하늘 버그"로 신고됐던 것이 이것이다.
 `WorldMapManager`: `baseDistanceStep 1200` · `oceanSize 40000` · `terrainMaxHeight 8` · `worldSeed 0`
 `initialIslandCount 8` (+ 시작 섬 1 = **총 9개**)
@@ -106,7 +113,9 @@ health/maxHealth 100 · hunger/thirst 시작 100
 
 ### 엔딩
 배: 3단계 누적 + 도면 3장 + 비상식량 12 · 생수 12 · 연료 1 + **경과 15일**
-비행기: 엔진부품 2 · 금속조각 6 · 연료 3 · 노끈 4 (엔진부품이 특대 전용이라 배 1단계를 반드시 거친다)
+비행기: 엔진부품 2 · 금속조각 6 · 연료 3 · 노끈 4 + **경과 8일**
+  (엔진부품이 특대 전용이라 배 1단계를 반드시 거친다. 8일 조건이 없던 시절에는 실제 플레이 길이가
+   30분이 되어 30~90분 구간이 통째로 선택 사항이었다 — `aircraftRequiredElapsedDays = 8`, 코드 기본값.)
 `EndingChecker.survivalClock` 연결됨 · `requiredElapsedDays 15` 동작 중
 동시 성립 시 **배 엔딩이 이긴다(확정, 의도)** — `ResolveAchievableEnding()` + `GetEndingPriority()`(Boat 2 / Aircraft 1).
 두 검사의 코드 순서를 뒤바꿔도 결과가 안 뒤집힌다. 배가 15일 + 3단계 + 비축까지 요구하는 더 긴 경로라 그쪽을 보여준다.
@@ -117,10 +126,24 @@ health/maxHealth 100 · hunger/thirst 시작 100
 
 ### 밸런스 SO
 `Assets/_Project/Resources/SurvivalBalanceConfig.asset` (guid `80e0187dae8f4309843ba9454f977b28`)
-**8개** 컴포넌트가 참조한다(SurvivalStats / HazardSpawner / ConsumptionSystem / WeatherSystem /
-Campfire / SurvivalClock / EndingChecker / WaterStill). 폴백 규칙: **필드가 미설정일 때만 config 값으로 채운다**(씬 값이 이긴다).
+**코드상 8개**가 참조하지만 **씬에서 실제로 배선된 것은 4개뿐**이다.
+- 씬 배선됨: `SurvivalStats` / `HazardSpawner` / `SurvivalClock` / `EndingChecker`
+- 미배선: `WeatherSystem` / `Campfire` / `WaterStill` — 씬에 인스턴스가 없어 `Active`(Resources 자동 로드)로 받는다
+- **`ConsumptionSystem` 은 `balanceConfig` 가 비어 있고, 폴백도 `<=0` 이 아니라 `useConfigPoisonChance`
+  명시 토글(기본 false)이다 → config의 `rawFoodPoisonChance` 는 현재 씬에서 한 번도 읽히지 않는다.**
+
+> **"config만 고치면 반영된다"고 가정하지 마라.** 이 프로젝트 사고의 대표 유형이다(0장 표 참고).
+
+폴백 규칙: 필드가 미설정일 때만 config 값으로 채운다(씬 값이 이긴다).
+0이 유효값인 필드(`requiredElapsedDays` 등)는 `<=0` 이 아니라 **`<0`** 으로 판정한다.
 런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill)는 인스펙터 연결이 불가능해서
 `SurvivalBalanceConfig.Active` (Resources 자동 로드)로 받는다.
+
+### 세이브
+파일은 `makegame_save.json` + **`.bak`(직전 저장본)** 2개다. F5는 `.tmp` 에 쓰고 원자적으로 교체하며
+직전 저장본을 `.bak` 으로 남긴다. F9는 본 파일이 깨져 있으면 **`.bak` 으로 자동 폴백**한다.
+`.bak`/`.tmp` 를 잔여물로 오해해서 지우는 코드를 넣지 마라 — 세이브 복구 경로다.
+`JsonUtility` 는 없는 필드를 기본값으로 채우므로 **`SaveData` 필드 추가는 안전하지만 제거·개명은 파괴적**이다.
 
 ---
 

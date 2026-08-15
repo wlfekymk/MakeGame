@@ -117,6 +117,43 @@ namespace MakeGame.UI
         // true→false 전환도 감지해 다시 닫아준다.
         private bool lastShowing = false;
 
+        // ── 개발 전용 미리보기 상태 ────────────────────────────────────────────────────────────
+        // 엔딩 조건은 배 15일(실시간 74~150분)이라 실기로 도달할 수가 없어서, 디렉터가 화면만 띄워
+        // 확인할 수 있는 경로가 필요하다. **게임 상태는 절대 바꾸지 않는다** - EndingChecker의
+        // showEndingUI/achievedEnding/endingTriggered를 건드리지 않고, MarkEndingPresentationFinished도
+        // 부르지 않는다. 이 UI가 자기 패널만 열고 닫는다.
+        // 유일하게 건드리는 전역 상태는 Time.timeScale이고(진짜 엔딩과 같은 조건 - timeScale 0에서
+        // unscaledDeltaTime 연출이 실제로 도는지 확인하는 것이 이 미리보기의 핵심 목적이다),
+        // 닫을 때 원래 값으로 되돌린다.
+        // previewMode를 true로 만드는 유일한 입구(DebugPreviewEnding)가 #if로 출시 빌드에서 아예
+        // 사라지므로, 출시 빌드에서 이 값은 구조적으로 false 이외가 될 수 없다.
+        private bool previewMode = false;
+        private float previewTimeScaleBackup = 1f;
+
+        // [B12 디렉터] 미리보기 상호 배제 / 대칭 복원 가드용 캐시.
+        // F6·F7(엔딩)과 F8(사망)이 서로를 배제하지 않아, 겹쳐 열면 각자 뜬 백업값이 엇갈려
+        // timeScale이 0으로 영구 고정되는 문제가 있었다(qa 지적). GameOverUI 쪽은 이미 대칭으로
+        // 고쳐졌고, 이 파일이 반대편이다 - 한쪽만 고치면 반대 순서에서 같은 사고가 그대로 난다.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // 미리보기 진입 경로에서만 쓰므로 출시 빌드에서는 필드 자체를 없앤다(CS0169 방지).
+        private GameOverUI cachedGameOverUI;
+#endif
+        // 이쪽은 ClosePreview(public, 반대편에서도 호출된다)가 쓰므로 조건부 컴파일 밖이다.
+        private GameOverController cachedGameOverController;
+
+        /// <summary>
+        /// 연출이 시작된 프레임. 이 프레임에는 건너뛰기 입력을 받지 않는다.
+        ///
+        /// 미리보기를 여는 입력(DebugHud의 F6/F7)과 "아무 키나 = 건너뛰기"가 같은 프레임에 겹치기
+        /// 때문이다. 두 컴포넌트의 스크립트 실행 순서는 정해져 있지 않으므로(AGENT_BRIEF 4장),
+        /// DebugHud가 먼저 도는 실행에서는 F6을 눌러 연 연출이 같은 프레임에 그대로 건너뛰어져
+        /// 마지막 화면만 보인다. 이 프로젝트에서 이미 한 번 일어난 종류의 사고라 미리 막는다.
+        /// </summary>
+        private int presentationStartFrame = -1;
+
+        /// <summary>지금 개발용 미리보기로 화면이 떠 있는지(QA 도구가 토글 상태를 알기 위해 읽는다).</summary>
+        public bool IsPreviewing => previewMode;
+
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 EndingUI를 생성한다.
         /// </summary>
@@ -308,6 +345,22 @@ namespace MakeGame.UI
         /// </summary>
         private void Update()
         {
+            // 개발용 미리보기 중에는 EndingChecker와 완전히 분리된 상태 기계로 돈다. 통지도 보내지
+            // 않고(FlushPendingPresentationFinished를 타지 않는다) 상태 전환도 감시하지 않는다.
+            if (previewMode)
+            {
+                if (presenting)
+                {
+                    if (Input.anyKeyDown && Time.frameCount > presentationStartFrame)
+                        SkipToFinalState();
+                }
+                else if (Input.GetKeyDown(GetContinueKey()))
+                {
+                    ClosePreview();
+                }
+                return;
+            }
+
             if (endingChecker == null)
                 return;
 
@@ -329,7 +382,7 @@ namespace MakeGame.UI
             if (!showing || !presenting)
                 return;
 
-            if (Input.anyKeyDown)
+            if (Input.anyKeyDown && Time.frameCount > presentationStartFrame)
                 SkipToFinalState();
         }
 
@@ -365,6 +418,7 @@ namespace MakeGame.UI
             // 지난 연출의 통지 예약이 남아 도는 일이 없게 한다.
             fanfarePlayed = false;
             markPresentationFinishedFrame = -1;
+            presentationStartFrame = Time.frameCount;
 
             presenting = true;
             if (sequenceRoutine != null)
@@ -447,7 +501,16 @@ namespace MakeGame.UI
             // 이 경로는 키 입력 없이 시간이 흘러 끝난 것이라 같은 프레임에 continueKey가 들어올 일이
             // 없다. 지연 없이 바로 알려 Space가 곧장 화면을 닫을 수 있게 한다.
             markPresentationFinishedFrame = -1;
-            endingChecker?.MarkEndingPresentationFinished();
+
+            // 미리보기는 EndingChecker에 아무것도 통지하지 않는다(게임 상태 불변 원칙).
+            if (!previewMode)
+                endingChecker?.MarkEndingPresentationFinished();
+        }
+
+        /// <summary>계속하기에 쓰는 키. EndingChecker가 없으면 그 기본값(Space)을 쓴다.</summary>
+        private KeyCode GetContinueKey()
+        {
+            return endingChecker != null ? endingChecker.continueKey : KeyCode.Space;
         }
 
         /// <summary>
@@ -517,7 +580,8 @@ namespace MakeGame.UI
 
             // 통지는 다음 프레임으로 미룬다. 지금 이 프레임의 키 입력(Space일 수 있다)을 EndingChecker가
             // 이어서 "화면 닫기"로 읽으면 한 번의 입력이 건너뛰기와 닫기를 동시에 해버린다.
-            markPresentationFinishedFrame = Time.frameCount + 1;
+            // 미리보기에서는 통지 자체가 없으므로 예약도 하지 않는다.
+            markPresentationFinishedFrame = previewMode ? -1 : Time.frameCount + 1;
         }
 
         /// <summary>계속하기 버튼이 실제로 눌릴 수 있게 만든다(연출이 끝났거나 건너뛴 뒤).</summary>
@@ -548,7 +612,11 @@ namespace MakeGame.UI
         /// 자리에 놓고 제목만 엔딩 종류에 맞춰 채운다. **문구 결정권은 EndingChecker 호출부에 있고
         /// (그 파일은 이 에이전트 소유가 아니다), 이 UI는 어떤 형식이 와도 깨지지 않게만 만든다.**
         /// </summary>
-        private void ApplyEndingMessage(string raw, bool isAircraft)
+        /// <param name="useCheckerText">
+        /// false면 EndingChecker가 들고 있는 문구를 무시하고 raw/기본 문구만 쓴다. 개발용 미리보기에서
+        /// "배 화면"을 요청했는데 직전에 달성한 비행기 엔딩 문구가 남아 있어 그쪽이 뜨는 것을 막는다.
+        /// </param>
+        private void ApplyEndingMessage(string raw, bool isAircraft, bool useCheckerText = true)
         {
             string title = null;
             string closing = null;
@@ -557,7 +625,8 @@ namespace MakeGame.UI
             // 프로퍼티를 실제로 만들었다. 문자열을 쪼개는 것보다 이쪽이 정확하다 - 구분자 방식은
             // 문구에 그 문자가 섞이는 날 조용히 깨진다(systems가 같은 이유로 구분자 형식을 거부했다).
             // 아래 파싱 경로는 두 프로퍼티가 비어 있을 때만 도는 폴백으로 남긴다.
-            if (endingChecker != null
+            if (useCheckerText
+                && endingChecker != null
                 && !string.IsNullOrEmpty(endingChecker.EndingTitle)
                 && !string.IsNullOrEmpty(endingChecker.EndingSubtitle))
             {
@@ -802,7 +871,121 @@ namespace MakeGame.UI
         /// </summary>
         private void OnContinueClicked()
         {
+            // 미리보기 중에는 DismissEndingUI를 부르지 않는다. 그 메서드는 timeScale을 1로 돌리고
+            // playerController/interactionController를 켜는 "엔딩을 실제로 봤다"는 뒷정리라, 엔딩이
+            // 일어나지도 않은 상태에서 부르면 게임 상태를 바꾸게 된다.
+            if (previewMode)
+            {
+                ClosePreview();
+                return;
+            }
+
             endingChecker?.DismissEndingUI();
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// [개발 전용] 엔딩 조건을 충족하지 않은 채로 엔딩 화면만 띄운다(QA/실기 확인용).
+        ///
+        /// 배 엔딩은 경과 15일 + 3단계 + 비축을 요구해 실기로는 도달할 수 없고(74~150분),
+        /// 그래서 지금까지 아무도 이 화면을 실제로 본 적이 없다. 이 메서드는 **화면만** 띄운다.
+        /// EndingChecker의 어떤 필드도 쓰지 않고, 엔딩 달성으로 기록되지도 않는다.
+        ///
+        /// 이중 격리: (1) 이 메서드는 #if로 출시 빌드에서 아예 컴파일되지 않는다.
+        /// (2) 그래도 Debug.isDebugBuild를 한 번 더 확인한다(에디터/개발 빌드에서만 true).
+        /// 호출부(DebugHud)도 F3 패널이 열려 있을 때만 키를 받으므로 실수로 눌릴 여지가 없다.
+        /// </summary>
+        /// <param name="aircraft">true면 경비행기(탈출) 화면, false면 배(귀환) 화면.</param>
+        public void DebugPreviewEnding(bool aircraft)
+        {
+            if (!Debug.isDebugBuild)
+                return;
+
+            // 진짜 엔딩이 떠 있는 동안에는 절대 끼어들지 않는다(진짜 연출을 덮어쓰면 그게 더 나쁘다).
+            if (endingChecker != null && endingChecker.IsShowingEnding)
+                return;
+
+            // 미리보기가 이미 떠 있으면 종류만 바꾸는 것이 아니라 처음부터 다시 재생한다
+            // (팡파레/페이즈 상태가 반쯤 진행된 채로 섞이지 않게).
+            if (previewMode)
+                ClosePreview();
+
+            // 반대편(사망 미리보기)이 떠 있으면 먼저 닫는다. 이 순서여야 아래에서 뜨는
+            // previewTimeScaleBackup이 "미리보기 이전의 진짜 값"이 된다 - 닫기 전에 뜨면
+            // 상대가 걸어 둔 0을 백업하게 되어, 나중에 복원해도 0으로 되돌아간다.
+            if (cachedGameOverUI == null)
+                cachedGameOverUI = FindAnyObjectByType<GameOverUI>();
+
+            if (cachedGameOverUI != null && cachedGameOverUI.IsPreviewing)
+                cachedGameOverUI.ClosePreview();
+
+            // 문구는 EndingChecker가 아니라 요청받은 종류에서만 결정한다(useCheckerText: false).
+            ApplyEndingMessage(null, aircraft, useCheckerText: false);
+            ApplyEndingBackground(aircraft);
+            RefreshStats(aircraft);
+
+            ResetPresentationState();
+            SetOpen(true);
+
+            fanfarePlayed = false;
+            markPresentationFinishedFrame = -1;
+            presentationStartFrame = Time.frameCount;
+            previewMode = true;
+
+            // 진짜 엔딩과 동일한 조건을 재현한다 - TriggerEnding이 timeScale 0을 걸기 때문에
+            // 이 화면의 모든 연출이 unscaledDeltaTime이어야 한다는 것이 이 프로젝트의 대표적 함정이고,
+            // 미리보기가 그것을 재현하지 않으면 확인의 의미가 없다. 닫을 때 그대로 되돌린다.
+            previewTimeScaleBackup = Time.timeScale;
+            Time.timeScale = 0f;
+
+            presenting = true;
+            if (sequenceRoutine != null)
+                StopCoroutine(sequenceRoutine);
+            sequenceRoutine = StartCoroutine(PlaySequence());
+        }
+#endif
+
+        /// <summary>
+        /// 개발용 미리보기를 닫고 timeScale을 원래대로 되돌린다. 미리보기가 아니면 아무 일도 하지 않는다.
+        /// (진짜 엔딩 경로는 EndingChecker.DismissEndingUI → IsShowingEnding 전환 → ClosePresentation을 탄다.)
+        /// </summary>
+        public void ClosePreview()
+        {
+            if (!previewMode)
+                return;
+
+            if (sequenceRoutine != null)
+            {
+                StopCoroutine(sequenceRoutine);
+                sequenceRoutine = null;
+            }
+
+            previewMode = false;
+            presenting = false;
+            markPresentationFinishedFrame = -1;
+            SetOpen(false);
+
+            // 미리보기 도중에 진짜 엔딩/사망이 성립했다면 그쪽이 이미 timeScale 0을 걸어둔 상태다.
+            // 그때 백업값(보통 1)을 복원하면 정지해야 할 화면에서 게임이 계속 흐른다.
+            if (!IsRealEndScreenActive())
+                Time.timeScale = previewTimeScaleBackup;
+        }
+
+        /// <summary>
+        /// 진짜 결말 화면(엔딩 또는 사망)이 지금 떠 있는지. 둘 중 하나라도 떠 있으면 그쪽이 이미
+        /// timeScale 0을 걸어둔 상태이므로 미리보기 백업값을 복원해서는 안 된다.
+        /// GameOverUI.IsRealEndScreenActive와 판정 내용이 정확히 같다 - 한쪽만 엔딩을, 다른 쪽만
+        /// 사망을 보는 비대칭 가드가 바로 이번 배치의 지적 사항이었다.
+        /// </summary>
+        private bool IsRealEndScreenActive()
+        {
+            if (endingChecker != null && endingChecker.IsShowingEnding)
+                return true;
+
+            if (cachedGameOverController == null)
+                cachedGameOverController = FindAnyObjectByType<GameOverController>();
+
+            return cachedGameOverController != null && cachedGameOverController.isGameOver;
         }
 
         /// <summary>

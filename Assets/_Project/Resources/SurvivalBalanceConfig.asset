@@ -15,7 +15,7 @@ MonoBehaviour:
   hungerDecayPerSecond: 0.05
   thirstDecayPerSecond: 0.08
   starvationDamagePerSecond: 1
-  sunstrokeGainPerSecond: 0.1
+  sunstrokeGainPerSecond: 0.25
   sunstrokeRecoveryPerSecond: 0.2
   sunstrokeDamagePerSecond: 1
   poisonDamagePerSecond: 0.8
@@ -25,10 +25,10 @@ MonoBehaviour:
   oxygenRecoveryPerSecond: 25
   oxygenDrainPerSecond: 5
   drowningDamagePerSecond: 3
-  coconutOverdoseThreshold: 40
-  rawFoodPoisonChance: 0.3
+  coconutOverdoseThreshold: 100
+  rawFoodPoisonChance: 0.15
   campfireSecondsPerFuel: 90
-  campfireCookingExperience: 8
+  campfireCookingExperience: 20
   waterStillPerSecond: 0.1
   waterStillMaxStorage: 12
   secondsPerDay: 600
@@ -41,6 +41,7 @@ MonoBehaviour:
   hazardMediumMultiplier: 1.75
   hazardLargeMultiplier: 2.5
   hazardExtraLargeMultiplier: 3.25
+  endingAircraftRequiredElapsedDays: 8
   endingRequiredFoodCount: 12
   endingRequiredWaterCount: 12
   endingRequiredFuelCount: 1

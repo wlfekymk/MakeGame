@@ -156,7 +156,20 @@ namespace MakeGame.UI
                 offsetMax: new Vector2(-20f, -20f),
                 color: new Color(0f, 0f, 0f, 0.5f), addTopBorder: true);
 
-            var border = UIBuilder.CreateText(panel, "Hint", "[M] 지도", 12, new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerCenter);
+            // 이 한 줄이 게임에서 **항상 화면에 떠 있는 유일한 키 안내**다(레이더는 상시 표시).
+            // [game-designer 지적] 키가 9개가 넘는데 발견 경로가 사실상 여기와 조준 프롬프트뿐이라,
+            // 나머지 키를 모아 둔 곳(설정 화면의 "조작" 섹션)으로 가는 입구를 같은 줄에 붙인다.
+            // 새 패널을 만들지 않고 이미 상시 노출된 자리에 얹는 것이 가장 싼 해결이다.
+            // Esc 키 값은 박아두지 않고 SettingsMenuController가 실제로 들고 있는 값을 읽는다
+            // (씬에서 바꾸면 이 안내도 따라간다). 없으면 그 컴포넌트의 코드 기본값을 쓴다.
+            var settingsMenu = FindAnyObjectByType<SettingsMenuController>();
+            KeyCode settingsKey = settingsMenu != null ? settingsMenu.toggleKey : KeyCode.Escape;
+
+            var border = UIBuilder.CreateText(panel, "Hint", $"[{toggleKey}] 지도 · [{settingsKey}] 조작", 12,
+                new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerCenter);
+            // 레이더 폭(기본 160px)에 한 줄로 들어가야 한다. 줄바꿈이 일어나면 두 번째 줄이
+            // 세로로 잘려(verticalOverflow 기본 Truncate) 글자가 반쯤 사라진다.
+            border.horizontalOverflow = HorizontalWrapMode.Overflow;
             border.rectTransform.anchorMin = new Vector2(0f, 0f);
             border.rectTransform.anchorMax = new Vector2(1f, 0f);
             border.rectTransform.pivot = new Vector2(0.5f, 0f);
@@ -312,7 +325,7 @@ namespace MakeGame.UI
 
             listPanelRoot = panel.gameObject;
 
-            var title = UIBuilder.CreateText(panel, "Title", "섬 목록 (M)", 20, Color.white, TextAnchor.UpperLeft);
+            var title = UIBuilder.CreateText(panel, "Title", $"섬 목록 ({toggleKey})", 20, Color.white, TextAnchor.UpperLeft);
             title.rectTransform.anchorMin = new Vector2(0f, 1f);
             title.rectTransform.anchorMax = new Vector2(1f, 1f);
             title.rectTransform.pivot = new Vector2(0.5f, 1f);
@@ -335,15 +348,24 @@ namespace MakeGame.UI
             checklistLabel.rectTransform.anchorMax = new Vector2(1f, 0f);
             checklistLabel.rectTransform.pivot = new Vector2(0.5f, 0f);
             checklistLabel.rectTransform.anchoredPosition = new Vector2(0f, 28f);
-            checklistLabel.rectTransform.sizeDelta = new Vector2(-20f, 20f);
+            // 높이 20 → 34(두 줄). 한 줄(20)로 두면 문구가 폭 500px을 넘는 순간 Text가 줄바꿈을 하고,
+            // 넘친 두 번째 줄은 verticalOverflow 기본값 Truncate 때문에 **통째로 사라진다**.
+            // 실제로 특대 섬 문구("특대 섬 준비: 손도끼 X  물 O  음식 X  무기 X   (엔진부품은 맨손으로
+            // 캔다, 손도끼는 금속조각용)")가 한글 20자 + 기호로 500px을 넘겨, 정작 가장 중요한 괄호 안
+            // 도구 안내만 조용히 잘려나갈 폭이었다. 힌트가 반만 보이면 힌트가 아니라 함정이 된다
+            // (사망 화면 회피 힌트와 같은 기준 - Design_Ending.md 5-3).
+            checklistLabel.rectTransform.sizeDelta = new Vector2(-20f, 34f);
 
             var listGo = new GameObject("IslandList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             listGo.transform.SetParent(panel, false);
             listContainer = listGo.GetComponent<RectTransform>();
             listContainer.anchorMin = new Vector2(0f, 0f);
             listContainer.anchorMax = new Vector2(1f, 1f);
-            // 아래쪽 여백 32 → 52: 상태 문구 위에 준비 체크리스트 한 줄이 들어갈 자리를 비운다.
-            listContainer.offsetMin = new Vector2(14f, 52f);
+            // 아래쪽 여백 32 → 52 → 66: 상태 문구 위에 준비 체크리스트가 들어갈 자리를 비운다.
+            // 체크리스트가 두 줄(34px)로 늘어난 만큼 14px 더 올려, 긴 문구가 두 줄이 돼도 섬 목록을
+            // 침범하지 않게 한다. 남는 목록 높이는 440 - 40(위) - 66 = 334px로, 섬 9개 × 26px + 간격
+            // (총 ~262px)이 그대로 들어간다.
+            listContainer.offsetMin = new Vector2(14f, 66f);
             listContainer.offsetMax = new Vector2(-14f, -40f);
 
             var vlg = listGo.GetComponent<VerticalLayoutGroup>();

@@ -56,6 +56,32 @@ namespace MakeGame.UI
         private Text bodyLabel;
         private float refreshTimer = 0f;
 
+        // ── 결말 화면 미리보기(개발 전용) ────────────────────────────────────────────────────
+        // 배 엔딩은 경과 15일(매일 취침해도 실질 74분, 안 자면 150분)이 조건이라 실기로는 도달할 수
+        // 없고, 사망 화면은 실제로 죽어야 뜬다. 그래서 이 세 화면은 지금까지 아무도 실행 중에 본 적이
+        // 없다. F3 패널이 열려 있는 동안만 받는 키로 화면만 띄운다.
+        //
+        // 격리 방식(출시 빌드에서 플레이어가 절대 누를 수 없어야 한다):
+        //   1) 키 상수와 처리 코드가 전부 #if UNITY_EDITOR || DEVELOPMENT_BUILD 안에 있다 - 출시
+        //      빌드에는 컴파일조차 되지 않는다.
+        //   2) 그 안에서도 Debug.isDebugBuild를 한 번 더 확인한다.
+        //   3) EndingUI/GameOverUI 쪽 진입점(DebugPreviewEnding/DebugPreviewGameOver)에도 같은
+        //      #if + Debug.isDebugBuild 가드가 걸려 있다.
+        //   4) F3 디버그 패널이 열려 있을 때만 키를 읽는다(패널 기본값은 꺼짐).
+        // 공개 필드로 두지 않는 이유: 씬 직렬화 대상이 되면 #if로 빠지는 빌드에서 "씬에는 있는데
+        // 읽는 코드가 없는 키"가 남는다. QA 도구의 고정 키라 상수로 충분하다.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private const KeyCode PreviewBoatEndingKey = KeyCode.F6;
+        private const KeyCode PreviewAircraftEndingKey = KeyCode.F7;
+        private const KeyCode PreviewGameOverKey = KeyCode.F8;
+
+        private EndingUI cachedEndingUI;
+        private GameOverUI cachedGameOverUI;
+
+        /// <summary>지금 미리보기로 띄워둔 엔딩이 경비행기인지. 같은 키를 다시 누르면 닫기 위한 상태다.</summary>
+        private bool previewingAircraftEnding = false;
+#endif
+
         // 문자열 조립용 버퍼. 갱신 때마다 새 StringBuilder를 만들지 않고 Clear해서 재사용한다.
         private readonly StringBuilder builder = new StringBuilder(512);
 
@@ -109,6 +135,8 @@ namespace MakeGame.UI
 
             if (panelRoot == null || !panelRoot.activeSelf)
                 return;
+
+            HandleScreenPreviewKeys();
 
             refreshTimer -= Time.unscaledDeltaTime;
             if (refreshTimer > 0f)
@@ -170,10 +198,83 @@ namespace MakeGame.UI
                 builder.Append("[F5] 저장   [F9] 불러오기   [Esc] 설정\n");
             }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // 개발 빌드에서만 존재하는 줄이다. 출시 빌드에는 이 안내 자체가 컴파일되지 않으므로
+            // "화면에 적혀 있는데 눌러도 안 되는 키"가 남지 않는다.
+            if (Debug.isDebugBuild)
+            {
+                builder.Append('\n');
+                builder.Append("── 결말 화면 미리보기 (상태 변경 없음) ──\n");
+                builder.Append('[').Append(PreviewBoatEndingKey.ToString()).Append("] 배 엔딩   ")
+                    .Append('[').Append(PreviewAircraftEndingKey.ToString()).Append("] 비행기 엔딩   ")
+                    .Append('[').Append(PreviewGameOverKey.ToString()).Append("] 사망 화면\n");
+                builder.Append("같은 키를 다시 누르면 닫힘\n");
+            }
+#endif
+
             builder.Append('\n').Append('[').Append(toggleKey.ToString()).Append("] 디버그 패널 끄기");
 
             bodyLabel.text = builder.ToString();
         }
+
+        /// <summary>
+        /// 결말 화면 미리보기 키를 처리한다. 출시 빌드에서는 본문이 통째로 컴파일되지 않는 빈 메서드다.
+        /// 같은 키를 다시 누르면 닫힌다(토글). 게임 상태는 전혀 바뀌지 않는다 - EndingChecker/
+        /// GameOverController의 어떤 값도 쓰지 않고, 화면을 띄우는 쪽이 자기 패널만 열고 닫는다.
+        /// </summary>
+        private void HandleScreenPreviewKeys()
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (!Debug.isDebugBuild)
+                return;
+
+            if (Input.GetKeyDown(PreviewBoatEndingKey))
+                ToggleEndingPreview(aircraft: false);
+            else if (Input.GetKeyDown(PreviewAircraftEndingKey))
+                ToggleEndingPreview(aircraft: true);
+            else if (Input.GetKeyDown(PreviewGameOverKey))
+                ToggleGameOverPreview();
+#endif
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// 엔딩 화면 미리보기를 켜고 끈다. 이미 같은 종류를 보고 있으면 닫고, 다른 종류를 보고 있으면
+        /// 그쪽으로 갈아탄다(EndingUI.DebugPreviewEnding이 내부에서 먼저 닫고 처음부터 다시 재생한다).
+        /// EndingUI/GameOverUI는 씬 오브젝트가 아니라 sceneLoaded에서 런타임 생성되므로 Start()에서
+        /// 미리 찾지 않고, 실제로 필요할 때 찾아서 캐시한다(씬 리로드 시 죽은 참조는 null 검사로 걸린다).
+        /// </summary>
+        private void ToggleEndingPreview(bool aircraft)
+        {
+            if (cachedEndingUI == null)
+                cachedEndingUI = FindAnyObjectByType<EndingUI>();
+            if (cachedEndingUI == null)
+                return;
+
+            if (cachedEndingUI.IsPreviewing && previewingAircraftEnding == aircraft)
+            {
+                cachedEndingUI.ClosePreview();
+                return;
+            }
+
+            previewingAircraftEnding = aircraft;
+            cachedEndingUI.DebugPreviewEnding(aircraft);
+        }
+
+        /// <summary>사망 화면 미리보기를 켜고 끈다.</summary>
+        private void ToggleGameOverPreview()
+        {
+            if (cachedGameOverUI == null)
+                cachedGameOverUI = FindAnyObjectByType<GameOverUI>();
+            if (cachedGameOverUI == null)
+                return;
+
+            if (cachedGameOverUI.IsPreviewing)
+                cachedGameOverUI.ClosePreview();
+            else
+                cachedGameOverUI.DebugPreviewGameOver();
+        }
+#endif
 
         /// <summary>패널을 열거나 닫는다. 여는 순간 즉시 한 번 갱신해 낡은 값이 보이지 않게 한다.</summary>
         private void SetOpen(bool open)

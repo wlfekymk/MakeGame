@@ -24,5 +24,5 @@ MonoBehaviour:
   resultItem: {fileID: 11400000, guid: 25fad7a6c7d84ed9809d1dc8458dc0d9, type: 2}
   resultQuantity: 1
   requiredSkill: 1
-  requiredSkillLevel: 3
+  requiredSkillLevel: 2
   experienceReward: 25

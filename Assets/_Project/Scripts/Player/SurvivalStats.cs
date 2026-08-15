@@ -172,9 +172,34 @@ namespace MakeGame.Player
         // 기본 인자(40f)에만 하드코딩돼 있어서, config를 고쳐도 게임은 40으로 굴러갔다.
         // 지금 배선하는 이유: config 값(40)과 실효값(40)이 아직 같아서 회귀 위험이 0이다 - 둘이 갈라진
         // 뒤에 배선하면 그 순간이 곧 밸런스 변경이 된다.
+        // ⚠ 위 문단은 규칙 재설계 이전의 기록이다. **지금은 config의 40이 옛 의미(1회 섭취량)를
+        //   담고 있어 새 의미(마신 뒤 갈증 합계)와 맞지 않는다.** 아래 필드 기본값이 100(양수)이라
+        //   폴백(<=0일 때만)이 실행되지 않아 당장은 아무 영향이 없지만, 에셋 값을 100으로 고쳐야
+        //   한다(디렉터 요청 올림 - .asset은 이 역할이 편집할 수 없다).
+        // [규칙 재설계 - game-designer 실측] 위 배선은 값만 이었고 **규칙 자체가 죽어 있었다.**
+        // 판정이 `amount > coconutOverdoseThreshold`(= 1회 섭취량)인데 코코넛의 1회 섭취량은
+        // Item_코코넛.asset의 thirstRestoreAmount 30으로 고정이고 임계치는 40이라 30 > 40은 영원히
+        // 거짓이다. 코코넛 워터 아이템은 이 하나뿐이므로(isCoconutWaterSource: 1인 에셋 전수 = 1개)
+        // 값을 바꿔도 살아나지 않는다 - 임계치를 30 미만으로 내리면 "모든 섭취가 과음"이 되어
+        // 규칙이 반대편으로 죽는다.
+        //
+        // 그래서 "얼마나 많이 마셨나"가 아니라 **"배부른데 또 마셨나"**로 판정을 바꿨다. 이 필드는
+        // 이제 1회 섭취량이 아니라 **마신 뒤의 갈증 합계**와 비교되며, 기본값도 그 의미에 맞는
+        // MaxStatValue(100)다. 필드/타입/이름은 그대로라 씬·프리팹 직렬화에는 영향이 없다
+        // (SampleScene의 SurvivalStats 블록 :684-708에 이 키 자체가 없고, SurvivalStats를 가진
+        // 프리팹도 0개 - 전수 확인함. 따라서 실효값은 코드 기본값 100이 된다).
+        //
+        // 왜 이 안이 가장 온건한가: (1) 페널티가 연속적이다. 임계치 바로 아래에서 초과분 0으로
+        // 시작하므로 예전의 "갈증 절반" 같은 절벽이 없다. (2) 갈증 70 이하(= 100 - 30)에서 마시면
+        // 페널티가 **아예 걸리지 않는다** - 정상적으로 목마를 때 마시는 플레이는 지금과 100% 동일하다.
+        // (3) 손익분기가 85다(85에서 마시면 100 - 15 = 85로 제자리). 즉 손해를 보려면 갈증 85 이상,
+        // 사실상 "마실 이유가 없을 때" 마셔야 한다. 최대 손실은 초과분 상한인 30(갈증 100에서 섭취).
         [Header("코코넛워터 과음")]
-        [Tooltip("코코넛 워터를 1회에 이 수치보다 많이 마시면 과음으로 판정되어 설사로 갈증이 절반으로 떨어진다.")]
-        public float coconutOverdoseThreshold = 40f;
+        [Tooltip("코코넛 워터를 마신 뒤의 갈증 합계가 이 수치를 넘으면 과음으로 판정되어, 넘친 만큼\n" +
+            "설사로 갈증을 다시 잃는다(초과분 = 마신 뒤 합계 - 이 수치). 기본값 100 = 최대치를\n" +
+            "넘겨 마실 때만 손해. 0 이하는 이 파일의 다른 필드와 마찬가지로 '미설정'으로 보고\n" +
+            "config 값으로 채운다 - 조건을 세게 걸고 싶으면 0이 아니라 작은 양수를 넣을 것.")]
+        public float coconutOverdoseThreshold = MaxStatValue;
 
         /// <summary>현재 사망 상태인지 여부.</summary>
         public bool IsDead => health <= 0f;
@@ -394,25 +419,33 @@ namespace MakeGame.Player
 
         /// <summary>
         /// 코코넛 워터처럼 과음 시 부작용이 있는 수분 공급원을 섭취한다.
-        /// 갈증은 회복되지만, 과음(threshold 초과) 시 설사로 인해 갈증이 급격히 다시 악화된다.
+        /// 갈증은 회복되지만, **이미 배가 부른 상태에서 더 마시면**(마신 뒤 합계가 임계치 초과)
+        /// 설사로 초과분만큼 갈증을 다시 잃는다. 규칙을 이렇게 바꾼 이유는 coconutOverdoseThreshold
+        /// 선언부 주석 참고 - 예전 판정(1회 섭취량 &gt; 임계치)은 수학적으로 성립할 수 없는 죽은 코드였다.
         /// </summary>
         /// <param name="amount">회복시킬 갈증 수치</param>
-        /// <param name="overdoseThreshold">과음으로 판정되는 1회 섭취량 기준치.
+        /// <param name="overdoseThreshold">과음 판정 기준치. **마신 뒤의 갈증 합계**와 비교한다.
         /// 음수(기본값 -1)로 두면 이 컴포넌트의 coconutOverdoseThreshold 필드를 쓴다 - 그 필드는
         /// ApplyBalanceConfigFallback을 통해 SurvivalBalanceConfig와 연결돼 있다.
-        /// 예전 기본값 40f는 config를 무시하는 하드코딩이었고, 지금은 필드 기본값도 40f라 호출부
-        /// (ConsumptionSystem.Consume - 인자를 넘기지 않는 유일한 호출부)의 동작이 완전히 동일하다.</param>
+        /// 유일한 호출부(ConsumptionSystem.Consume)는 이 인자를 넘기지 않는다.</param>
         public void ConsumeCoconutWater(float amount, float overdoseThreshold = -1f)
         {
+            float thirstBefore = thirst;
             ConsumeWater(amount);
 
-            // 0도 유효한 임계치("아무리 조금 마셔도 과음")로 보고, 미지정은 음수로만 판정한다.
+            // 인자로 0을 넘기는 것은 "합계가 0만 넘어도 과음" 이라는 유효한 지정으로 보고, 미지정은
+            // 음수로만 판정한다(필드 쪽 0 이하는 ApplyBalanceConfigFallback이 미설정으로 다룬다).
             float threshold = overdoseThreshold >= 0f ? overdoseThreshold : coconutOverdoseThreshold;
 
-            if (amount > threshold)
+            // 마시지 않은(amount 0 이하) 호출은 과음 판정에서 아예 제외한다 - 마시지도 않았는데
+            // 갈증이 높다는 이유로 배탈이 나면 안 된다(임계치가 낮게 설정된 경우에 실제로 그럴 수 있다).
+            float totalAfterDrink = thirstBefore + amount;
+            if (amount > 0f && totalAfterDrink > threshold)
             {
-                // 과음 시 설사로 인해 갈증이 절반 수준으로 급격히 악화된다.
-                thirst = Mathf.Max(0f, thirst * 0.5f);
+                // 넘긴 만큼(초과분) 설사로 다시 잃는다. ConsumeWater가 이미 최대치로 잘라냈으므로
+                // 여기서 빼는 값은 "버려진 양"이 아니라 그 위에 얹히는 실제 손해다.
+                float overdoseAmount = totalAfterDrink - threshold;
+                thirst = Mathf.Max(0f, thirst - overdoseAmount);
             }
         }
 

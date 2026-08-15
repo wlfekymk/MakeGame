@@ -63,6 +63,14 @@ namespace MakeGame.UI
             public int cachedMinRemaining = -1;
         }
 
+        // 사용법 힌트에 쓰는 실제 키. 예전에는 "[C] 섭취"처럼 문자열에 키가 박혀 있었는데, 실제 키는
+        // InteractionController가 정하고 씬에서 바뀔 수 있다(이 프로젝트에서 코드/씬 값이 갈라지는 것이
+        // 사고의 유일한 원인이다 - AGENT_BRIEF 0장). Start()에서 실제 필드를 읽어 캐시한다.
+        private KeyCode interactKey = KeyCode.E;
+        private KeyCode cookKey = KeyCode.R;
+        private KeyCode consumeKey = KeyCode.C;
+        private KeyCode placeKey = KeyCode.G;
+
         private GameObject panelRoot;
         private RectTransform listContainer;
         private Text titleLabel;
@@ -79,6 +87,15 @@ namespace MakeGame.UI
         /// </summary>
         private void Start()
         {
+            var interaction = FindAnyObjectByType<MakeGame.Systems.InteractionController>();
+            if (interaction != null)
+            {
+                interactKey = interaction.interactKey;
+                cookKey = interaction.cookKey;
+                consumeKey = interaction.consumeKey;
+                placeKey = interaction.placeKey;
+            }
+
             BuildUI();
             SetOpen(false);
         }
@@ -121,7 +138,9 @@ namespace MakeGame.UI
             if (currentFilterIndex == lastDisplayedFilterIndex)
                 return;
 
-            titleLabel.text = $"인벤토리 (Tab)  [필터: {CategoryFilterNames[currentFilterIndex]}, F로 전환]";
+            // 키는 이 컴포넌트가 직접 들고 있는 값(씬에서 바뀔 수 있다)을 쓴다. 창 제목처럼 명사에
+            // 붙는 자리는 "이름 (키)" 표기다(지금 눌러야 할 동작을 가리키는 "[키] 동작"과 구분).
+            titleLabel.text = $"인벤토리 ({toggleKey})  [필터: {CategoryFilterNames[currentFilterIndex]}, {cycleFilterKey}로 전환]";
             lastDisplayedFilterIndex = currentFilterIndex;
         }
 
@@ -154,7 +173,7 @@ namespace MakeGame.UI
 
             panelRoot = panel.gameObject;
 
-            var title = UIBuilder.CreateText(panel, "Title", "인벤토리 (Tab)", 20, Color.white, TextAnchor.UpperLeft);
+            var title = UIBuilder.CreateText(panel, "Title", $"인벤토리 ({toggleKey})", 20, Color.white, TextAnchor.UpperLeft);
             title.rectTransform.anchorMin = new Vector2(0f, 1f);
             title.rectTransform.anchorMax = new Vector2(1f, 1f);
             title.rectTransform.pivot = new Vector2(0.5f, 1f);
@@ -466,25 +485,25 @@ namespace MakeGame.UI
         /// 정하는 값이라(C=섭취/R=조리/G=설치) 여기서는 그 기본 키에 맞춘 표시 문자열만 담당한다.
         /// 판정 기준은 ItemData가 이미 들고 있는 플래그(isRawFood/isPlaceable/IsConsumable/isWeapon) 그대로다.
         /// </summary>
-        private static string GetUsageHint(ItemData data)
+        private string GetUsageHint(ItemData data)
         {
             if (data == null)
                 return "";
 
             if (data.isRawFood && data.cookedResult != null)
-                return "[R] 굽기";
+                return $"[{cookKey}] 굽기";
 
             if (data.isPlaceable && data.placementPrefab != null)
-                return "[G] 설치";
+                return $"[{placeKey}] 설치";
 
             if (data.curesBleeding || data.curesPoison || data.curesBrokenBone)
-                return "[C] 치료";
+                return $"[{consumeKey}] 치료";
 
             if (data.IsConsumable)
-                return "[C] 섭취";
+                return $"[{consumeKey}] 섭취";
 
             if (data.isWeapon)
-                return "[E] 공격";
+                return $"[{interactKey}] 공격";
 
             return "재료";
         }

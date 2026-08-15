@@ -70,7 +70,7 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 밤에 쉼터에서 상호작용하면 취침해 아침(다음 날 일출, TimeOfDay01 0.25)까지 시간을 건너뛰고
+        /// 밤에 쉼터에서 상호작용하면 취침해 **이 밤이 끝나는 아침**(TimeOfDay01 0.25)까지 시간을 건너뛰고
         /// 소량의 체력을 회복하며 일사병 수치를 완전히 초기화한다. 신규 기능: 예전에는 밤이 되어도
         /// 그냥 지켜보거나 돌아다니는 것 외에 할 수 있는 게 없었는데, Stranded Deep처럼 쉼터를 지은
         /// 보람이 있도록 "밤을 건너뛰는 능동적 행동"을 추가했다. 낮에는 건너뛸 밤이 없으므로 실패한다.
@@ -80,12 +80,12 @@ namespace MakeGame.Systems
         /// </summary>
         public bool TrySleep(SurvivalClock clock, SurvivalStats survivalStats)
         {
-            if (clock == null || clock.IsDaytime)
+            if (clock == null || clock.IsDaytime || clock.secondsPerDay <= 0f)
                 return false;
 
-            // 다음 날의 일출 시각(TimeOfDay01 == 0.25)으로 정확히 이동시킨다.
-            int nextDay = clock.ElapsedDays + 1;
-            clock.elapsedSeconds = (nextDay + 0.25f) * clock.secondsPerDay;
+            // "이 밤이 끝나는 아침"(TimeOfDay01 == 0.25)으로 이동시킨다. GetWakeDay 주석 참고 -
+            // 예전의 ElapsedDays + 1은 자정을 넘긴 뒤에 자면 하루를 통째로 더 건너뛰었다.
+            clock.elapsedSeconds = GetWakeSeconds(clock);
 
             if (survivalStats != null)
             {
@@ -97,6 +97,52 @@ namespace MakeGame.Systems
             // 예전에는 PlayCraftSuccess()를 재사용해 "제작"과 "취침"이 같은 소리로 구분이 안 됐다.
             AudioManager.Instance?.PlaySleepSuccess();
             return true;
+        }
+
+        // ── 취침 목적지 계산 (game-designer 지적: 자정 이후 취침이 1.25일을 건너뛴다) ──────────────
+        //
+        // 무엇이 틀렸었나: 예전 계산은 `ElapsedDays + 1`이었다. 밤은 하루의 끝(TimeOfDay01 0.75~1.0)과
+        // **다음 날의 시작**(0~0.25) 양쪽에 걸쳐 있는데, 자정을 넘긴 시각에는 ElapsedDays가 이미 +1 된
+        // 상태다. 거기에 또 +1을 하면 의도(그날 아침까지 0.25일)의 5배인 1.25일을 건너뛴다.
+        // 그 결과 배 엔딩의 15일 조건 도달이 74.5분 → 59.5분으로 20% 짧아졌다(Design_MidGame 7장).
+        //
+        // 고친 방법: 시각을 0.75일(= 밤의 시작) 앞으로 밀어 놓고 날짜를 내림한다. 그러면 일몰 직후와
+        // 자정 직후가 **같은 날 번호**로 접히므로, 한 밤 안의 어느 시각에 자든 도착지가 하나로 정해진다.
+        //   · 일몰 직후 t=0.76 (day D) → floor(D+0.76+0.75) = D+1 → 도착 (D+1.25)일 = 0.49일 건너뜀
+        //   · 자정 직후 t=0.01 (day D+1, 같은 밤) → floor(D+1.01+0.75) = D+1 → 같은 도착지, 0.24일 건너뜀
+        //   · 일출 직전 t=0.24 (day D+1) → floor(D+1.24+0.75) = D+1 → 같은 도착지, 0.01일 건너뜀
+        // 시계가 뒤로 가는 경우는 없다: n = floor(x + 0.75) > x - 0.25 이므로 항상 n + 0.25 > x다.
+
+        /// <summary>밤의 시작(= 낮의 끝) 시각. SurvivalClock.IsDaytime의 상한과 같은 기준이다.</summary>
+        private const float NightStartTimeOfDay = 0.75f;
+
+        /// <summary>일출(아침) 시각. SurvivalClock.IsDaytime의 하한/DayNightCycle과 같은 기준이다.</summary>
+        private const float MorningTimeOfDay = 0.25f;
+
+        /// <summary>
+        /// 지금 취침하면 눈을 뜨는 날(ElapsedDays 기준, 0 = 1일차). 위 주석의 계산이다.
+        /// 시계가 없거나 하루 길이가 0 이하면(0 나누기) 0을 돌려주므로, 호출부는 시계를 먼저 확인할 것.
+        /// [ui-engineer] InteractionPromptUI가 같은 식을 따로 들고 있었는데, 그쪽이 이 메서드를 부르면
+        /// 프롬프트의 "N일차 아침" 표기가 실제 도착지와 갈라지지 않는다.
+        /// </summary>
+        public static int GetWakeDay(SurvivalClock clock)
+        {
+            if (clock == null || clock.secondsPerDay <= 0f)
+                return 0;
+
+            return Mathf.FloorToInt(clock.elapsedSeconds / clock.secondsPerDay + NightStartTimeOfDay);
+        }
+
+        /// <summary>
+        /// 지금 취침하면 도달하는 게임 내 경과 시간(초). 곧 다음 아침(TimeOfDay01 == 0.25)이다.
+        /// 건너뛰는 시간을 표시하려면 이 값에서 clock.elapsedSeconds를 빼면 된다.
+        /// </summary>
+        public static float GetWakeSeconds(SurvivalClock clock)
+        {
+            if (clock == null || clock.secondsPerDay <= 0f)
+                return 0f;
+
+            return (GetWakeDay(clock) + MorningTimeOfDay) * clock.secondsPerDay;
         }
     }
 }

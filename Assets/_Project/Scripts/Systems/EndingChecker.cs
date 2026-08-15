@@ -23,7 +23,9 @@ namespace MakeGame.Systems
     ///    + 최소 경과 일수(requiredElapsedDays, Spec_11 기준 15일) 도달. 여러 단계를 밟아 꾸준히
     ///    자원을 모으는 정공법 경로.
     /// 2) 경비행기 수리 엔딩: 시작 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
-    ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete가 true가 되는 순간 확정된다.
+    ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete + 최소 경과 일수
+    ///    (aircraftRequiredElapsedDays, Design_MidGame 8장 기준 8일)를 함께 요구한다 - 예전에는
+    ///    isRepairComplete 하나뿐이라 시간 조건이 0이었다(HasElapsedAircraftRequiredDays 주석 참고).
     ///
     /// B4-1 (Spec_15 3단계 배선): SurvivalBalanceConfig를 선택적(nullable) 참조로 받는다.
     /// 폴백으로 읽는 config 필드 — requiredFoodCount ← endingRequiredFoodCount,
@@ -59,8 +61,14 @@ namespace MakeGame.Systems
         [Tooltip("배 엔딩에 필요한 최소 경과 일수 (Spec_11 기준 15일)")]
         public int requiredElapsedDays = 15;
 
+        [Tooltip("경비행기 엔딩에 필요한 최소 경과 일수 (Design_MidGame 8장 기준 8일). 0이면 이 조건을 끈다.")]
+        public int aircraftRequiredElapsedDays = 8;
+
         /// <summary>survivalClock 미연결 경고를 이미 한 번 남겼는지 여부 (매 프레임 로그 스팸 방지용).</summary>
         private bool survivalClockMissingWarned = false;
+
+        /// <summary>경비행기 경로에서 survivalClock 미연결 경고를 이미 남겼는지 여부(로그 스팸 방지).</summary>
+        private bool aircraftSurvivalClockMissingWarned = false;
 
         [Header("엔딩 연출")]
         [Tooltip("엔딩 달성 시 잠시 비활성화할 이동/시점 컨트롤러")]
@@ -252,6 +260,11 @@ namespace MakeGame.Systems
             if (requiredWaterCount < 0) requiredWaterCount = balanceConfig.endingRequiredWaterCount;
             if (requiredFuelCount < 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
             if (requiredElapsedDays < 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
+
+            // aircraftRequiredElapsedDays는 여기서 폴백하지 않는다. SurvivalBalanceConfig에 대응
+            // 필드(endingAircraftRequiredElapsedDays)가 아직 없기 때문이다 - 없는 필드를 읽으면
+            // 컴파일이 깨진다. 필드가 추가되면 위 네 줄과 같은 형태(<0일 때만)로 한 줄 붙이면 된다.
+            // 그때까지 음수 값은 "조건 없음"으로 동작한다(ElapsedDays >= 음수는 항상 참).
         }
 
         /// <summary>
@@ -306,7 +319,7 @@ namespace MakeGame.Systems
             if (CheckBoatEndingConditions())
                 best = HigherPriority(best, EndingKind.Boat);
 
-            if (aircraftRepair != null && aircraftRepair.isRepairComplete)
+            if (aircraftRepair != null && aircraftRepair.isRepairComplete && HasElapsedAircraftRequiredDays())
                 best = HigherPriority(best, EndingKind.Aircraft);
 
             return best;
@@ -385,19 +398,51 @@ namespace MakeGame.Systems
         /// </summary>
         private bool HasElapsedRequiredDays()
         {
+            return HasElapsedDaysOrWarn(requiredElapsedDays, "배", ref survivalClockMissingWarned);
+        }
+
+        /// <summary>
+        /// 경비행기 엔딩의 최소 경과 일수(aircraftRequiredElapsedDays) 조건을 만족했는지 확인한다.
+        ///
+        /// [추가 근거 - Design_MidGame.md 8장] 이 조건이 붙기 전까지 경비행기 판정은
+        /// isRepairComplete 하나뿐이었다. 그런데 엔진부품(특대 전용)에 도달하는 시점에 그 섬에 이미
+        /// 재료가 넘치게 있어서 25~30분이면 게임이 끝난다 - 배 경로(74.5분)의 절반도 안 되고, 그
+        /// 결과 30분 이후의 모든 콘텐츠가 "아무도 보지 않는" 선택 사항이 된다.
+        /// 8일 근거: 일몰 취침 루프 기준 39.5분(270 + 300×7초)이라 재료 확보 완료 추정(25~30분)보다
+        /// 10분 뒤이고, 배 엔딩(15일)의 약 절반이라 두 엔딩의 길이 차이는 그대로 유지된다.
+        ///
+        /// survivalClock 미연결 시의 처리(경고 1회 + 조건 통과)는 배 쪽과 완전히 동일하다 -
+        /// 미연결 때문에 엔딩이 영구히 막히는 편이 조건이 헐거워지는 것보다 나쁘다는 같은 판단이다.
+        /// </summary>
+        private bool HasElapsedAircraftRequiredDays()
+        {
+            return HasElapsedDaysOrWarn(aircraftRequiredElapsedDays, "경비행기",
+                ref aircraftSurvivalClockMissingWarned);
+        }
+
+        /// <summary>
+        /// 경과 일수 조건 판정의 공통 본체. survivalClock이 없으면 최초 1회만 Debug.LogError를 남기고
+        /// 조건을 만족한 것으로 처리한다(소프트락 방지 - HasElapsedRequiredDays 주석 참고).
+        /// 경로마다 경고 플래그를 따로 넘기므로 배/경비행기 경고가 서로를 잡아먹지 않는다.
+        /// </summary>
+        /// <param name="requiredDays">그 경로가 요구하는 최소 경과 일수(0 이하면 사실상 조건 없음).</param>
+        /// <param name="endingName">로그에 표시할 경로 이름.</param>
+        /// <param name="warnedFlag">그 경로의 "경고를 이미 남겼는지" 플래그.</param>
+        private bool HasElapsedDaysOrWarn(int requiredDays, string endingName, ref bool warnedFlag)
+        {
             if (survivalClock == null)
             {
-                if (!survivalClockMissingWarned)
+                if (!warnedFlag)
                 {
-                    Debug.LogError($"[EndingChecker] survivalClock이 연결되지 않았습니다. 배 엔딩의 경과 일수" +
-                        $"({requiredElapsedDays}일) 조건을 검사할 수 없어 이 조건을 만족한 것으로 처리합니다. " +
+                    Debug.LogError($"[EndingChecker] survivalClock이 연결되지 않았습니다. {endingName} 엔딩의 경과 일수" +
+                        $"({requiredDays}일) 조건을 검사할 수 없어 이 조건을 만족한 것으로 처리합니다. " +
                         "Inspector에서 SurvivalClock을 연결하세요.");
-                    survivalClockMissingWarned = true;
+                    warnedFlag = true;
                 }
                 return true;
             }
 
-            return survivalClock.ElapsedDays >= requiredElapsedDays;
+            return survivalClock.ElapsedDays >= requiredDays;
         }
 
         /// <summary>

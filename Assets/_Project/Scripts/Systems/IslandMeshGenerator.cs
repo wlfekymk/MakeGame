@@ -124,12 +124,18 @@ namespace MakeGame.Systems
         /// 현재 값 220 = 야자수 16 + 덤불 48 + 풀포기 156 (전부 특대 섬 R=200에서의 상한).
         /// 즉 특대 섬은 정확히 이 값에 닿고, 누군가 공식을 조금이라도 올리는 순간 트림이 발동한다.
         ///
-        /// 예산 근거(특대 섬 실측, B9 저폴리 교체 후):
-        ///   삼각형 10,512 (야자수 5,760 + 덤불 2,880 + 풀 1,872) — 교체 전 157,824에서 **-93%**
-        ///   렌더러 508 (16×13 + 48×3 + 156×1) — 교체 전 406에서 +25%
-        /// 삼각형이 15배 남았으므로 개수를 늘렸는데, **늘린 것은 저폴리가 된 덤불·풀뿐**이고 야자수 16은
-        /// 그대로 뒀다. 야자수는 저폴리 교체 대상이 아니어서 여전히 그루당 360삼각형 / 렌더러 13개로
-        /// 가장 비싸고(현재 삼각형의 55%), 그루 수 16은 B8에서 디렉터가 렌더러 예산을 보고 정한 값이다.
+        /// 예산 근거(특대 섬 실측, B10 줄기 프리즘 교체 후):
+        ///   삼각형 8,016 (야자수 3,264 + 덤불 2,880 + 풀 1,872) — B9 10,512에서 **-24%**,
+        ///   저폴리 교체 전 157,824 대비 **-95%**
+        ///   렌더러 508 (16×13 + 48×3 + 156×1) — 프리즘 교체로 **변하지 않았다**(줄기 파츠 수 동일).
+        ///
+        /// [B10 그루 수를 올리지 않는 이유] 야자수 1그루가 360 → 204삼각형이 됐지만 그루 수 16은
+        /// 그대로 둔다. 근거 두 가지다.
+        ///   (1) 16을 정한 제약은 삼각형이 아니라 **렌더러 수**다(B8, 디렉터). 그루당 렌더러 13개는
+        ///       프리즘 교체로 1개도 줄지 않았으므로 16을 올릴 근거가 새로 생기지 않았다.
+        ///   (2) 16 + 48 + 156 = 220 = 이 상한과 정확히 같다. 야자수만 올리면 아래 트림 블록이 발동해
+        ///       **덤불·풀이 대신 깎인다** - "야자수를 늘렸더니 숲이 성겨졌다"는 조용한 회귀가 된다.
+        ///       그루 수를 올리려면 이 상한과 렌더러 예산을 함께 올려야 하고, 그것은 디렉터 결정이다.
         /// </summary>
         public const int MaxVegetationInstancesPerIsland = 220;
 
@@ -240,7 +246,8 @@ namespace MakeGame.Systems
             //     [B9] 덤불 로브와 풀포기를 내장 Sphere(768삼각형)에서 저폴리 메시(20 / 12삼각형)로
             //     교체해 삼각형이 15배 남았다. 남은 예산은 **저폴리가 된 쪽에만** 쓴다 -
             //     덤불 40 → 48, 풀포기 78 → 156. 야자수 16은 그대로다(교체 대상이 아니라 여전히
-            //     그루당 360삼각형 / 렌더러 13개로 가장 비싸고, 16은 렌더러 예산을 보고 정한 값이다).
+            //     그루당 204삼각형(B10 프리즘 교체 후) / 렌더러 13개로 여전히 가장 비싸고, 16은
+            //     삼각형이 아니라 렌더러 예산을 보고 정한 값이다).
             //     세 상한의 합 16+48+156 = 220 = MaxVegetationInstancesPerIsland로 정확히 맞춰,
             //     아래 트림 블록이 도달 불가 코드가 아니라 살아 있는 가드가 되게 했다.
             //     하한(4/12/20)은 IslandSizeMetrics의 최소 반지름이 50이라 현재 어떤 섬에서도 발동하지
@@ -356,6 +363,31 @@ namespace MakeGame.Systems
             //       밝기 단차도 1.18배 → 1.10배로 낮춘다. 원형 경계(GrassCap/WetSandCap)에도 같은
             //       디더를 얇게 걸어 네 캡의 경계 처리를 한 방식으로 통일한다.
 
+            // [B10 "각진 삼각형 얼룩" 후속] 직선 이음매는 위 디더로 사라졌지만, 실기에 **옅은 각진
+            // 삼각형 얼룩**이 남았다. 남은 원인은 경계가 아니라 **톤 자체**다. 값으로 특정한 근거:
+            //   · ToneIndex의 삼각형 단위 해시 디더 진폭이 0.55(=±0.275)였는데 톤 한 칸의 폭은
+            //     1/toneCount = 0.333이다. 즉 디더가 칸 폭의 165%라, 저주파 펄린이 만들려던 "넓은
+            //     얼룩"이 완전히 묻히고 **모든 삼각형이 사실상 무작위로 3톤에 배정**됐다.
+            //     경계만 점묘가 되는 것이 아니라 캡 전체가 소금·후추 노이즈가 된 것이다.
+            //   · 그 3톤의 차이가 명도(±6%)라 이웃 삼각형 사이 최대 단차가 1.06/0.94 = **12.8%**다.
+            //     넓고 평평하게 조명된 면에서 12.8% 명도 단차는 육안 식별 한계(수 %)를 크게 넘는다.
+            //     삼각형 하나하나가 도드라져 보이는 이유가 이것이고, 평면 셰이딩이 아니라 톤 배정이
+            //     범인이다(캡 메시는 RemapVertex가 정점을 공유해 스무스 셰이딩된다 - 위 주석 참고).
+            // 정점 색 검토(디렉터 요청): **불가능하다.** URP Lit 셰이더는 정점 색 입력 자체가 없고
+            //   (Attributes에 color 시맨틱이 없다), 이 프로젝트는 셰이더/Shader Graph 에셋이 0개라
+            //   (AGENT_BRIEF 1장) 정점 색을 읽는 셰이더를 만들 수단이 없다. 그래서 "서브메시를 늘리지
+            //   않고 정점 색으로 부드러운 그라데이션"은 이 파이프라인에서 성립하지 않는다.
+            // 조치(서브메시 개수는 그대로 3/1/2, 드로우콜 변화 0):
+            //   (1) 톤 변주를 명도가 아니라 **색상**으로 준다. ToneVariant가 상대휘도를 기준색에 정확히
+            //       고정하므로 톤 사이 명도 단차가 **0%**가 된다 - 삼각형이 밝기 얼룩으로 보일 수가 없다.
+            //       사람 눈은 색차의 공간 해상도가 명도보다 훨씬 낮아(크로마 서브샘플링이 성립하는 이유)
+            //       같은 크기의 변주라도 삼각형 단위에서는 거의 보이지 않고 넓은 패치에서만 읽힌다.
+            //       이 파일이 잎 머티리얼에 이미 쓰고 있는 규칙("변주는 명도가 아니라 색상으로")과 같다.
+            //   (2) ToneIndex의 삼각형 디더를 0.55 → 0.20으로 낮춰, 톤 배정이 저주파 펄린(격자 ≈29m)에
+            //       지배되게 되돌린다. 패치 경계 근처 삼각형만 섞이므로 원래 의도였던 "경계만 점묘"가 된다.
+            //   (3) HighlandCap의 명도 단차 1.10배(=10%)도 같은 이유로 1.05배로 낮추고, 부족해진 구분은
+            //       색상(Frond Green 쪽으로 0.55) 으로 채운다. 능선은 조명 자체가 달라 5%면 충분히 읽힌다.
+
             // 캡 경계를 흩뜨리는 폭. 삼각형 하나(2~5m)보다 넓은 띠에 걸쳐 포함/제외가 섞이게 만들어
             // 경계가 선이 아니라 점묘(stipple)로 읽히게 하는 것이 목적이다.
             float highlandDither = Mathf.Max(0.4f, peakHeight * 0.13f);   // 고도 기준 ±0.55m ≈ 평면상 ±6m
@@ -370,13 +402,16 @@ namespace MakeGame.Systems
                 capOffset, radius * 0.75f, "leaf",
                 (centroid, distance, angle) => distance <=
                     GrassBoundaryRadius(angle, radius, phaseA, phaseB) + (Hash01(centroid) - 0.5f) * radialDither,
-                3, 0.06f);
+                // 3톤 × 최대 0.50 혼합 = Meadow Green(색상각 80°) → 약 88° 사이의 색조 변주.
+                // 상대휘도는 세 톤 모두 0.609로 동일하다(ToneVariant) → 명도 단차 0%.
+                3, 0.50f, StructureVisualBuilder.FrondGreen);
 
             // 정상부의 밝은 풀. 반지름이 아니라 고도로 잘라내, 지형 굴곡(펄린 노이즈로 생긴 등성이)이
             // 그대로 색 경계가 된다 - 원형으로 잘라내면 또 하나의 완벽한 동심원이 생겨 인공적으로 보인다.
             // 0.86은 코사인 지형에서 대략 0.34R 안쪽(정상부)에 해당한다(cos(0.34·π/2) ≈ 0.86).
             // 디더 항이 이 배치의 핵심 수정이다 - 없으면 컷이 펄린 격자(20m 축 정렬)를 그대로 따라간다.
-            BuildCapLayer(surfaceRoot, source, radius, "HighlandCap", Shade(StructureVisualBuilder.MeadowGreen, 1.10f),
+            BuildCapLayer(surfaceRoot, source, radius, "HighlandCap",
+                Shade(ToneVariant(StructureVisualBuilder.MeadowGreen, StructureVisualBuilder.FrondGreen, 0.55f), 1.05f),
                 capOffset + 0.06f, radius * 0.75f, "leaf",
                 (centroid, distance, angle) =>
                     centroid.y >= peakHeight * 0.86f + (Hash01(centroid) - 0.5f) * highlandDither
@@ -390,7 +425,7 @@ namespace MakeGame.Systems
                 (centroid, distance, angle) =>
                     distance >= radius * 0.84f + (Hash01(centroid) - 0.5f) * radialDither * 0.8f
                     && distance <= radius * 0.955f,
-                2, 0.05f);
+                2, 0.22f, StructureVisualBuilder.WeatheredStone);
         }
 
         /// <summary>
@@ -411,10 +446,16 @@ namespace MakeGame.Systems
         /// 늘어나는 것은 드로우콜 (toneCount-1)개뿐이다(섬당 총 +3). 초목 프리미티브 상한 180과는
         /// 무관하다 - 프리미티브를 하나도 추가하지 않는다.
         /// </param>
-        /// <param name="toneSpread">톤 사이의 밝기 폭(±비율). 0.06이면 0.94/1.00/1.06배.</param>
+        /// <param name="toneSpread">
+        /// 마지막 톤이 toneShift 쪽으로 얼마나 섞이는지(0~1). [B10] 예전에는 "밝기 폭(±비율)"이었는데,
+        /// 명도 변주가 삼각형 단위 얼룩의 직접 원인이라 **색상 혼합 비율**로 의미를 바꿨다.
+        /// 상대휘도는 ToneVariant가 기준색에 고정하므로 이 값이 아무리 커도 명도 단차는 0이다.
+        /// </param>
+        /// <param name="toneShift">톤이 섞여 들어갈 상대 색. 비우면 변주 없음(단색)과 같다.</param>
         private static void BuildCapLayer(Transform surfaceRoot, Mesh source, float radius, string name,
             Color color, float yOffset, float textureTiling, string textureName,
-            System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.06f)
+            System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.30f,
+            Color? toneShift = null)
         {
             Vector3[] sourceVertices = source.vertices;
             int[] sourceTriangles = source.triangles;
@@ -483,11 +524,13 @@ namespace MakeGame.Systems
             var materials = new Material[usedTones.Count];
             for (int s = 0; s < usedTones.Count; s++)
             {
-                // 톤 0 → -toneSpread, 마지막 톤 → +toneSpread로 균등 배분(toneCount 1이면 정확히 1.0배).
-                float factor = toneCount <= 1
-                    ? 1f
-                    : 1f + (usedTones[s] / (float)(toneCount - 1) - 0.5f) * 2f * toneSpread;
-                var material = StructureVisualBuilder.CreateColorMaterial(Shade(color, factor), textureName);
+                // 톤 0 → 기준색 그대로, 마지막 톤 → toneShift 쪽으로 toneSpread만큼(toneCount 1이면 0).
+                // 상대휘도는 전 톤이 동일하다(ToneVariant) - 이웃 삼각형 사이 명도 단차 0%.
+                float mix = toneCount <= 1
+                    ? 0f
+                    : usedTones[s] / (float)(toneCount - 1) * toneSpread;
+                var material = StructureVisualBuilder.CreateColorMaterial(
+                    ToneVariant(color, toneShift ?? color, mix), textureName);
                 // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
                 // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
                 // WorldMapManager.CreateDefaultTerrainMaterial의 모래 타일링과 같은 계산 방식이다.
@@ -565,11 +608,29 @@ namespace MakeGame.Systems
         /// <summary>야자수 1그루를 이루는 줄기 마디 수. 마디마다 기울기를 조금씩 더해 휜 기둥을 만든다.</summary>
         private const int PalmTrunkSegments = 3;
 
+        /// <summary>
+        /// 야자수 줄기 프리즘의 각 수. 내장 Cylinder(20각, 마디당 80삼각형)를 대체한다.
+        ///
+        /// [B10] 6각(마디당 20)이 아니라 **8각(마디당 28)** 으로 정했다. 직전 배치에서 스스로 올린 우려
+        /// ("줄기는 5m 이내 근접 관찰 대상이라 각이 눈에 띌 수 있다")를 값으로 검증한 결과다.
+        ///   · 실루엣 오차: 정n각형의 평균 폭은 Cauchy 공식으로 2nR·sin(π/n)/π다. 원(2R) 대비
+        ///     20각 99.6% / 8각 97.5% / 6각 95.5% — 즉 회전에 따라 굵기가 출렁이는 폭이
+        ///     8각 7.6% vs 6각 13.4%다. 굵기 인지 한계(약 5%)를 8각은 거의 넘지 않고 6각은 확실히 넘는다.
+        ///   · 능선 꺾임각: 6각은 면 사이 법선이 60° 꺾이고 8각은 45°다. 지향성 광원 하나뿐인
+        ///     이 씬에서 60° 꺾임은 이웃 면 사이 밝기가 최대 2배 가까이 벌어져, 지금 지면에서 고치고 있는
+        ///     "각진 얼룩"과 같은 실패를 굵기 0.3m짜리 근접 오브젝트에서 재현하게 된다.
+        ///   · 비용 차이는 그루당 24삼각형(마디 3개 × 8), 특대 섬 16그루 기준 384삼각형 = 교체 전
+        ///     총량의 3.7%뿐이다. 가장 자주 근접 관찰되는 오브젝트의 리스크를 그 값에 사는 것이 맞다.
+        /// 옆면은 **스무스 셰이딩**(법선을 반경 방향으로 직접 지정)이라 내장 Cylinder와 음영이 사실상
+        /// 같다. 덤불/풀의 평면 셰이딩과 달리 여기서 각을 세우지 않는 이유는 위 능선 꺾임각 근거와 같다.
+        /// </summary>
+        private const int PalmTrunkSides = 8;
+
         /// <summary>야자수 1그루의 잎 장수. 잎 1장은 안쪽/바깥쪽 2마디로 꺾여 아래로 늘어진다.</summary>
         private const int PalmFrondCount = 5;
 
         /// <summary>
-        /// 야자수 한 그루(줄기 원기둥 3 + 잎 박스 5×2 = 렌더러 13개)를 만든다.
+        /// 야자수 한 그루(줄기 8각 프리즘 3 + 잎 박스 5×2 = 렌더러 13개 / 204삼각형)를 만든다.
         ///
         /// [B8 형태 개선] 이전 형태는 곧은 원기둥 1개 + 방사형으로 뻗은 평평한 판자 4개라서, 실기에서
         /// "가는 장대에 판자를 붙인 것"으로 보이고 야자수로 읽히지 않았다. 진짜 야자수의 실루엣을 만드는
@@ -588,8 +649,18 @@ namespace MakeGame.Systems
         {
             // 굵기: 예전 0.16~0.26m는 5~7m 높이에 대해 너무 가늘어 장대로 보였다. 밑동을 0.26~0.38m로
             // 올리고 위로 갈수록 62%까지 가늘어지게 해서 "굵은 밑동 → 가는 목"의 야자수 비례를 만든다.
+            //
+            // [B10 호출부 스케일 재검토 — 형태 교체와 함께 반드시 본다는 규칙]
+            // 여기 값은 **외접 반지름**(정점이 놓이는 반지름)이다. 내장 Cylinder도 정점이 반지름 0.5에
+            // 놓이므로 스케일의 의미 자체는 그대로지만, 화면에 보이는 굵기는 외접 반지름이 아니라
+            // **평균 폭**(Cauchy: 2nR·sin(π/n)/π)이다. 20각 0.996·2R → 8각 0.9745·2R 이므로 같은
+            // baseRadius를 그대로 넣으면 줄기가 **2.2% 가늘어 보인다**. 그래서 범위를 0.9958/0.9745
+            // = 1.0219배 한 0.266~0.388로 올려 교체 전후 평균 굵기를 일치시킨다.
+            // (참고: 6각이었다면 보정이 4.3%로 인지 한계에 걸린다 - 8각을 고른 또 하나의 이유다.)
+            // 난수 소비는 그대로 1회다. NextFloat(min,max)는 범위와 무관하게 스트림을 한 번만 당기므로
+            // 상·하한을 바꿔도 같은 worldSeed에서 이후 배치가 밀리지 않는다(파일 상단 [결정성] 전제 유지).
             float height = rng.NextFloat(4.6f, 7.6f);
-            float baseRadius = rng.NextFloat(0.26f, 0.38f);
+            float baseRadius = rng.NextFloat(0.266f, 0.388f);
             float leanDirection = rng.NextFloat(0f, 360f);   // 어느 쪽으로 휘는가
             float leanStart = rng.NextFloat(1f, 5f);         // 밑동 마디의 기울기(거의 수직)
             float leanStep = rng.NextFloat(4f, 9f);          // 마디마다 더해지는 기울기
@@ -615,9 +686,10 @@ namespace MakeGame.Systems
                 float t = (i + 0.5f) / PalmTrunkSegments;
                 float segmentRadius = Mathf.Lerp(baseRadius, baseRadius * 0.62f, t);
 
-                // 원기둥 프리미티브는 높이 2단위라 localScale.y에 "마디 길이의 절반"을 넣어야 한다.
-                // 마디 사이가 벌어져 보이지 않게 길이를 6% 겹쳐 쌓는다.
-                CreatePart(palm.transform, $"Veg_PalmTrunk{i}", PrimitiveType.Cylinder,
+                // 프리즘 메시는 내장 Cylinder와 동일한 로컬 규격(반지름 0.5·높이 2)이라 아래 스케일 식이
+                // 그대로 유효하다. localScale.y에 "마디 길이의 절반"을 넣고, 마디 사이가 벌어져 보이지
+                // 않게 길이를 6% 겹쳐 쌓는다.
+                CreatePart(palm.transform, $"Veg_PalmTrunk{i}", GetPalmTrunkPrismMesh(),
                     cursor + direction * (segmentLength * 0.5f),
                     new Vector3(segmentRadius * 2f, segmentLength * 0.53f, segmentRadius * 2f),
                     rotation, trunkMaterial);
@@ -792,7 +864,7 @@ namespace MakeGame.Systems
         //
         // 실측(특대 섬, 교체 전): 풀포기 78×768 = 59,904 · 덤불 로브 120×768 = 92,160 ·
         // 야자수 전체 5,760 → 합계 157,824. 즉 덤불+풀이 96%였다. 반면 야자수는 그루당 360삼각형
-        // (원기둥 3×80 + 큐브 10×12)뿐이라 애초에 싸다 - B8에서 "그루 수 42 → 16으로 상쇄했다"고
+        // (내장 Cylinder 3×80 + 큐브 10×12)뿐이라 애초에 쌌다 - B8에서 "그루 수 42 → 16으로 상쇄했다"고
         // 한 것은 렌더러 예산에는 맞았지만 삼각형 관점에서는 잘못된 곳을 줄인 것이었다.
         //
         // 내장 Sphere는 768삼각형짜리 UV 구다. 덤불 로브와 풀포기는 둘 다 비균일 스케일로 납작하게
@@ -842,6 +914,126 @@ namespace MakeGame.Systems
 
             lowPolyLobeMesh = BuildFlatShadedMesh("Veg_LobeIcosa", basePoints, faces, true);
             return lowPolyLobeMesh;
+        }
+
+        /// <summary>
+        /// 야자수 줄기 마디용 저폴리 프리즘(8각, 28삼각형). 내장 Cylinder 80삼각형의 35%.
+        ///
+        /// 규격은 **내장 Cylinder와 완전히 동일**하다 - 정점이 반지름 0.5 원 위에 놓이고 높이는 y = -1~+1.
+        /// 그래야 CreatePalm의 스케일 식 (segmentRadius*2, segmentLength*0.53, segmentRadius*2)의 의미가
+        /// 한 글자도 바뀌지 않는다(굵기 보정은 스케일 식이 아니라 baseRadius 범위에서 한다 - 그쪽 주석 참고).
+        ///
+        /// 삼각형 내역: 옆면 8×2 = 16, 캡 2×(8-2) = 12 → 28. 캡은 중심 정점 없이 모서리에서 부채꼴로
+        /// 감아(=n-2개) 삼각형을 아낀다. 캡을 아예 빼면 12삼각형까지 내려가지만, 마디가 6% 겹쳐 있다는
+        /// 전제가 깨지는 순간(기울기 누적이 커지면 이음매가 벌어질 수 있다) 줄기 속이 뚫려 보이므로 남긴다.
+        ///
+        /// 옆면 법선은 반경 방향으로 **직접 지정**한다. RecalculateNormals에 맡기면 정점을 면마다 나눈
+        /// 구조가 아니어도 면 법선이 평균돼 결과가 파이프라인 버전에 의존하고, 무엇보다 평면 셰이딩이
+        /// 되면 이웃 면 사이 45° 법선 단차가 그대로 밝기 단차로 나온다(PalmTrunkSides 주석의 근거).
+        /// 캡은 정점을 따로 두고 ±Y 법선을 줘 옆면과 섞이지 않게 한다.
+        /// </summary>
+        private static Mesh GetPalmTrunkPrismMesh()
+        {
+            if (palmTrunkPrismMesh != null)
+                return palmTrunkPrismMesh;
+
+            const int sides = PalmTrunkSides;
+            const float radius = 0.5f;
+
+            var vertices = new List<Vector3>();
+            var normals = new List<Vector3>();
+            var uvs = new List<Vector2>();
+
+            // 옆면: 이음매 정점을 한 번 더 둬서 UV가 한 바퀴 돌 때 되감기지 않게 한다.
+            int sideStart = vertices.Count;
+            for (int i = 0; i <= sides; i++)
+            {
+                float angle = (float)i / sides * Mathf.PI * 2f;
+                var radial = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                Vector3 p = radial * radius;
+                float u = (float)i / sides;
+
+                vertices.Add(new Vector3(p.x, -1f, p.z));
+                normals.Add(radial);
+                uvs.Add(new Vector2(u, 0f));
+
+                vertices.Add(new Vector3(p.x, 1f, p.z));
+                normals.Add(radial);
+                uvs.Add(new Vector2(u, 1f));
+            }
+
+            int topStart = vertices.Count;
+            for (int i = 0; i < sides; i++)
+            {
+                float angle = (float)i / sides * Mathf.PI * 2f;
+                var p = new Vector3(Mathf.Cos(angle) * radius, 1f, Mathf.Sin(angle) * radius);
+                vertices.Add(p);
+                normals.Add(Vector3.up);
+                uvs.Add(new Vector2(p.x + 0.5f, p.z + 0.5f));
+            }
+
+            int bottomStart = vertices.Count;
+            for (int i = 0; i < sides; i++)
+            {
+                float angle = (float)i / sides * Mathf.PI * 2f;
+                var p = new Vector3(Mathf.Cos(angle) * radius, -1f, Mathf.Sin(angle) * radius);
+                vertices.Add(p);
+                normals.Add(Vector3.down);
+                uvs.Add(new Vector2(p.x + 0.5f, p.z + 0.5f));
+            }
+
+            Vector3[] positions = vertices.ToArray();
+            var triangles = new List<int>();
+
+            for (int i = 0; i < sides; i++)
+            {
+                int b0 = sideStart + i * 2;
+                int t0 = b0 + 1;
+                int b1 = b0 + 2;
+                int t1 = b0 + 3;
+
+                float mid = ((float)i + 0.5f) / sides * Mathf.PI * 2f;
+                var outward = new Vector3(Mathf.Cos(mid), 0f, Mathf.Sin(mid));
+                AddOrientedTriangle(triangles, positions, b0, t0, t1, outward);
+                AddOrientedTriangle(triangles, positions, b0, t1, b1, outward);
+            }
+
+            for (int i = 1; i < sides - 1; i++)
+            {
+                AddOrientedTriangle(triangles, positions, topStart, topStart + i, topStart + i + 1, Vector3.up);
+                AddOrientedTriangle(triangles, positions, bottomStart, bottomStart + i, bottomStart + i + 1, Vector3.down);
+            }
+
+            var mesh = new Mesh { name = "Veg_PalmTrunkPrism" };
+            mesh.SetVertices(vertices);
+            mesh.SetNormals(normals);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateBounds(); // 법선은 위에서 직접 넣었으므로 RecalculateNormals를 부르면 안 된다.
+
+            palmTrunkPrismMesh = mesh;
+            return palmTrunkPrismMesh;
+        }
+
+        /// <summary>
+        /// 삼각형 하나를 감김 방향까지 맞춰 넣는다. 기하 법선이 reference와 반대면 감김을 뒤집는다.
+        /// 이 프로젝트는 왼손 좌표계라 표준 인덱스 표를 그대로 옮기면 통째로 안쪽을 향해 컬링되는
+        /// 사고가 반복됐다(BuildFlatShadedMesh 주석). 표를 믿지 않고 계산으로 확정하는 방식을 그대로 쓴다.
+        /// </summary>
+        private static void AddOrientedTriangle(List<int> triangles, Vector3[] positions,
+            int i0, int i1, int i2, Vector3 reference)
+        {
+            Vector3 geometric = Vector3.Cross(positions[i1] - positions[i0], positions[i2] - positions[i0]);
+            if (Vector3.Dot(geometric, reference) < 0f)
+            {
+                int swap = i1;
+                i1 = i2;
+                i2 = swap;
+            }
+
+            triangles.Add(i0);
+            triangles.Add(i1);
+            triangles.Add(i2);
         }
 
         /// <summary>
@@ -946,6 +1138,7 @@ namespace MakeGame.Systems
 
         private static Mesh lowPolyLobeMesh;
         private static Mesh grassBladeMesh;
+        private static Mesh palmTrunkPrismMesh;
 
         /// <summary>
         /// 팔레트 색의 명도만 바꾼 변주를 만든다(알파는 항상 1로 유지 - URP Lit Opaque에서 알파가
@@ -988,6 +1181,34 @@ namespace MakeGame.Systems
                 1f);
         }
 
+        /// <summary>Rec.709 상대휘도. 톤 변주가 명도를 건드리지 않았는지 판정하는 기준이다.</summary>
+        private static float Luma(Color color)
+        {
+            return 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
+        }
+
+        /// <summary>
+        /// 기준색과 같은 상대휘도를 유지한 채 색상만 shiftTarget 쪽으로 amount만큼 민 변주를 만든다.
+        ///
+        /// 왜 Shade가 아니라 이것인가(B10): 지면 캡의 톤 변주를 명도로 주면 이웃 삼각형 사이에 명도
+        /// 단차가 생기고, 넓고 평평하게 조명된 지면에서 그 단차는 몇 %만 되어도 "각진 삼각형 얼룩"으로
+        /// 읽힌다(실기 보고). 색상 변주는 같은 크기라도 삼각형 단위에서는 거의 보이지 않는다 - 사람 눈의
+        /// 색차 공간 해상도가 명도보다 훨씬 낮기 때문이다. 여기서 휘도를 강제로 되맞추므로 명도 단차는
+        /// 정확히 0이 되고, 남는 것은 넓은 패치에서만 읽히는 색조 변화뿐이다.
+        /// </summary>
+        private static Color ToneVariant(Color baseColor, Color shiftTarget, float amount)
+        {
+            if (amount <= 0.0001f)
+                return new Color(baseColor.r, baseColor.g, baseColor.b, 1f);
+
+            Color mixed = Color.Lerp(baseColor, shiftTarget, Mathf.Clamp01(amount));
+            float mixedLuma = Luma(mixed);
+            if (mixedLuma <= 0.0001f)
+                return new Color(baseColor.r, baseColor.g, baseColor.b, 1f);
+
+            return Shade(mixed, Luma(baseColor) / mixedLuma);
+        }
+
         /// <summary>
         /// 야자수 줄기(나무껍질) 색. Driftwood(#8C6640)의 명도를 0.93배로 낮추고 채도를 1.20배로 올린
         /// 변주 = #82582D. 팔레트에 새 색을 추가한 것이 아니라 Driftwood의 한 단계다("목재" 의미 유지).
@@ -1010,9 +1231,14 @@ namespace MakeGame.Systems
         /// <summary>
         /// 캡 삼각형 하나를 어느 톤(서브메시)에 넣을지 고른다.
         ///
-        /// 저주파 펄린(격자 ≈29m)으로 넓은 얼룩을 만들되, 삼각형 단위 해시를 크게 섞어 얼룩의 경계를
+        /// 저주파 펄린(격자 ≈29m)으로 넓은 얼룩을 만들되, 삼각형 단위 해시를 섞어 얼룩의 경계를
         /// 점묘로 흩뜨린다. 이 디더가 없으면 펄린 격자가 축 정렬(axis-aligned)이라는 사실이 그대로
         /// 드러나 직선 경계의 사각 얼룩이 생긴다 - HighlandCap에서 실제로 났던 사고와 같은 원인이다.
+        ///
+        /// [B10] 디더 진폭을 0.55 → 0.20으로 낮췄다. 톤 한 칸의 폭이 1/toneCount = 0.333인데 0.55는
+        /// ±0.275, 즉 칸 폭의 165%라 펄린 패치가 통째로 묻히고 **모든** 삼각형이 무작위 배정됐다
+        /// (= 캡 전체가 소금·후추 노이즈). 0.20은 ±0.10 = 칸 폭의 30%라, 패치 경계 근처 삼각형만
+        /// 섞이고 패치 안쪽은 한 톤으로 남는다 - 원래 의도했던 "경계만 점묘"가 된다.
         /// </summary>
         private static int ToneIndex(Vector3 centroid, int toneCount)
         {
@@ -1022,7 +1248,7 @@ namespace MakeGame.Systems
             // 펄린은 실제로 0~1을 다 쓰지 않고 대략 0.25~0.75에 몰려 있어, 그대로 나누면 양 끝 톤이
             // 거의 안 쓰인다. 1.6배로 펴서 세 톤이 고르게 나오게 한다.
             float patch = (Mathf.PerlinNoise(centroid.x * 0.035f + 517f, centroid.z * 0.035f + 517f) - 0.5f) * 1.6f + 0.5f;
-            float dithered = Mathf.Clamp01(patch + (Hash01(centroid) - 0.5f) * 0.55f);
+            float dithered = Mathf.Clamp01(patch + (Hash01(centroid) - 0.5f) * 0.20f);
             return Mathf.Clamp(Mathf.FloorToInt(dithered * toneCount), 0, toneCount - 1);
         }
     }

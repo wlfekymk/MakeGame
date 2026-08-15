@@ -87,11 +87,21 @@ namespace MakeGame.UI
         private float onsetTimer = 0f;
         private Color onsetColor = Color.white;
 
+        // 치료 키. 예전에는 문구에 "(C)"가 박혀 있었는데, 실제 키는 InteractionController.consumeKey가
+        // 정한다(씬에서 바뀔 수 있다). 값이 갈라지면 화면이 거짓말을 하므로 실제 필드를 읽어 캐시한다.
+        // 표기는 조준 프롬프트/인벤토리 사용법과 같은 "[키] 동작" 형식으로 통일했다 - 지금 눌러야 할
+        // 키를 알려주는 문장이라 명사 뒤 괄호 표기(제작(V) 같은 서술형)와 성격이 다르다(보고서 [결정] 1).
+        private KeyCode consumeKey = KeyCode.C;
+
         /// <summary>
         /// 시작 시 배너 UI 계층을 생성하고 기본적으로 닫힌 상태로 둔다.
         /// </summary>
         private void Start()
         {
+            var interaction = FindAnyObjectByType<InteractionController>();
+            if (interaction != null)
+                consumeKey = interaction.consumeKey;
+
             BuildUI();
             SetOpen(false);
             SetSunsetOpen(false);
@@ -391,12 +401,14 @@ namespace MakeGame.UI
         {
             var parts = new System.Collections.Generic.List<string>();
 
+            string cure = $"[{consumeKey}]";
+
             if (survivalStats.isBleeding)
-                parts.Add("⚠ 출혈 중! 붕대로 지혈하세요 (C)");
+                parts.Add($"⚠ 출혈 중! {cure} 붕대로 지혈");
             if (survivalStats.isPoisoned)
-                parts.Add("⚠ 중독 상태! 해독제가 필요합니다 (C)");
+                parts.Add($"⚠ 중독 상태! {cure} 해독제 사용");
             if (survivalStats.hasBrokenBone)
-                parts.Add("⚠ 골절 상태! 부목으로 치료하세요 (C)");
+                parts.Add($"⚠ 골절 상태! {cure} 부목으로 치료");
             if (isDrowning)
                 parts.Add("⚠ 산소 부족! 수면으로 올라가세요");
             if (isSunstroke)

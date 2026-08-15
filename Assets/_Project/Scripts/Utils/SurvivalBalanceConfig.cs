@@ -9,10 +9,14 @@ namespace MakeGame.Data
     /// 조정하려면 스크립트 기본값과 씬/프리팹 오버라이드를 모두 찾아 다녀야 한다(#13 WaterStill
     /// 사고가 실제 사례).
     ///
-    /// 2단계(B3-11) 진행 상황: SurvivalStats가 이 config를 선택적(nullable) 참조로 배선했다(필드가
-    /// 0 이하로 미설정일 때만 config 값을 채우는 폴백 구조, SurvivalStats.ApplyBalanceConfigFallback
-    /// 참고). WaterStill/Campfire/WeatherSystem/HazardSpawner/EndingChecker/SurvivalClock은 아직
-    /// 배선하지 않았다. 기존 MonoBehaviour의 public 필드는 단 하나도 제거/치환하지 않았다.
+    /// [B11 현황] 코드상 8개 컴포넌트가 이 config를 참조한다(SurvivalStats / HazardSpawner /
+    /// ConsumptionSystem / WeatherSystem / Campfire / SurvivalClock / EndingChecker / WaterStill).
+    /// 다만 **씬에서 실제로 배선된 것은 4개뿐**이다(SurvivalStats / HazardSpawner / SurvivalClock /
+    /// EndingChecker). 나머지는 SurvivalBalanceConfig.Active(Resources 자동 로드)로 받거나,
+    /// ConsumptionSystem처럼 명시 토글(useConfigPoisonChance, 기본 false)이 꺼져 있어 아예 안 읽는다.
+    /// → **"config만 고치면 반영된다"고 가정하지 마라.** 이 프로젝트 사고의 대표 유형이다.
+    /// 폴백 규칙: 필드가 미설정(대개 <=0, 0이 유효값인 필드는 <0)일 때만 config 값으로 채운다.
+    /// 기존 MonoBehaviour의 public 필드는 단 하나도 제거/치환하지 않았다.
     ///
     /// 기본값 출처: Docs/Balance_SceneSnapshot.md(씬/프리팹 실측값). 코드 기본값이 아니라 실측값을
     /// 우선했다 — 예를 들어 hazard*Multiplier는 HazardSpawner의 현재 기본값(1/1.75/2.5/3.25, B3-7
@@ -33,9 +37,9 @@ namespace MakeGame.Data
         public float starvationDamagePerSecond = 1f;
 
         [Header("일사병")]
-        public float sunstrokeGainPerSecond = 0.1f;
+        public float sunstrokeGainPerSecond = 0.25f;
         public float sunstrokeRecoveryPerSecond = 0.2f;
-        public float sunstrokeDamagePerSecond = 0.5f;
+        public float sunstrokeDamagePerSecond = 1f;
 
         [Header("상태이상 피해")]
         public float poisonDamagePerSecond = 0.8f;
@@ -51,14 +55,17 @@ namespace MakeGame.Data
         public float drowningDamagePerSecond = 3f;
 
         [Header("코코넛워터 과음")]
-        public float coconutOverdoseThreshold = 40f;
+        // [B11] 의미가 바뀌었다: 예전에는 "1회 섭취량"을 봤는데, 코코넛의 thirstRestoreAmount(30)가
+        // 임계치(40)보다 작아 판정이 영원히 거짓이었다(규칙이 죽어 있었다). 지금은 "마신 뒤의 갈증
+        // 합계"를 본다 - 갈증 70 이하에서 마시면 페널티 0, 85가 손익분기다.
+        public float coconutOverdoseThreshold = 100f;
 
         [Header("식중독")]
-        [Range(0f, 1f)] public float rawFoodPoisonChance = 0.3f;
+        [Range(0f, 1f)] public float rawFoodPoisonChance = 0.15f;
 
         [Header("모닥불")]
-        public float campfireSecondsPerFuel = 30f;
-        public float campfireCookingExperience = 8f;
+        public float campfireSecondsPerFuel = 90f;
+        public float campfireCookingExperience = 20f;
 
         [Header("물 증류기 (#13 반영)")]
         public float waterStillPerSecond = 0.10f;
@@ -85,9 +92,14 @@ namespace MakeGame.Data
         public float hazardLargeMultiplier = 2.5f;
         public float hazardExtraLargeMultiplier = 3.25f;
 
+        [Header("경비행기 엔딩 (B11 반영)")]
+        // 비행기 엔딩에 시간 조건이 아예 없어서 실제 플레이 길이가 30분이 되고 30~90분 구간이
+        // 통째로 선택 사항이 됐다(Docs/Design_MidGame.md). 배 15일의 절반인 8일을 건다.
+        public int endingAircraftRequiredElapsedDays = 8;
+
         [Header("배 엔딩 (#11 반영)")]
-        public int endingRequiredFoodCount = 30;
-        public int endingRequiredWaterCount = 30;
+        public int endingRequiredFoodCount = 12;
+        public int endingRequiredWaterCount = 12;
         public int endingRequiredFuelCount = 1;
         public int endingRequiredElapsedDays = 15;
 

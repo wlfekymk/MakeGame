@@ -118,7 +118,7 @@ namespace MakeGame.UI
 
             panelRoot = panel.gameObject;
 
-            var title = UIBuilder.CreateText(panel, "Title", "제작 (V)", 20, Color.white, TextAnchor.UpperLeft);
+            var title = UIBuilder.CreateText(panel, "Title", $"제작 ({toggleKey})", 20, Color.white, TextAnchor.UpperLeft);
             title.rectTransform.anchorMin = new Vector2(0f, 1f);
             title.rectTransform.anchorMax = new Vector2(1f, 1f);
             title.rectTransform.pivot = new Vector2(0.5f, 1f);

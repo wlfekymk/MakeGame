@@ -309,15 +309,21 @@ namespace MakeGame.UI
                 return true;
             }
 
-            // Shelter.TrySleep과 같은 계산: 다음 날 일출(TimeOfDay01 0.25)로 이동한다. 시계는 실시간
-            // 1초당 1초씩 흐르므로(SurvivalClock.Update), 건너뛰는 게임 내 초 = 아껴지는 실제 초다.
-            int nextDay = clock.ElapsedDays + 1;
-            float wakeSeconds = (nextDay + 0.25f) * clock.secondsPerDay;
+            // 목적지 계산은 **전혀 하지 않는다** - Shelter가 실제 취침에 쓰는 public static을 그대로
+            // 부른다. 예전에는 여기서 `ElapsedDays + 1`을 자체 계산했는데, systems가 자정 이후 취침이
+            // 1.25일을 건너뛰던 버그를 Shelter 쪽에서만 고쳐(GetWakeDay 주석 참고) 프롬프트만 틀린
+            // 값을 말하게 됐다(자정 직후 실제 2.4분인데 "12.4분", 날짜도 하루 밀림). 채집 프롬프트가
+            // ResourceNode.GetHarvestFailure의 결론만 받아 옮기는 것과 같은 규칙을 적용한다.
+            // 시계는 실시간 1초당 1초씩 흐르므로(SurvivalClock.Update) 건너뛰는 게임 내 초 = 아껴지는 실제 초다.
+            // 두 메서드는 clock이 null이거나 secondsPerDay <= 0이면 0을 돌려주는데, 위에서 clock null을
+            // 이미 걸렀고 secondsPerDay <= 0인 씬이면 Shelter.TrySleep 자체가 실패하므로 표시도 0이 맞다.
+            int wakeDay = Shelter.GetWakeDay(clock);
+            float wakeSeconds = Shelter.GetWakeSeconds(clock);
             float skipped = Mathf.Max(0f, wakeSeconds - clock.elapsedSeconds);
 
-            // HUD의 "N일차"와 같은 기준(ElapsedDays + 1)으로 눈뜰 날짜를 표기한다.
+            // HUD의 "N일차"와 같은 기준(0 = 1일차)으로 눈뜰 날짜를 표기한다.
             main = $"{key} 쉼터에서 취침 - {FormatSkipDuration(skipped)} 건너뛰기";
-            sub = $"{nextDay + 1}일차 아침으로 이동 · 체력 {shelter.sleepHealAmount:F0} 회복 · 자는 동안 허기·갈증 소모 없음";
+            sub = $"{wakeDay + 1}일차 아침으로 이동 · 체력 {shelter.sleepHealAmount:F0} 회복 · 자는 동안 허기·갈증 소모 없음";
             return true;
         }
 
