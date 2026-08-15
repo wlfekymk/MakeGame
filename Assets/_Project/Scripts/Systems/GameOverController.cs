@@ -27,11 +27,21 @@ namespace MakeGame.Systems
         /// <summary>현재 게임 오버 상태인지 여부.</summary>
         public bool isGameOver = false;
 
-        // 성능 개선(#5): OnGUI가 매 프레임 호출될 때마다 new GUIStyle(...)로 새 인스턴스를 만들고 있었다.
-        // UI/StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱 패턴을 적용해, 최초 1회만 만들고
-        // 이후에는 캐시된 스타일을 재사용한다.
-        private GUIStyle titleStyle;
-        private GUIStyle subStyle;
+        // 회귀 수정(qa-reviewer 지적): 레거시 IMGUI(OnGUI)는 Unity 렌더링 순서상 항상 Screen Space-Overlay
+        // Canvas보다 나중에, 최상단에 그려진다(sortOrder로도 못 바꾼다). 예전 OnGUI()가 화면 전체를 다시
+        // 덮고 자체 문구를 그렸기 때문에, ui-engineer가 새로 만든 UI/GameOverUI(UGUI)의 제목/사망 메시지/
+        // 재시작 버튼이 화면에 전혀 보이지 않는 문제가 있었다. "검증 전까지 과도기 안전장치로 남겨두라"는
+        // 이전 지시가 틀렸다는 판단에 따라 OnGUI()/titleStyle/subStyle/EnsureStyles()를 전부 제거했다.
+        // 새 화면 표시는 전적으로 UI/GameOverUI가 담당하며, 이 클래스는 isGameOver/GetDeathMessage()/
+        // RestartGame()만 노출한다.
+
+        /// <summary>
+        /// RestartGame()이 같은 프레임 안에서 두 번 실행되는 것을 막는 1회성 가드.
+        /// qa-reviewer 지적: R키 입력(이 클래스의 Update)과 UI/GameOverUI의 재시작 버튼 클릭이 서로
+        /// 다른 경로로 RestartGame()을 호출할 수 있어, 겹치면 GameManager.ClearInstance/
+        /// AudioManager.ClearInstance/Destroy(gameObject)/SceneManager.LoadScene이 중복 실행될 위험이 있었다.
+        /// </summary>
+        private bool isRestarting = false;
 
         /// <summary>
         /// 매 프레임 생존 수치의 사망 여부를 감시하다가, 사망을 감지하면 게임 오버 상태로 전환한다.
@@ -78,9 +88,15 @@ namespace MakeGame.Systems
         /// 새 싱글턴이 되도록 한다.
         /// 컴파일 차단 해제: UI/GameOverUI.cs(새 UGUI 게임오버 화면)가 재시작 버튼에서 이 메서드를
         /// 직접 호출해야 해서 접근제한자만 private→public으로 바꿨다(시그니처/본문은 그대로).
+        /// qa-reviewer 지적: R키(Update)와 UI/GameOverUI의 버튼 클릭 두 경로가 같은 프레임에 겹치면
+        /// 아래 정리/씬 로드 로직이 중복 실행될 수 있어, 진입부에 1회성 가드(isRestarting)를 추가했다.
         /// </summary>
         public void RestartGame()
         {
+            if (isRestarting)
+                return;
+            isRestarting = true;
+
             Time.timeScale = 1f;
 
             GameManager.ClearInstance();
@@ -88,28 +104,6 @@ namespace MakeGame.Systems
             Destroy(gameObject);
 
             SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
-        }
-
-        /// <summary>
-        /// 게임 오버 상태일 때 화면 전체를 어둡게 덮고 중앙에 안내 문구를 표시한다.
-        /// Time.timeScale이 0이어도 OnGUI/Input은 정상 동작하므로 재시작 입력을 받을 수 있다.
-        /// </summary>
-        private void OnGUI()
-        {
-            if (!isGameOver)
-                return;
-
-            // 배경 아트(밝은 섬 사진)는 일부러 넣지 않는다 - 사망 화면은 어둡고 무거운 톤이 맞다고 판단해
-            // 순수 검정 대신 아주 어두운 핏빛을 살짝 섞어 분위기만 보강했다.
-            GUI.color = new Color(0.12f, 0.02f, 0.02f, 0.85f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
-
-            EnsureStyles();
-
-            GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "게임 오버", titleStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), GetDeathMessage(), subStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), "[R] 키를 눌러 다시 시작", subStyle);
         }
 
         /// <summary>
@@ -144,30 +138,6 @@ namespace MakeGame.Systems
                 default:
                     return "무인도에서 생존하지 못했습니다.";
             }
-        }
-
-        /// <summary>
-        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
-        /// 캐시해둔다(UI/StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
-        /// </summary>
-        private void EnsureStyles()
-        {
-            if (titleStyle != null)
-                return;
-
-            titleStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 48,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            titleStyle.normal.textColor = Color.red;
-
-            subStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 20,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            subStyle.normal.textColor = Color.white;
         }
     }
 }
