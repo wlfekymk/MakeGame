@@ -86,9 +86,13 @@ namespace MakeGame.Systems
             StructureVisualBuilder.CreateVisualPart(transform, "Basin", PrimitiveType.Cylinder,
                 new Vector3(0f, 0.25f, 0f), new Vector3(0.9f, 0.25f, 0.9f), new Color(0.16f, 0.16f, 0.16f));
 
-            // 돔 천막을 받치는 중심 지지대
-            StructureVisualBuilder.CreateVisualPart(transform, "Pole", PrimitiveType.Cylinder,
-                new Vector3(0f, 0.75f, 0f), new Vector3(0.06f, 0.5f, 0.06f), new Color(0.4f, 0.28f, 0.15f));
+            // 돔 천막을 받치는 중심 지지대.
+            // [tech-artist-B 요청 - 인공물 시각 언어] 원기둥 → 각진 사각 기둥 + 밧줄 결속(ArtDirection 2장 4번).
+            // 원기둥 메시는 높이가 2단위라 scale.y에 0.5(=실제 높이 1.0m)를 넣고 있었는데, CreateLashedPost는
+            // 큐브라 실제 높이를 그대로 받는다 - 1.0f를 넘겨 기존과 동일하게 y 0.25~1.25 구간을 채운다
+            // (바스킷 윗면 0.5m와 겹치고 집수 돔 1.15m를 받치는 위치도 그대로다).
+            StructureVisualBuilder.CreateLashedPost(transform, "Pole", new Vector3(0f, 0.75f, 0f),
+                1f, 0.06f, new Color(0.4f, 0.28f, 0.15f));
 
             // 증발한 수분을 모으는 반투명한 느낌의 집수 돔(비닐 천막)
             StructureVisualBuilder.CreateVisualPart(transform, "Tarp", PrimitiveType.Sphere,

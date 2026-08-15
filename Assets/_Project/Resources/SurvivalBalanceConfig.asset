@@ -41,7 +41,7 @@ MonoBehaviour:
   hazardMediumMultiplier: 1.75
   hazardLargeMultiplier: 2.5
   hazardExtraLargeMultiplier: 3.25
-  endingRequiredFoodCount: 30
-  endingRequiredWaterCount: 30
+  endingRequiredFoodCount: 12
+  endingRequiredWaterCount: 12
   endingRequiredFuelCount: 1
   endingRequiredElapsedDays: 15

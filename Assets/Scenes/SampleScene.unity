@@ -889,7 +889,7 @@ MonoBehaviour:
     baseCount: 4
     minimumIslandSize: 0
     requiresTool: 0
-    requiredTool: {fileID: 11400000, guid: e78c2cccce274d2fac0d814667672602, type: 2}
+    requiredTool: {fileID: 0}
   - yieldItem: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
     baseCount: 3
     minimumIslandSize: 0
@@ -935,6 +935,11 @@ MonoBehaviour:
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+  - yieldItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
+    baseCount: 2
+    minimumIslandSize: 0
+    requiresTool: 0
+    requiredTool: {fileID: 0}
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
     minimumIslandSize: 0
@@ -942,7 +947,7 @@ MonoBehaviour:
     requiredTool: {fileID: 0}
   - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
     baseCount: 2
-    minimumIslandSize: 2
+    minimumIslandSize: 3
     requiresTool: 0
     requiredTool: {fileID: 0}
   smallMultiplier: 1
@@ -1030,9 +1035,9 @@ MonoBehaviour:
   interactionController: {fileID: 2000000004}
   continueKey: 32
   nonPerishableFoodItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
-  requiredFoodCount: 30
+  requiredFoodCount: 12
   waterSupplyItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
-  requiredWaterCount: 30
+  requiredWaterCount: 12
   fuelItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
   requiredFuelCount: 1
   balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
@@ -1070,7 +1075,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.BoatBlueprintSpawner
   boatConstruction: {fileID: 1886019771}
-  largeIslandSpawnChance: 0.9
+  largeIslandSpawnChance: 1
   extraLargeIslandSpawnChance: 0.95
   placementOffset: 4
 --- !u!114 &2000000013

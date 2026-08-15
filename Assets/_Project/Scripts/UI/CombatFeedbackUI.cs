@@ -168,8 +168,13 @@ namespace MakeGame.UI
         /// </summary>
         private void Update()
         {
+            // 버그 수정(Design_Ending.md 1장 제약 A): Time.deltaTime을 쓰면 timeScale = 0인 동안 타이머가
+            // 절대 줄지 않는다. 플레이어가 피격과 동시에 죽으면 GameOverController가 즉시 timeScale = 0을
+            // 걸기 때문에, 이 붉은 비네트가 최대 알파 그대로 화면에 영구히 얼어붙어 사망 화면을 덮고 있었다
+            // (엔딩 트리거도 동일하게 timeScale = 0을 건다). unscaledDeltaTime으로 세면 멈춘 화면 위에서도
+            // 정상적으로 페이드아웃돼 사라진다.
             if (flashTimer > 0f)
-                flashTimer -= Time.deltaTime;
+                flashTimer -= Time.unscaledDeltaTime;
 
             bool active = flashTimer > 0f;
             if (panelRoot.activeSelf != active)

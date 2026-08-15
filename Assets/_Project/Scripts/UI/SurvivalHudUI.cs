@@ -42,8 +42,28 @@ namespace MakeGame.UI
         private static readonly Color WarningColor = new Color(1f, 0.15f, 0.15f, 1f);
 
         private Text dayLabel;
+        private Text objectiveLabel;
         private Text boatLabel;
         private Text aircraftLabel;
+
+        // 목표 1줄(Design_Progression.md 3장 5단계 체인)에 쓰는 상태.
+        // 원칙: 이 UI는 "무엇이 목표인지"를 판정하지 않는다. 외부(systems)가 SetObjective로 넣어준
+        // 문자열을 그대로 표시하는 것이 정상 경로이고, 아직 판정 API가 없는 동안에만 아래
+        // ResolveFallbackObjective()가 "지금 있는 public 시그니처만" 읽어 대략적인 문구를 만든다.
+        // 한 번이라도 SetObjective가 불리면 그 뒤로는 폴백을 완전히 끈다(외부 판정이 항상 이긴다).
+        private bool objectiveInjected = false;
+        private string lastDisplayedObjective = null;
+        private float objectiveRefreshTimer = 0f;
+        private PlayerInventory playerInventory;
+
+        // 목표 문구 갱신 주기(초). 매 프레임 인벤토리를 훑으면 낭비라서 간격을 둔다.
+        private const float ObjectiveRefreshInterval = 0.5f;
+
+        /// <summary>
+        /// 이 씬의 HUD 인스턴스. 진행 단계 판정 시스템이 매번 FindAnyObjectByType를 하지 않고
+        /// 목표 문구를 넣을 수 있도록 노출한다(씬 리로드마다 새 인스턴스로 교체된다).
+        /// </summary>
+        public static SurvivalHudUI Instance { get; private set; }
 
         private GameObject poisonIcon;
         private GameObject bleedingIcon;
@@ -80,12 +100,38 @@ namespace MakeGame.UI
         /// </summary>
         private void Start()
         {
+            Instance = this;
+
             survivalStats = FindAnyObjectByType<SurvivalStats>();
             survivalClock = FindAnyObjectByType<SurvivalClock>();
             boatConstruction = FindAnyObjectByType<BoatConstructionSystem>();
             aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
+            playerInventory = FindAnyObjectByType<PlayerInventory>();
 
             BuildUI();
+        }
+
+        /// <summary>
+        /// 씬이 다시 로드되면 이 인스턴스는 파괴되고 새 HUD가 생성되므로, 정적 참조가 죽은
+        /// 오브젝트를 계속 가리키지 않게 정리한다(CombatFeedbackUI와 동일한 패턴).
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (Instance == this)
+                Instance = null;
+        }
+
+        /// <summary>
+        /// 현재 목표 1줄을 외부에서 주입한다(Design_Progression.md 6장 [요청] ui-engineer).
+        /// 진행 단계 판정은 전적으로 호출부의 책임이고, 이 UI는 받은 문자열을 그대로 한 줄로 표시만 한다.
+        /// 한 번이라도 호출되면 내부 폴백 판정은 영구히 꺼진다 - 외부 판정과 폴백이 매 0.5초마다
+        /// 서로 문구를 덮어쓰며 깜빡이는 상황을 원천 차단하기 위함이다.
+        /// null이나 빈 문자열을 넣으면 목표 줄이 비워진다(주입 우선 상태는 그대로 유지).
+        /// </summary>
+        public void SetObjective(string objective)
+        {
+            objectiveInjected = true;
+            ApplyObjectiveText(objective ?? "");
         }
 
         /// <summary>
@@ -99,7 +145,10 @@ namespace MakeGame.UI
             var panel = UIBuilder.CreatePanel(
                 canvas.transform, "SurvivalHudPanel",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
-                offsetMin: new Vector2(20f, -272f), offsetMax: new Vector2(300f, -20f),
+                // 높이 -272 → -296: 아래 목표 1줄 라벨(18) + 레이아웃 간격(6)만큼 패널을 늘렸다.
+                // 새 패널을 만들지 않고 기존 HUD 패널 안에 한 줄만 추가하라는 지시(Design_Progression.md
+                // 3장 단계 1 (b) "새 패널을 만들지 않는다")를 그대로 따른 결과다.
+                offsetMin: new Vector2(20f, -296f), offsetMax: new Vector2(300f, -20f),
                 color: new Color(0f, 0f, 0f, 0.55f),
                 addTopBorder: true);
 
@@ -112,6 +161,14 @@ namespace MakeGame.UI
 
             dayLabel = UIBuilder.CreateText(panel, "DayLabel", "1일차", 16, Color.white, TextAnchor.MiddleLeft);
             dayLabel.gameObject.AddComponent<LayoutElement>().minHeight = 22f;
+
+            // 현재 목표 1줄(Design_Progression.md 3장). "N일차" 바로 아래, 폰트 12 = ArtDirection.md 4.3
+            // Body 등급. 진행 단계 판정 결과를 받아 표시만 하는 라벨이고, 패널을 새로 만들지 않는다.
+            // 색은 새로 만들지 않는다(ArtDirection.md 1장 원칙). 이미 코드에서 "주목시키는 안내 문구"에
+            // 쓰고 있는 값(MinimapUI.statusLabel과 동일한 옅은 금색)을 그대로 재사용해, 회색 보조 진행도
+            // 문구(배/경비행기)와는 구분되고 흰색 본문보다는 눈에 먼저 들어오게 한다.
+            objectiveLabel = UIBuilder.CreateText(panel, "ObjectiveLabel", "", 12, new Color(1f, 0.9f, 0.4f, 1f), TextAnchor.MiddleLeft);
+            objectiveLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
 
             // 개선(ArtDirection.md 1.3/1.1): "위급/전투" 의미의 빨강이 #CC4040/#D93333/#CC1A1A/#FF2626로
             // 흩어져 있던 것 중, 체력 평상시 색을 Danger Red #CC3333로 통일한다. WarningColor(펄스
@@ -346,6 +403,62 @@ namespace MakeGame.UI
                     aircraftLabelDisplayed = true;
                 }
             }
+
+            UpdateObjectiveFallback();
+        }
+
+        /// <summary>
+        /// 진행 단계 판정 API가 아직 없는 동안만 도는 최소 폴백. SetObjective가 한 번이라도 불렸으면
+        /// 즉시 아무 일도 하지 않는다. Time.timeScale이 0인 화면(타이틀/설정/게임오버/엔딩) 위에서도
+        /// 타이머가 멈추지 않도록 unscaledDeltaTime을 쓴다(Design_Ending.md 1장 제약 A).
+        /// </summary>
+        private void UpdateObjectiveFallback()
+        {
+            if (objectiveInjected || objectiveLabel == null)
+                return;
+
+            objectiveRefreshTimer -= Time.unscaledDeltaTime;
+            if (objectiveRefreshTimer > 0f)
+                return;
+
+            objectiveRefreshTimer = ObjectiveRefreshInterval;
+            ApplyObjectiveText(ResolveFallbackObjective());
+        }
+
+        /// <summary>
+        /// 지금 이 코드베이스에 실제로 존재하는 public 시그니처(BoatConstructionSystem.currentStage,
+        /// AircraftRepairSystem.GetOverallProgress, PlayerInventory.items, SurvivalStats)만으로 만든
+        /// 아주 단순한 단계 판정이다. Design_Progression.md 3장의 정식 진입 신호(도면 습득/금속조각
+        /// 최초 획득 등)는 여기서 알 수 없으므로 근사치이며, 정식 판정 API가 들어오면
+        /// SetObjective 주입이 이 폴백을 통째로 대체한다.
+        /// </summary>
+        private string ResolveFallbackObjective()
+        {
+            // [B6 디렉터] 이 메서드는 원래 판정 API가 없던 동안 쓰는 임시 폴백이었다. 이제
+            // ProgressionTracker(systems-engineer-B, WorldMapManager.cs)가 들어왔으므로 그쪽으로 위임한다.
+            //
+            // 임시 폴백에 실제 버그가 있었다: `boatConstruction.currentStage >= 1` 로 4단계를 판정했는데
+            // currentStage의 초기값이 1이다(= "1단계를 아직 안 지었다"는 뜻이지 "1단계를 지었다"가 아니다).
+            // 그래서 게임 시작 0초에 곧바로 "탈출 준비" 목표가 떴다. 실기 확인에서 잡혔다.
+            // ProgressionTracker.Evaluate는 hasCurrentStageBlueprint / highestCompletedStage / 진행률로
+            // 판정하므로 같은 함정에 빠지지 않는다.
+            //
+            // 인자는 전부 null 허용이다. islandTravel 참조는 이 UI가 들고 있지 않아 null을 넘기는데,
+            // 그러면 "시작 섬을 떠났다" 신호만 빠지고 손도끼 보유 신호로 3단계 판정이 유지된다.
+            return ProgressionTracker.GetObjectiveText(
+                playerInventory, survivalStats, boatConstruction, aircraftRepair, null);
+        }
+
+        /// <summary>
+        /// 목표 문구가 실제로 바뀐 경우에만 .text에 대입한다(#7과 동일한 GC 절약 패턴).
+        /// </summary>
+        private void ApplyObjectiveText(string objective)
+        {
+            if (objectiveLabel == null || objective == lastDisplayedObjective)
+                return;
+
+            objectiveLabel.text = objective;
+            lastDisplayedObjective = objective;
         }
     }
 }

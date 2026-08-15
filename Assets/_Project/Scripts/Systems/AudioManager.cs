@@ -46,6 +46,15 @@ namespace MakeGame.Systems
         private AudioClip clipSleepSuccess;
         private AudioClip clipCampfireLit;
 
+        // [game-designer 최우선 요청] 행동이 조건 미달로 실패했을 때의 전용 신호음. 지금까지 실패는
+        // "아무 소리도 나지 않음"이라 플레이어가 버그와 구분할 수 없었다(ResourceNode.Harvest 참고).
+        // 성공음과 정반대의 음색(사각파 부저)을 쓴다 - 자세한 이유는 CreateBuzz 주석 참고.
+        private AudioClip clipActionFail;
+
+        // [ui-engineer 요청] 상태 이상(중독/출혈/일사병/익사)이 시작된 그 순간에만 울리는 짧은 경고음.
+        // 지속 중 반복 재생은 금지 - PlayStatusOnset의 재발동 가드 주석 참고.
+        private AudioClip clipStatusOnset;
+
         /// <summary>
         /// 싱글턴 인스턴스를 초기화하고, 씬 전환에도 파괴되지 않게 한 뒤 재생용 AudioSource와
         /// 절차적 효과음 클립들을 준비한다.
@@ -128,6 +137,14 @@ namespace MakeGame.Systems
             clipHealSuccess = ProceduralAudioClipGenerator.CreateChord(new float[] { 392f, 494f, 587f }, 0.3f); // 치료 성공: 배 제작 완료(523/659/784)보다 한 옥타브 낮고 차분한 3화음
             clipSleepSuccess = ProceduralAudioClipGenerator.CreateBeep(440f, 0.5f, 220f); // 취침 성공: 다른 효과음보다 훨씬 길게(0.5초) 늘여 서서히 가라앉는 저음 - "잠드는" 느낌
             clipCampfireLit = ProceduralAudioClipGenerator.CreateBeep(150f, 0.15f, 600f); // 모닥불 점화: 낮은음에서 확 타오르듯 빠르게 상승하는 스윕음
+
+            // 실패(조건 미달): 낮은 사각파 부저 2연타. 이 게임에서 사각파를 쓰는 유일한 소리라
+            // 채집 성공(880->1046 상승 사인)/제작 성공(660->990)과 음색 자체가 달라 절대 헷갈리지 않는다.
+            clipActionFail = ProceduralAudioClipGenerator.CreateBuzz(140f, 0.16f, 2);
+
+            // 상태 이상 시작: 반음 이내로 붙인 두 음의 맥놀이. 협화음인 축하음(523/659/784)·치료음
+            // (392/494/587)과 같은 화음 계열이지만 불협이라 귀에는 정반대로("불길함") 읽힌다.
+            clipStatusOnset = ProceduralAudioClipGenerator.CreateWarningBeat(466f, 14f, 0.34f);
         }
 
         /// <summary>자원 채집 성공 시 재생한다.</summary>
@@ -178,6 +195,46 @@ namespace MakeGame.Systems
         /// 호출부 교체는 Campfire.cs(systems-engineer 소유) 쪽에서 이뤄져야 한다.
         /// </summary>
         public void PlayCampfireLit() => PlaySfx(clipCampfireLit);
+
+        /// <summary>
+        /// [game-designer 최우선 요청] 플레이어의 행동이 "조건 미달"로 실패했을 때 재생한다
+        /// (예: 손도끼 없이 금속조각 채집 시도, 이미 고갈된 노드 재채집).
+        ///
+        /// 이 신호가 없던 동안 실패는 화면·소리 어느 쪽에서도 아무 일이 일어나지 않는 것과 구별되지
+        /// 않았고, 플레이어는 그것을 버그로 읽고 해당 노드를 영구히 포기했다. 화면 문구는
+        /// InteractionPromptUI(조준 시 회색 사유 표시)가 담당하므로, 여기서는 "지금 누른 그 입력이
+        /// 확실히 처리됐고 다만 거부됐다"는 사실만 소리로 확인해 준다.
+        ///
+        /// 남용 금지: 조건 미달로 거부된 그 순간에만 부른다. 상시로 반복되는 상태(굶주림 등)에는 쓰지 않는다.
+        /// </summary>
+        public void PlayActionFail() => PlaySfx(clipActionFail);
+
+        /// <summary>
+        /// [ui-engineer 요청] 상태 이상(중독/출혈/일사병/익사)이 **시작된 그 순간**에만 재생하는 경고음.
+        /// CombatFeedbackUI.TriggerStatusOnset(Color)의 청각 짝이며, 같은 지점에서 함께 부르면 된다.
+        ///
+        /// 반드시 1회성으로 부를 것: 상태 이상 플래그가 false -> true로 바뀐 그 프레임에만 호출한다
+        /// (StatusEffectWarningUI가 이미 그 방식으로 CombatFeedbackUI를 호출하고 있다). 지속되는 동안
+        /// 매 프레임 부르면 경고음이 끊임없이 겹쳐 울려 소리가 뭉개지고 정보 가치가 사라진다.
+        ///
+        /// 호출부 실수에 대비한 최소한의 방어로 재발동 간격 가드를 하나 둔다. 이것은 "매 프레임 호출해도
+        /// 된다"는 뜻이 절대 아니다 - 가드는 같은 접촉으로 중독과 출혈이 동시에 시작되는 경우(곰/상어)처럼
+        /// 같은 순간의 중복만 하나로 합쳐 주며, 시간 간격을 둔 정상적인 재발동은 그대로 통과시킨다.
+        /// </summary>
+        public void PlayStatusOnset()
+        {
+            // Time.timeScale = 0인 화면(게임오버/설정)에서도 정상 동작하도록 unscaledTime을 쓴다.
+            if (Time.unscaledTime - lastStatusOnsetTime < StatusOnsetMinInterval)
+                return;
+
+            lastStatusOnsetTime = Time.unscaledTime;
+            PlaySfx(clipStatusOnset);
+        }
+
+        /// <summary>같은 순간에 겹쳐 시작된 상태 이상들을 한 번의 경고음으로 합치는 최소 간격(초).</summary>
+        private const float StatusOnsetMinInterval = 0.3f;
+
+        private float lastStatusOnsetTime = -999f;
 
         /// <summary>지정한 효과음 클립을 sfxVolume 크기로 한 번 재생한다. 클립이 없으면 아무 것도 하지 않는다.</summary>
         private void PlaySfx(AudioClip clip)

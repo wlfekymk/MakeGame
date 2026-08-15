@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using MakeGame.Data;
 using MakeGame.Player;
 using MakeGame.Systems;
@@ -72,6 +73,10 @@ namespace MakeGame.UI
             public GameObject rowGo;
             public Text infoLabel;
             public Button travelButton;
+
+            /// <summary>이 행이 지금 어느 섬을 가리키는지. 준비 체크리스트가 "선택된 목적지"를
+            /// 알아내는 데 쓴다. RefreshList가 매 갱신마다 다시 채운다.</summary>
+            public int islandId = -1;
         }
 
         private RectTransform radarDotsLayer;
@@ -83,9 +88,21 @@ namespace MakeGame.UI
         private GameObject listPanelRoot;
         private RectTransform listContainer;
         private Text statusLabel;
+        private Text checklistLabel;
         private readonly List<IslandRow> islandRows = new List<IslandRow>();
 
         private string lastTravelStatus = "";
+
+        // 준비 체크리스트(Design_Progression.md 3장 단계 3)가 대상으로 삼는 목적지.
+        // 이동 버튼에 포인터를 올리거나 누르면 그 섬이 "선택된 목적지"가 된다. -1은 선택 없음.
+        private int selectedIslandId = -1;
+        private string lastDisplayedChecklist = null;
+
+        // 체크리스트 O/X 색(ArtDirection.md 1.1): 갖춘 항목은 Medic Green #4FA87A(안전 지표),
+        // 없는 항목은 Danger Red #CC3333. ✓/✗ 유니코드 글리프는 LegacyRuntime.ttf에서 보장되지
+        // 않으므로(빈 네모로 깨질 수 있다) ASCII O/X + 색으로만 구분한다.
+        private static readonly Color ReadyColor = new Color(0.31f, 0.66f, 0.48f, 1f);
+        private static readonly Color MissingColor = new Color(0.8f, 0.2f, 0.2f, 1f);
 
         /// <summary>시작 시 레이더와 섬 목록 패널을 만들고, 목록 패널은 기본적으로 닫아 둔다.</summary>
         private void Start()
@@ -309,12 +326,24 @@ namespace MakeGame.UI
             statusLabel.rectTransform.anchoredPosition = new Vector2(0f, 6f);
             statusLabel.rectTransform.sizeDelta = new Vector2(-20f, 22f);
 
+            // 출발 전 준비 체크리스트 1줄(Design_Progression.md 3장 단계 3 (b)).
+            // 대형/특대 섬을 목적지로 선택(이동 버튼에 포인터를 올리거나 클릭)했을 때만 채워진다.
+            // **이동을 막지 않는다** - 버튼 interactable은 이 줄과 완전히 무관하게 유지된다.
+            // 순환 잠금 사고(아래 RefreshList 주석)를 다시 만들지 않기 위한 명시적 규칙이다.
+            checklistLabel = UIBuilder.CreateText(panel, "Checklist", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.LowerLeft);
+            checklistLabel.rectTransform.anchorMin = new Vector2(0f, 0f);
+            checklistLabel.rectTransform.anchorMax = new Vector2(1f, 0f);
+            checklistLabel.rectTransform.pivot = new Vector2(0.5f, 0f);
+            checklistLabel.rectTransform.anchoredPosition = new Vector2(0f, 28f);
+            checklistLabel.rectTransform.sizeDelta = new Vector2(-20f, 20f);
+
             var listGo = new GameObject("IslandList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             listGo.transform.SetParent(panel, false);
             listContainer = listGo.GetComponent<RectTransform>();
             listContainer.anchorMin = new Vector2(0f, 0f);
             listContainer.anchorMax = new Vector2(1f, 1f);
-            listContainer.offsetMin = new Vector2(14f, 32f);
+            // 아래쪽 여백 32 → 52: 상태 문구 위에 준비 체크리스트 한 줄이 들어갈 자리를 비운다.
+            listContainer.offsetMin = new Vector2(14f, 52f);
             listContainer.offsetMax = new Vector2(-14f, -40f);
 
             var vlg = listGo.GetComponent<VerticalLayoutGroup>();
@@ -355,6 +384,7 @@ namespace MakeGame.UI
                 row.travelButton.interactable = !island.isStartingIsland;
 
                 int islandId = island.islandId; // 클로저 캡처용 로컬 변수
+                row.islandId = islandId;        // 준비 체크리스트가 읽는 "이 행의 목적지"
                 row.travelButton.onClick.RemoveAllListeners();
                 row.travelButton.onClick.AddListener(() => TryTravel(islandId));
             }
@@ -363,6 +393,87 @@ namespace MakeGame.UI
                 islandRows[i].rowGo.SetActive(false);
 
             statusLabel.text = lastTravelStatus;
+            RefreshChecklist();
+        }
+
+        /// <summary>
+        /// 선택된 목적지가 대형/특대 섬일 때만 출발 전 준비 체크리스트 1줄을 채운다
+        /// (Design_Progression.md 2장/3장 - 손도끼 필요성 인지 시점을 "도착 후"에서 "출발 전"으로 앞당기는 수단).
+        ///
+        /// 규칙 두 가지를 반드시 지킨다.
+        /// 1) **이동을 막지 않는다.** 이 함수는 어떤 버튼의 interactable도 건드리지 않는다. 정보만 주고
+        ///    판단은 플레이어에게 맡긴다(순환 잠금 사고 재발 방지).
+        /// 2) **규모를 몰래 알려주지 않는다.** BuildIslandInfo가 미발견 섬의 규모를 "미확인"으로 가리고
+        ///    있으므로, 여기서도 규모가 공개된 섬(시작 섬 또는 발견한 섬)에 대해서만 체크리스트를 띄운다.
+        ///    미발견 섬에 체크리스트가 뜨면 그 자체가 "저건 대형이다"라는 정보 누출이 된다.
+        /// </summary>
+        private void RefreshChecklist()
+        {
+            if (checklistLabel == null)
+                return;
+
+            string text = BuildChecklistText();
+            if (text == lastDisplayedChecklist)
+                return;
+
+            checklistLabel.text = text;
+            lastDisplayedChecklist = text;
+        }
+
+        /// <summary>체크리스트 문구를 만든다. 표시할 상황이 아니면 빈 문자열을 돌려준다.</summary>
+        private string BuildChecklistText()
+        {
+            if (selectedIslandId < 0 || worldMapManager == null)
+                return "";
+
+            var island = worldMapManager.GetIsland(selectedIslandId);
+            if (island == null)
+                return "";
+
+            bool sizeRevealed = island.isStartingIsland || island.isDiscovered;
+            if (!sizeRevealed)
+                return "";
+
+            if (island.size != IslandSize.Large && island.size != IslandSize.ExtraLarge)
+                return "";
+
+            bool hasAxe = HasItemNamed("손도끼");
+            bool hasWater = HasItem(item => item.thirstRestoreAmount > 0f || item.isCoconutWaterSource);
+            bool hasFood = HasItem(item => item.hungerRestoreAmount > 0f);
+            bool hasWeapon = HasItem(item => item.isWeapon);
+
+            return $"{GetSizeKoreanName(island.size)} 섬 준비: "
+                + $"{Mark("손도끼", hasAxe)}  {Mark("물", hasWater)}  {Mark("음식", hasFood)}  {Mark("무기", hasWeapon)}"
+                + (hasAxe ? "" : "   (금속조각 채집에는 손도끼가 필요하다)");
+        }
+
+        /// <summary>체크리스트 항목 하나를 "이름 O"/"이름 X" 형태의 색 있는 조각으로 만든다.</summary>
+        private string Mark(string label, bool ready)
+        {
+            Color color = ready ? ReadyColor : MissingColor;
+            return $"<color=#{ColorUtility.ToHtmlStringRGBA(color)}>{label} {(ready ? "O" : "X")}</color>";
+        }
+
+        /// <summary>인벤토리에 조건을 만족하는 아이템이 하나라도 있는지 확인한다(표시 전용 조회).</summary>
+        private bool HasItem(System.Func<ItemData, bool> predicate)
+        {
+            if (inventory == null || inventory.items == null)
+                return false;
+
+            for (int i = 0; i < inventory.items.Count; i++)
+            {
+                var entry = inventory.items[i];
+                if (entry != null && entry.data != null && predicate(entry.data))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>인벤토리에 이름에 특정 단어가 들어간 아이템이 있는지 확인한다(표시 전용 조회).</summary>
+        private bool HasItemNamed(string keyword)
+        {
+            return HasItem(item => !string.IsNullOrEmpty(item.itemName) && item.itemName.Contains(keyword));
         }
 
         /// <summary>섬 행 풀의 개수가 부족하면 필요한 만큼 새로 만든다.</summary>
@@ -391,7 +502,22 @@ namespace MakeGame.UI
             var travelButton = UIBuilder.CreateButton(rowGo.transform, "TravelButton", "이동", null);
             travelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 70f;
 
-            return new IslandRow { rowGo = rowGo, infoLabel = infoLabel, travelButton = travelButton };
+            var row = new IslandRow { rowGo = rowGo, infoLabel = infoLabel, travelButton = travelButton };
+
+            // "목적지 선택" = 이동 버튼에 포인터를 올리는 것. 이 프로젝트는 커서를 잠그지 않으므로
+            // (전수 확인: Cursor.lockState를 건드리는 코드가 한 곳도 없다) 마우스 오버가 그대로 동작한다.
+            // 콜백은 행을 만들 때 한 번만 등록하고 row.islandId를 이벤트 시점에 읽는다 - onClick처럼
+            // 매 프레임 Remove/Add를 반복하지 않기 위함이다.
+            var trigger = travelButton.gameObject.AddComponent<EventTrigger>();
+            var enterEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            enterEntry.callback.AddListener(_ =>
+            {
+                selectedIslandId = row.islandId;
+                RefreshChecklist();
+            });
+            trigger.triggers.Add(enterEntry);
+
+            return row;
         }
 
         /// <summary>
@@ -430,6 +556,9 @@ namespace MakeGame.UI
         /// </summary>
         private void TryTravel(int islandId)
         {
+            // 클릭도 "목적지 선택"으로 친다(키보드/게임패드처럼 포인터 오버가 없는 입력 대비).
+            selectedIslandId = islandId;
+
             if (islandTravel == null || inventory == null)
                 return;
 

@@ -127,6 +127,11 @@ namespace MakeGame.Systems
             // 전투/접촉 시각 피드백: 위험요소와 "접촉한 이 순간"에만 화면 테두리를 붉게 번쩍인다.
             // SurvivalStats.TakeDamage 안에 걸면 굶주림/일사병 등 상시 피해에도 매번 발동해 버리므로,
             // 반드시 이 접촉 진입점에서만 트리거해야 한다 (CombatFeedbackUI 클래스 주석 참고).
+            // [ui-engineer 요청 / 피격 세기 3단계] 지금은 피해량을 넘길 수 없어 곰(10)·상어(18)·함정(0)이
+            // 전부 똑같은 세기로 번쩍인다. 넘길 값은 아래 GetContactDamage()에 이미 준비해 뒀고,
+            // CombatFeedbackUI(ui-engineer 소유)에 `public void TriggerHit(float damage)` 오버로드가
+            // 추가되는 즉시 이 줄을 `TriggerHit(GetContactDamage())`로 바꾸면 된다.
+            // 없는 오버로드를 미리 부르면 프로젝트 전체가 컴파일 불가가 되므로 지금은 기존 시그니처만 부른다.
             CombatFeedbackUI.Instance?.TriggerHit();
 
             // B4-11: 화면 테두리 플래시(2D)는 "맞았다"만 알려줄 뿐 어디서 맞았는지는 알려주지 못한다.
@@ -175,6 +180,33 @@ namespace MakeGame.Systems
                 case HazardType.Dehydration:
                     // 음식 부족/탈수는 SurvivalStats의 허기/갈증 감소 로직에서 이미 처리되므로 별도 효과 없음.
                     break;
+            }
+        }
+
+        /// <summary>
+        /// [ui-engineer 요청 / 피격 세기 3단계] 이 위험 요소와 한 번 접촉했을 때 실제로 체력에서 깎이는
+        /// 즉시 피해량을 반환한다. ApplyHazardEffect의 switch와 **같은 분류**를 쓰므로, 종류별 효과가
+        /// 바뀌면 반드시 두 곳을 함께 고쳐야 한다(값 자체는 directDamage 필드를 그대로 읽으므로
+        /// 밸런스 수치를 여기서 새로 정의하지 않는다 - 씬/ConfigureForType이 정한 값이 그대로 나온다).
+        ///
+        /// 0을 반환하는 경우가 정상적으로 존재한다: 독사/전갈(중독)·함정(골절)은 접촉 순간에 체력을
+        /// 깎지 않고 상태 이상만 건다. 화면 연출에서 이 0을 "피격 아님"으로 취급해 아무 것도 보여주지
+        /// 않으면 예전의 무반응 문제가 그대로 돌아오므로, **0도 가장 약한 단계로 반드시 표시**할 것.
+        /// (상태 이상이 걸렸다는 사실 자체는 StatusEffectWarningUI + AudioManager.PlayStatusOnset이 알린다.)
+        /// </summary>
+        public float GetContactDamage()
+        {
+            switch (hazardType)
+            {
+                case HazardType.Bear:
+                case HazardType.Cannibal:
+                case HazardType.BeeSwarm:
+                case HazardType.Shark:
+                    return directDamage;
+
+                default:
+                    // 독사/전갈/함정/음식부족/탈수: 접촉 순간의 직접 피해는 없다.
+                    return 0f;
             }
         }
 

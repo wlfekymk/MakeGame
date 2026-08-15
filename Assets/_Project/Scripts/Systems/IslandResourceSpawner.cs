@@ -82,6 +82,35 @@ namespace MakeGame.Systems
         public float largeScatterRadius = 112f;
         public float extraLargeScatterRadius = 160f;
 
+        [Header("시작 섬 착륙 원 (game-designer 요청)")]
+        // 문제: 시작 섬은 소형(배율 1)이라 자원 노드가 18개뿐인데 산포 반경이 40m다. 노드 하나가 평균
+        // 약 280제곱미터를 차지하므로, 불시착 지점(섬 중심)에 서 있는 플레이어 눈앞이 통째로 비어 있는
+        // 경우가 흔하다 - 첫 채집까지 헤매는 원인이 이 밀도다.
+        // 해결: 시작 섬에 한해 "무엇을 어떻게 줍는지"를 가르치는 최소 3종(수분=코코넛, 목재=나뭇가지,
+        // 석재=돌조각. 손도끼 레시피 재료가 뒤 둘이다)을 시작 지점 근처에 확정 배치한다.
+        // 밸런스를 바꾸지 않기 위해 기존 무작위 스폰은 한 줄도 건드리지 않고 3개를 "더한다"
+        // (시작 섬 노드 18 → 21개, 다른 8개 섬은 변화 없음).
+        [Tooltip("시작 섬(isStartingIsland)에 한해 플레이어 시작 지점 근처에 기초 자원 3종을 확정 배치할지 여부.\n" +
+                 "끄면 예전처럼 무작위 스폰만 돌아간다(기존 무작위 스폰 자체는 이 값과 무관하게 그대로다).")]
+        public bool spawnLandingCircle = true;
+
+        [Tooltip("착륙 원의 최대 반경(미터). 플레이어 시작 지점에서 이 거리 안에 3종이 배치된다.\n" +
+                 "game-designer 요청 상한이 12m라 그보다 크게 설정해도 12m로 잘린다.")]
+        public float landingCircleRadius = 9f;
+
+        /// <summary>착륙 원에 확정 배치할 자원 3종. resourceEntries에서 이름으로 찾아 그 항목의 설정(도구 요구 등)을 그대로 재사용한다.</summary>
+        private static readonly string[] LandingCircleItemNames = { "코코넛", "나뭇가지", "돌조각" };
+
+        /// <summary>착륙 원 상한 반경(미터). game-designer가 지정한 "시작 지점 반경 12m 안" 규격.</summary>
+        private const float LandingCircleMaxRadius = 12f;
+
+        /// <summary>
+        /// 착륙 원 첫 번째 노드의 기준 각도(도, +X축 기준 반시계). 3종을 120도 간격으로 벌려 놓되,
+        /// 시작 섬의 고정 배치물 두 개 - 경비행기 잔해(+6, -4 → 약 -34도)와 배 작업대(-6, -3 → 약 207도) -
+        /// 와 각도가 겹치지 않도록 20도에서 시작한다(20 / 140 / 260도).
+        /// </summary>
+        private const float LandingCircleBaseAngle = 20f;
+
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.
         /// 각 노드는 섬 위치를 중심으로 scatterRadius 반경 안에 무작위 배치된다.
@@ -124,7 +153,70 @@ namespace MakeGame.Systems
                 }
             }
 
+            // 착륙 원은 반드시 위 무작위 루프가 끝난 "뒤"에 처리한다. 이유가 두 개다.
+            // (1) 난수: 같은 rng를 이어 쓰되 모든 추가 draw가 기존 노드들의 draw 뒤에 오므로, 기존 18개
+            //     노드의 위치/모양/개수가 1mm도 바뀌지 않는다(기존 밸런스·레이아웃 완전 보존).
+            // (2) 세이브 키: 채집 상태가 (islandIndex, spawnOrder) 쌍으로 저장되므로(B3-4) 새 노드는
+            //     기존 번호 뒤에 이어 붙는 번호를 받아야 한다. 앞에 끼워 넣으면 기존 세이브의 채집 상태가
+            //     통째로 한 칸씩 밀린다. 뒤에 붙이면 옛 세이브도 그대로 복원되고, 새 노드 3개만 미채집
+            //     상태로 시작한다.
+            if (spawnLandingCircle && island.isStartingIsland)
+                SpawnLandingCircleNodes(island, parent, rng, spawned, ref spawnOrder);
+
             return spawned;
+        }
+
+        /// <summary>
+        /// 시작 섬 한정으로, 플레이어 시작 지점 주변에 기초 자원 3종(코코넛/나뭇가지/돌조각)을 확정 배치한다.
+        ///
+        /// 시작 지점을 섬 중심(island.mapPosition)으로 잡는 근거: 씬의 Player 트랜스폼이 (0, 5, 0)이고
+        /// WorldMapManager.GenerateStartingIsland가 0번 섬의 mapPosition을 Vector3.zero로 두므로, 두 지점의
+        /// XZ 좌표가 정확히 같다(플레이어 시작 위치를 참조하는 별도 배선을 만들 필요가 없다).
+        ///
+        /// 결정성: UnityEngine.Random을 쓰지 않고 호출자가 넘긴 섬 전용 System.Random 스트림을 그대로
+        /// 이어 쓴다. 같은 worldSeed면 RegenerateWorld(F9 불러오기) 후에도 같은 3개 위치가 재현된다.
+        /// 각도/거리에만 작은 지터를 줘서(격자처럼 보이지 않게) 3종이 늘 같은 방향에 박혀 있지는 않되,
+        /// 시드가 같으면 항상 같은 자리에 오도록 한다.
+        /// </summary>
+        private void SpawnLandingCircleNodes(IslandInstance island, Transform parent, System.Random rng,
+            List<ResourceNode> spawned, ref int spawnOrder)
+        {
+            float radius = Mathf.Clamp(landingCircleRadius, 3f, LandingCircleMaxRadius);
+            float angleStep = 360f / LandingCircleItemNames.Length;
+
+            for (int i = 0; i < LandingCircleItemNames.Length; i++)
+            {
+                ResourceEntry entry = FindEntryByItemName(LandingCircleItemNames[i]);
+                if (entry == null)
+                    continue; // 그 자원이 resourceEntries에 없으면 조용히 건너뛴다(설정 누락에 NRE로 죽지 않게).
+
+                float angle = (LandingCircleBaseAngle + i * angleStep + rng.NextFloat(-12f, 12f)) * Mathf.Deg2Rad;
+                float distance = radius * rng.NextFloat(0.62f, 1f); // 너무 발밑에 붙지 않게 최소 62%는 띄운다.
+                Vector3 position = island.mapPosition + new Vector3(Mathf.Cos(angle) * distance, 0f, Mathf.Sin(angle) * distance);
+                position = TerrainSampler.SnapToGround(position);
+
+                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                spawnOrder++;
+            }
+        }
+
+        /// <summary>
+        /// resourceEntries에서 지정한 이름의 자원 항목을 찾는다(없으면 null).
+        /// 착륙 원이 이 조회를 쓰는 이유: 새 ResourceEntry를 코드에서 만들어 쓰면 씬에 직렬화된 실제 설정
+        /// (도구 요구 여부/최소 섬 규모 등)과 어긋난 노드가 생긴다. 씬 항목을 그대로 재사용해야
+        /// "같은 자원은 어디서 나오든 같은 규칙"이 유지된다.
+        /// </summary>
+        private ResourceEntry FindEntryByItemName(string itemName)
+        {
+            if (resourceEntries == null || string.IsNullOrEmpty(itemName))
+                return null;
+
+            foreach (var entry in resourceEntries)
+            {
+                if (entry != null && entry.yieldItem != null && entry.yieldItem.itemName == itemName)
+                    return entry;
+            }
+            return null;
         }
 
         /// <summary>
@@ -299,9 +391,10 @@ namespace MakeGame.Systems
                     }
 
                 case "대나무":
-                    // 퀄리티 개선: 마디 개수(2~4개)를 무작위로 바꿔 대나무 길이감이 다양해 보이게 했다.
+                    // 퀄리티 개선: 마디 개수를 무작위로 바꿔 대나무 길이감이 다양해 보이게 했다.
+                    // [tech-artist-B 요청 - 파츠 예산] 2~4개 → 2~3개 (야자잎 주석의 근거와 동일).
                     {
-                        int jointCount = rng.NextInt(2, 5);
+                        int jointCount = rng.NextInt(2, 4);
                         for (int i = 0; i < jointCount; i++)
                         {
                             float t = (float)i / Mathf.Max(1, jointCount - 1); // 0~1
@@ -342,9 +435,12 @@ namespace MakeGame.Systems
 
                 case "야자잎":
                     {
-                        // 퀄리티 개선: 잎사귀 개수(4~6장)와 부채꼴 각도 간격, 개별 잎 길이를 무작위로 바꿔
+                        // 퀄리티 개선: 잎사귀 개수와 부채꼴 각도 간격, 개별 잎 길이를 무작위로 바꿔
                         // 같은 야자잎이라도 풍성해 보이는 것과 성긴 것이 섞여 보이게 했다.
-                        int leafCount = rng.NextInt(4, 7);
+                        // [tech-artist-B 요청 - 파츠 예산] 4~6장 → 3~5장. 특대 섬에는 자원 노드가 90개 넘게
+                        // 깔리고 노드당 파츠 하나가 곧 드로우콜 하나다. ResourceNode 쪽에서 노드당 4개 상한을
+                        // 코드로 강제하고 있으므로, 소스에서 그 상한을 넘겨 만들어 놓고 트림당하는 낭비를 없앤다.
+                        int leafCount = rng.NextInt(3, 6);
                         float spread = rng.NextFloat(100f, 140f); // 부채꼴 전체 펼침 각도
                         for (int i = 0; i < leafCount; i++)
                         {
@@ -376,9 +472,11 @@ namespace MakeGame.Systems
                     break;
 
                 case "엔진부품":
-                    // 퀄리티 개선: 볼트 개수(3~6개)를 무작위로 바꿔 부품마다 조립 상태가 달라 보이게 했다.
+                    // 퀄리티 개선: 볼트 개수를 무작위로 바꿔 부품마다 조립 상태가 달라 보이게 했다.
+                    // [tech-artist-B 요청 - 파츠 예산] 3~6개 → 2~3개 (야자잎 주석의 근거와 동일).
+                    // 볼트는 원주 배치라 개수가 줄어도 360/boltCount 간격이 자동으로 벌어져 형태가 깨지지 않는다.
                     {
-                        int boltCount = rng.NextInt(3, 7);
+                        int boltCount = rng.NextInt(2, 4);
                         for (int i = 0; i < boltCount; i++)
                         {
                             float rad = i * (360f / boltCount) * Mathf.Deg2Rad;

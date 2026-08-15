@@ -157,8 +157,22 @@ namespace MakeGame.Systems
             }
             else
             {
-                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeL");
-                AddCompensated(go, PrimitiveType.Sphere, new Vector3(-0.12f, 0.6f, 0.28f), new Vector3(0.08f, 0.08f, 0.08f), s, new Color(0.05f, 0.05f, 0.05f), "EyeR");
+                // [tech-artist-B 요청 - 눈이 몸통 안에 묻혀 있다] 기존 로컬 (±0.12, 0.6, 0.28)은 몸통 캡슐
+                // 상단 반구 중심(0, 0.5, 0)에서 로컬 거리 0.32였다 - 표면(0.5)보다 안쪽이라 어느 각도에서도
+                // 보이지 않았다(HuntableCreature.BuildHeadSilhouette 주석의 실측과 동일한 값).
+                // 이제 눈은 몸통이 아니라 HuntableCreature가 붙이는 머리 돌기(로컬 (0, 0.72, 0.42),
+                // 월드 반지름 0.14m) 표면에 얹는다. 검산(몸통 스케일 (0.45, 0.6, 0.45) 기준, 월드 단위):
+                //   눈 중심   = (0.11·0.45, 0.81·0.60, 0.68·0.45) = (0.0495, 0.486, 0.306)
+                //   머리 중심 = (0,         0.72·0.60, 0.42·0.45) = (0,      0.432, 0.189)
+                //   두 점 거리 = √(0.0495² + 0.054² + 0.117²) = 0.1380m ≈ 머리 반지름 0.14m
+                // 즉 눈 중심이 머리 표면 바로 위(0.002m 안쪽)에 놓여 눈 구체의 절반이 머리 밖으로 드러난다.
+                // 세 번째 인자는 반지름이 아니라 월드 "지름"이다(AddCompensated는 worldSize를 그대로
+                // localScale로 환산한다 - CreatureVisualBuilder.AddCompensatedSphere의 worldRadius와 다르다).
+                // 0.08 → 0.05로 줄인 이유: 지름 0.28m짜리 머리 위에서 0.08m 눈은 과하게 커 보인다.
+                // 주의: 두 파츠 모두 몸통(go) 로컬 좌표계의 형제이므로, 머리 위치/반지름이 바뀌면 이 값도
+                // 함께 다시 계산해야 한다(HuntableCreature.BuildHeadSilhouette와 짝을 이루는 값이다).
+                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0.11f, 0.81f, 0.68f), new Vector3(0.05f, 0.05f, 0.05f), s, new Color(0.05f, 0.05f, 0.05f), "EyeL");
+                AddCompensated(go, PrimitiveType.Sphere, new Vector3(-0.11f, 0.81f, 0.68f), new Vector3(0.05f, 0.05f, 0.05f), s, new Color(0.05f, 0.05f, 0.05f), "EyeR");
 
                 // 연결(A-2): tech-artist가 만든 CreatureVisualBuilder.AddQuadrupedLegs를 호출해 짧은 다리
                 // 4개를 붙인다. 몸통 캡슐 + 눈뿐이면 사람 형태(곰/식인종 HazardSource 캡슐)와 실루엣이

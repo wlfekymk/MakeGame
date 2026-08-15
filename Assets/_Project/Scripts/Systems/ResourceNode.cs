@@ -65,6 +65,50 @@ namespace MakeGame.Systems
         public bool CanHarvest => remainingHarvestCount > 0;
 
         /// <summary>
+        /// [game-designer 최우선 요청] 채집 시도가 거부된 이유. Harvest()가 그냥 false를 반환하던 시절에는
+        /// "왜 안 되는지"를 아무도 알 수 없었고(소리도 문구도 없었다) 플레이어는 그것을 버그로 읽었다.
+        ///
+        /// None을 제외한 값은 전부 "지금은 안 되지만 조건만 갖추면 된다"는 뜻이며, 밸런스 조건 자체는
+        /// 예전과 100% 동일하다 - 이 enum은 이미 존재하던 판정의 결과를 이름 붙여 밖으로 내보낼 뿐이다.
+        /// </summary>
+        public enum HarvestFailure
+        {
+            /// <summary>실패가 아니다 - 지금 채집할 수 있다.</summary>
+            None = 0,
+
+            /// <summary>남은 채집 횟수가 0이다. respawnSeconds가 지나면 저절로 다시 찬다.</summary>
+            Depleted = 1,
+
+            /// <summary>requiredTool(예: 손도끼)을 인벤토리에 갖고 있지 않다.</summary>
+            MissingTool = 2,
+
+            /// <summary>인벤토리 참조가 없다(호출부 배선 오류). 플레이어가 해결할 수 있는 사유가 아니다.</summary>
+            NoInventory = 3,
+
+            /// <summary>이 노드에 지급할 yieldItem이 설정되지 않았다(스포너/데이터 오류). 역시 플레이어 잘못이 아니다.</summary>
+            NoYieldItem = 4,
+        }
+
+        /// <summary>
+        /// 채집 시도가 실패한 순간 발생한다. 첫 인자는 실패한 노드, 둘째는 그 사유다.
+        /// 화면 표시(조준 시 사유 문구)는 InteractionPromptUI가 이미 담당하므로 이 이벤트는
+        /// "E를 실제로 눌렀는데 거부당한 순간"에만 발생한다 - 조준만 하고 있을 때는 발생하지 않는다.
+        /// 튜토리얼 힌트·실패 로그·통계 수집처럼 나중에 붙는 시스템이 구독할 수 있게 열어 둔다.
+        ///
+        /// 주의(static 이벤트): 씬을 다시 로드해도 구독은 자동으로 끊기지 않는다. 씬과 함께 생성되는
+        /// MonoBehaviour가 구독한다면 반드시 OnDisable/OnDestroy에서 -= 로 해제할 것. 해제하지 않으면
+        /// 파괴된 오브젝트를 가리키는 델리게이트가 남아 사망 후 재시작 시 MissingReferenceException이 난다.
+        /// </summary>
+        public static event System.Action<ResourceNode, HarvestFailure> HarvestFailed;
+
+        /// <summary>
+        /// 채집이 성공한 순간 발생한다(인자는 성공한 노드). 성공 효과음/파티클은 Harvest 안에서 이미
+        /// 처리하므로 이 이벤트는 부가 시스템(퀘스트 진행도 등)을 위한 것이다.
+        /// static 이벤트 해제 주의사항은 HarvestFailed와 동일하다.
+        /// </summary>
+        public static event System.Action<ResourceNode> Harvested;
+
+        /// <summary>
         /// 스포너가 yieldItem을 채워 넣은 뒤(AddComponent 직후 대입되므로 Awake 시점에는 아직 비어 있다)
         /// 실행되는 시각 보강 단계. 게임플레이 값은 일절 건드리지 않는다.
         /// </summary>
@@ -269,16 +313,19 @@ namespace MakeGame.Systems
         /// </summary>
         public bool Harvest(PlayerInventory inventory, PlayerSkills skills)
         {
-            if (!CanHarvest || inventory == null || yieldItem == null)
+            // [game-designer 최우선 요청] 조건 판정을 GetHarvestFailure 한 곳으로 모았다. 예전 코드와
+            // 검사 항목·순서·조건이 완전히 동일하며(고갈 -> 인벤토리 -> yieldItem -> 도구), 달라진 것은
+            // "왜 실패했는지"를 알 수 있게 된 것뿐이다. 채집 가능 조건 자체는 1도 건드리지 않았다.
+            HarvestFailure failure = GetHarvestFailure(inventory);
+            if (failure != HarvestFailure.None)
+            {
+                ReportHarvestFailure(failure);
                 return false;
+            }
 
             InventoryItem toolItem = null;
             if (requiresTool && requiredTool != null)
-            {
                 toolItem = inventory.FindItem(requiredTool);
-                if (toolItem == null)
-                    return false;
-            }
 
             for (int i = 0; i < yieldPerHarvest; i++)
                 inventory.AddItem(yieldItem);
@@ -298,7 +345,49 @@ namespace MakeGame.Systems
             // 보이지 않았다. 입자 색은 EffectBuilder가 노드 표면 색을 그대로 읽어 쓴다.
             EffectBuilder.PlayHarvestPop(gameObject);
 
+            Harvested?.Invoke(this);
             return true;
+        }
+
+        /// <summary>
+        /// 지금 이 인벤토리로 채집을 시도하면 어떤 사유로 거부되는지 미리 알려준다(None이면 채집 가능).
+        /// Harvest()가 실제로 쓰는 바로 그 판정이며, 유일한 판정 소스다 - UI가 같은 조건을 따로 구현하면
+        /// 언젠가 화면 표시와 실제 동작이 갈라지므로 반드시 이 메서드를 통해 물어볼 것.
+        /// 상태를 전혀 바꾸지 않으므로 매 프레임 호출해도 안전하다(소리도 나지 않는다).
+        /// </summary>
+        public HarvestFailure GetHarvestFailure(PlayerInventory inventory)
+        {
+            // 아래 순서는 예전 Harvest()의 조건 순서를 그대로 옮긴 것이다. 순서를 바꾸면 고갈된 노드에
+            // 도구가 없을 때 표시되는 사유가 달라지므로 임의로 재배치하지 말 것.
+            if (!CanHarvest)
+                return HarvestFailure.Depleted;
+
+            if (inventory == null)
+                return HarvestFailure.NoInventory;
+
+            if (yieldItem == null)
+                return HarvestFailure.NoYieldItem;
+
+            if (requiresTool && requiredTool != null && inventory.FindItem(requiredTool) == null)
+                return HarvestFailure.MissingTool;
+
+            return HarvestFailure.None;
+        }
+
+        /// <summary>
+        /// 실패 사유를 소리와 이벤트로 밖에 알린다. 화면 문구는 InteractionPromptUI가 조준 단계에서 이미
+        /// 보여주므로 여기서 UI를 직접 만들지 않는다(UI 소유권 분리). 이 메서드가 하는 일은 두 가지뿐이다:
+        /// (1) "입력은 분명히 처리됐고 다만 거부됐다"를 알리는 실패음 재생,
+        /// (2) 다른 시스템이 붙을 수 있는 HarvestFailed 이벤트 발행.
+        /// </summary>
+        private void ReportHarvestFailure(HarvestFailure failure)
+        {
+            // 사유가 무엇이든 소리는 하나로 통일한다. 사유별로 음을 나누면 플레이어가 네 가지 소리를
+            // 새로 외워야 하는데, 정확한 사유는 이미 조준 프롬프트에 글자로 떠 있으므로 이득이 없다.
+            // 여기서 소리가 맡는 역할은 "무반응이 아니다"를 0.16초 안에 확실히 알리는 것 하나다.
+            AudioManager.Instance?.PlayActionFail();
+
+            HarvestFailed?.Invoke(this, failure);
         }
     }
 }

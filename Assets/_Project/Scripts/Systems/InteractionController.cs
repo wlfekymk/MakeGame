@@ -242,8 +242,19 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 카메라 정면 레이캐스트로 맞은 오브젝트를 반환한다. 아무것도 맞지 않으면 false를 반환한다.
+        ///
+        /// [ui-engineer 요청] public으로 공개한다. InteractionPromptUI가 조준 대상을 알아내려고
+        /// interactionCamera/interactionDistance를 직접 읽어 같은 조건의 레이를 한 번 더 쏘고 있었는데,
+        /// 레이캐스트가 두 벌이면 나중에 이 판정에 레이어 마스크나 QueryTriggerInteraction 같은 조건이
+        /// 하나라도 추가되는 순간 화면에 보이는 대상과 E키가 실제로 잡는 대상이 조용히 갈라진다.
+        /// InteractWithTarget / CookFirstRawFoodAtTarget이 쓰는 바로 이 메서드를 그대로 공개해
+        /// 조준 판정의 유일한 소스로 만든다 - UI 쪽에 별도 구현을 두지 말 것.
+        ///
+        /// 상태를 바꾸지 않으므로 매 프레임 호출해도 안전하다.
         /// </summary>
-        private bool TryGetLookTarget(out GameObject target)
+        /// <param name="target">조준 중인 오브젝트. 아무것도 맞지 않으면 null.</param>
+        /// <returns>조준 대상이 있으면 true.</returns>
+        public bool TryGetLookTarget(out GameObject target)
         {
             target = null;
             if (interactionCamera == null)

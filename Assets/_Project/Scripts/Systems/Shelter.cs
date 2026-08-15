@@ -56,11 +56,16 @@ namespace MakeGame.Systems
                 new Vector3(-1.6f, 0f, -1.6f),
             };
 
+            // [tech-artist-B 요청 - 인공물 시각 언어] 매끈한 원기둥 다리는 야자수 줄기/대나무 자원과 같은
+            // 형태 언어라 "내가 지은 것"으로 읽히지 않는다(ArtDirection 2장 4번). 각진 사각 기둥 + 밧줄
+            // 결속으로 바꾼다. 높이 인자가 원기둥과 다르다는 점에 주의: 원기둥 메시는 높이가 2단위라
+            // scale.y에 절반(roofHeight * 0.5)을 넣어야 했지만, CreateLashedPost는 큐브라 실제 높이를
+            // 그대로 받는다 - 그래서 roofHeight를 넘긴다(중심은 지붕 아래 roofHeight/2로 동일하므로
+            // 기둥이 바닥~지붕을 정확히 잇는 결과도 이전과 완전히 같다).
             foreach (var offset in legOffsets)
             {
-                StructureVisualBuilder.CreateVisualPart(visualParts.transform, "Leg", PrimitiveType.Cylinder,
-                    offset + Vector3.down * (roofHeight * 0.5f), new Vector3(0.12f, roofHeight * 0.5f, 0.12f),
-                    new Color(0.35f, 0.22f, 0.1f));
+                StructureVisualBuilder.CreateLashedPost(visualParts.transform, "Leg",
+                    offset + Vector3.down * (roofHeight * 0.5f), roofHeight, 0.12f, new Color(0.35f, 0.22f, 0.1f));
             }
         }
 

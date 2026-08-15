@@ -254,13 +254,18 @@ namespace MakeGame.Systems
                 case HazardType.BeeSwarm:
                     // 공 하나가 아니라 작은 벌 여러 마리가 뭉쳐 있는 것처럼 보이도록 주변에 작은 구체를 흩뿌린다.
                     // B3-3: 시드 없는 UnityEngine.Random 대신 호출자가 넘긴 결정적 rng를 쓴다.
+                    // [tech-artist-B 요청 - 벌이 아니라 덩어리로 보인다] 벌 한 마리의 월드 반지름이 0.22m로
+                    // 몸통 구체 반지름(localScale 0.5 → 0.25m)과 거의 같았다. 같은 크기의 구체 6개가 반경
+                    // 0.8 안에서 서로 파고들면 "무리"가 아니라 울퉁불퉁한 덩어리 하나로 읽힌다.
+                    // 0.22 → 0.09(몸통의 약 1/3)로 줄여 개별 개체가 몸통과 분리돼 보이게 한다.
+                    // 개수(5)와 산포 범위(±0.8)는 그대로 둔다 - rng 소비량이 바뀌지 않아 재현성도 유지된다.
                     for (int i = 0; i < 5; i++)
                     {
                         Vector3 offset = new Vector3(
                             rng.NextFloat(-0.8f, 0.8f),
                             rng.NextFloat(-0.8f, 0.8f),
                             rng.NextFloat(-0.8f, 0.8f));
-                        AddCompensatedSphere(go, offset, 0.22f, s, config.color, $"Bee{i}");
+                        AddCompensatedSphere(go, offset, 0.09f, s, config.color, $"Bee{i}");
                     }
                     break;
             }

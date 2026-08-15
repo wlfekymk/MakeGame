@@ -143,6 +143,79 @@ namespace MakeGame.Systems
             return BuildClip("RainAmbient", samples);
         }
 
+        /// <summary>
+        /// 사각파(square wave)를 짧게 끊어 반복하는 "삐-삐" 부저음을 생성한다. 실패/거부/경고 신호 전용이다.
+        ///
+        /// 왜 사각파인가: 이 프로젝트의 다른 효과음은 전부 사인파 비프/화음(채집·제작·치료·취침·점화)
+        /// 아니면 백색 노이즈 버스트(타격) 둘 중 하나다. 사인파끼리는 주파수만 다르면 빠르게 스치는
+        /// 0.1초 안에서 서로 구분되지 않는다 - 실제로 "제작 성공음 재사용" 문제(#18)가 그래서 생겼다.
+        /// 사각파는 홀수 배음이 그대로 살아 있어 음색 자체가 다르므로, 주파수가 겹쳐도 "부저"로 들린다.
+        /// 게임 안에서 사각파를 쓰는 소리는 이것 하나뿐이라 다른 어떤 효과음과도 혼동되지 않는다.
+        /// </summary>
+        /// <param name="frequency">부저 기본 주파수(Hz). 낮을수록 둔탁한 "거부" 느낌이 강해진다.</param>
+        /// <param name="duration">전체 길이(초). 반복 횟수만큼 균등 분할된다.</param>
+        /// <param name="repeats">끊어 울리는 횟수(1 이상). 2면 "삐-삐".</param>
+        /// <param name="amplitude">최대 진폭(0~1). 사각파는 같은 진폭의 사인파보다 체감 음량이 커서 기본값을 낮게 잡았다.</param>
+        public static AudioClip CreateBuzz(float frequency, float duration, int repeats = 2, float amplitude = 0.3f)
+        {
+            int sampleCount = Mathf.Max(1, Mathf.RoundToInt(SampleRate * duration));
+            int pulseCount = Mathf.Max(1, repeats);
+            int samplesPerPulse = Mathf.Max(1, sampleCount / pulseCount);
+            float[] samples = new float[sampleCount];
+
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float t = i / (float)SampleRate;
+
+                // 한 펄스 안에서의 진행도(0~1). 앞 70%만 소리를 내고 뒤 30%는 무음으로 둬서 "삐-삐"처럼 끊는다.
+                float pulseProgress = (i % samplesPerPulse) / (float)samplesPerPulse;
+                if (pulseProgress > 0.7f)
+                {
+                    samples[i] = 0f;
+                    continue;
+                }
+
+                // 펄스 내부에서도 시작/끝을 사인 곡선으로 감싸 클릭 잡음을 막는다(CreateBeep과 같은 방식).
+                float envelope = Mathf.Sin(Mathf.PI * (pulseProgress / 0.7f));
+                float square = Mathf.Sin(2f * Mathf.PI * frequency * t) >= 0f ? 1f : -1f;
+                samples[i] = square * envelope * amplitude;
+            }
+
+            return BuildClip($"Buzz_{frequency}", samples);
+        }
+
+        /// <summary>
+        /// 두 주파수가 아주 좁은 간격으로 동시에 울려 "우웅-" 하는 맥놀이(beating)를 만드는 경고음을 생성한다.
+        /// 상태 이상이 시작된 순간처럼 "불길한 일이 방금 일어났다"를 알릴 때 쓴다.
+        ///
+        /// CreateChord와의 차이: CreateChord는 협화음(523/659/784 = C장3화음)이라 성취/축하로 들린다.
+        /// 여기서는 일부러 반음 이내로 붙인 두 음을 겹쳐 위상이 서로 어긋나며 음량이 주기적으로 흔들리게
+        /// 만든다 - 같은 화음 계열이지만 귀에는 정반대(불안정)로 들려 축하음과 절대 헷갈리지 않는다.
+        /// </summary>
+        /// <param name="frequency">기준 주파수(Hz).</param>
+        /// <param name="beatOffset">기준 주파수에 더할 간격(Hz). 작을수록 맥놀이가 느리고 불길해진다.</param>
+        /// <param name="duration">전체 길이(초).</param>
+        public static AudioClip CreateWarningBeat(float frequency, float beatOffset, float duration)
+        {
+            int sampleCount = Mathf.Max(1, Mathf.RoundToInt(SampleRate * duration));
+            float[] samples = new float[sampleCount];
+
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float t = i / (float)SampleRate;
+                float progress = i / (float)sampleCount;
+
+                // 뒤로 갈수록 빠르게 잦아드는 엔벨로프(시작이 가장 크다) - 경고는 첫 순간이 가장 중요하다.
+                float envelope = Mathf.Sin(Mathf.PI * progress) * (1f - progress * 0.5f);
+                float value = Mathf.Sin(2f * Mathf.PI * frequency * t)
+                            + Mathf.Sin(2f * Mathf.PI * (frequency + beatOffset) * t);
+
+                samples[i] = (value * 0.5f) * envelope * 0.45f;
+            }
+
+            return BuildClip($"WarningBeat_{frequency}", samples);
+        }
+
         /// <summary>생성한 샘플 배열로 모노(1채널) AudioClip을 만들어 반환한다.</summary>
         private static AudioClip BuildClip(string name, float[] samples)
         {
