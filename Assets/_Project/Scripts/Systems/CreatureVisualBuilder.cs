@@ -308,11 +308,27 @@ namespace MakeGame.Systems
         /// 따라서 배치 깊이가 0.39m보다 얕아야 지느러미가 수면을 뚫는다. B4-2에서 코드 기본값과 씬
         /// 직렬화 값을 모두 0.3으로 맞춰(이전: 코드 0.6 / 씬 2) 약 0.09m가 수면 위로 드러난다.
         /// 지느러미 크기를 다시 조정하려면 SharkSpawner.depthBelowSeaLevel과 반드시 함께 계산할 것.
+        ///
+        /// [B5 축 정정 - 등지느러미와 같은 버그가 꼬리지느러미에 그대로 남아 있었다]
+        /// 몸통이 Euler(0,0,90)으로 눕혀져 있어 로컬 축의 의미는 "+X = 월드 위쪽, +Y = 몸통 진행 방향,
+        /// +Z = 좌우"다(Z축 +90도 회전: +X→+Y, +Y→-X). 그런데 기존 worldSize는 (0.05, 0.32, 0.16)이라
+        /// 수직 높이(로컬 X)가 5cm뿐이고 좌우 폭(로컬 Z)이 16cm인, 물 위에 뜬 가로 판때기였다 - 꼬리
+        /// 지느러미의 형태 신호(세로로 선 삼각 꼬리)가 전혀 없었다.
+        /// (0.32, 0.32, 0.06)으로 바꿔 수직 32cm / 진행 방향 32cm / 두께 6cm의 "세워진 꼬리"로 만든다.
+        /// localPosition의 z=0.18도 같은 축 혼동의 산물이었다 - 위로 띄우려던 값이 실제로는 옆구리
+        /// 방향(로컬 Z)으로 18cm 밀어낸 것이라 꼬리가 몸통 중심선에서 한쪽으로 어긋나 있었다. 0으로
+        /// 되돌려 중심선에 맞춘다. 몸통 뒤쪽 끝(-Y 0.85)과 몸통 캡슐/콜라이더는 건드리지 않는다.
+        ///
+        /// 판정 불변: 이 파츠는 CreateVisualPart가 콜라이더를 제거한 순수 시각 오브젝트이고, 상어의
+        /// 판정은 몸통 캡슐의 트리거 콜라이더 하나뿐이라 꼬리를 세워도 공격 범위는 변하지 않는다.
+        /// 노출 높이도 변하지 않는다: 꼬리는 몸통 중심 위 0.16m×몸통 스케일 0.45 = 0.072m까지만
+        /// 올라와, 등지느러미 꼭대기(0.39m)보다 훨씬 낮으므로 수면 노출 계산(depthBelowSeaLevel 0.3)에
+        /// 아무 영향을 주지 않는다 - depthBelowSeaLevel은 손대지 않는다.
         /// </summary>
         public static void AddSharkTailDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
             Color finColor = bodyColor * 0.8f;
-            AddCompensatedBox(body.transform, new Vector3(0f, -0.85f, 0.18f), new Vector3(0.05f, 0.32f, 0.16f), appliedScale, finColor, "TailFin");
+            AddCompensatedBox(body.transform, new Vector3(0f, -0.85f, 0f), new Vector3(0.32f, 0.32f, 0.06f), appliedScale, finColor, "TailFin");
         }
 
         /// <summary>

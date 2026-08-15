@@ -16,18 +16,16 @@ namespace MakeGame.UI
     /// 생각할 수밖에 없었다. 이제 조건이 안 맞으면 프롬프트 전체를 회색으로 낮추고 아래 줄에 "손도끼 필요"
     /// 처럼 정확한 사유를 적는다.
     ///
-    /// 판정 로직은 이 UI가 새로 만들지 않는다. 대상 컴포넌트가 이미 public으로 노출한 값
-    /// (ResourceNode.CanHarvest/requiresTool/requiredTool, Campfire.isLit/fuelItem,
+    /// 판정 로직은 이 UI가 새로 만들지 않는다. 대상 컴포넌트가 이미 public으로 노출한 판정
+    /// (ResourceNode.GetHarvestFailure, Campfire.isLit/fuelItem,
     /// BoatConstructionSystem.CanFindBlueprintOnIsland/GetCurrentStageRequirements 등)과
-    /// PlayerInventory의 보유 수량만 읽어 문장으로 옮긴다.
+    /// PlayerInventory의 보유 수량만 읽어 문장으로 옮긴다. UI가 같은 조건을 다시 구현하는 순간
+    /// 화면에 보이는 것과 실제 동작이 조용히 갈라지기 때문이다.
     ///
-    /// 주의(레이캐스트 중복): 지금 InteractionController는 조준 대상을 외부에 노출하는 public API가 없어서
-    /// (TryGetLookTarget이 private), 이 UI가 InteractionController.interactionCamera/interactionDistance
-    /// 라는 public 필드를 그대로 읽어 동일한 조건의 레이를 한 번 더 쏜다. 판정 파라미터는 전부 컨트롤러
-    /// 쪽 값을 참조하므로 거리/카메라가 바뀌어도 자동으로 따라가지만, 레이캐스트 자체가 두 벌인 것은
-    /// 여전히 어긋날 여지가 있다. systems-engineer에게 public 접근자(예:
-    /// `public bool TryGetLookTarget(out GameObject target)`) 공개를 요청해 둔 상태이며, 공개되는 즉시
-    /// 아래 TryGetLookTarget()을 그 호출로 교체하면 된다(이 파일 외 수정 불필요).
+    /// 레이캐스트도 같은 원칙이다: 조준 대상은 InteractionController.TryGetLookTarget(public)이 유일한
+    /// 소스다. 예전에는 이 UI가 interactionCamera/interactionDistance를 직접 읽어 같은 조건의 레이를 한 번
+    /// 더 쐈는데, 그러면 컨트롤러 쪽 판정에 레이어 마스크 하나만 추가돼도 "화면에 뜬 대상"과 "E키가 잡는
+    /// 대상"이 어긋난다. 이 파일에 별도 레이캐스트를 다시 만들지 말 것.
     ///
     /// OnGUI(IMGUI)는 절대 쓰지 않는다 - IMGUI는 sortingOrder와 무관하게 Screen Space Overlay Canvas 위에
     /// 덮어 그려져 다른 UGUI 화면을 통째로 가려버린 사고가 있었다(GameOverController.OnGUI 사례).
@@ -146,7 +144,9 @@ namespace MakeGame.UI
                 }
             }
 
-            if (!TryGetLookTarget(out GameObject target))
+            // 조준 판정은 InteractionController가 실제 상호작용에 쓰는 그 메서드를 그대로 부른다
+            // (UI 전용 레이캐스트 사본 금지 - 클래스 주석 참고).
+            if (!interaction.TryGetLookTarget(out GameObject target))
             {
                 SetOpen(false);
                 return;
@@ -171,25 +171,6 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// InteractionController가 쓰는 것과 동일한 카메라/거리로 정면 레이를 쏴 대상 오브젝트를 얻는다.
-        /// (클래스 주석 참고 - 컨트롤러가 public 접근자를 공개하면 이 메서드는 그 호출로 교체한다.)
-        /// </summary>
-        private bool TryGetLookTarget(out GameObject target)
-        {
-            target = null;
-            Camera cam = interaction.interactionCamera;
-            if (cam == null)
-                return false;
-
-            Ray ray = new Ray(cam.transform.position, cam.transform.forward);
-            if (!Physics.Raycast(ray, out RaycastHit hit, interaction.interactionDistance))
-                return false;
-
-            target = hit.collider.gameObject;
-            return true;
-        }
-
-        /// <summary>
         /// 대상 오브젝트에 붙은 컴포넌트 종류를 InteractionController.InteractWithTarget과 **동일한 우선순위**로
         /// 확인해 문구를 만든다(순서가 어긋나면 화면에 보이는 행동과 실제 실행되는 행동이 달라진다).
         /// 표시할 것이 없으면 false를 반환해 프롬프트를 숨긴다.
@@ -205,29 +186,7 @@ namespace MakeGame.UI
 
             var resourceNode = target.GetComponent<ResourceNode>();
             if (resourceNode != null)
-            {
-                string yieldName = resourceNode.yieldItem != null ? resourceNode.yieldItem.itemName : "자원";
-                main = $"{key} {yieldName} 채집";
-
-                if (!resourceNode.CanHarvest)
-                {
-                    blocked = true;
-                    sub = "지금은 고갈됨 - 잠시 뒤 다시 자란다";
-                }
-                else if (resourceNode.requiresTool && resourceNode.requiredTool != null
-                         && (inventory == null || inventory.FindItem(resourceNode.requiredTool) == null))
-                {
-                    // 실측(Balance_SceneSnapshot.md): 금속조각은 손도끼가 있어야 채집된다. 손도끼가 없으면
-                    // Harvest()가 조용히 실패할 뿐이라, 여기서 사유를 반드시 보여줘야 한다.
-                    blocked = true;
-                    sub = $"{resourceNode.requiredTool.itemName} 필요";
-                }
-                else
-                {
-                    sub = $"남은 채집 {resourceNode.remainingHarvestCount}회 · 1회당 {resourceNode.yieldPerHarvest}개";
-                }
-                return true;
-            }
+                return BuildResourceNodePrompt(resourceNode, inventory, key, out main, out sub, out blocked);
 
             var creature = target.GetComponent<HuntableCreature>();
             if (creature != null)
@@ -310,27 +269,134 @@ namespace MakeGame.UI
 
             var shelter = target.GetComponent<Shelter>();
             if (shelter != null)
+                return BuildShelterPrompt(shelter, key, out main, out sub, out blocked);
+
+            return false;
+        }
+
+        /// <summary>
+        /// [game-designer 요청] 쉼터 취침 프롬프트.
+        ///
+        /// 왜 문구를 이렇게까지 자세히 쓰는가: Design_BalancePass.md 2장에 따르면 Shelter.TrySleep은 시계를
+        /// 다음 날 일출로 **점프**시키므로, 매일 밤 취침하는 플레이어는 15일 조건을 147분이 아니라 74.5분에
+        /// 끝낸다. 2배 차이가 순수하게 "이 기능을 아는가"에서 나오는데 지금까지 게임 어디에도 안내가
+        /// 없었다(같은 문서가 "그 전제는 아직 참이 아니다"라고 못박은 지점). 이 프롬프트가 유일한 발견
+        /// 경로이므로, "잘 수 있다"가 아니라 **얼마나 건너뛰는지**를 숫자로 보여준다.
+        ///
+        /// 낮에도 "밤이 되면 무엇을 할 수 있는지"를 함께 알려준다 - 쉼터를 지어놓고도 밤에 다시 찾아올
+        /// 이유를 모르면 기능이 없는 것과 같기 때문이다. 판정(밤인지)과 실제 점프는 전부
+        /// SurvivalClock/Shelter가 하고, 여기서는 그 값을 읽어 문장으로만 옮긴다.
+        /// </summary>
+        private bool BuildShelterPrompt(Shelter shelter, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            main = $"{key} 쉼터에서 취침";
+            sub = "";
+            blocked = false;
+
+            var clock = interaction.survivalClock;
+            if (clock == null)
             {
-                main = $"{key} 쉼터에서 취침";
-                var clock = interaction.survivalClock;
-                if (clock == null)
-                {
-                    blocked = true;
-                    sub = "지금은 잠들 수 없다";
-                }
-                else if (clock.IsDaytime)
-                {
-                    blocked = true;
-                    sub = "밤에만 취침할 수 있다";
-                }
-                else
-                {
-                    sub = $"아침까지 건너뛰고 체력 {shelter.sleepHealAmount:F0} 회복";
-                }
+                blocked = true;
+                sub = "지금은 잠들 수 없다";
                 return true;
             }
 
-            return false;
+            if (clock.IsDaytime)
+            {
+                blocked = true;
+                sub = "밤에만 취침할 수 있다 - 밤에 다시 오면 아침까지 통째로 건너뛴다";
+                return true;
+            }
+
+            // Shelter.TrySleep과 같은 계산: 다음 날 일출(TimeOfDay01 0.25)로 이동한다. 시계는 실시간
+            // 1초당 1초씩 흐르므로(SurvivalClock.Update), 건너뛰는 게임 내 초 = 아껴지는 실제 초다.
+            int nextDay = clock.ElapsedDays + 1;
+            float wakeSeconds = (nextDay + 0.25f) * clock.secondsPerDay;
+            float skipped = Mathf.Max(0f, wakeSeconds - clock.elapsedSeconds);
+
+            // HUD의 "N일차"와 같은 기준(ElapsedDays + 1)으로 눈뜰 날짜를 표기한다.
+            main = $"{key} 쉼터에서 취침 - {FormatSkipDuration(skipped)} 건너뛰기";
+            sub = $"{nextDay + 1}일차 아침으로 이동 · 체력 {shelter.sleepHealAmount:F0} 회복 · 자는 동안 허기·갈증 소모 없음";
+            return true;
+        }
+
+        /// <summary>
+        /// 건너뛰는 시간(초)을 프롬프트 한 줄에 들어갈 짧은 문구로 만든다. 1분 미만은 초 단위로 올림해
+        /// "0분"처럼 아무 것도 아닌 것처럼 보이는 표시를 피한다.
+        /// </summary>
+        private static string FormatSkipDuration(float seconds)
+        {
+            if (seconds < 60f)
+                return $"{Mathf.CeilToInt(seconds)}초";
+
+            return $"약 {Mathf.RoundToInt(seconds / 60f)}분";
+        }
+
+        /// <summary>
+        /// 채집 노드 프롬프트. 가능 여부 판정은 **전혀 하지 않는다** - ResourceNode.GetHarvestFailure가
+        /// Harvest()와 같은 코드로 내려준 결론을 받아 한국어 문구로 옮기기만 한다.
+        /// (예전에는 이 자리에서 CanHarvest/requiresTool/FindItem을 UI가 다시 조합했는데, 그러면
+        /// 채집 조건이 한 줄만 바뀌어도 화면 문구가 조용히 거짓말을 하기 시작한다.)
+        /// 매 프레임 호출해도 상태가 바뀌지 않고 소리도 나지 않는다(GetHarvestFailure 주석의 보장).
+        /// </summary>
+        private bool BuildResourceNodePrompt(ResourceNode node, PlayerInventory inventory, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            string yieldName = node.yieldItem != null ? node.yieldItem.itemName : "자원";
+
+            // 수확량은 성공/실패와 무관하게 항상 보여준다 - "이걸 치면 몇 개가 들어오는가"는 어느 노드를
+            // 먼저 칠지 고르는 정보라, 도구가 없어 지금 막혀 있을 때도 알아야 하는 값이다.
+            int yield = GetEffectiveYieldPerHarvest(node, inventory);
+            main = $"{key} {yieldName} 채집 (+{yield})";
+
+            ResourceNode.HarvestFailure failure = node.GetHarvestFailure(inventory);
+            blocked = failure != ResourceNode.HarvestFailure.None;
+            sub = blocked
+                ? GetHarvestFailureText(node, failure)
+                : $"남은 채집 {node.remainingHarvestCount}회";
+            return true;
+        }
+
+        /// <summary>
+        /// 채집 실패 사유(enum) 하나를 플레이어가 읽을 문장으로 바꾼다. 이 메서드가 UI가 채집에 대해
+        /// 하는 일의 전부다 - 조건 판정은 ResourceNode가 이미 끝냈다.
+        /// NoInventory/NoYieldItem은 플레이어가 해결할 수 있는 사유가 아니지만(배선/데이터 오류),
+        /// 그렇다고 프롬프트를 숨기면 다시 "쳐도 아무 일이 없다"가 되므로 "지금은 채집할 수 없다"고
+        /// 분명히 말한다.
+        /// </summary>
+        private static string GetHarvestFailureText(ResourceNode node, ResourceNode.HarvestFailure failure)
+        {
+            switch (failure)
+            {
+                case ResourceNode.HarvestFailure.Depleted:
+                    return "지금은 고갈됨 - 잠시 뒤 다시 자란다";
+
+                case ResourceNode.HarvestFailure.MissingTool:
+                    // 실측(Balance_SceneSnapshot.md): 금속조각은 손도끼가 있어야 채집된다.
+                    return node.requiredTool != null ? $"{node.requiredTool.itemName} 필요" : "도구 필요";
+
+                case ResourceNode.HarvestFailure.NoInventory:
+                case ResourceNode.HarvestFailure.NoYieldItem:
+                default:
+                    return "지금은 채집할 수 없다";
+            }
+        }
+
+        /// <summary>
+        /// 이 노드를 한 번 채집하면 실제로 몇 개가 들어오는지. **수확량 계산은 이 메서드 한 곳에서만 한다**
+        /// - 프롬프트 문구가 여러 군데서 각자 계산하면 보너스가 붙는 순간 서로 다른 숫자를 표시한다.
+        ///
+        /// 지금은 ResourceNode.Harvest의 지급 루프(yieldPerHarvest회 AddItem)와 정확히 같은 값이다.
+        /// [B7 디렉터] 보너스 도구(bonusTool / bonusYieldPerHarvest)가 ResourceNode에 들어왔으므로
+        /// 판정을 그쪽 단일 소스에 위임한다. GetEffectiveYield는 상태를 바꾸지 않고 inventory가 null이어도
+        /// 기본 수확량을 돌려주므로 매 프레임 호출해도 안전하다.
+        /// 수확량 계산이 이 프로젝트에 두 벌 생기면 "표시는 +3인데 실제로는 +2"가 되므로, 여기서 직접
+        /// 더하지 말고 반드시 ResourceNode 쪽만 고칠 것.
+        /// </summary>
+        private static int GetEffectiveYieldPerHarvest(ResourceNode node, PlayerInventory inventory)
+        {
+            return node.GetEffectiveYield(inventory);
         }
 
         /// <summary>

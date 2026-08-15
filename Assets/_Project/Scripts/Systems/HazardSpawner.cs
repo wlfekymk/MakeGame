@@ -84,6 +84,12 @@ namespace MakeGame.Systems
         public float extraLargeScatterRadius = 160f;
 
         /// <summary>
+        /// 초목 배치 전용 난수 스트림의 salt 기준값. 섬 레이아웃(-2000000)/상어(-1000000)/섬별 위험요소
+        /// (islandId 그대로, 0 이상의 작은 값)와 겹치지 않는 별도 대역을 예약해, 초목 개수를 나중에
+        /// 조정해도 다른 스포너의 난수 시퀀스에 전혀 영향이 없게 한다.
+        /// </summary>
+
+        /// <summary>
         /// 초기화 시점에 balanceConfig 폴백을 적용한다. SpawnHazardsForIsland는 월드 생성 흐름에서
         /// 호출되므로, 그 전에 배율이 확정돼 있어야 한다.
         /// </summary>
@@ -123,7 +129,10 @@ namespace MakeGame.Systems
         public List<HazardSource> SpawnHazardsForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
             var spawned = new List<HazardSource>();
-            if (island == null || island.isStartingIsland)
+            if (island == null)
+                return spawned;
+
+            if (island.isStartingIsland)
                 return spawned;
 
             System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
@@ -228,9 +237,24 @@ namespace MakeGame.Systems
                     break;
 
                 case HazardType.Shark:
-                    // 상어는 눕혀서 배치되므로(로컬 Y가 몸통 진행 방향) 머리 쪽에 눈을 붙인다.
-                    AddCompensatedSphere(go, new Vector3(0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeL");
-                    AddCompensatedSphere(go, new Vector3(-0.22f, 0.7f, 0f), 0.07f, s, darkEye, "EyeR");
+                    // 상어는 rotationEuler(0,0,90)으로 눕혀져 있다. Z축 +90도 회전은 +X→+Y, +Y→-X이므로
+                    // 로컬 축의 의미가 이렇게 바뀐다: 로컬 +X = 월드 위쪽, 로컬 +Y = 몸통 진행 방향(머리),
+                    // 로컬 +Z = 좌우.
+                    //
+                    // [B5 수정 - 눈이 좌우가 아니라 위아래로 쌓여 있었다] 기존 값은 눈 두 개를 로컬
+                    // X ±0.22에 두었는데, 위 축 관계에 따르면 로컬 X는 좌우가 아니라 "월드 수직"이다.
+                    // 즉 두 눈이 머리의 정수리와 턱 아래에 하나씩 박혀 있었다(등지느러미가 옆구리에
+                    // 붙어 있던 B4-3 버그와 완전히 같은 축 혼동). 좌우인 로컬 Z로 옮긴다.
+                    //
+                    // 값 근거(식인종 창이 몸통에 파묻혀 있던 사례와 같은 실측): 몸통 캡슐의 로컬 반지름은
+                    // 0.5이고, 눈을 붙이는 로컬 y=0.7 지점은 이미 반구 캡 구간이라 그 단면 반지름은
+                    // sqrt(0.5² - 0.2²) ≈ 0.458이다. 눈 중심을 로컬 (x=0.12, z=±0.40)에 두면 축 기준
+                    // 반경이 sqrt(0.12² + 0.40²) ≈ 0.418로 표면 바로 안쪽이고, 여기에 눈 자체의 월드
+                    // 반지름 0.07m가 더해져 몸통 밖으로 확실히 드러난다(몸통 로컬 스케일 0.45 기준
+                    // 월드 표면 0.206m 대비 눈 바깥면 0.258m). x를 0으로 두지 않고 0.12만큼 올린 것은
+                    // 눈이 머리 옆면 가운데가 아니라 약간 위쪽에 붙어야 상어처럼 읽히기 때문이다.
+                    AddCompensatedSphere(go, new Vector3(0.12f, 0.7f, 0.40f), 0.07f, s, darkEye, "EyeL");
+                    AddCompensatedSphere(go, new Vector3(0.12f, 0.7f, -0.40f), 0.07f, s, darkEye, "EyeR");
                     // 등지느러미: 작은 원뿔 대신 얇은 큐브로 단순하게 표현.
                     //
                     // B4-3(축 정정 + 확대 + 색): 세 가지를 함께 고쳤다.
@@ -270,10 +294,21 @@ namespace MakeGame.Systems
                     break;
             }
 
-            // 연결(A-1): tech-artist가 만든 CreatureVisualBuilder.AddHazardDetailsIfMissing을 호출해
-            // 독사(VenomousSnake)/전갈(Scorpion)/함정(Trap)에 보조 디테일(혀/꼬리·집게/가시)을 추가한다.
-            // 곰/식인종/상어/벌떼는 위 switch에서 이미 자체 디테일을 만들었고 CreatureVisualBuilder는
-            // 그 네 종류에는 아무 것도 하지 않으므로(직접 확인함) 중복 없이 안전하게 이어붙일 수 있다.
+            // 연결(A-1): CreatureVisualBuilder.AddHazardDetailsIfMissing을 호출해 보조 디테일을 추가한다.
+            //
+            // [B5 정정 - 이전 주석이 사실과 달랐다(qa-reviewer 지적)] 여기에는 "곰/식인종/상어/벌떼는
+            // CreatureVisualBuilder가 아무 것도 하지 않으므로(직접 확인함) 중복이 없다"고 적혀 있었으나
+            // 사실이 아니다. AddHazardDetailsIfMissing의 switch는 VenomousSnake/Scorpion/Trap뿐 아니라
+            // Bear(귀+주둥이)/Cannibal(창+돌촉)/Shark(꼬리지느러미)까지 여섯 종류를 실제로 처리한다
+            // (CreatureVisualBuilder.cs의 AddHazardDetailsIfMissing 본문 참조). 아무 것도 하지 않는 것은
+            // BeeSwarm 하나뿐이다.
+            //
+            // 그럼에도 중복 파츠가 생기지 않는 진짜 이유는 "파츠 이름이 겹치지 않기" 때문이다.
+            // 위 switch가 만드는 이름은 EyeL/EyeR/Fin/Bee*이고, CreatureVisualBuilder가 만드는 이름은
+            // EarL/EarR/Snout/Spear/SpearHead/TailFin 등으로 서로 완전히 분리돼 있다. 즉 두 곳은
+            // "역할 분담"이지 "한쪽이 비어 있어서"가 아니다.
+            // → 새 디테일을 추가할 때는 반드시 양쪽 이름 목록을 모두 확인할 것. 같은 이름을 쓰면
+            //   같은 자리에 파츠 두 개가 겹쳐 z-파이팅으로 지글거린다.
             CreatureVisualBuilder.AddHazardDetailsIfMissing(go, type, s, config.color);
         }
 

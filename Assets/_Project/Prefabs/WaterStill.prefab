@@ -133,6 +133,11 @@ MonoBehaviour:
   waterPerSecond: 0.1
   storedWater: 0
   maxStorage: 12
+  bottledWaterItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
+  requiredContainerItem: {fileID: 11400000, guid: 4427ef709e804d3487fb24440b9995f7, type: 2}
+  waterPerBottle: 6
+  bottleModifierKey: 304
+  targetInventory: {fileID: 0}
 --- !u!1 &100000010
 GameObject:
   m_ObjectHideFlags: 0

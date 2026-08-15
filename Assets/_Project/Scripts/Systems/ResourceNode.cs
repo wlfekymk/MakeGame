@@ -35,6 +35,25 @@ namespace MakeGame.Systems
         [Tooltip("채집에 필요한 도구 아이템 (requiresTool이 true일 때만 사용, 예: 손도끼)")]
         public ItemData requiredTool;
 
+        // [game-designer 요청 - Design_BalancePass 3장] 보너스 도구(가산 방식). requiredTool과 목적이
+        // 정반대라는 점이 이 두 필드의 전부다:
+        //   requiredTool = 없으면 채집이 "거부"된다(GetHarvestFailure.MissingTool).
+        //   bonusTool    = 없어도 채집은 100% 성공하고, 있으면 수확량만 늘어난다.
+        // 그래서 bonusTool은 GetHarvestFailure에 절대 들어가지 않는다 - 판정에 한 번이라도 들어가는
+        // 순간 "도구를 잃으면 그 자원 경로가 통째로 죽는다"는 잠금 위험이 되살아나고, 3장의 잠금 반증
+        // (최악의 결과가 '느려짐'이지 '경로 소멸'이 아니다)이 무효가 된다.
+        //
+        // 기본값이 곧 "보너스 없음"이다(bonusTool = null, bonusYieldPerHarvest = 0). 두 조건을 AND로
+        // 묶어 검사하므로 둘 중 어느 쪽이 비어 있어도 가산은 0이다 - 이 필드들이 추가되기 전부터
+        // 존재하던 씬/세이브의 노드는 역직렬화 시 어느 쪽으로 채워지든(초기화식 값이든 0/null이든)
+        // 결과가 같아서, 씬을 고치기 전까지 기존 동작이 1도 바뀌지 않는다.
+        [Tooltip("보유하고 있으면 이 노드의 채집량이 늘어나는 보너스 도구 (예: 야자잎에 칼).\n" +
+            "requiredTool과 달리 없어도 채집은 정상적으로 성공한다 - 수확량 가산에만 관여한다.")]
+        public ItemData bonusTool;
+
+        [Tooltip("bonusTool을 보유했을 때 1회 채집당 추가로 얻는 개수. 0이면 보너스가 없다(기본값).")]
+        public int bonusYieldPerHarvest = 0;
+
         // B3-3: 이 노드를 배치한 섬 번호와, 그 섬 안에서 몇 번째로 생성됐는지(생성 순번). 절차적으로
         // 생성되는 노드라 고유한 프리팹/에셋 식별자가 없으므로, 이 두 값의 조합이 세이브 파일에서 노드
         // 하나를 다시 가리킬 수 있는 유일한 안정적인 키가 된다 - 같은 worldSeed로 재생성하면 항상 같은
@@ -327,7 +346,10 @@ namespace MakeGame.Systems
             if (requiresTool && requiredTool != null)
                 toolItem = inventory.FindItem(requiredTool);
 
-            for (int i = 0; i < yieldPerHarvest; i++)
+            // [game-designer 요청 - 3장] 보너스 도구 가산. 이 시점에는 이미 GetHarvestFailure가 None을
+            // 돌려준 뒤이므로, 보너스는 "성공한 채집이 몇 개를 주는가"에만 영향을 준다.
+            int totalYield = GetEffectiveYield(inventory);
+            for (int i = 0; i < totalYield; i++)
                 inventory.AddItem(yieldItem);
 
             if (skills != null)
@@ -347,6 +369,29 @@ namespace MakeGame.Systems
 
             Harvested?.Invoke(this);
             return true;
+        }
+
+        /// <summary>
+        /// 지금 이 인벤토리로 채집을 시도하면 1회 채집에 실제로 몇 개를 받게 되는지 알려준다
+        /// (기본 수확량 + 보너스 도구 가산). Harvest()가 실제로 쓰는 바로 그 계산이며, 상태를 전혀
+        /// 바꾸지 않으므로 조준 프롬프트가 매 프레임 호출해도 안전하다.
+        ///
+        /// [ui-engineer 요청 - Design_BalancePass 3장] "1회당 N개" 표시가 이 값을 쓰지 않으면
+        /// 보너스 도구 설계 전체가 플레이어에게 보이지 않는 기능이 된다 - 발견 경로가 이 숫자 하나뿐이다.
+        /// inventory가 null이면 보너스 없이 기본 수확량만 돌려준다.
+        /// </summary>
+        public int GetEffectiveYield(PlayerInventory inventory)
+        {
+            int bonus = 0;
+            if (bonusTool != null && bonusYieldPerHarvest > 0 && inventory != null
+                && inventory.FindItem(bonusTool) != null)
+            {
+                bonus = bonusYieldPerHarvest;
+            }
+
+            // yieldPerHarvest 자체는 손대지 않는다 - 이 메서드가 하는 일은 "기존 수확량에 가산항을
+            // 더하는 것" 하나뿐이며, 보너스가 없을 때의 반환값은 예전 for 루프의 상한과 완전히 동일하다.
+            return yieldPerHarvest + bonus;
         }
 
         /// <summary>

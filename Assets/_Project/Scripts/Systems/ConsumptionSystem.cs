@@ -1,4 +1,5 @@
 using UnityEngine;
+using MakeGame.Data;
 using MakeGame.Player;
 
 namespace MakeGame.Systems
@@ -18,6 +19,47 @@ namespace MakeGame.Systems
         [Tooltip("익히지 않은 음식을 먹었을 때 식중독(중독)에 걸릴 확률 (0~1)")]
         [Range(0f, 1f)]
         public float rawFoodPoisonChance = 0.3f;
+
+        // [죽은 config 값 배선 (B)] SurvivalBalanceConfig.rawFoodPoisonChance(=0.3)도 아무도 읽지 않는
+        // 죽은 값이었다. 그런데 이 필드는 이 프로젝트가 다른 12곳에서 쓰는 "0 이하 = 미설정" 폴백 패턴을
+        // 쓸 수 없다:
+        //   · 확률 0(= 생식해도 절대 식중독에 걸리지 않는다)은 완전히 유효한 밸런스 설정이라
+        //     "미설정"과 구분되지 않는다. 0을 넣으면 조용히 config의 0.3으로 되돌아간다.
+        //   · [Range(0,1)]가 붙어 있어 음수 센티널(-1 = 미설정)도 쓸 수 없다 - 인스펙터 슬라이더가
+        //     음수를 입력할 방법을 주지 않고, 값을 넣어도 클램프된다.
+        // 그래서 "값의 크기"가 아니라 "명시적 토글"로 출처를 고른다. 기본값 false = 씬 동작 불변이며,
+        // 씬 실측값(SampleScene.unity:874 rawFoodPoisonChance: 0.3)과 config 값(0.3)이 지금은 같아서
+        // 토글을 켜도 당장은 아무 것도 바뀌지 않는다 - 회귀 위험 0인 타이밍에 배선만 해 둔다.
+        [Header("밸런스 config (선택)")]
+        [Tooltip("식중독 확률을 config에서 읽고 싶을 때 연결한다. 비워두면 useConfigPoisonChance가 켜진 " +
+            "경우에 한해 Resources의 공용 SurvivalBalanceConfig를 자동으로 집는다.")]
+        public SurvivalBalanceConfig balanceConfig;
+
+        [Tooltip("켜면 위 rawFoodPoisonChance 대신 config의 rawFoodPoisonChance를 쓴다.\n" +
+            "끄면(기본값) 이 컴포넌트에 직렬화된 값만 쓴다 - config가 연결돼 있어도 무시한다.")]
+        public bool useConfigPoisonChance = false;
+
+        /// <summary>
+        /// 토글이 켜져 있을 때만 config를 확보한다. 꺼져 있으면 Resources 조회조차 하지 않으므로,
+        /// 기본 상태에서는 이 필드가 존재하지 않던 때와 실행 경로가 완전히 같다.
+        /// </summary>
+        private void Awake()
+        {
+            if (useConfigPoisonChance && balanceConfig == null)
+                balanceConfig = SurvivalBalanceConfig.Active;
+        }
+
+        /// <summary>
+        /// 이번 섭취에 실제로 적용할 식중독 확률. 토글이 켜져 있고 config가 실제로 잡혔을 때만
+        /// config 값을 쓰고, 그 외에는 항상 이 컴포넌트의 직렬화 값을 쓴다(에셋이 없어도 NRE 없음).
+        /// </summary>
+        private float GetRawFoodPoisonChance()
+        {
+            if (useConfigPoisonChance && balanceConfig != null)
+                return balanceConfig.rawFoodPoisonChance;
+
+            return rawFoodPoisonChance;
+        }
 
         /// <summary>
         /// 지정한 인벤토리 아이템을 섭취한다.
@@ -47,7 +89,7 @@ namespace MakeGame.Systems
                 AudioManager.Instance?.PlayDrink(); // 음료 섭취 효과음
             }
 
-            if (item.data.isRawFood && Random.value < rawFoodPoisonChance)
+            if (item.data.isRawFood && Random.value < GetRawFoodPoisonChance())
                 survivalStats.ApplyPoison();
 
             // 치료 효과가 있는 아이템(붕대/해독제/부목 등)을 사용하면 해당 상태 이상을 치료한다.

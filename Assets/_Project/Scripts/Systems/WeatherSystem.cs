@@ -19,9 +19,13 @@ namespace MakeGame.Systems
     /// maxClearSeconds ← weatherMaxClearSeconds, minRainSeconds ← weatherMinRainSeconds,
     /// maxRainSeconds ← weatherMaxRainSeconds, rainDimFactor ← rainDimFactor.
     /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로 인스펙터 값이 항상 이긴다.
-    /// [주의] 이 컴포넌트는 Bootstrap()이 런타임에 new GameObject로 생성하므로 그 인스턴스에는
-    /// balanceConfig를 인스펙터에서 연결할 수 없다(항상 null → 폴백 미적용 = 코드 기본값 그대로).
-    /// 씬에 WeatherSystem을 직접 배치해 config를 연결하는 경우에만 폴백이 의미를 갖는다.
+    /// [B5 정정 - 이전 주석이 사실과 달랐다(qa-reviewer 지적)] 여기에는 "Bootstrap()이 런타임에
+    /// new GameObject로 생성하므로 balanceConfig는 항상 null이고, 따라서 폴백은 씬에 직접 배치한
+    /// 경우에만 의미가 있다"고 적혀 있었으나, 그 뒤 B4-2에서 ApplyBalanceConfigFallback에
+    /// `balanceConfig ??= SurvivalBalanceConfig.Active`(Resources 자동 로드) 경로가 추가되어 더 이상
+    /// 사실이 아니다. 런타임 생성 인스턴스도 Resources에 공용 에셋만 있으면 config를 확보하므로,
+    /// 폴백은 항상 살아 있는 경로다. 즉 아래 필드의 코드 기본값을 0 이하로 바꾸면 그 순간부터
+    /// config 값이 실제 게임 동작을 지배한다 - "어차피 null이니 상관없다"고 판단하면 안 된다.
     /// </summary>
     public class WeatherSystem : MonoBehaviour
     {

@@ -31,6 +31,18 @@ namespace MakeGame.UI
         [Tooltip("상태 이상 시작 플래시가 사라지기까지 걸리는 시간(초)")]
         public float statusOnsetDuration = 0.5f;
 
+        [Tooltip("피격 세기 구분 기준(약함/보통). 이 값 미만의 피해는 가장 약한 단계로 표시한다.\n실측 HazardSource.GetContactDamage: 독사·전갈·함정 0 / 곰·벌떼 10 / 상어 18")]
+        public float lightHitDamage = 6f;
+
+        [Tooltip("피격 세기 구분 기준(보통/강함). 이 값 이상의 피해는 가장 강한 단계로 표시한다.")]
+        public float heavyHitDamage = 15f;
+
+        [Tooltip("가장 약한 피격 단계의 플래시 세기 배수 (0 피해도 이 단계로 반드시 표시된다)")]
+        public float lightHitStrength = 0.45f;
+
+        [Tooltip("중간 피격 단계의 플래시 세기 배수")]
+        public float mediumHitStrength = 0.75f;
+
         private float flashTimer = 0f;
 
         // 지금 재생 중인 플래시의 총 길이/색/세기. TriggerHit(C단계 위협)과 TriggerStatusOnset(상태 이상
@@ -138,8 +150,47 @@ namespace MakeGame.UI
         /// </summary>
         public void TriggerHit()
         {
-            currentFlashDuration = flashDuration;
-            currentFlashStrength = 1f;
+            TriggerHitFlash(1f, flashDuration);
+        }
+
+        /// <summary>
+        /// [C단계 = 위협, 세기 3단계] 피해량을 아는 호출부(HazardSource.ApplyHazardEffect →
+        /// GetContactDamage())가 쓰는 오버로드. 곰 10 / 상어 18 / 벌떼 10 / 독사·전갈·함정 0처럼 위협의
+        /// 무게가 실제로 다른데 전부 똑같은 세기로 번쩍이면, 플래시는 "맞았다"만 말하고 "얼마나 위험한
+        /// 상황인가"는 말하지 못한다. 세기를 3단계로 나눠 상어에게 물린 것과 함정을 밟은 것이 화면에서
+        /// 구분되게 한다.
+        ///
+        /// **피해 0도 반드시 번쩍인다.** 독사·전갈·함정은 접촉 순간의 직접 피해가 0이지만 중독/골절을
+        /// 걸어 오는 진짜 위협이고, 무엇보다 "아무 반응이 없는 것"이 이 프로젝트가 반복해서 저지른
+        /// 실패다. 0은 "피격이 아님"이 아니라 **가장 약한 단계**로 다룬다 - 여기서 조용히 return하면
+        /// 함정을 밟은 플레이어는 다시 아무 것도 못 보게 된다.
+        ///
+        /// 무인자 TriggerHit()은 기존 호출부를 위해 그대로 남아 있으며 동작도 예전과 100% 같다(최대 세기).
+        /// </summary>
+        /// <param name="damage">접촉 순간의 직접 피해량. 0 이하도 유효한 입력이다(가장 약한 단계).</param>
+        public void TriggerHit(float damage)
+        {
+            float strength;
+            if (damage < lightHitDamage)
+                strength = Mathf.Clamp01(lightHitStrength);
+            else if (damage < heavyHitDamage)
+                strength = Mathf.Clamp01(mediumHitStrength);
+            else
+                strength = 1f;
+
+            // 약한 피격은 짧게, 강한 피격은 길게 남는다 - 세기(알파/두께)만 다르면 순간적으로는
+            // 구분이 잘 안 되기 때문에 지속 시간도 함께 움직인다.
+            TriggerHitFlash(strength, flashDuration * Mathf.Lerp(0.7f, 1.25f, strength));
+        }
+
+        /// <summary>
+        /// 붉은 피격 비네트를 지정한 세기/길이로 처음부터 재생한다(두 TriggerHit 오버로드의 공통 구현).
+        /// 색은 항상 Danger Red 계열로 고정한다 - 색까지 세기별로 바꾸면 상태 이상 플래시와 구분이 흐려진다.
+        /// </summary>
+        private void TriggerHitFlash(float strength, float duration)
+        {
+            currentFlashDuration = Mathf.Max(0.05f, duration);
+            currentFlashStrength = Mathf.Clamp01(strength);
             currentFlashColor = new Color(0.8f, 0f, 0f, 1f);
             flashTimer = currentFlashDuration;
         }

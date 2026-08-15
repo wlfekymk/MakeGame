@@ -17,9 +17,8 @@ MonoBehaviour:
   icon: {fileID: 21300000, guid: 5d5cb6c34afeca1abcb2f69eea58be71, type: 3}
   maxUses: 1
   blockedFromLargeIslandsByCurrent: 0
-  materialFamily: 5
   hungerRestoreAmount: 0
-  thirstRestoreAmount: 50
+  thirstRestoreAmount: 30
   isRawFood: 0
   cookedResult: {fileID: 0}
   isCoconutWaterSource: 1

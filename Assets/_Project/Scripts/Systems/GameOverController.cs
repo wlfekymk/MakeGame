@@ -67,6 +67,7 @@ namespace MakeGame.Systems
         private void TriggerGameOver()
         {
             isGameOver = true;
+            EnsureDeathCauseRecorded();
 
             if (playerController != null)
                 playerController.enabled = false;
@@ -77,6 +78,44 @@ namespace MakeGame.Systems
             Time.timeScale = 0f;
             AudioManager.Instance?.PlayDamage(); // 사망 알림용 피해음 재생
             Debug.Log("[GameOverController] 플레이어가 사망했습니다. 게임 오버.");
+        }
+
+        /// <summary>
+        /// [ui-engineer 요청 - Design_Ending.md 5장 (3)] 사망 화면의 사인별 회피 힌트는 정확도가
+        /// 전적으로 lastDamageCause에 달려 있다(사인이 Unknown이면 "허기와 갈증을 먼저 관리하라"는
+        /// 일반 문구로 떨어져, 실제로는 상어에게 죽은 플레이어에게 엉뚱한 힌트를 준다).
+        ///
+        /// 전수 조사 결과: SurvivalStats.TakeDamage 호출부 8곳(굶주림/일사병/중독/출혈/익사 5곳 +
+        /// HazardSource의 Predator 2곳·SharkAttack 1곳)은 전부 cause를 명시적으로 넘기고 있어,
+        /// **체력을 깎아서 죽는 경로에는 빈 곳이 없다.** 남은 빈 경로는 체력을 깎지 않고 죽는 하나뿐이다:
+        /// SaveLoadController가 저장된 체력을 survivalStats.health에 직접 대입한다(TakeDamage를 거치지
+        /// 않는다). 체력이 매우 낮은 상태로 저장된 판을 불러오면 lastDamageCause는 초기값 Unknown인
+        /// 채로 사망 판정에 도달할 수 있다.
+        ///
+        /// 그래서 여기서는 "사인이 아직 비어 있을 때에 한해" 현재 생존 수치에서 사인을 역추정해 채운다.
+        /// 이미 기록된 사인은 절대 덮어쓰지 않으므로(정상 경로 100% 무변화), 이 메서드가 값을 바꾸는
+        /// 경우는 원래 Unknown이었을 때뿐이다 - 즉 나빠질 수 있는 표시가 없다.
+        /// </summary>
+        private void EnsureDeathCauseRecorded()
+        {
+            if (survivalStats == null || survivalStats.lastDamageCause != DamageCause.Unknown)
+                return;
+
+            // 순서는 "지금 실제로 체력을 깎고 있는 효과" 중 초당 피해가 큰 쪽부터다
+            // (익사 3.0 > 출혈 1.2 > 굶주림/탈수 1.0 > 중독 0.8 > 일사병 0.5, SurvivalStats 기본값 기준).
+            // 여러 조건이 동시에 참이면 가장 빨리 죽였을 쪽을 사인으로 본다.
+            if (survivalStats.oxygen <= 0f)
+                survivalStats.lastDamageCause = DamageCause.Drowning;
+            else if (survivalStats.isBleeding)
+                survivalStats.lastDamageCause = DamageCause.Bleeding;
+            else if (survivalStats.hunger <= 0f || survivalStats.thirst <= 0f)
+                survivalStats.lastDamageCause = DamageCause.Starvation;
+            else if (survivalStats.isPoisoned)
+                survivalStats.lastDamageCause = DamageCause.Poison;
+            else if (survivalStats.sunstroke >= SurvivalStats.MaxStatValue)
+                survivalStats.lastDamageCause = DamageCause.Sunstroke;
+            // 어느 것도 아니면 Unknown 그대로 둔다 - 근거 없이 아무 사인이나 찍으면 힌트가 함정이 된다
+            // (Design_Ending.md 5장: "힌트가 틀리면 힌트가 아니라 함정이 된다").
         }
 
         /// <summary>

@@ -79,6 +79,10 @@ namespace MakeGame.Player
             if (oxygenRecoveryPerSecond <= 0f) oxygenRecoveryPerSecond = balanceConfig.oxygenRecoveryPerSecond;
             if (oxygenDrainPerSecond <= 0f) oxygenDrainPerSecond = balanceConfig.oxygenDrainPerSecond;
             if (drowningDamagePerSecond <= 0f) drowningDamagePerSecond = balanceConfig.drowningDamagePerSecond;
+
+            // [죽은 config 값 배선 (A)] 임계치 0 이하 = "과음이 항상 성립"이라는 뜻이 되어 밸런스 값으로
+            // 성립하지 않으므로, 이 파일의 다른 12줄과 똑같이 0 이하를 미설정 신호로 쓴다.
+            if (coconutOverdoseThreshold <= 0f) coconutOverdoseThreshold = balanceConfig.coconutOverdoseThreshold;
         }
 
         // 추가 작업(#10 준비): SurvivalHudUI가 위험 경고(빨간 경고색 깜빡임)를 띄우는 임계값(0.25f/0.2f/0.8f)을
@@ -162,6 +166,15 @@ namespace MakeGame.Player
         public float oxygenDrainPerSecond = 5f;
         [Tooltip("산소가 고갈된 채로 잠수 중일 때 초당 입는 익사 피해량")]
         public float drowningDamagePerSecond = 3f;
+
+        // [죽은 config 값 배선 (A)] SurvivalBalanceConfig.coconutOverdoseThreshold(=40)는 에셋에 값이
+        // 있는데 이 프로젝트의 어느 코드도 읽지 않는 죽은 값이었다. 과음 임계치가 ConsumeCoconutWater의
+        // 기본 인자(40f)에만 하드코딩돼 있어서, config를 고쳐도 게임은 40으로 굴러갔다.
+        // 지금 배선하는 이유: config 값(40)과 실효값(40)이 아직 같아서 회귀 위험이 0이다 - 둘이 갈라진
+        // 뒤에 배선하면 그 순간이 곧 밸런스 변경이 된다.
+        [Header("코코넛워터 과음")]
+        [Tooltip("코코넛 워터를 1회에 이 수치보다 많이 마시면 과음으로 판정되어 설사로 갈증이 절반으로 떨어진다.")]
+        public float coconutOverdoseThreshold = 40f;
 
         /// <summary>현재 사망 상태인지 여부.</summary>
         public bool IsDead => health <= 0f;
@@ -307,12 +320,19 @@ namespace MakeGame.Player
         /// 갈증은 회복되지만, 과음(threshold 초과) 시 설사로 인해 갈증이 급격히 다시 악화된다.
         /// </summary>
         /// <param name="amount">회복시킬 갈증 수치</param>
-        /// <param name="overdoseThreshold">과음으로 판정되는 1회 섭취량 기준치</param>
-        public void ConsumeCoconutWater(float amount, float overdoseThreshold = 40f)
+        /// <param name="overdoseThreshold">과음으로 판정되는 1회 섭취량 기준치.
+        /// 음수(기본값 -1)로 두면 이 컴포넌트의 coconutOverdoseThreshold 필드를 쓴다 - 그 필드는
+        /// ApplyBalanceConfigFallback을 통해 SurvivalBalanceConfig와 연결돼 있다.
+        /// 예전 기본값 40f는 config를 무시하는 하드코딩이었고, 지금은 필드 기본값도 40f라 호출부
+        /// (ConsumptionSystem.Consume - 인자를 넘기지 않는 유일한 호출부)의 동작이 완전히 동일하다.</param>
+        public void ConsumeCoconutWater(float amount, float overdoseThreshold = -1f)
         {
             ConsumeWater(amount);
 
-            if (amount > overdoseThreshold)
+            // 0도 유효한 임계치("아무리 조금 마셔도 과음")로 보고, 미지정은 음수로만 판정한다.
+            float threshold = overdoseThreshold >= 0f ? overdoseThreshold : coconutOverdoseThreshold;
+
+            if (amount > threshold)
             {
                 // 과음 시 설사로 인해 갈증이 절반 수준으로 급격히 악화된다.
                 thirst = Mathf.Max(0f, thirst * 0.5f);

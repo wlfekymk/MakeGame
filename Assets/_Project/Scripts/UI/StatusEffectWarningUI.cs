@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using MakeGame.Player;
+using MakeGame.Systems;
 
 namespace MakeGame.UI
 {
@@ -159,6 +160,13 @@ namespace MakeGame.UI
                 // 화면 가장자리 플래시 1회(C단계). "시작된 순간"에만 호출하므로 상시 피해에 플래시를
                 // 거는 것이 아니다 - ArtDirection.md 4.2 규칙을 지킨다.
                 CombatFeedbackUI.Instance?.TriggerStatusOnset(onsetColor);
+
+                // 같은 순간에 경고음도 한 번. 화면 아래쪽을 보고 있거나 정면 전투에 시선이 묶여 있으면
+                // 상단 배너와 가장자리 플래시를 둘 다 놓칠 수 있어, 시선과 무관한 채널이 하나 필요하다.
+                // 이 호출은 startedNow(false→true) 게이트 안에 있으므로 상태 이상이 지속되는 동안
+                // 반복 재생되지 않는다. 동시에 여러 개가 시작돼도 AudioManager가 최소 간격(0.3초)으로
+                // 한 번으로 합쳐 준다.
+                AudioManager.Instance?.PlayStatusOnset();
             }
 
             if (!everBuilt || isBleeding != lastBleeding || isPoisoned != lastPoisoned || hasBrokenBone != lastBrokenBone

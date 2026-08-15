@@ -17,15 +17,17 @@ namespace MakeGame.Systems
     /// 폴백으로 읽는 config 필드 — requiredFoodCount ← endingRequiredFoodCount,
     /// requiredWaterCount ← endingRequiredWaterCount, requiredFuelCount ← endingRequiredFuelCount,
     /// requiredElapsedDays ← endingRequiredElapsedDays.
-    /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용된다. 씬 실측값(30/30/1, Balance_SceneSnapshot.md
-    /// 2장)이 전부 양수이므로 현재 씬에서는 폴백이 한 번도 실행되지 않는다 = 동작 변화 없음.
+    /// 폴백은 해당 필드가 음수(미설정)일 때만 적용된다 - 네 필드 모두 같은 규칙이다(qa-reviewer 요청으로
+    /// "0 이하" → "음수"로 통일했다. 근거는 ApplyBalanceConfigFallback 주석 참고). 씬 실측값
+    /// (12/12/1/15, SampleScene.unity:1038-1045)이 전부 양수이므로 현재 씬에서는 폴백이 한 번도
+    /// 실행되지 않는다 = 동작 변화 없음.
     /// </summary>
     public class EndingChecker : MonoBehaviour
     {
         [Header("밸런스 config (선택, B4-1)")]
         [Tooltip("연결하면, 아래 requiredFoodCount/requiredWaterCount/requiredFuelCount/" +
-            "requiredElapsedDays가 0 이하로(미설정) 남아있는 경우에 한해 config의 ending* 값을 대신 쓴다." +
-            " 씬에 이미 의미 있는(양수) 값이 직렬화돼 있으면 절대 덮어쓰지 않는다.")]
+            "requiredElapsedDays가 음수로(미설정) 남아있는 경우에 한해 config의 ending* 값을 대신 쓴다." +
+            " 0은 '그 조건을 끈다'는 의미 있는 값이라 폴백 대상이 아니다(0을 넣으면 0이 그대로 쓰인다).")]
         public SurvivalBalanceConfig balanceConfig;
 
         [Tooltip("완성 여부를 확인할 배 제작 시스템")]
@@ -127,12 +129,26 @@ namespace MakeGame.Systems
             if (balanceConfig == null)
                 return;
 
-            if (requiredFoodCount <= 0) requiredFoodCount = balanceConfig.endingRequiredFoodCount;
-            if (requiredWaterCount <= 0) requiredWaterCount = balanceConfig.endingRequiredWaterCount;
-            if (requiredFuelCount <= 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
-            // [B5 qa 지적] 나머지 3개는 대응 ItemData를 비우면 조건을 끌 수 있지만, 경과 일수에는 대응
-            // 아이템이 없어서 0이 유일한 비활성화 수단이다. <=0 으로 폴백하면 인스펙터에 0을 넣어도
-            // 조용히 15로 되돌아가 테스트가 막힌다. 미설정은 음수로만 판정한다.
+            // [qa-reviewer 요청] 네 필드 모두 "미설정 = 음수" 한 가지 규칙으로 통일했다(<=0 → <0).
+            //
+            // 판단 근거 - <=0 유지 + 주석 대신 <0 통일을 고른 이유:
+            //   (1) 0은 세 필드 모두에서 "의미 있는 값"이다. requiredFoodCount 0 = "식량 조건 없음"은
+            //       설계자가 실제로 원할 수 있는 설정이고, 지금은 그렇게 넣어도 config의 12로 조용히
+            //       되돌아가 인스펙터 표시와 실제 판정이 갈라진다. 조건을 끄는 다른 수단(대응 ItemData
+            //       비우기)이 있다는 사실은 이 침묵을 정당화하지 못한다 - 두 수단이 서로 다르게 동작하는
+            //       것 자체가 다음 사람이 틀릴 자리다.
+            //   (2) 같은 파일 안에서 네 줄 중 한 줄만 규칙이 다르면, 그 차이가 "의도"인지 "고치다 만
+            //       흔적"인지 읽는 사람이 판별할 수 없다. requiredElapsedDays만 <0 이었던 직전 상태가
+            //       정확히 그 모양이었다.
+            //   (3) 회귀 위험 0인 타이밍이다. 씬 실측값이 12/12/1로 전부 양수라(SampleScene.unity
+            //       :1038,1040,1042) 이 세 줄은 지금 씬에서 한 번도 실행되지 않는다. 폴백이 필요한
+            //       상황을 만들려면 인스펙터에서 값을 음수로 직접 내려야 한다.
+            //
+            // 주의: 이 규칙 변경으로 "필드를 0으로 두면 config가 채워준다"는 동작이 사라진다. 앞으로
+            // config 값을 쓰고 싶으면 해당 필드를 -1로 둘 것.
+            if (requiredFoodCount < 0) requiredFoodCount = balanceConfig.endingRequiredFoodCount;
+            if (requiredWaterCount < 0) requiredWaterCount = balanceConfig.endingRequiredWaterCount;
+            if (requiredFuelCount < 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
             if (requiredElapsedDays < 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
         }
 

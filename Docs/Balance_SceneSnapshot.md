@@ -1,3 +1,27 @@
+> ## ⚠️ 이 문서는 부분적으로 stale하다 (2026-08-15 v0.01.089 기준 갱신)
+>
+> 1장 GUID 매핑표(31개)는 `.asset.meta` 직접 추출값이라 **여전히 정확하다.** qa-reviewer가 두 차례
+> 재검증했다. 아래 밸런스 수치 중 배치 4~7에서 바뀐 것은 이 경고 블록에 정리한다.
+>
+> | 항목 | 이 문서 표기 | 현재 씬 실측 |
+> |---|---|---|
+> | `EndingChecker.requiredFoodCount` | 30 | **12** |
+> | `EndingChecker.requiredWaterCount` | 30 | **12** |
+> | `EndingChecker.survivalClock` | 필드 없음 | **연결됨** (`requiredElapsedDays: 15` 동작 중) |
+> | HazardSpawner 배율 | 1 / 1.5 / 2 / 2.5 | **1 / 1.75 / 2.5 / 3.25** |
+> | 스포너 `scatterRadius` | 80 / 100 / 90 단일값 | **죽은 키였음. 제거됨.** 규모별 40 / 72 / 112 / 160 |
+> | `SharkSpawner.depthBelowSeaLevel` | 2 | **0.3** (코드와 일치) |
+> | `WorldMapManager.terrainMaxHeight` | 2.5 | **8** |
+> | `BoatBlueprintSpawner.largeIslandSpawnChance` | 0.9 | **1** |
+> | 엔진부품 `minimumIslandSize` | 2 | **3** (특대 전용) |
+> | 자원 노드 종류 | 12종 | **13종** (생수 신설, `minimumIslandSize: 1`) |
+> | `WaterStill` 프리팹 | 0.3 / 20 | **0.1 / 12** + 생수 병입 배선 |
+> | `Item_칼.maxUses` | 10 | **-1** (무한) |
+> | `Item_코코넛.thirstRestoreAmount` | 50 | **30** (상시 과음 해소) |
+>
+> **문서를 근거로 판단하기 전에 `Assets/Scenes/SampleScene.unity` YAML을 직접 파싱해서 대조할 것.**
+> 이 프로젝트에서 사고의 대부분은 "문서/주석이 주장하는 값"과 "실제 직렬화된 값"이 갈라진 데서 나왔다.
+
 # SampleScene 실측 스냅샷 + GUID 확정 매핑표
 
 > 작성: 2026-08-15 · 디렉터(unity-operator 역할 겸임)

@@ -127,12 +127,11 @@ namespace MakeGame.Systems
             // 전투/접촉 시각 피드백: 위험요소와 "접촉한 이 순간"에만 화면 테두리를 붉게 번쩍인다.
             // SurvivalStats.TakeDamage 안에 걸면 굶주림/일사병 등 상시 피해에도 매번 발동해 버리므로,
             // 반드시 이 접촉 진입점에서만 트리거해야 한다 (CombatFeedbackUI 클래스 주석 참고).
-            // [ui-engineer 요청 / 피격 세기 3단계] 지금은 피해량을 넘길 수 없어 곰(10)·상어(18)·함정(0)이
-            // 전부 똑같은 세기로 번쩍인다. 넘길 값은 아래 GetContactDamage()에 이미 준비해 뒀고,
-            // CombatFeedbackUI(ui-engineer 소유)에 `public void TriggerHit(float damage)` 오버로드가
-            // 추가되는 즉시 이 줄을 `TriggerHit(GetContactDamage())`로 바꾸면 된다.
-            // 없는 오버로드를 미리 부르면 프로젝트 전체가 컴파일 불가가 되므로 지금은 기존 시그니처만 부른다.
-            CombatFeedbackUI.Instance?.TriggerHit();
+            // [B7 디렉터] 피격 세기 3단계 연결 완료. GetContactDamage()가 곰 10 / 상어 18 / 벌떼 10 /
+            // 독사·전갈·함정 0을 돌려주고, CombatFeedbackUI가 이를 약/중/강으로 나눠 번쩍인다.
+            // 0을 "피격 아님"으로 버리지 않는다 - 독사·전갈·함정은 체력이 안 깎일 뿐 접촉은 일어났고,
+            // 무반응은 이 프로젝트가 반복해서 낸 실패 패턴이다(가장 약한 단계로 반드시 표시된다).
+            CombatFeedbackUI.Instance?.TriggerHit(GetContactDamage());
 
             // B4-11: 화면 테두리 플래시(2D)는 "맞았다"만 알려줄 뿐 어디서 맞았는지는 알려주지 못한다.
             // 접촉 지점 근처(플레이어 가슴 높이)에 Danger Red 입자를 짧게 튀겨 위치 정보를 더한다.

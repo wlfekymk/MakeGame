@@ -502,7 +502,27 @@ namespace MakeGame.Systems
 
             placeholder.name = $"Island_{island.islandId}_{island.size}";
             island.placeholderObject = placeholder;
+
+            // [B7 디렉터] 지면 구분(해안 모래 / 내륙 풀밭)과 초목 배치. tech-artist가 처음에는 편집 권한
+            // 때문에 HazardSpawner.SpawnHazardsForIsland에 얹었는데, 초목은 위험 요소와 아무 관계가 없고
+            // 시작 섬은 위험 요소를 면제받으므로 그 자리에 두면 조기 반환에 걸리기 쉬웠다. 섬 지오메트리를
+            // 만드는 진짜 주인인 여기로 옮겼다.
+            // 시드: 초목 전용 salt 대역(3000000+)을 쓴다. 위험 요소/자원 스트림과 절대 공유하면 안 된다 -
+            // 공유하면 초목 개수를 바꿀 때마다 자원·위험요소 배치가 통째로 밀려 세이브 복원 키가 어긋난다.
+            // Physics.autoSyncTransforms는 기본 false다. 방금 만들어 위치를 잡은 MeshCollider는
+            // 아직 물리 씬에 반영되지 않았을 수 있고, 그 상태로 TerrainSampler.SnapToGround가 레이를
+            // 쏘면 지형을 못 맞혀 초목이 전부 y=0(해수면)에 깔린다. 명시적으로 한 번 동기화한다.
+            // 섬 생성은 월드당 9회뿐이라 이 호출의 비용은 무시할 수 있다.
+            Physics.SyncTransforms();
+
+            IslandMeshGenerator.BuildIslandSurface(
+                placeholder,
+                IslandSizeMetrics.GetTerrainRadius(island.size),
+                SeededRandomExtensions.CreateForSalt(worldSeed, VegetationSeedSalt + island.islandId));
         }
+
+        /// <summary>초목 배치 전용 난수 salt 대역. 자원/위험요소/섬 레이아웃 스트림과 분리돼 있다.</summary>
+        private const int VegetationSeedSalt = 3000000;
 
         /// <summary>
         /// 지정한 반지름/위치에 절차적 섬 지형 메시를 생성한다.

@@ -41,6 +41,23 @@ namespace MakeGame.Systems
 
             [Tooltip("채집에 필요한 도구 아이템 (requiresTool이 true일 때만 사용, 예: 손도끼)")]
             public ItemData requiredTool;
+
+            // [game-designer 요청 - Design_BalancePass 3장] 보너스 도구는 requiredTool과 정반대의
+            // 물건이다. requiredTool은 "없으면 채집 거부"(잠금 위험)이고, bonusTool은 "있으면 더 많이"
+            // (가산)라서 실패값이 '경로 소멸'이 아니라 '느려짐'이다. 그래서 이 두 필드는 채집 성공/실패
+            // 판정(ResourceNode.GetHarvestFailure)에 절대 전달되지 않고 수확량 계산에만 쓰인다.
+            //
+            // 중요 - 기존 씬 엔트리와의 호환: 이 두 키는 SampleScene.unity의 resourceEntries 12개
+            // 항목 어디에도 아직 없다. 역직렬화 시 없는 키가 무엇으로 채워지든(초기화식 값이든 0/null
+            // 이든) 결과가 "보너스 없음"으로 같아지도록, bonusTool = null / bonusYieldPerHarvest = 0을
+            // 기본값으로 잡고 ResourceNode 쪽에서 두 조건을 AND로 검사한다. 즉 디렉터가 씬에 값을
+            // 넣기 전까지 채집량은 1도 바뀌지 않는다.
+            [Tooltip("보유하고 있으면 이 자원의 채집량이 늘어나는 보너스 도구 (예: 야자잎에 칼).\n" +
+                "requiredTool과 달리, 없어도 채집은 정상적으로 성공한다 - 수확량 가산에만 관여한다.")]
+            public ItemData bonusTool;
+
+            [Tooltip("bonusTool을 보유했을 때 1회 채집당 추가로 얻는 개수. 0이면 보너스가 없다(기본값).")]
+            public int bonusYieldPerHarvest = 0;
         }
 
         [Tooltip("섬에 배치할 자원 종류와 기본 개수 목록")]
@@ -55,12 +72,18 @@ namespace MakeGame.Systems
         // IslandSizeMetrics는 삭제하지 않고, 이 필드가 의미 있게 설정되지 않았을 때(0 이하)만 쓰는
         // "폴백 단일 소스"로 역할을 낮췄다 (GetMultiplier/GetScatterRadius 참고).
         [Header("섬 규모별 배치 배율")]
-        // 버그 수정 (#1003/#1006 - 섬 크기별 자원 밀도 공식 정립): 예전에는 이 배율이 섬 반지름과 같은
-        // "선형" 비율(1/2/3/4)로만 늘어났다. 그런데 자원이 실제로 흩뿌려지는 면적은 반지름의 "제곱"에
-        // 비례해서 커진다. WorldMapManager.GetSizeScale의 지형 반지름이 50/90/140/200이므로 면적비는
-        // 1 : 3.24 : 7.84 : 16이 된다. 배율을 반지름과 같은 선형 비율로만 올리면 섬이 커질수록 단위
-        // 면적당 자원 밀도가 오히려 옅어지는 문제가 있었다(맵 스케일을 10배로 키운 배치 이후 발견).
-        // 아래 배율을 면적비에 맞춰 올려서 섬 크기와 무관하게 체감 밀도가 비슷하게 유지되도록 했다.
+        // [B7 디렉터 정정] 이 자리에 있던 주석은 "배율을 면적비(1 : 3.24 : 7.84 : 16)에 맞춰 올렸다"고
+        // 적혀 있었지만 값은 선형 1/2/3/4 그대로였다. 씬 값도 1/2/3/4다. 즉 주석이 주장하는 수정이
+        // 코드에 반영된 적이 없다 - 바로 옆 scatterRadius가 정확히 같은 방식으로 오래 살아남았던
+        // 버그와 같은 유형이다(qa-reviewer 지적).
+        //
+        // 확인 후 선형을 유지하기로 했다. 면적비를 적용하면 특대 섬의 자원 노드가 16배가 되어
+        // 노드 수백 개가 깔린다(현재 특대 기준 약 96개 → 380개 이상). 드로우콜·세이브 크기·탐색 재미가
+        // 전부 나빠진다. 큰 섬은 "자원이 빽빽한 곳"이 아니라 "특별한 자원(금속조각·부력통·엔진부품)이
+        // 있는 곳"으로 차별화하는 것이 이 게임의 설계다(Docs/Design_Progression.md).
+        // 밀도가 옅어지는 것은 의도된 것이다 - 넓은 섬은 실제로 더 많이 걸어야 한다.
+        // IslandSizeMetrics.GetAreaProportionalMultiplier는 이 필드들이 0 이하일 때만 쓰이는 폴백이라
+        // 현재 호출되지 않는다. 지우지는 않았다(다른 밸런스 실험에서 다시 쓸 수 있다).
         public float smallMultiplier = 1f;
         public float mediumMultiplier = 2f;
         public float largeMultiplier = 3f;
@@ -89,7 +112,7 @@ namespace MakeGame.Systems
         // 해결: 시작 섬에 한해 "무엇을 어떻게 줍는지"를 가르치는 최소 3종(수분=코코넛, 목재=나뭇가지,
         // 석재=돌조각. 손도끼 레시피 재료가 뒤 둘이다)을 시작 지점 근처에 확정 배치한다.
         // 밸런스를 바꾸지 않기 위해 기존 무작위 스폰은 한 줄도 건드리지 않고 3개를 "더한다"
-        // (시작 섬 노드 18 → 21개, 다른 8개 섬은 변화 없음).
+        // (시작 섬 노드 20 → 23개, 다른 8개 섬은 변화 없음).
         [Tooltip("시작 섬(isStartingIsland)에 한해 플레이어 시작 지점 근처에 기초 자원 3종을 확정 배치할지 여부.\n" +
                  "끄면 예전처럼 무작위 스폰만 돌아간다(기존 무작위 스폰 자체는 이 값과 무관하게 그대로다).")]
         public bool spawnLandingCircle = true;
@@ -282,6 +305,8 @@ namespace MakeGame.Systems
             node.remainingHarvestCount = node.maxHarvestCount;
             node.requiresTool = entry.requiresTool;
             node.requiredTool = entry.requiredTool;
+            node.bonusTool = entry.bonusTool;
+            node.bonusYieldPerHarvest = entry.bonusYieldPerHarvest;
             node.islandIndex = islandIndex;
             node.spawnOrder = spawnOrder;
             return node;
@@ -440,7 +465,18 @@ namespace MakeGame.Systems
                         // [tech-artist-B 요청 - 파츠 예산] 4~6장 → 3~5장. 특대 섬에는 자원 노드가 90개 넘게
                         // 깔리고 노드당 파츠 하나가 곧 드로우콜 하나다. ResourceNode 쪽에서 노드당 4개 상한을
                         // 코드로 강제하고 있으므로, 소스에서 그 상한을 넘겨 만들어 놓고 트림당하는 낭비를 없앤다.
-                        int leafCount = rng.NextInt(3, 6);
+                        //
+                        // [systems-engineer-B 요청 - 파츠 예산 최종] 3~5장 → 2~3장. 3~5장은 루트를 포함해
+                        // 4~6개라 ResourceNode.MaxVisualPrimitives(4, 루트 포함)를 여전히 넘겼다 - 야자잎은
+                        // 12종 자원 중 유일한 초과 항목이었다. 두 해법 중 여기(소스에서 감량)를 고른 이유:
+                        //   (1) ResourceNode의 트림은 자식을 "뒤에서부터" 지운다(TrimDetailChildren). 잎은
+                        //       -spread/2 → +spread/2 순서로 각도순 배치되므로 뒤를 자르면 한쪽 날개만 남은
+                        //       비대칭 반쪽 부채꼴이 된다. 같은 장수라도 대칭 부채꼴 쪽이 훨씬 잘 읽힌다.
+                        //   (2) 트림은 GameObject를 만들었다가 곧바로 Destroy하는 낭비다 - 바로 위 주석이
+                        //       없애자고 한 그 낭비를, 야자잎에 트림을 붙이면 다시 들여오게 된다.
+                        // 2장이면 V자, 3장이면 부채꼴로 읽힌다. 아래 각도 보간식이 leafCount 1도 안전하게
+                        // 처리하므로(Mathf.Max(1, ...)) 범위를 더 줄여도 0으로 나누지 않는다.
+                        int leafCount = rng.NextInt(2, 4);
                         float spread = rng.NextFloat(100f, 140f); // 부채꼴 전체 펼침 각도
                         for (int i = 0; i < leafCount; i++)
                         {

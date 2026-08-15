@@ -622,7 +622,7 @@ MonoBehaviour:
   worldSeed: 0
   oceanSize: 40000
   seaLevel: 0
-  terrainMaxHeight: 2.5
+  terrainMaxHeight: 8
   terrainMaterial: {fileID: 0}
 --- !u!1 &1925945763
 GameObject:
@@ -714,7 +714,7 @@ Transform:
   m_GameObject: {fileID: 1925945763}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 5, z: 0}
+  m_LocalPosition: {x: 0, y: 14, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -900,6 +900,8 @@ MonoBehaviour:
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 11400000, guid: 57c8b75b1a78d9b45ae04aaa7355d08a, type: 2}
+    bonusYieldPerHarvest: 1
   - yieldItem: {fileID: 11400000, guid: 0b631157c4864eb3adb1b0bf99ba09da, type: 2}
     baseCount: 2
     minimumIslandSize: 0
@@ -935,11 +937,6 @@ MonoBehaviour:
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
-  - yieldItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
-    baseCount: 2
-    minimumIslandSize: 0
-    requiresTool: 0
-    requiredTool: {fileID: 0}
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
     minimumIslandSize: 0
@@ -948,6 +945,11 @@ MonoBehaviour:
   - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
     baseCount: 2
     minimumIslandSize: 3
+    requiresTool: 0
+    requiredTool: {fileID: 0}
+  - yieldItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
+    baseCount: 1
+    minimumIslandSize: 1
     requiresTool: 0
     requiredTool: {fileID: 0}
   smallMultiplier: 1
@@ -1099,6 +1101,9 @@ MonoBehaviour:
   survivalClock: {fileID: 2000000009}
   islandTravel: {fileID: 2000000008}
   worldMapManager: {fileID: 1886019775}
+  campfirePrefab: {fileID: 500000100, guid: c7d2b8a94e6f4d3ab1f0e9c6a5d8b3f2, type: 3}
+  shelterPrefab: {fileID: 5421002868401471053, guid: 60ec241f8f0048548aff55b5ac6526e9, type: 3}
+  waterStillPrefab: {fileID: 9207985716762942123, guid: 313230279933cee49a30fa72ed1aea5d, type: 3}
   saveKey: 286
   loadKey: 290
   lastStatusMessage: 
