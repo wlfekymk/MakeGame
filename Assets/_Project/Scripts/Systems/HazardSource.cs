@@ -206,6 +206,22 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// B3-5: 세이브 파일에서 읽어온 처치 상태를 그대로 되돌린다. TryAttack과 달리 무기/인벤토리를
+        /// 전혀 거치지 않고 isDefeated/체력/시각 표시만 직접 맞춘다 - 저장 시점에 "처치됨"이었던 위험
+        /// 요소를 불러온 뒤에도 다시 처치된 채로 보이게 하기 위함이다. 재등장까지 남은 시간은 저장하지
+        /// 않으므로(SaveData.defeatedHazards 주석 참고) respawnTimer는 항상 0부터 다시 시작한다 -
+        /// 즉 불러온 직후부터 respawnSeconds가 다시 꽉 채워 흘러야 재등장한다(오프라인 경과 시간 미반영,
+        /// SaveLoadController.RestoreHazardsAndCreatures 주석 참고).
+        /// </summary>
+        public void RestoreDefeatedState(bool defeated)
+        {
+            isDefeated = defeated;
+            respawnTimer = 0f;
+            currentHealth = defeated ? 0f : maxHealth;
+            SetVisualActive(!defeated);
+        }
+
+        /// <summary>
         /// 인벤토리에 보유한 무기(isWeapon) 중 피해량이 가장 높은 InventoryItem 인스턴스를 찾는다. 없으면 null.
         /// ItemData가 아니라 InventoryItem을 반환해야 TryAttack에서 그 무기 하나의 내구도를 실제로 소모시킬 수 있다.
         /// </summary>

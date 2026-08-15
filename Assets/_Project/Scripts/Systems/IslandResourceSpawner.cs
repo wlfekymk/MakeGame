@@ -160,7 +160,7 @@ namespace MakeGame.Systems
 
             // 아이템 종류(무기/음식/음료/설치형/이동수단/일반 재료)에 맞는 색을 입혀 카테고리 단위로 구분한다.
             Color color = UIBuilder.GetItemCategoryColor(yieldItem);
-            string textureName = GetSurfaceTextureName(itemName);
+            string textureName = GetSurfaceTextureName(yieldItem);
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer != null)
@@ -422,11 +422,39 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 아이템 이름을 보고 어떤 표면 질감 텍스처(Resources/Textures/*)를 씌울지 결정한다.
-        /// 처음에는 wood/stone/noise 3종뿐이었는데, 금속과 잎/식물류가 돌·나무와 뭉뚱그려져 있어
-        /// leaf(잎맥 얼룩)와 metal(브러시드 메탈 스크래치)을 추가로 분리했다.
+        /// 아이템이 어떤 표면 질감 텍스처(Resources/Textures/*)를 씌울지 결정한다.
+        /// B3-9: game-designer의 Spec_B2_11_MaterialFamilyField.md 권장 매핑에 따라, ItemData.materialFamily
+        /// 필드가 설정돼 있으면(None이 아니면) 그 값을 우선 참조한다. 필드가 아직 None인 경우(43개의
+        /// 기존 .asset이 이 필드가 추가되기 전부터 있었으므로 game-designer가 값을 채우기 전까지는 전부
+        /// None이다) 예전과 동일한 itemName 문자열 추론 로직(GetSurfaceTextureNameFromName)으로 폴백해,
+        /// .asset 값이 채워지기 전까지는 동작이 전혀 바뀌지 않는다.
         /// </summary>
-        private string GetSurfaceTextureName(string itemName)
+        private string GetSurfaceTextureName(ItemData item)
+        {
+            if (item == null)
+                return "noise";
+
+            switch (item.materialFamily)
+            {
+                case MaterialFamily.Wood: return "wood";
+                case MaterialFamily.Stone: return "stone";
+                case MaterialFamily.Metal: return "metal";
+                case MaterialFamily.Fiber: return "leaf";
+                case MaterialFamily.Fruit: return "noise";
+                case MaterialFamily.Supply: return "noise";
+                case MaterialFamily.None:
+                default:
+                    return GetSurfaceTextureNameFromName(item.itemName);
+            }
+        }
+
+        /// <summary>
+        /// (B3-9 이전 로직, materialFamily가 None일 때의 폴백) 아이템 이름을 보고 어떤 표면 질감
+        /// 텍스처(Resources/Textures/*)를 씌울지 추론한다. 처음에는 wood/stone/noise 3종뿐이었는데,
+        /// 금속과 잎/식물류가 돌·나무와 뭉뚱그려져 있어 leaf(잎맥 얼룩)와 metal(브러시드 메탈 스크래치)을
+        /// 추가로 분리했다.
+        /// </summary>
+        private string GetSurfaceTextureNameFromName(string itemName)
         {
             if (string.IsNullOrEmpty(itemName))
                 return "noise";

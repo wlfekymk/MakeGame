@@ -29,6 +29,15 @@ namespace MakeGame.Data
             "제외했다 (자세한 내용은 PlayerInventory.CanCarryToIsland 참고).")]
         public bool blockedFromLargeIslandsByCurrent = false;
 
+        [Header("재질 계열 (B3-9)")]
+        [Tooltip("이 아이템의 재질 계열. IslandResourceSpawner 등이 표면 텍스처/분류를 결정할 때 itemName" +
+            " 문자열 추론 대신 우선 참조하는 필드다.\n" +
+            "기본값은 반드시 None이어야 한다 - 이 필드가 추가되기 전부터 존재하던 43개의 기존 .asset이" +
+            " 전부 역직렬화 시 0(None)으로 채워지기 때문이다. None일 때는 기존 문자열 추론 로직으로" +
+            " 자동 폴백하므로, game-designer가 이후 배치(B3-10)에서 .asset 값을 채우기 전까지는 동작이" +
+            " 전혀 바뀌지 않는다.")]
+        public MaterialFamily materialFamily = MaterialFamily.None;
+
         [Header("음식/음료 효과 (해당하는 경우에만 사용)")]
         [Tooltip("섭취 시 회복되는 허기 수치. 0이면 음식이 아니다.")]
         public float hungerRestoreAmount = 0f;

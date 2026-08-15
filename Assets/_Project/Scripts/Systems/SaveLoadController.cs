@@ -14,9 +14,12 @@ namespace MakeGame.Systems
     /// 섬/자원/위험요소/사냥감 배치는 저장된 worldSeed로 WorldMapManager.RegenerateWorld를 호출해
     /// 저장 시점과 동일하게 다시 만들어낸다 (재현 가능).
     /// B2-15 1단계: 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기)의 위치·상태를 저장·복원한다
-    /// (SaveStructures/RestoreStructures 참고). 개별 자원 노드의 채집 여부와 위험 요소·사냥감의
-    /// 처치 여부는 여전히 저장하지 않으므로, 불러오면 섬 배치는 동일하지만 자원/위험요소는 다시
-    /// 미채집/생존 상태로 리셋된다(다음 배치 예정, 이유는 RestoreStructures 근처 주석 참고).
+    /// (SaveStructures/RestoreStructures 참고).
+    /// B3-4/B3-5: IslandResourceSpawner/HazardSpawner/CreatureSpawner가 섬별 결정적 System.Random을
+    /// 쓰도록 바뀌어(B3-3) 같은 worldSeed로 재생성해도 (islandIndex, spawnOrder) 키가 항상 동일한
+    /// 개체를 가리킨다는 전제가 성립하게 되면서, 자원 노드의 부분/완전 채집 상태(SaveResourceNodes/
+    /// RestoreResourceNodes)와 위험 요소·사냥감의 처치/포획 상태(SaveHazardsAndCreatures/
+    /// RestoreHazardsAndCreatures)도 저장·복원 대상에 추가했다.
     /// </summary>
     public class SaveLoadController : MonoBehaviour
     {
@@ -158,6 +161,8 @@ namespace MakeGame.Systems
             }
 
             SaveStructures(data);
+            SaveResourceNodes(data);
+            SaveHazardsAndCreatures(data);
 
             string json = JsonUtility.ToJson(data, true);
             File.WriteAllText(SavePath, json);
@@ -295,6 +300,8 @@ namespace MakeGame.Systems
                 GameManager.Instance.CompleteEnding();
 
             RestoreStructures(data);
+            RestoreResourceNodes(data);
+            RestoreHazardsAndCreatures(data);
 
             lastStatusMessage = $"불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 불러오기 완료 확인음
@@ -431,16 +438,14 @@ namespace MakeGame.Systems
         /// 루트로 생성되는 구조물은 그 청소 대상에 포함되지 않는다. 그래서 복원 전에 먼저
         /// ClearExistingStructures로 "불러오기 시점에 씬에 이미 남아있던" 구조물을 명시적으로 지워야,
         /// 불러온 뒤 옛 구조물과 복원된 구조물이 겹쳐 남는 중복 생성을 막을 수 있다.
-        /// [다음 배치로 미룬 것] 자원 노드 채집 상태·위험 요소/사냥감 처치 상태는 이번에 포함하지
-        /// 않았다 - 둘 다 절차적 생성(IslandResourceSpawner/HazardSpawner/CreatureSpawner)이 섬마다
-        /// "규모별 배율 → 자원/확률 목록 순회 → UnityEngine.Random 호출"로 정해지는 순서에 의존하는데,
-        /// 개별 채집/처치 상태를 안정적인 키로 저장하려면 "같은 worldSeed로 다시 생성했을 때 정확히
-        /// 같은 순번으로 같은 노드/위험요소가 나온다"는 가정이 100% 보장돼야 한다. 지금 생성 코드에는
-        /// 위치 지터·크기 지터처럼 시드 없는 UnityEngine.Random을 함께 쓰는 곳이 섞여 있어(예:
-        /// IslandResourceSpawner.SpawnSingleNode의 scaleJitter), 그 순서 보장을 검증 없이 확신할 수
-        /// 없었다. 절반만 맞는 인덱싱으로 엉뚱한 노드가 "이미 채집됨" 처리되는 것이 안 하느니만 못한
-        /// 결과라고 판단해, 이번 배치에서는 검증 가능한 범위(구조물)만 완성하고 자원/위험요소는
-        /// 다음 배치로 넘겼다(코디네이터 보고 참고).
+        /// [B3-4/B3-5로 해소됨] 예전에는 여기서 자원 노드 채집 상태·위험 요소/사냥감 처치 상태를
+        /// 다음 배치로 미뤘었다 - 절차적 생성(IslandResourceSpawner/HazardSpawner/CreatureSpawner)이
+        /// "같은 worldSeed로 다시 생성했을 때 정확히 같은 순번으로 같은 노드/위험요소가 나온다"는
+        /// 전제가 100% 보장돼야 개별 상태를 안정적인 키로 저장할 수 있는데, 당시 코드에는 위치 지터·
+        /// 크기 지터처럼 시드 없는 UnityEngine.Random이 섞여 있어 그 순서 보장을 확신할 수 없었다.
+        /// B3-3에서 5개 스포너 전부가 섬별 결정적 System.Random 스트림을 쓰도록 바뀌어 그 전제가
+        /// 성립하게 되면서, 이제 RestoreResourceNodes/RestoreHazardsAndCreatures가 (islandIndex,
+        /// spawnOrder) 키로 자원 노드 채집 상태·위험 요소/사냥감 처치 상태까지 복원한다.
         /// </summary>
         private void RestoreStructures(SaveData data)
         {
@@ -559,6 +564,151 @@ namespace MakeGame.Systems
             var waterStill = go.GetComponent<WaterStill>();
             if (waterStill != null)
                 waterStill.storedWater = entry.storedWater;
+        }
+
+        /// <summary>
+        /// 섬 인덱스와 생성 순번을 딕셔너리 키로 쓸 수 있는 충돌 없는 long 하나로 합친다. islandIndex를
+        /// 상위 32비트, spawnOrder를 하위 32비트에 넣는다 - islandIndex는 음수(-1, 섬에 속하지 않는
+        /// 상어 등)일 수 있어 그대로 두고, spawnOrder는 항상 0 이상이므로 uint로 캐스팅해 부호 확장으로
+        /// 하위 비트가 오염되지 않게 한다.
+        /// </summary>
+        private static long CombineSpawnKey(int islandIndex, int spawnOrder)
+        {
+            return ((long)islandIndex << 32) | (uint)spawnOrder;
+        }
+
+        /// <summary>
+        /// B3-4: 씬에 있는 모든 ResourceNode 중 "온전한 상태(remainingHarvestCount == maxHarvestCount)"가
+        /// 아닌 노드만 골라 (islandIndex, spawnOrder, remainingHarvestCount)로 기록한다.
+        /// 온전한 노드까지 전부 저장하지 않는 이유: 특대 섬 하나에만 자원 노드가 최대 수백 개(예: 나뭇가지
+        /// baseCount=3 x extraLargeMultiplier=4 = 12개 같은 항목이 resourceEntries 개수만큼) 나올 수 있고
+        /// 섬이 8개라면 전체 노드 수가 수천 개에 이를 수 있는데, 그중 대다수는 플레이어가 아직 손대지
+        /// 않은 "완전 채집 가능" 상태다. 목록에 없는 (islandIndex, spawnOrder)는 RestoreResourceNodes가
+        /// "온전한 상태로 남겨둔다"로 해석하므로, 부분/완전 소진된 노드만 저장해도 정보 손실이 없다.
+        /// spawnOrder가 음수인 노드(스포너를 거치지 않고 수동 배치된 노드 등, ResourceNode.islandIndex/
+        /// spawnOrder 주석의 -1 기본값 참고)는 안정적인 키가 없으므로 저장 대상에서 제외한다.
+        /// </summary>
+        private void SaveResourceNodes(SaveData data)
+        {
+            foreach (var node in Object.FindObjectsByType<ResourceNode>(FindObjectsInactive.Include))
+            {
+                if (node.spawnOrder < 0)
+                    continue;
+
+                if (node.remainingHarvestCount == node.maxHarvestCount)
+                    continue;
+
+                data.partialResourceNodes.Add(new ResourceNodeSaveEntry
+                {
+                    islandIndex = node.islandIndex,
+                    spawnOrder = node.spawnOrder,
+                    remainingHarvestCount = node.remainingHarvestCount,
+                });
+            }
+        }
+
+        /// <summary>
+        /// B3-4: RegenerateWorld로 새로 생성된 자원 노드들 중, 저장된 (islandIndex, spawnOrder) 키와
+        /// 일치하는 노드를 찾아 remainingHarvestCount를 되돌린다. 키 안정성 논증은 SaveLoadController
+        /// 클래스 주석과 IslandResourceSpawner.SpawnResourcesForIsland 주석을 참고 - 같은 worldSeed면
+        /// 섬별 결정적 System.Random 스트림 덕분에 항상 같은 순번에 같은 노드가 나온다는 전제가 성립한다.
+        /// 목록에 없는 노드는 손대지 않는다(스폰 직후의 기본값 그대로 = 온전한 상태이므로 맞다).
+        /// </summary>
+        private void RestoreResourceNodes(SaveData data)
+        {
+            if (data.partialResourceNodes == null || data.partialResourceNodes.Count == 0)
+                return;
+
+            var nodesByKey = new Dictionary<long, ResourceNode>();
+            foreach (var node in Object.FindObjectsByType<ResourceNode>(FindObjectsInactive.Include))
+            {
+                if (node.spawnOrder < 0)
+                    continue;
+                nodesByKey[CombineSpawnKey(node.islandIndex, node.spawnOrder)] = node;
+            }
+
+            foreach (var saved in data.partialResourceNodes)
+            {
+                if (nodesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out ResourceNode node))
+                    node.remainingHarvestCount = Mathf.Clamp(saved.remainingHarvestCount, 0, node.maxHarvestCount);
+            }
+        }
+
+        /// <summary>
+        /// B3-5: 씬에 있는 모든 HazardSource/HuntableCreature 중 현재 처치/포획된 것만 (islandIndex,
+        /// spawnOrder) 키로 기록한다. 온전한(살아있는/잡히지 않은) 개체는 저장하지 않는다 - 자원 노드와
+        /// 같은 이유로 목록에 없는 키는 "온전한 상태"로 간주되기 때문이다.
+        /// </summary>
+        private void SaveHazardsAndCreatures(SaveData data)
+        {
+            foreach (var hazard in Object.FindObjectsByType<HazardSource>(FindObjectsInactive.Include))
+            {
+                if (hazard.spawnOrder < 0 || hazard.IsActive)
+                    continue;
+
+                data.defeatedHazards.Add(new SpawnKeySaveEntry { islandIndex = hazard.islandIndex, spawnOrder = hazard.spawnOrder });
+            }
+
+            foreach (var creature in Object.FindObjectsByType<HuntableCreature>(FindObjectsInactive.Include))
+            {
+                if (creature.spawnOrder < 0 || creature.IsAvailable)
+                    continue;
+
+                data.caughtCreatures.Add(new SpawnKeySaveEntry { islandIndex = creature.islandIndex, spawnOrder = creature.spawnOrder });
+            }
+        }
+
+        /// <summary>
+        /// B3-5: RegenerateWorld로 새로 생성된 위험 요소/사냥감 중, 저장된 키와 일치하는 대상을 찾아
+        /// 처치/포획 상태로 되돌린다(HazardSource.RestoreDefeatedState / HuntableCreature.RestoreCaughtState).
+        /// [설계 결정 - 오프라인 경과 시간 미반영] HazardSource/HuntableCreature 모두 모든 종류가 시간이
+        /// 지나면 자동으로 재등장하며(HazardSource.Update 확인 결과 영구 제거되는 위험 요소 종류는 없다 -
+        /// 전투 불가 종류인 독사/전갈/함정도 그냥 isDefeated가 될 수 없을 뿐 별도의 "영구 제거" 코드 경로가
+        /// 없다), 저장 시점에 처치/포획 상태였던 respawnTimer 진행분은 저장하지 않고 항상 0으로 되돌린다.
+        /// 즉 "저장하고 나서 실제로(현실 시간으로) 얼마나 지났는지"는 재등장 진행에 전혀 반영하지 않는다.
+        /// 이렇게 결정한 이유: (1) 이 프로젝트의 다른 시간 기반 시스템(WaterStill의 증류 진행, Campfire의
+        /// 남은 연료)도 저장된 값을 그대로 복원할 뿐 저장~로드 사이의 실시간 경과를 반영하는 벽시계
+        /// 인프라가 전혀 없다 - 여기서만 오프라인 진행을 계산하면 시스템 간 동작이 일관되지 않는다.
+        /// (2) SurvivalClock.elapsedSeconds도 게임 내 시간일 뿐 실제 시스템 시계를 기록/비교하지 않는다.
+        /// (3) 오프라인 진행을 도입하려면 저장 시각(System.DateTime)을 SaveData에 별도로 추가해야 하는데,
+        /// 이는 이번 B3-5 범위를 넘어서는 새 설계이고, 굳이 필요하다면 다음 배치에서 다른 시스템들과 함께
+        /// 일관되게 재설계하는 편이 낫다고 판단했다.
+        /// </summary>
+        private void RestoreHazardsAndCreatures(SaveData data)
+        {
+            if (data.defeatedHazards != null && data.defeatedHazards.Count > 0)
+            {
+                var hazardsByKey = new Dictionary<long, HazardSource>();
+                foreach (var hazard in Object.FindObjectsByType<HazardSource>(FindObjectsInactive.Include))
+                {
+                    if (hazard.spawnOrder < 0)
+                        continue;
+                    hazardsByKey[CombineSpawnKey(hazard.islandIndex, hazard.spawnOrder)] = hazard;
+                }
+
+                foreach (var saved in data.defeatedHazards)
+                {
+                    if (hazardsByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out HazardSource hazard))
+                        hazard.RestoreDefeatedState(true);
+                }
+            }
+
+            if (data.caughtCreatures != null && data.caughtCreatures.Count > 0)
+            {
+                var creaturesByKey = new Dictionary<long, HuntableCreature>();
+                foreach (var creature in Object.FindObjectsByType<HuntableCreature>(FindObjectsInactive.Include))
+                {
+                    if (creature.spawnOrder < 0)
+                        continue;
+                    creaturesByKey[CombineSpawnKey(creature.islandIndex, creature.spawnOrder)] = creature;
+                }
+
+                foreach (var saved in data.caughtCreatures)
+                {
+                    if (creaturesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out HuntableCreature creature))
+                        creature.RestoreCaughtState(true);
+                }
+            }
         }
     }
 }

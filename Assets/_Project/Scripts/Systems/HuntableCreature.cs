@@ -67,6 +67,18 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// B3-5: 세이브 파일에서 읽어온 포획 상태를 그대로 되돌린다. TryHunt와 달리 인벤토리/스킬을
+        /// 전혀 거치지 않고 isCaught만 직접 맞춘다. 재등장까지 남은 시간은 저장하지 않으므로
+        /// (SaveData.caughtCreatures 주석 참고) respawnTimer는 항상 0부터 다시 시작한다 - 오프라인 경과
+        /// 시간은 반영하지 않는다(SaveLoadController.RestoreHazardsAndCreatures 주석 참고).
+        /// </summary>
+        public void RestoreCaughtState(bool caught)
+        {
+            isCaught = caught;
+            respawnTimer = 0f;
+        }
+
+        /// <summary>
         /// 사냥을 시도한다. 도구가 지정되어 있으면 인벤토리에 해당 도구를 보유해야 시도할 수 있다.
         /// 시도하면 성공 여부와 관계없이 개체는 자리를 벗어나 재생 타이머가 시작된다.
         /// 성공 시 재료를 지급하고 사냥 스킬 경험치를 준다.
