@@ -76,8 +76,10 @@ namespace MakeGame.Systems
         /// 월드가 새로 생성되지 않는다. 따라서 재시작 시에는 정적 인스턴스 참조를 먼저 비우고
         /// 이 오브젝트(Managers)를 명시적으로 파괴한 뒤 씬을 로드해, 새 씬의 Managers가 정상적으로
         /// 새 싱글턴이 되도록 한다.
+        /// 컴파일 차단 해제: UI/GameOverUI.cs(새 UGUI 게임오버 화면)가 재시작 버튼에서 이 메서드를
+        /// 직접 호출해야 해서 접근제한자만 private→public으로 바꿨다(시그니처/본문은 그대로).
         /// </summary>
-        private void RestartGame()
+        public void RestartGame()
         {
             Time.timeScale = 1f;
 
@@ -115,8 +117,10 @@ namespace MakeGame.Systems
         /// SurvivalStats.lastDamageCause(체력을 마지막으로 깎은 원인)를 읽어, 굶주림/탈수/일사병/중독/출혈/
         /// 익사/맹수 중 실제로 죽음에 이른 원인에 맞는 문구를 보여준다. 원인을 알 수 없으면(예: 초기값 그대로
         /// 죽은 경우) 기존 문구로 대체한다.
+        /// 컴파일 차단 해제: UI/GameOverUI.cs가 사망 문구를 표시하려면 이 메서드를 직접 호출해야 해서
+        /// 접근제한자만 private→public으로 바꿨다(시그니처/본문은 그대로).
         /// </summary>
-        private string GetDeathMessage()
+        public string GetDeathMessage()
         {
             if (survivalStats == null)
                 return "무인도에서 생존하지 못했습니다.";

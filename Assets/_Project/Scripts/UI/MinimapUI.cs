@@ -33,13 +33,27 @@ namespace MakeGame.UI
         public KeyCode toggleKey = KeyCode.M;
 
         [Header("레이더 설정")]
-        [Tooltip("레이더에 표시할 실제 월드 반경(미터). 이보다 먼 섬은 가장자리에 붙어서 표시된다.")]
-        // 퀄리티 개선: 섬 배치 거리가 10배로 커진 것(WorldMapManager.baseDistanceStep)에 맞춰
-        // 레이더가 보여주는 실제 월드 범위도 10배로 넓혀야 멀리 있는 섬도 미니맵 안에 들어온다.
-        public float radarWorldRadius = 4000f;
+        [Tooltip("레이더에 표시할 실제 월드 반경(미터). 이보다 먼 섬은 가장자리에 붙어서 표시된다. " +
+            "0 이하로 두면(기본값) WorldMapManager의 섬 배치 설정(baseDistanceStep 등)에서 자동으로 유도한다. " +
+            "특정 값을 강제하고 싶으면 여기 직접 양수를 입력하면 그 값이 항상 우선한다.")]
+        // 개선(B2-10): 예전엔 4000이라는 값을 이 필드 하나에 하드코딩해뒀는데, WorldMapManager.baseDistanceStep
+        // (섬 배치 간격)이 바뀌면 이 값과 조용히 어긋나 섬이 레이더 밖으로 나가거나 반대로 너무 촘촘해 보일
+        // 위험이 있었다. 배치 1에서 확립한 패턴대로, 필드 자체는 남겨 씬/Inspector에서 명시적으로 override할
+        // 수 있게 하되(0보다 크면 그 값이 항상 우선), 기본값은 "미설정"을 뜻하는 0으로 낮추고 실제 반경은
+        // ResolveRadarWorldRadius()가 WorldMapManager 배치 설정에서 매번 유도하도록 했다.
+        public float radarWorldRadius = 0f;
 
         [Tooltip("레이더 패널의 한 변 크기(픽셀)")]
         public float radarPanelSize = 160f;
+
+        // worldMapManager 참조가 없어(Inspector 미할당 등) 유도 계산 자체가 불가능할 때만 쓰는 최후 안전값.
+        // 필드 기본값이 아니라 "정말 아무 정보도 없을 때"의 방어적 fallback이라 별도 상수로 분리했다.
+        private const float FallbackRadarWorldRadius = 4000f;
+
+        // BuildRadar()에서 한 번 계산해 캐시해두는 실제 사용 반경(radarWorldRadius를 그대로 쓰거나,
+        // 0 이하면 WorldMapManager 설정에서 유도한 값). worldMapManager 참조는 Start() 이전에 이미
+        // Inspector에서 확정되므로 매 프레임 다시 계산할 필요가 없다.
+        private float effectiveRadarWorldRadius;
 
         /// <summary>섬 하나에 대응하는 레이더 위 점(dot) UI.
         /// 퀄리티 개선: 예전에는 sprite 없는 사각형 Image 하나뿐이라 배경 대비가 약하고 사각형으로 보였다.
@@ -76,9 +90,29 @@ namespace MakeGame.UI
         /// <summary>시작 시 레이더와 섬 목록 패널을 만들고, 목록 패널은 기본적으로 닫아 둔다.</summary>
         private void Start()
         {
+            effectiveRadarWorldRadius = ResolveRadarWorldRadius();
             BuildRadar();
             BuildListPanel();
             SetListOpen(false);
+        }
+
+        /// <summary>
+        /// 레이더가 실제로 표시할 월드 반경을 결정한다. radarWorldRadius가 Inspector/씬에서 명시적으로
+        /// 양수로 설정돼 있으면(예: 디렉터가 씬에서 직접 override) 그 값을 그대로 쓴다. 그렇지 않으면(0
+        /// 이하, 즉 "미설정") WorldMapManager의 실제 섬 배치 공식(FindValidPosition의
+        /// baseDistanceStep * islands.Count + distanceJitter)을 그대로 따라, 초기 생성되는 마지막 섬이
+        /// 배치될 수 있는 최대 거리를 계산해 반경으로 삼는다. 이러면 baseDistanceStep/initialIslandCount/
+        /// distanceJitter 중 하나가 바뀌어도 레이더 범위가 자동으로 맞춰진다.
+        /// </summary>
+        private float ResolveRadarWorldRadius()
+        {
+            if (radarWorldRadius > 0f)
+                return radarWorldRadius;
+
+            if (worldMapManager == null)
+                return FallbackRadarWorldRadius;
+
+            return worldMapManager.baseDistanceStep * worldMapManager.initialIslandCount + worldMapManager.distanceJitter;
         }
 
         /// <summary>매 프레임 레이더를 갱신하고, 목록 패널이 열려 있으면 목록도 함께 갱신한다.</summary>
@@ -157,7 +191,9 @@ namespace MakeGame.UI
             var islands = worldMapManager.islands;
             EnsureRadarDotCount(islands.Count);
 
-            float scale = (radarPanelSize / 2f) / radarWorldRadius;
+            // effectiveRadarWorldRadius는 Start()에서 ResolveRadarWorldRadius()로 한 번만 계산해둔 값이다
+            // (radarWorldRadius를 그대로 쓰거나, 0 이하면 WorldMapManager 배치 설정에서 유도).
+            float scale = (radarPanelSize / 2f) / effectiveRadarWorldRadius;
             float maxOffset = radarPanelSize / 2f - 6f;
 
             for (int i = 0; i < islands.Count; i++)

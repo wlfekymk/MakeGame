@@ -5,7 +5,9 @@ namespace MakeGame.Systems
 {
     /// <summary>
     /// 위험 요소(HazardSource)/사냥감(HuntableCreature)처럼 몸통 프리미티브 하나만으로는 종류를 구분하기
-    /// 어려운 생물형 오브젝트에, 눈/꼬리/집게/다리 같은 최소한의 보조 파츠를 절차적으로 붙여주는 공용 유틸리티.
+    /// 어려운 생물형 오브젝트에, 눈/꼬리/집게/다리/귀/창 같은 최소한의 보조 파츠를 절차적으로 붙여주는
+    /// 공용 유틸리티. B2-16(독사/전갈/함정/육상 사냥감)에 이어 B2-17(곰/식인종/상어)까지 더해
+    /// HazardType 7종 중 벌떼(이미 충분하다고 판단해 보강 제외)를 뺀 전부가 이 클래스를 거친다.
     /// StructureVisualBuilder(구조물 전용)와 완전히 동일한 패턴 - 프리미티브 조합 + CreateColorMaterial +
     /// 비균일 스케일 보정 - 을 그대로 따른다.
     /// HazardSpawner.AddDetailParts/CreatureSpawner.AddCompensated에 각각 거의 동일한 형태로 중복
@@ -106,12 +108,18 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 지정한 위험 요소 종류에 맞는 디테일 파츠를 몸통에 붙인다. 곰/식인종/벌떼/상어는 이미
-        /// HazardSpawner.AddDetailParts가 자체적으로 디테일(눈/지느러미/벌떼 무리)을 만들고 있으므로
-        /// 여기서는 건드리지 않고 조용히 아무 것도 하지 않는다 - 그동안 몸통 프리미티브 + 색상뿐이라
-        /// 실루엣 구분이 약했던 독사/전갈/함정 세 종류만 이 메서드로 보강한다.
-        /// HazardSpawner.AddDetailParts의 기존 switch 케이스와 겹치지 않으므로, 그 switch 뒤에
-        /// 조건 분기 없이 이 메서드 호출 한 줄만 추가하면 안전하게 연결된다.
+        /// 지정한 위험 요소 종류에 맞는 디테일 파츠를 몸통에 붙인다. 이 메서드는
+        /// HazardSpawner.AddDetailParts의 switch 뒤에서 종류 구분 없이 항상 호출되므로(호출부는 이미
+        /// 연결되어 있음 - B2-16), 여기 case를 추가/제거하는 것만으로 새 디테일을 얹거나 뺄 수 있다.
+        /// - 독사/전갈/함정: 그동안 몸통 프리미티브 + 색상뿐이라 실루엣 구분이 약해 이 메서드가
+        ///   유일한 디테일 소스다(B2-16에서 추가).
+        /// - 곰/식인종/상어: HazardSpawner.AddDetailParts가 이미 자체적으로 눈(공통)/등지느러미(상어)를
+        ///   만들고 있는데, 그 위에 이 메서드가 종류별 실루엣 보강을 "추가로" 얹는다(B2-17) - 곰은
+        ///   귀+주둥이로 "동물 머리"임을, 식인종은 옆에 세운 창으로 "무장한 사람"임을 드러내 실루엣만
+        ///   보고도 두 서 있는 캡슐을 구분할 수 있게 하고, 상어는 꼬리지느러미를 더해 몸의 앞/뒤가
+        ///   드러나게 한다. 이름이 겹치지 않아(EarL/Snout/Spear/TailFin) 기존 눈/지느러미와 충돌하지 않는다.
+        /// - 벌떼: 실물 확인 결과 이미 몸통 구체 + 흩어진 작은 구체 5개로 "무리" 느낌이 충분해
+        ///   보강하지 않는다(B2-17에서 판단, 억지로 손대지 않음).
         /// </summary>
         public static void AddHazardDetailsIfMissing(GameObject body, HazardType type, Vector3 appliedScale, Color bodyColor)
         {
@@ -126,7 +134,63 @@ namespace MakeGame.Systems
                 case HazardType.Trap:
                     AddTrapDetails(body, appliedScale, bodyColor);
                     break;
+                case HazardType.Bear:
+                    AddBearDetails(body, appliedScale, bodyColor);
+                    break;
+                case HazardType.Cannibal:
+                    AddCannibalDetails(body, appliedScale, bodyColor);
+                    break;
+                case HazardType.Shark:
+                    AddSharkTailDetails(body, appliedScale, bodyColor);
+                    break;
             }
+        }
+
+        /// <summary>
+        /// 곰(HazardType.Bear) 전용 보강 디테일(B2-17). 기존에 이미 붙어 있는 눈(공통 케이스)만으로는
+        /// 식인종과 똑같이 "서 있는 캡슐"로 보여 구분이 어려웠다. 회전 없는 구체(귀 2개)와 박스(주둥이)만
+        /// 사용해 - 캡슐 자체나 기존 눈 배치는 건드리지 않고 - 위쪽에 "동물 머리" 실루엣 단서를 더한다.
+        /// 회전이 필요 없는 파츠만 골라 써서(구체는 방향이 없고, 박스는 회전 없이도 로컬 축이 그대로
+        /// 원하는 치수와 일치) 비균일 스케일 보정 계산이 어긋날 여지를 없앴다.
+        /// </summary>
+        public static void AddBearDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color darker = bodyColor * 0.7f;
+
+            // 귀 두 개: 기존 눈(0.18, 0.75, 0.35)보다 위/뒤쪽에 붙인다.
+            AddCompensatedSphere(body.transform, new Vector3(0.22f, 0.98f, 0.12f), 0.11f, appliedScale, darker, "EarL");
+            AddCompensatedSphere(body.transform, new Vector3(-0.22f, 0.98f, 0.12f), 0.11f, appliedScale, darker, "EarR");
+
+            // 주둥이: 얼굴 앞(+Z)으로 짧게 튀어나온 박스. 곰/식인종은 rotationEuler가 0이라 로컬 축이
+            // 곧 월드 축과 같으므로 회전 없이도 원하는 방향(앞)으로 정확히 튀어나온다.
+            AddCompensatedBox(body.transform, new Vector3(0f, 0.62f, 0.5f), new Vector3(0.16f, 0.13f, 0.22f), appliedScale, darker, "Snout");
+        }
+
+        /// <summary>
+        /// 식인종(HazardType.Cannibal) 전용 보강 디테일(B2-17). 곰과 반대 방향의 구분 신호를 준다 -
+        /// 몸통(사람 실루엣)은 그대로 두고, 옆에 세워 든 창 하나(회전 없는 세로 박스)만 더해
+        /// "무장한 사람"이라는 실루엣을 만든다. 곰(동물 머리 단서)과 나란히 보면 한쪽은 동물,
+        /// 한쪽은 무기를 든 사람으로 멀리서도 구분된다.
+        /// </summary>
+        public static void AddCannibalDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color woodColor = new Color(0.4f, 0.28f, 0.15f);
+            AddCompensatedBox(body.transform, new Vector3(0.42f, 0f, 0.05f), new Vector3(0.05f, 1.6f, 0.05f), appliedScale, woodColor, "Spear");
+        }
+
+        /// <summary>
+        /// 상어(HazardType.Shark) 전용 보강 디테일(B2-17). HazardSpawner.AddDetailParts가 이미 만드는
+        /// 등지느러미(Fin, 로컬 y=0.1 부근)와 짝을 이루는 꼬리지느러미를 몸통 뒤쪽 끝(눈이 있는 +Y
+        /// 반대편, -Y)에 붙여 몸의 앞/뒤가 실루엣만으로 구분되게 한다. 회전 없는 박스라 상어 몸통의
+        /// 기존 회전(Quaternion.Euler(0,0,90))에 대해서도 로컬 축 기준으로 동일하게 동작한다.
+        /// 참고: 상어 전체가 SharkSpawner.depthBelowSeaLevel(기본 2m)만큼 해수면 아래에 배치되므로,
+        /// 지느러미를 아무리 키워도 수면 위로는 드러나지 않는다 - 이건 스포너 배치 문제라 이 메서드로
+        /// 해결할 수 없다(아래 [확인요청] 참고).
+        /// </summary>
+        public static void AddSharkTailDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color finColor = bodyColor * 0.8f;
+            AddCompensatedBox(body.transform, new Vector3(0f, -0.85f, 0.18f), new Vector3(0.05f, 0.32f, 0.16f), appliedScale, finColor, "TailFin");
         }
 
         /// <summary>

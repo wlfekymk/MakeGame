@@ -306,16 +306,17 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// itemDataByName 캐시가 비어 있으면(최초 호출) Resources.FindObjectsOfTypeAll로 현재 메모리에
-        /// 로드돼 있는 모든 ItemData를 한 번 순회해 이름→ItemData 딕셔너리를 구축한다.
-        /// [한계] FindObjectsOfTypeAll은 "지금 메모리에 로드된" 오브젝트만 찾을 수 있다 - 씬의 여러
-        /// 컴포넌트(인벤토리 시작 아이템, 배 제작/경비행기 재료 설계, 제작 레시피 등)가 이미 참조 중인
-        /// ItemData는 대부분 이 시점에 로드되어 있어 실제로는 대체로 잘 동작하지만, 만약 어떤 ItemData가
-        /// 정말로 아무 컴포넌트에서도 참조되지 않는다면(예: 저장 파일에만 이름이 남아있고 씬 어디에서도
-        /// 더 이상 연결돼 있지 않은 구버전 아이템) 여전히 못 찾는다. 이 근본 문제를 확실히 없애려면
-        /// 모든 ItemData를 Resources 폴더 아래로 옮기고 Resources.LoadAll&lt;ItemData&gt;("")로 전수
-        /// 로드하는 방식이 필요한데, 이번 배치에서는 실제 에셋 배치 구조를 확인할 수 없어 섣불리
-        /// 바꾸지 않았다(코디네이터 보고서의 [요청] 항목 참고).
+        /// itemDataByName 캐시가 비어 있으면(최초 호출) 이름→ItemData 딕셔너리를 구축한다.
+        /// B2-16: 근본 한계 해결 - ItemDataRegistry(Resources/ 아래 배치될 SO, allItems 리스트로 모든
+        /// ItemData를 직접 참조)를 우선 사용한다. Unity는 레지스트리 에셋을 로드하는 순간 그 리스트가
+        /// 참조하는 ItemData를 전부 함께 로드하므로, 씬의 어떤 컴포넌트도 참조하지 않는 ItemData라도
+        /// 레지스트리에만 등록돼 있으면 찾을 수 있다(예전 FindObjectsOfTypeAll의 "지금 메모리에 로드된
+        /// 것만 찾는다"는 한계를 없앤다).
+        /// [주의] 레지스트리 `.asset` 인스턴스는 아직 만들어지지 않았다(1단계: 클래스+로딩 경로만,
+        /// 실제 에셋 생성/등록은 game-designer 담당 - 코디네이터 보고서의 [요청] 항목 참고). 레지스트리가
+        /// 없으면 LoadFromResources()가 null을 반환하므로, 그 경우 이전 방식(FindObjectsOfTypeAll로 현재
+        /// 로드된 모든 ItemData 순회)으로 안전하게 폴백한다 - 레지스트리가 생기기 전까지는 동작이 전혀
+        /// 바뀌지 않는다.
         /// </summary>
         private void EnsureItemDataCache()
         {
@@ -324,21 +325,37 @@ namespace MakeGame.Systems
 
             itemDataByName = new Dictionary<string, ItemData>();
 
-            var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
-            foreach (var item in allItems)
+            ItemDataRegistry registry = ItemDataRegistry.LoadFromResources();
+            if (registry != null)
             {
-                if (item == null || string.IsNullOrEmpty(item.itemName))
-                    continue;
-
-                // 이름이 같은 ItemData가 여러 개면(설정 실수 등) 먼저 발견된 것을 유지하고 경고만 남긴다.
-                if (itemDataByName.ContainsKey(item.itemName))
-                {
-                    Debug.LogWarning($"[SaveLoadController] 이름이 중복된 ItemData를 발견했습니다: {item.itemName}. 먼저 찾은 항목을 사용합니다.");
-                    continue;
-                }
-
-                itemDataByName.Add(item.itemName, item);
+                foreach (var item in registry.allItems)
+                    AddToItemDataCache(item);
             }
+            else
+            {
+                // 레지스트리 에셋이 아직 없다(B2-16 1단계 상태) - 예전과 동일한 폴백 방식을 그대로 쓴다.
+                var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
+                foreach (var item in allItems)
+                    AddToItemDataCache(item);
+            }
+        }
+
+        /// <summary>
+        /// itemDataByName 캐시에 ItemData 하나를 추가한다. 이름이 비어 있으면 무시하고, 이름이 같은
+        /// ItemData가 이미 있으면(설정 실수 등) 먼저 등록된 것을 유지하고 경고만 남긴다.
+        /// </summary>
+        private void AddToItemDataCache(ItemData item)
+        {
+            if (item == null || string.IsNullOrEmpty(item.itemName))
+                return;
+
+            if (itemDataByName.ContainsKey(item.itemName))
+            {
+                Debug.LogWarning($"[SaveLoadController] 이름이 중복된 ItemData를 발견했습니다: {item.itemName}. 먼저 찾은 항목을 사용합니다.");
+                return;
+            }
+
+            itemDataByName.Add(item.itemName, item);
         }
     }
 }

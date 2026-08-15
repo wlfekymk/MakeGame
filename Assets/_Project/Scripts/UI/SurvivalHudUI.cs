@@ -243,10 +243,13 @@ namespace MakeGame.UI
                 float healthRatio = survivalStats.maxHealth > 0f
                     ? Mathf.Clamp01(survivalStats.health / survivalStats.maxHealth)
                     : 0f;
-                float hungerRatio = Mathf.Clamp01(survivalStats.hunger / 100f);
-                float thirstRatio = Mathf.Clamp01(survivalStats.thirst / 100f);
-                float sunstrokeRatio = Mathf.Clamp01(survivalStats.sunstroke / 100f);
-                float oxygenRatio = Mathf.Clamp01(survivalStats.oxygen / 100f);
+                // 개선(B2-9): 허기/갈증/일사병/산소의 최대치 100을 UI가 직접 알고 나누던 것을,
+                // SurvivalStats가 단일 소스로 노출한 MaxStatValue 참조로 바꿨다(값은 100f로 동일).
+                // health/maxHealth는 원래도 survivalStats.maxHealth를 실제로 읽고 있어 대상이 아니다.
+                float hungerRatio = Mathf.Clamp01(survivalStats.hunger / SurvivalStats.MaxStatValue);
+                float thirstRatio = Mathf.Clamp01(survivalStats.thirst / SurvivalStats.MaxStatValue);
+                float sunstrokeRatio = Mathf.Clamp01(survivalStats.sunstroke / SurvivalStats.MaxStatValue);
+                float oxygenRatio = Mathf.Clamp01(survivalStats.oxygen / SurvivalStats.MaxStatValue);
 
                 healthFill.fillAmount = healthRatio;
                 hungerFill.fillAmount = hungerRatio;

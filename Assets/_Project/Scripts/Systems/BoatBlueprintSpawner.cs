@@ -26,14 +26,22 @@ namespace MakeGame.Systems
         [Range(0f, 1f)]
         public float extraLargeIslandSpawnChance = 0.95f;
 
-        // 긴급 정정(#3 회귀 수정): 한 차례 placementOffset 필드를 제거하고 IslandSizeMetrics.GetScatterRadius로
+        // 긴급 정정(#3 회귀 수정) 이력: 한 차례 placementOffset 필드를 제거하고 IslandSizeMetrics.GetScatterRadius로
         // 대체했었는데, 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 placementOffset=4가
-        // 직렬화되어 있다는 사실이 뒤늦게 확인되었다. 필드를 되살려 씬 값이 다시 정상적으로 바인딩되도록
-        // 되돌렸다. "특대 섬에서 도면이 중심 4m 반경에만 몰린다"는 문제 자체는 실재하지만, 조용히 밸런스를
-        // 바꿔서는 안 되는 사안이라 동작은 현행(고정 4m) 그대로 유지하고 판단을 기획에 넘긴다
-        // ([요청] game-designer 항목 참고).
-        [Tooltip("도면 습득 지점을 섬 중심으로부터 흩뿌릴 반경")]
+        // 직렬화되어 있다는 사실이 뒤늦게 확인되어 필드를 되살렸었다. 절대 지우지 않는다(씬 직렬화 값 보존).
+        [Tooltip("(구버전 호환용) 도면 습득 지점을 섬 중심으로부터 흩뿌릴 기본 반경. largePlacementOffset/" +
+            "extraLargePlacementOffset이 0 이하로 비어 있을 때만 폴백으로 쓰인다.")]
         public float placementOffset = 4f;
+
+        // 기획 확정(B2-8): 예전에는 placementOffset(4f) 하나로 대형/특대 섬 모두를 처리해, 도면이 항상
+        // 섬 중심 4m 반경(플레이어 착지 지점과 거의 겹치는 거리)에만 나와 사실상 탐색이 없었다. 섬 규모별로
+        // 분리된 반경을 새로 도입해, 큰 섬일수록 더 넓게 흩어지도록 했다. 0 이하로 남아있으면(과거 저장된
+        // 씬처럼 아직 이 필드를 모르는 경우) 구버전 필드 placementOffset으로 안전하게 폴백한다.
+        [Tooltip("대형 섬에서 도면 습득 지점을 섬 중심으로부터 흩뿌릴 반경 (0 이하면 placementOffset으로 폴백)")]
+        public float largePlacementOffset = 30f;
+
+        [Tooltip("특대 섬에서 도면 습득 지점을 섬 중심으로부터 흩뿌릴 반경 (0 이하면 placementOffset으로 폴백)")]
+        public float extraLargePlacementOffset = 45f;
 
         /// <summary>
         /// 지정한 섬이 대형/특대 섬이면 확률적으로 배 도면 습득 지점을 하나 생성한다.
@@ -51,7 +59,13 @@ namespace MakeGame.Systems
             if (Random.value > chance)
                 return null;
 
-            Vector2 offset = Random.insideUnitCircle * placementOffset;
+            // 기획 확정(B2-8): 섬 규모별 전용 반경을 우선 사용하고, 아직 설정되지 않았으면(0 이하)
+            // 구버전 필드 placementOffset으로 폴백한다.
+            float scatterRadius = island.size == IslandSize.Large
+                ? (largePlacementOffset > 0f ? largePlacementOffset : placementOffset)
+                : (extraLargePlacementOffset > 0f ? extraLargePlacementOffset : placementOffset);
+
+            Vector2 offset = Random.insideUnitCircle * scatterRadius;
             Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
             position = TerrainSampler.SnapToGround(position);
 

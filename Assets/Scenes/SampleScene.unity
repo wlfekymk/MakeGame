@@ -1072,6 +1072,8 @@ MonoBehaviour:
   largeIslandSpawnChance: 0.9
   extraLargeIslandSpawnChance: 0.95
   placementOffset: 4
+  largePlacementOffset: 30
+  extraLargePlacementOffset: 45
 --- !u!114 &2000000013
 MonoBehaviour:
   m_ObjectHideFlags: 0
