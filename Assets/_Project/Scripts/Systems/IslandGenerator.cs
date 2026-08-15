@@ -42,6 +42,18 @@ namespace MakeGame.Systems
         /// <param name="totalIslandCount">이번 초기 생성에서 만들 전체 섬 개수.</param>
         public IslandSize GenerateNextIslandSize(int islandIndex, int totalIslandCount)
         {
+            // 버그 수정(#1 - 치명): spawnConfig가 Inspector에서 연결되지 않은 채로 호출되면 바로 아래에서
+            // NullReferenceException이 터져 WorldMapManager.Start() 체인 전체가 멈추고 섬이 단 하나도
+            // 생성되지 않는다(게임이 시작조차 못 함). 다른 스포너들의 방어 패턴(null 조건부 연산자 `?.`,
+            // `!= null` 가드)과 맞춰, 여기서도 즉시 실패하지 않고 소형 섬으로 안전하게 폴백하면서
+            // 원인을 로그로 명확히 남긴다.
+            if (spawnConfig == null)
+            {
+                Debug.LogError("[IslandGenerator] spawnConfig가 연결되지 않았습니다. 섬 규모를 결정할 수 없어 " +
+                    "기본값(Small)으로 대체합니다. Inspector에서 IslandSpawnConfig 에셋을 연결하세요.");
+                return IslandSize.Small;
+            }
+
             bool isEarlyGame = generatedIslandCount < spawnConfig.earlyGameIslandCount;
             generatedIslandCount++;
 

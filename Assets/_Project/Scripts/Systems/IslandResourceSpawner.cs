@@ -46,15 +46,36 @@ namespace MakeGame.Systems
         [Tooltip("섬에 배치할 자원 종류와 기본 개수 목록")]
         public List<ResourceEntry> resourceEntries = new List<ResourceEntry>();
 
+        // 긴급 정정(#2 회귀 수정): 이 필드들을 한 차례 제거하고 IslandSizeMetrics 직접 호출로 바꿨었는데,
+        // 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 이 필드들에 코드 기본값과 다른
+        // 값(디자이너가 조정한 실제 밸런스 값)이 직렬화되어 있다는 사실이 뒤늦게 확인되었다. 필드를
+        // 제거하면 Unity가 그 직렬화 값을 잃어버리고 조용히 코드 기본값으로 되돌아간다 - "스테이징 범위에
+        // 씬 파일이 없다"는 것이 "프로젝트에 씬 파일이 없다"는 뜻이 아니었다. 필드명/타입/기본값을
+        // 원래(리팩터링 이전) 그대로 복원해 씬 직렬화 값이 다시 정상적으로 바인딩되도록 되돌렸다.
+        // IslandSizeMetrics는 삭제하지 않고, 이 필드가 의미 있게 설정되지 않았을 때(0 이하)만 쓰는
+        // "폴백 단일 소스"로 역할을 낮췄다 (GetMultiplier/GetScatterRadius 참고).
         [Header("섬 규모별 배치 배율")]
+        // 버그 수정 (#1003/#1006 - 섬 크기별 자원 밀도 공식 정립): 예전에는 이 배율이 섬 반지름과 같은
+        // "선형" 비율(1/2/3/4)로만 늘어났다. 그런데 자원이 실제로 흩뿌려지는 면적은 반지름의 "제곱"에
+        // 비례해서 커진다. WorldMapManager.GetSizeScale의 지형 반지름이 50/90/140/200이므로 면적비는
+        // 1 : 3.24 : 7.84 : 16이 된다. 배율을 반지름과 같은 선형 비율로만 올리면 섬이 커질수록 단위
+        // 면적당 자원 밀도가 오히려 옅어지는 문제가 있었다(맵 스케일을 10배로 키운 배치 이후 발견).
+        // 아래 배율을 면적비에 맞춰 올려서 섬 크기와 무관하게 체감 밀도가 비슷하게 유지되도록 했다.
         public float smallMultiplier = 1f;
-        public float mediumMultiplier = 2f;
-        public float largeMultiplier = 3f;
-        public float extraLargeMultiplier = 4f;
+        public float mediumMultiplier = 3.24f;
+        public float largeMultiplier = 7.84f;
+        public float extraLargeMultiplier = 16f;
 
-        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale)에 맞춰 함께 10배로 키웠다.
-        [Tooltip("자원 노드를 흩뿌릴 반경 (섬 플레이스홀더 크기에 맞춰 조절)")]
-        public float scatterRadius = 80f;
+        [Header("섬 규모별 산포 반경")]
+        // 버그 수정 (#1003/#1006): 예전에는 scatterRadius가 섬 규모와 무관하게 값 하나(80f)뿐이었다.
+        // WorldMapManager.GetSizeScale의 지형 반지름(50/90/140/200)과 전혀 맞지 않아서, 소형 섬은
+        // 지형 밖(바다)까지 자원이 튀어나가고 특대 섬은 중심 근처에만 자원이 몰려 대부분의 면적이 텅
+        // 비어 보이는 문제가 있었다. 각 섬 지형 반지름의 80%(해안에 자원이 물에 잠기지 않도록 여백 확보)
+        // 에 맞춰 규모별 반경을 따로 뒀다.
+        public float smallScatterRadius = 40f;
+        public float mediumScatterRadius = 72f;
+        public float largeScatterRadius = 112f;
+        public float extraLargeScatterRadius = 160f;
 
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.
@@ -67,6 +88,7 @@ namespace MakeGame.Systems
                 return spawned;
 
             float multiplier = GetMultiplier(island.size);
+            float radius = GetScatterRadius(island.size);
 
             foreach (var entry in resourceEntries)
             {
@@ -80,7 +102,7 @@ namespace MakeGame.Systems
                 int count = Mathf.RoundToInt(entry.baseCount * multiplier);
                 for (int i = 0; i < count; i++)
                 {
-                    Vector2 offset = Random.insideUnitCircle * scatterRadius;
+                    Vector2 offset = Random.insideUnitCircle * radius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
                     spawned.Add(SpawnSingleNode(entry, position, parent));
@@ -414,16 +436,36 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 섬 규모에 대응하는 자원 개수 배율을 반환한다.
+        /// 긴급 정정(#2 회귀 수정): 인스펙터(씬 직렬화)에 설정된 필드 값을 항상 우선한다. 필드가 0
+        /// 이하로 남아있어(설정 실수/아직 배치 안 된 새 컴포넌트 등) 의미 있게 설정되지 않은 경우에만
+        /// IslandSizeMetrics.GetAreaProportionalMultiplier를 안전한 기본값 폴백으로 사용한다.
         /// </summary>
         private float GetMultiplier(IslandSize size)
         {
             switch (size)
             {
-                case IslandSize.Small: return smallMultiplier;
-                case IslandSize.Medium: return mediumMultiplier;
-                case IslandSize.Large: return largeMultiplier;
-                case IslandSize.ExtraLarge: return extraLargeMultiplier;
-                default: return smallMultiplier;
+                case IslandSize.Small: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
+                case IslandSize.Medium: return mediumMultiplier > 0f ? mediumMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
+                case IslandSize.Large: return largeMultiplier > 0f ? largeMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
+                case IslandSize.ExtraLarge: return extraLargeMultiplier > 0f ? extraLargeMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
+                default: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
+            }
+        }
+
+        /// <summary>
+        /// 섬 규모에 대응하는 자원 산포 반경을 반환한다.
+        /// 긴급 정정(#2 회귀 수정): 인스펙터(씬 직렬화)에 설정된 필드 값을 항상 우선한다. 필드가 0 이하로
+        /// 남아있을 때만 IslandSizeMetrics.GetScatterRadius를 안전한 기본값 폴백으로 사용한다.
+        /// </summary>
+        private float GetScatterRadius(IslandSize size)
+        {
+            switch (size)
+            {
+                case IslandSize.Small: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.Medium: return mediumScatterRadius > 0f ? mediumScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.Large: return largeScatterRadius > 0f ? largeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.ExtraLarge: return extraLargeScatterRadius > 0f ? extraLargeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                default: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
             }
         }
     }

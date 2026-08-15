@@ -49,6 +49,19 @@ namespace MakeGame.UI
         private GameObject bleedingIcon;
         private GameObject brokenBoneIcon;
 
+        // 성능 개선(#7): Update()가 매 프레임 값 변화와 무관하게 $"..." 문자열 보간으로 .text를 다시 만들면
+        // 불필요한 GC 할당이 누적된다. 화면에 실제로 표시되는 값(정수 일수/단계/퍼센트, 불리언 플래그)을
+        // 캐시해두고, 그 표시용 값이 실제로 바뀐 프레임에만 문자열을 새로 만들어 대입한다.
+        // day/boat 단계/aircraft 퍼센트는 정수라 float 오차 없이 "==" 비교가 안전하다. 다만 최초 1회는
+        // 반드시 갱신돼야 하므로 각 값이 절대 나올 수 없는 범위(-1 등)를 "아직 표시한 적 없음" 센티널로 둔다.
+        private int lastDisplayedDay = -1;
+        private int lastDisplayedBoatStage = -1;
+        private bool lastDisplayedBoatHasBlueprint;
+        private bool boatLabelDisplayed = false;
+        private int lastDisplayedAircraftPercent = -1;
+        private bool lastDisplayedAircraftComplete;
+        private bool aircraftLabelDisplayed = false;
+
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 SurvivalHudUI를 생성한다.
         /// </summary>
@@ -214,7 +227,16 @@ namespace MakeGame.UI
         private void Update()
         {
             if (survivalClock != null)
-                dayLabel.text = $"{survivalClock.ElapsedDays + 1}일차";
+            {
+                int day = survivalClock.ElapsedDays + 1;
+                // 정수값이 실제로 바뀐 프레임에만 새 문자열을 만들어 대입한다 (그 외 프레임은 이전 프레임과
+                // 화면에 보이는 결과가 완전히 동일하므로 매번 다시 만들 필요가 없다).
+                if (day != lastDisplayedDay)
+                {
+                    dayLabel.text = $"{day}일차";
+                    lastDisplayedDay = day;
+                }
+            }
 
             if (survivalStats != null)
             {
@@ -247,14 +269,35 @@ namespace MakeGame.UI
 
             if (boatConstruction != null)
             {
-                boatLabel.text = $"배: {boatConstruction.currentStage}/{BoatConstructionSystem.TotalStages}단계"
-                    + (boatConstruction.hasCurrentStageBlueprint ? "" : " (도면 필요)");
+                int boatStage = boatConstruction.currentStage;
+                bool hasBlueprint = boatConstruction.hasCurrentStageBlueprint;
+                // 단계 숫자 또는 도면 보유 여부(문구에 "(도면 필요)"가 붙는지) 둘 중 하나라도 바뀌었을 때만
+                // 갱신한다. 두 값 다 정수/불리언이라 프레임마다 흔들리는 float 오차 걱정 없이 "==" 비교로 충분하다.
+                if (!boatLabelDisplayed || boatStage != lastDisplayedBoatStage || hasBlueprint != lastDisplayedBoatHasBlueprint)
+                {
+                    boatLabel.text = $"배: {boatStage}/{BoatConstructionSystem.TotalStages}단계"
+                        + (hasBlueprint ? "" : " (도면 필요)");
+                    lastDisplayedBoatStage = boatStage;
+                    lastDisplayedBoatHasBlueprint = hasBlueprint;
+                    boatLabelDisplayed = true;
+                }
             }
 
             if (aircraftRepair != null)
             {
-                aircraftLabel.text = $"경비행기: {(aircraftRepair.GetOverallProgress() * 100f):F0}%"
-                    + (aircraftRepair.isRepairComplete ? " (완료)" : "");
+                // 화면에는 F0(반올림된 정수 %)로 표시되므로, 원본 float가 미세하게 흔들려도 반올림 결과가
+                // 같으면 화면상 결과는 동일하다. 그래서 float를 직접 비교하지 않고, 표시에 쓰는 것과 동일한
+                // 반올림 정수값으로 변환한 뒤 비교한다 - 이러면 "보이지 않는 변화"로 인한 불필요한 갱신도 막는다.
+                int aircraftPercent = Mathf.RoundToInt(aircraftRepair.GetOverallProgress() * 100f);
+                bool isComplete = aircraftRepair.isRepairComplete;
+                if (!aircraftLabelDisplayed || aircraftPercent != lastDisplayedAircraftPercent || isComplete != lastDisplayedAircraftComplete)
+                {
+                    aircraftLabel.text = $"경비행기: {aircraftPercent}%"
+                        + (isComplete ? " (완료)" : "");
+                    lastDisplayedAircraftPercent = aircraftPercent;
+                    lastDisplayedAircraftComplete = isComplete;
+                    aircraftLabelDisplayed = true;
+                }
             }
         }
     }

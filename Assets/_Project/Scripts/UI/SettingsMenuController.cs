@@ -24,6 +24,13 @@ namespace MakeGame.UI
 
         private float timeScaleBeforeOpen = 1f;
 
+        // 성능 개선(#6): DrawSettingsPanel()이 매 프레임(OnGUI) 호출될 때마다 new GUIStyle(...)로
+        // 스타일 객체를 새로 만들던 것을 StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱
+        // 패턴으로 바꿔, 최초 1회만 생성하고 이후에는 재사용한다.
+        private GUIStyle titleStyle;
+        private GUIStyle labelStyle;
+        private GUIStyle buttonStyle;
+
         /// <summary>
         /// 플레이 중에는 toggleKey로 직접 열고 닫을 수 있다.
         /// 타이틀/설정 화면을 통해 이미 열려 있는 경우(openedStandalone == false)에는 이 키로 닫지 않는다 -
@@ -109,12 +116,8 @@ namespace MakeGame.UI
 
             GUI.Box(new Rect(panelX, panelY, panelWidth, panelHeight), string.Empty);
 
-            var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, alignment = TextAnchor.MiddleCenter };
-            titleStyle.normal.textColor = Color.white;
+            EnsureStyles();
             GUI.Label(new Rect(panelX, panelY + 10, panelWidth, 40), "설정", titleStyle);
-
-            var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 16 };
-            labelStyle.normal.textColor = Color.white;
 
             float sliderX = panelX + 30f;
             float sliderWidth = panelWidth - 60f;
@@ -133,9 +136,28 @@ namespace MakeGame.UI
             if (audio != null && !Mathf.Approximately(bgm, currentBgm))
                 audio.SetBgmVolume(bgm);
 
-            var buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 18 };
             if (GUI.Button(new Rect(panelX + panelWidth / 2f - 80f, panelY + panelHeight - 50f, 160f, 36f), "닫기", buttonStyle))
                 Close();
+        }
+
+        /// <summary>
+        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
+        /// 필드에 캐시해두고 이후에는 재사용한다(StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
+        /// DrawSettingsPanel은 자체 OnGUI와 MainMenuController.OnGUI 양쪽에서 호출될 수 있지만
+        /// 둘 다 유효한 GUI 컨텍스트이므로 이 안에서 지연 생성해도 안전하다.
+        /// </summary>
+        private void EnsureStyles()
+        {
+            if (titleStyle != null)
+                return;
+
+            titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, alignment = TextAnchor.MiddleCenter };
+            titleStyle.normal.textColor = Color.white;
+
+            labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 16 };
+            labelStyle.normal.textColor = Color.white;
+
+            buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 18 };
         }
     }
 }

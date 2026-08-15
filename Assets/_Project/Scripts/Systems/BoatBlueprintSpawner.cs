@@ -26,6 +26,12 @@ namespace MakeGame.Systems
         [Range(0f, 1f)]
         public float extraLargeIslandSpawnChance = 0.95f;
 
+        // 긴급 정정(#3 회귀 수정): 한 차례 placementOffset 필드를 제거하고 IslandSizeMetrics.GetScatterRadius로
+        // 대체했었는데, 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 placementOffset=4가
+        // 직렬화되어 있다는 사실이 뒤늦게 확인되었다. 필드를 되살려 씬 값이 다시 정상적으로 바인딩되도록
+        // 되돌렸다. "특대 섬에서 도면이 중심 4m 반경에만 몰린다"는 문제 자체는 실재하지만, 조용히 밸런스를
+        // 바꿔서는 안 되는 사안이라 동작은 현행(고정 4m) 그대로 유지하고 판단을 기획에 넘긴다
+        // ([요청] game-designer 항목 참고).
         [Tooltip("도면 습득 지점을 섬 중심으로부터 흩뿌릴 반경")]
         public float placementOffset = 4f;
 

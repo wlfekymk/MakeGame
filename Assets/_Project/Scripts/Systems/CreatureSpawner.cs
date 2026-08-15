@@ -39,15 +39,29 @@ namespace MakeGame.Systems
         [Tooltip("섬에 등장 가능한 사냥감/물고기 종류와 기본 개체 수 목록")]
         public List<CreatureEntry> creatureEntries = new List<CreatureEntry>();
 
+        // 긴급 정정(#2 회귀 수정): 이 필드들을 한 차례 제거하고 IslandSizeMetrics 직접 호출로 바꿨었는데,
+        // 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 이 필드들에 코드 기본값과 다른
+        // 값(디자이너가 조정한 실제 밸런스 값)이 직렬화되어 있다는 사실이 뒤늦게 확인되었다. 필드를
+        // 제거하면 Unity가 그 직렬화 값을 잃어버리고 조용히 코드 기본값으로 되돌아간다 - "스테이징 범위에
+        // 씬 파일이 없다"는 것이 "프로젝트에 씬 파일이 없다"는 뜻이 아니었다. 필드명/타입/기본값을
+        // 원래(리팩터링 이전) 그대로 복원해 씬 직렬화 값이 다시 정상적으로 바인딩되도록 되돌렸다.
+        // IslandSizeMetrics는 삭제하지 않고, 이 필드가 의미 있게 설정되지 않았을 때(0 이하)만 쓰는
+        // "폴백 단일 소스"로 역할을 낮췄다 (GetMultiplier/GetScatterRadius 참고).
         [Header("섬 규모별 개체 수 배율")]
         public float smallMultiplier = 1f;
         public float mediumMultiplier = 1.5f;
         public float largeMultiplier = 2f;
         public float extraLargeMultiplier = 2.5f;
 
-        // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale)에 맞춰 함께 10배로 키웠다.
-        [Tooltip("사냥감을 흩뿌릴 반경 (섬 플레이스홀더 크기에 맞춰 조절)")]
-        public float scatterRadius = 90f;
+        [Header("섬 규모별 산포 반경")]
+        // 버그 수정 (#1006): 예전에는 scatterRadius가 섬 규모와 무관한 값 하나(90f)뿐이었다.
+        // WorldMapManager.GetSizeScale의 지형 반지름(50/90/140/200)과 어긋나 있어서, 소형 섬에서는
+        // 사냥감이 바다 쪽에 배치될 수 있었고 특대 섬에서는 중심 근처로만 몰렸다. IslandResourceSpawner/
+        // HazardSpawner와 동일하게 각 섬 지형 반지름의 80%에 맞춰 규모별 반경을 따로 뒀다.
+        public float smallScatterRadius = 40f;
+        public float mediumScatterRadius = 72f;
+        public float largeScatterRadius = 112f;
+        public float extraLargeScatterRadius = 160f;
 
         /// <summary>
         /// 지정한 섬에 규모에 맞는 개체 수만큼 사냥감/물고기를 배치한다.
@@ -59,6 +73,7 @@ namespace MakeGame.Systems
                 return spawned;
 
             float multiplier = GetMultiplier(island.size);
+            float radius = GetScatterRadius(island.size);
 
             foreach (var entry in creatureEntries)
             {
@@ -70,7 +85,7 @@ namespace MakeGame.Systems
                 {
                     // preferShoreline이면 반경의 바깥쪽 80~100% 지점에 배치해 해안에 가깝게 흉내낸다.
                     float radiusScale = entry.preferShoreline ? Random.Range(0.8f, 1f) : Random.value;
-                    Vector2 offset = Random.insideUnitCircle.normalized * scatterRadius * radiusScale;
+                    Vector2 offset = Random.insideUnitCircle.normalized * radius * radiusScale;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
                     spawned.Add(SpawnSingleCreature(entry, position, parent));
@@ -159,16 +174,36 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 섬 규모에 대응하는 사냥감/물고기 개체 수 배율을 반환한다.
+        /// 긴급 정정(#2 회귀 수정): 인스펙터(씬 직렬화)에 설정된 필드 값을 항상 우선한다. 필드가 0
+        /// 이하로 남아있어(설정 실수/아직 배치 안 된 새 컴포넌트 등) 의미 있게 설정되지 않은 경우에만
+        /// IslandSizeMetrics.GetLinearDensityMultiplier를 안전한 기본값 폴백으로 사용한다.
         /// </summary>
         private float GetMultiplier(IslandSize size)
         {
             switch (size)
             {
-                case IslandSize.Small: return smallMultiplier;
-                case IslandSize.Medium: return mediumMultiplier;
-                case IslandSize.Large: return largeMultiplier;
-                case IslandSize.ExtraLarge: return extraLargeMultiplier;
-                default: return smallMultiplier;
+                case IslandSize.Small: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetLinearDensityMultiplier(size);
+                case IslandSize.Medium: return mediumMultiplier > 0f ? mediumMultiplier : IslandSizeMetrics.GetLinearDensityMultiplier(size);
+                case IslandSize.Large: return largeMultiplier > 0f ? largeMultiplier : IslandSizeMetrics.GetLinearDensityMultiplier(size);
+                case IslandSize.ExtraLarge: return extraLargeMultiplier > 0f ? extraLargeMultiplier : IslandSizeMetrics.GetLinearDensityMultiplier(size);
+                default: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetLinearDensityMultiplier(size);
+            }
+        }
+
+        /// <summary>
+        /// 섬 규모에 대응하는 사냥감/물고기 산포 반경을 반환한다.
+        /// 긴급 정정(#2 회귀 수정): 인스펙터(씬 직렬화)에 설정된 필드 값을 항상 우선한다. 필드가 0 이하로
+        /// 남아있을 때만 IslandSizeMetrics.GetScatterRadius를 안전한 기본값 폴백으로 사용한다.
+        /// </summary>
+        private float GetScatterRadius(IslandSize size)
+        {
+            switch (size)
+            {
+                case IslandSize.Small: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.Medium: return mediumScatterRadius > 0f ? mediumScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.Large: return largeScatterRadius > 0f ? largeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                case IslandSize.ExtraLarge: return extraLargeScatterRadius > 0f ? extraLargeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
+                default: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
             }
         }
     }

@@ -79,6 +79,12 @@ namespace MakeGame.Systems
         /// <summary>
         /// 저주파 사인파에 약한 노이즈를 겹쳐 파도가 밀려오는 느낌의 잔잔한 배경음 루프를 생성한다.
         /// 항상 같은 파형이 나오도록 고정 시드를 사용하고, 루프 이음매가 튀지 않도록 시작/끝을 페이드한다.
+        /// 품질 개선(#18): 예전엔 단일 주기(0.15Hz)만 써서 duration이 짧을 땐(4초) 물결이 "쿵-쿵-쿵"
+        /// 일정한 간격으로 반복되는 티가 났다. 배수 관계가 아닌 두 번째 훨씬 느린 주기(0.037Hz, 약 27초
+        /// 주기)를 다른 비중으로 섞어, 느린 너울과 빠른 잔물결이 서로 다른 위상으로 겹치면서 매번 살짝
+        /// 다른 세기로 밀려오는 불균일한 파도처럼 들리게 했다. 두 주기가 duration과 정수배로 안 맞아도
+        /// 문제없다 - 아래 fade 처리가 시작/끝을 항상 0으로 수렴시키므로 루프 이음매에서 위상이 얼마든
+        /// 클릭 없이 자연스럽게 이어진다.
         /// </summary>
         public static AudioClip CreateOceanAmbientLoop(float duration)
         {
@@ -89,7 +95,9 @@ namespace MakeGame.Systems
             for (int i = 0; i < sampleCount; i++)
             {
                 float t = i / (float)SampleRate;
-                float wave = Mathf.Sin(2f * Mathf.PI * 0.15f * t) * 0.5f + 0.5f; // 느린 파도 주기(밀물/썰물 느낌)
+                float fastWave = Mathf.Sin(2f * Mathf.PI * 0.15f * t) * 0.5f + 0.5f;   // 빠른 잔물결 주기(약 6.7초)
+                float slowWave = Mathf.Sin(2f * Mathf.PI * 0.037f * t) * 0.5f + 0.5f;  // 느린 너울 주기(약 27초)
+                float wave = fastWave * 0.6f + slowWave * 0.4f; // 두 주기를 섞어 불균일한 파도 세기를 만든다
                 float noise = ((float)random.NextDouble() * 2f - 1f) * 0.15f;
                 samples[i] = (noise * wave) * 0.3f;
             }

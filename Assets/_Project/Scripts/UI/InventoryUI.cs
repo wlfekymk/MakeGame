@@ -21,18 +21,6 @@ namespace MakeGame.UI
         [Tooltip("인벤토리가 열려 있을 때 카테고리 필터를 순환시키는 키")]
         public KeyCode cycleFilterKey = KeyCode.F;
 
-        /// <summary>인벤토리 아이템 분류 카테고리. 정렬 순서와 필터 순환 순서로 함께 사용한다.</summary>
-        private enum ItemCategory
-        {
-            Weapon = 0,
-            Cure = 1,
-            Food = 2,
-            Drink = 3,
-            Placeable = 4,
-            Vehicle = 5,
-            Material = 6,
-        }
-
         private static readonly string[] CategoryFilterNames =
         {
             "전체", "무기", "치료", "음식", "음료", "설치형", "이동수단", "재료"
@@ -40,6 +28,10 @@ namespace MakeGame.UI
 
         // 필터 인덱스 0은 "전체"를 뜻하고, 1부터는 ItemCategory 값 + 1에 대응한다.
         private int currentFilterIndex = 0;
+
+        // 성능 개선(#8): 제목 텍스트는 currentFilterIndex가 바뀔 때만 실제로 달라지므로, 마지막으로
+        // 반영한 필터 인덱스를 기억해두고 그 값이 그대로면 UpdateTitle()에서 문자열을 다시 만들지 않는다.
+        private int lastDisplayedFilterIndex = -1;
 
         /// <summary>아이템 한 종류를 표시하는 한 줄(아이콘 + 이름/개수 텍스트 + 설명 텍스트)을 구성하는 UI 요소 묶음.</summary>
         private class ItemRow
@@ -49,6 +41,15 @@ namespace MakeGame.UI
             public Text letterLabel;
             public Text nameCountLabel;
             public Text descLabel;
+
+            // 성능 개선(#8): 이 행이 마지막으로 문자열을 다시 만들었을 때의 표시 대상 값들을 캐시해둔다.
+            // 다음 프레임에 같은 위치(row)가 같은 아이템/같은 개수/같은 최소 잔여 사용횟수를 표시하는 경우
+            // (즉 화면에 보일 내용이 실제로 동일한 경우)에는 문자열 보간을 다시 하지 않고 건너뛴다.
+            // cachedData는 아이템 종류가 바뀌었는지(정렬 순서가 바뀌어 이 행에 다른 아이템이 들어와도 감지됨),
+            // cachedCount/cachedMinRemaining은 개수·내구도가 바뀌었는지를 각각 판정하는 데 쓴다.
+            public ItemData cachedData;
+            public int cachedCount = -1;
+            public int cachedMinRemaining = -1;
         }
 
         private GameObject panelRoot;
@@ -99,40 +100,30 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 제목 텍스트에 현재 적용 중인 카테고리 필터를 함께 표시한다 (예: "인벤토리 (Tab)  [필터: 무기, F로 전환]").
+        /// 성능 개선(#8): 필터가 실제로 바뀐 프레임에만 문자열을 새로 만든다.
         /// </summary>
         private void UpdateTitle()
         {
             if (titleLabel == null)
                 return;
 
+            if (currentFilterIndex == lastDisplayedFilterIndex)
+                return;
+
             titleLabel.text = $"인벤토리 (Tab)  [필터: {CategoryFilterNames[currentFilterIndex]}, F로 전환]";
+            lastDisplayedFilterIndex = currentFilterIndex;
         }
 
         /// <summary>
         /// 아이템 하나의 분류 카테고리를 판정한다. 정렬 순서와 필터링에 함께 사용한다.
-        /// UIBuilder.GetItemCategoryColor와 동일한 우선순위 규칙을 따른다.
+        /// 개선(#9): 이전에는 이 메서드가 UIBuilder.GetItemCategoryColor와 동일한 우선순위 로직을 별도로
+        /// 복제하고 있어 한쪽만 고치면 조용히 어긋날 위험이 있었다. 이제 단일 소스인
+        /// UIBuilder.GetItemCategory에 판정을 위임하고, 이 메서드는 InventoryUI 내부에서 쓰기 편하도록
+        /// 얇게 감싸는 역할만 한다(반환 타입/분류 결과는 기존과 100% 동일).
         /// </summary>
-        private static ItemCategory GetCategory(ItemData item)
+        private static UIBuilder.ItemCategory GetCategory(ItemData item)
         {
-            if (item.isWeapon)
-                return ItemCategory.Weapon;
-
-            if (item.curesBleeding || item.curesPoison || item.curesBrokenBone)
-                return ItemCategory.Cure;
-
-            if (item.hungerRestoreAmount > 0f)
-                return ItemCategory.Food;
-
-            if (item.thirstRestoreAmount > 0f)
-                return ItemCategory.Drink;
-
-            if (item.isPlaceable)
-                return ItemCategory.Placeable;
-
-            if (item.blockedFromLargeIslandsByCurrent)
-                return ItemCategory.Vehicle;
-
-            return ItemCategory.Material;
+            return UIBuilder.GetItemCategory(item);
         }
 
         /// <summary>
@@ -200,7 +191,7 @@ namespace MakeGame.UI
 
             // 필터 인덱스 0은 "전체"이고, 1 이상이면 해당 카테고리(인덱스-1)만 통과시킨다.
             bool filterActive = currentFilterIndex > 0;
-            ItemCategory activeCategory = filterActive ? (ItemCategory)(currentFilterIndex - 1) : default;
+            UIBuilder.ItemCategory activeCategory = filterActive ? (UIBuilder.ItemCategory)(currentFilterIndex - 1) : default;
 
             foreach (var item in inventory.items)
             {
@@ -244,6 +235,13 @@ namespace MakeGame.UI
                 rowPool[0].nameCountLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
                 rowPool[0].descLabel.text = "";
                 rowPool[0].rowGo.SetActive(true);
+                // 이 분기는 캐시를 거치지 않고 rowPool[0]에 직접 "비어 있음" 문구를 써버리므로,
+                // 캐시된 값(cachedData 등)을 그대로 두면 다음에 다시 실제 아이템이 이 행에 들어왔을 때
+                // "이전에 봤던 값과 같다"고 오판해 갱신을 건너뛰는 버그가 생긴다. 그래서 여기서 캐시를
+                // 강제로 무효화해, 다음 번엔 반드시 실제 아이템 표시 로직이 다시 실행되게 한다.
+                rowPool[0].cachedData = null;
+                rowPool[0].cachedCount = -1;
+                rowPool[0].cachedMinRemaining = -1;
                 for (int i = 1; i < rowPool.Count; i++)
                     rowPool[i].rowGo.SetActive(false);
                 return;
@@ -253,51 +251,65 @@ namespace MakeGame.UI
             {
                 var data = orderBuffer[i];
                 var row = rowPool[i];
-
-                row.icon.gameObject.SetActive(true);
-                // 아이템별 아이콘 스프라이트가 있으면 실제 그림을 보여주고, 없으면 기존처럼
-                // 카테고리 색상 배경 + 이름 첫 글자 placeholder로 대체 표시한다(하위 호환).
-                if (data.icon != null)
-                {
-                    row.icon.sprite = data.icon;
-                    row.icon.color = Color.white;
-                    row.icon.type = Image.Type.Simple;
-                    row.icon.preserveAspect = true;
-                    if (row.letterLabel != null)
-                        row.letterLabel.gameObject.SetActive(false);
-                }
-                else
-                {
-                    row.icon.sprite = null;
-                    row.icon.color = UIBuilder.GetItemCategoryColor(data);
-                    if (row.letterLabel != null)
-                    {
-                        row.letterLabel.gameObject.SetActive(true);
-                        row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
-                    }
-                }
-
                 int count = countBuffer[data];
-                // 최대 사용 횟수뿐 아니라 실제로 몇 번 남았는지(같은 종류 중 가장 적게 남은 값)도 함께 보여준다.
-                string usesInfo = data.IsUnlimited ? "" : $" ({minRemainingBuffer[data]}/{data.maxUses}회 남음)";
-                row.nameCountLabel.text = $"{data.itemName}  x{count}{usesInfo}";
-                // 내구도가 얼마 남지 않은 도구/무기는 노란색(경고)~빨간색(위급)으로 강조해 눈에 띄게 한다.
-                if (!data.IsUnlimited && data.maxUses > 0)
+                int minRemaining = minRemainingBuffer[data];
+
+                // 성능 개선(#8): 이 행이 지난 프레임과 같은 아이템/개수/잔여 사용횟수를 표시하는 중이면
+                // 화면에 보이는 결과가 동일하므로 문자열을 다시 만들지 않고 건너뛴다. 아이템 종류가
+                // 바뀌거나(정렬 순서 변경 포함) 개수·내구도가 바뀐 경우에는 반드시 다시 그린다.
+                bool needsRefresh = row.cachedData != data || row.cachedCount != count || row.cachedMinRemaining != minRemaining;
+
+                if (needsRefresh)
                 {
-                    float remainRatio = (float)minRemainingBuffer[data] / data.maxUses;
-                    row.nameCountLabel.color = remainRatio <= 0.2f ? new Color(1f, 0.35f, 0.3f, 1f)
-                        : remainRatio <= 0.4f ? new Color(1f, 0.85f, 0.3f, 1f)
-                        : Color.white;
-                }
-                else
-                {
-                    row.nameCountLabel.color = Color.white;
+                    row.icon.gameObject.SetActive(true);
+                    // 아이템별 아이콘 스프라이트가 있으면 실제 그림을 보여주고, 없으면 기존처럼
+                    // 카테고리 색상 배경 + 이름 첫 글자 placeholder로 대체 표시한다(하위 호환).
+                    if (data.icon != null)
+                    {
+                        row.icon.sprite = data.icon;
+                        row.icon.color = Color.white;
+                        row.icon.type = Image.Type.Simple;
+                        row.icon.preserveAspect = true;
+                        if (row.letterLabel != null)
+                            row.letterLabel.gameObject.SetActive(false);
+                    }
+                    else
+                    {
+                        row.icon.sprite = null;
+                        row.icon.color = UIBuilder.GetItemCategoryColor(data);
+                        if (row.letterLabel != null)
+                        {
+                            row.letterLabel.gameObject.SetActive(true);
+                            row.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
+                        }
+                    }
+
+                    // 최대 사용 횟수뿐 아니라 실제로 몇 번 남았는지(같은 종류 중 가장 적게 남은 값)도 함께 보여준다.
+                    string usesInfo = data.IsUnlimited ? "" : $" ({minRemaining}/{data.maxUses}회 남음)";
+                    row.nameCountLabel.text = $"{data.itemName}  x{count}{usesInfo}";
+                    // 내구도가 얼마 남지 않은 도구/무기는 노란색(경고)~빨간색(위급)으로 강조해 눈에 띄게 한다.
+                    if (!data.IsUnlimited && data.maxUses > 0)
+                    {
+                        float remainRatio = (float)minRemaining / data.maxUses;
+                        row.nameCountLabel.color = remainRatio <= 0.2f ? new Color(1f, 0.35f, 0.3f, 1f)
+                            : remainRatio <= 0.4f ? new Color(1f, 0.85f, 0.3f, 1f)
+                            : Color.white;
+                    }
+                    else
+                    {
+                        row.nameCountLabel.color = Color.white;
+                    }
+
+                    // 버그 수정: ItemData.description이 그동안 어떤 UI에도 표시되지 않는 죽은 데이터였다.
+                    // 이름/개수 아래에 작은 회색 글씨로 설명을 함께 보여줘, 이미 작성해둔 아이템 설명이
+                    // 실제로 플레이어에게 전달되게 한다.
+                    row.descLabel.text = string.IsNullOrEmpty(data.description) ? "" : data.description;
+
+                    row.cachedData = data;
+                    row.cachedCount = count;
+                    row.cachedMinRemaining = minRemaining;
                 }
 
-                // 버그 수정: ItemData.description이 그동안 어떤 UI에도 표시되지 않는 죽은 데이터였다.
-                // 이름/개수 아래에 작은 회색 글씨로 설명을 함께 보여줘, 이미 작성해둔 아이템 설명이
-                // 실제로 플레이어에게 전달되게 한다.
-                row.descLabel.text = string.IsNullOrEmpty(data.description) ? "" : data.description;
                 row.rowGo.SetActive(true);
             }
             for (int i = orderBuffer.Count; i < rowPool.Count; i++)

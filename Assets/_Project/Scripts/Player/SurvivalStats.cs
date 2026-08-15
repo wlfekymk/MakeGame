@@ -24,6 +24,23 @@ namespace MakeGame.Player
     /// </summary>
     public class SurvivalStats : MonoBehaviour
     {
+        // 추가 작업(#10 준비): SurvivalHudUI가 위험 경고(빨간 경고색 깜빡임)를 띄우는 임계값(0.25f/0.2f/0.8f)을
+        // UI 쪽에 하드코딩해서 쓰고 있어, 이 시스템의 밸런스(감소/회복 속도 등)가 바뀌어도 UI 경고 시점은
+        // 조용히 안 맞게 어긋날 위험이 있었다. 게임 규칙에 속하는 값이므로 SurvivalStats가 단일 소스로
+        // 노출하고, UI는 이 값을 참조하도록 한다(UI 쪽 교체는 ui-engineer가 다음 배치에서 진행 - 여기서는
+        // 노출만 하며, 값은 SurvivalHudUI가 현재 쓰는 것과 완전히 동일하다).
+        // (const 필드는 Unity Inspector에 노출되지 않으므로 [Header]를 붙이지 않는다.)
+        /// <summary>체력 비율이 이 값 미만이면 위험 경고를 표시한다 (SurvivalHudUI 기준값과 동일).</summary>
+        public const float LowHealthRatio = 0.25f;
+        /// <summary>허기 비율이 이 값 미만이면 위험 경고를 표시한다.</summary>
+        public const float LowHungerRatio = 0.2f;
+        /// <summary>갈증 비율이 이 값 미만이면 위험 경고를 표시한다.</summary>
+        public const float LowThirstRatio = 0.2f;
+        /// <summary>일사병 비율이 이 값을 초과하면 위험 경고를 표시한다.</summary>
+        public const float HighSunstrokeRatio = 0.8f;
+        /// <summary>산소 비율이 이 값 미만이면 위험 경고를 표시한다.</summary>
+        public const float LowOxygenRatio = 0.25f;
+
         [Header("체력")]
         [Tooltip("현재 체력 (0이 되면 사망)")]
         public float health = 100f;

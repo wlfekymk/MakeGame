@@ -464,17 +464,13 @@ namespace MakeGame.Systems
         /// 이 값을 바꾸면 섬끼리 겹치지 않기 위한 배치 간격(baseDistanceStep 등)과 바다 크기(oceanSize),
         /// 자원/위험요소/사냥감 산포 반경(scatterRadius)도 함께 비례해서 커져야 한다 - 그렇지 않으면
         /// 훨씬 커진 섬의 극히 일부 구역에만 콘텐츠가 몰리게 된다.
+        /// 리팩터링(#2): 예전에는 이 반지름 값(50/90/140/200)을 IslandResourceSpawner/HazardSpawner/
+        /// CreatureSpawner가 각자 산포 반경으로 다시 하드코딩해 총 네 곳에 같은 숫자가 흩어져 있었다.
+        /// IslandSizeMetrics.GetTerrainRadius를 단일 소스로 삼아 위임하도록 바꿨다(반환값은 기존과 동일).
         /// </summary>
         private float GetSizeScale(IslandSize size)
         {
-            switch (size)
-            {
-                case IslandSize.Small: return 50f;
-                case IslandSize.Medium: return 90f;
-                case IslandSize.Large: return 140f;
-                case IslandSize.ExtraLarge: return 200f;
-                default: return 50f;
-            }
+            return IslandSizeMetrics.GetTerrainRadius(size);
         }
 
         /// <summary>

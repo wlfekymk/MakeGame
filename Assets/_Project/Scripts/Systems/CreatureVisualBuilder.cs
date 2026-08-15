@@ -1,0 +1,154 @@
+using UnityEngine;
+using MakeGame.Data;
+
+namespace MakeGame.Systems
+{
+    /// <summary>
+    /// 위험 요소(HazardSource)/사냥감(HuntableCreature)처럼 몸통 프리미티브 하나만으로는 종류를 구분하기
+    /// 어려운 생물형 오브젝트에, 눈/꼬리/집게/다리 같은 최소한의 보조 파츠를 절차적으로 붙여주는 공용 유틸리티.
+    /// StructureVisualBuilder(구조물 전용)와 완전히 동일한 패턴 - 프리미티브 조합 + CreateColorMaterial +
+    /// 비균일 스케일 보정 - 을 그대로 따른다.
+    /// HazardSpawner.AddDetailParts/CreatureSpawner.AddCompensated에 각각 거의 동일한 형태로 중복
+    /// 정의되어 있던 "부모의 비균일 스케일을 상쇄한 보조 파츠 생성" 헬퍼를 이 한 곳으로 모아, 새 디테일을
+    /// 추가할 때마다 같은 코드를 또 베끼지 않도록 한다.
+    /// 실제 호출 연결은 이 클래스 소유가 아닌 HazardSpawner.cs/CreatureSpawner.cs 쪽 몫이라
+    /// (파일 소유권 규칙) 여기서는 만들기만 하고 붙이지 않는다.
+    /// </summary>
+    public static class CreatureVisualBuilder
+    {
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 구체 보조 파츠(눈, 벌떼 등)를 만들어 붙인다.
+        /// worldRadius는 부모가 어떻게 눌리거나 늘어나 있어도 항상 같은 월드 크기의 둥근 구체로
+        /// 보이게 하기 위한 목표 반지름(미터)이다.
+        /// </summary>
+        public static GameObject AddCompensatedSphere(Transform parent, Vector3 localPos, float worldRadius, Vector3 parentScale, Color color, string name)
+        {
+            Vector3 compScale = new Vector3(
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.x),
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.y),
+                worldRadius * 2f / Mathf.Max(0.0001f, parentScale.z));
+            return StructureVisualBuilder.CreateVisualPart(parent, name, PrimitiveType.Sphere, localPos, compScale, color);
+        }
+
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 박스 보조 파츠(지느러미, 가시 등 각진 형태)를 만들어 붙인다.
+        /// worldSize는 목표 월드 크기(가로/높이/깊이, 미터)다.
+        /// </summary>
+        public static GameObject AddCompensatedBox(Transform parent, Vector3 localPos, Vector3 worldSize, Vector3 parentScale, Color color, string name, Quaternion? localRotation = null)
+        {
+            Vector3 compScale = new Vector3(
+                worldSize.x / Mathf.Max(0.0001f, parentScale.x),
+                worldSize.y / Mathf.Max(0.0001f, parentScale.y),
+                worldSize.z / Mathf.Max(0.0001f, parentScale.z));
+            return StructureVisualBuilder.CreateVisualPart(parent, name, PrimitiveType.Cube, localPos, compScale, color, localRotation);
+        }
+
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 캡슐 보조 파츠(전갈 꼬리 마디, 다리 등 길쭉한 형태)를 만들어 붙인다.
+        /// </summary>
+        public static GameObject AddCompensatedCapsule(Transform parent, Vector3 localPos, Vector3 worldSize, Vector3 parentScale, Color color, string name, Quaternion? localRotation = null)
+        {
+            Vector3 compScale = new Vector3(
+                worldSize.x / Mathf.Max(0.0001f, parentScale.x),
+                worldSize.y / Mathf.Max(0.0001f, parentScale.y),
+                worldSize.z / Mathf.Max(0.0001f, parentScale.z));
+            return StructureVisualBuilder.CreateVisualPart(parent, name, PrimitiveType.Capsule, localPos, compScale, color, localRotation);
+        }
+
+        /// <summary>
+        /// 독사(HazardType.VenomousSnake) 전용 디테일. 몸통 캡슐은 이미 눕혀서 길고 얇게 배치되어
+        /// 형태만으로도 뱀임을 어느 정도 알 수 있으므로, 머리 쪽(로컬 +Z 끝)에 아주 작은 붉은 혀
+        /// 돌기 하나만 더해 "머리가 어느 쪽인지"와 뱀 특유의 느낌을 최소한으로 보강한다.
+        /// 과한 디테일(독립된 머리 형상 등)은 넣지 않는다.
+        /// </summary>
+        public static void AddSnakeDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            AddCompensatedBox(body.transform, new Vector3(0f, 0f, 0.95f), new Vector3(0.04f, 0.04f, 0.16f), appliedScale,
+                new Color(0.85f, 0.15f, 0.15f), "Tongue"); // 붉은 혀 돌기
+        }
+
+        /// <summary>
+        /// 전갈(HazardType.Scorpion) 전용 디테일. 몸통 뒤쪽에서 위로 구부러져 올라간 꼬리 마디(캡슐 2개)와
+        /// 앞쪽 양옆의 작은 집게(박스 2개)를 붙여, 몸통 프리미티브 하나로는 나오지 않는 전갈 특유의
+        /// 실루엣(들린 꼬리 + 집게)을 최소한의 파츠로 표현한다.
+        /// </summary>
+        public static void AddScorpionDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color darker = bodyColor * 0.85f;
+
+            AddCompensatedCapsule(body.transform, new Vector3(0f, 0.28f, -0.5f), new Vector3(0.1f, 0.32f, 0.1f), appliedScale,
+                darker, "TailSegment1", Quaternion.Euler(35f, 0f, 0f));
+            AddCompensatedCapsule(body.transform, new Vector3(0f, 0.55f, -0.75f), new Vector3(0.08f, 0.26f, 0.08f), appliedScale,
+                darker, "TailSegment2", Quaternion.Euler(-25f, 0f, 0f));
+
+            AddCompensatedBox(body.transform, new Vector3(0.28f, -0.08f, 0.55f), new Vector3(0.16f, 0.07f, 0.2f), appliedScale,
+                darker, "PincerL");
+            AddCompensatedBox(body.transform, new Vector3(-0.28f, -0.08f, 0.55f), new Vector3(0.16f, 0.07f, 0.2f), appliedScale,
+                darker, "PincerR");
+        }
+
+        /// <summary>
+        /// 함정(HazardType.Trap) 전용 디테일. 얇은 원판 가장자리를 따라 뾰족한 가시(가는 캡슐)를
+        /// 여러 개 둘러 박아, 밋밋한 원판이 아니라 "밟으면 위험한 것"이라는 실루엣을 만든다.
+        /// </summary>
+        public static void AddTrapDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color spikeColor = new Color(0.15f, 0.13f, 0.1f); // 거의 검은 쇠/나무 가시 색
+            const int spikeCount = 8;
+
+            for (int i = 0; i < spikeCount; i++)
+            {
+                float angle = i * (360f / spikeCount) * Mathf.Deg2Rad;
+                Vector3 localPos = new Vector3(Mathf.Cos(angle) * 0.42f, 0.05f, Mathf.Sin(angle) * 0.42f);
+                AddCompensatedCapsule(body.transform, localPos, new Vector3(0.025f, 0.13f, 0.025f), appliedScale,
+                    spikeColor, $"Spike{i}", Quaternion.Euler(90f, 0f, 0f));
+            }
+        }
+
+        /// <summary>
+        /// 지정한 위험 요소 종류에 맞는 디테일 파츠를 몸통에 붙인다. 곰/식인종/벌떼/상어는 이미
+        /// HazardSpawner.AddDetailParts가 자체적으로 디테일(눈/지느러미/벌떼 무리)을 만들고 있으므로
+        /// 여기서는 건드리지 않고 조용히 아무 것도 하지 않는다 - 그동안 몸통 프리미티브 + 색상뿐이라
+        /// 실루엣 구분이 약했던 독사/전갈/함정 세 종류만 이 메서드로 보강한다.
+        /// HazardSpawner.AddDetailParts의 기존 switch 케이스와 겹치지 않으므로, 그 switch 뒤에
+        /// 조건 분기 없이 이 메서드 호출 한 줄만 추가하면 안전하게 연결된다.
+        /// </summary>
+        public static void AddHazardDetailsIfMissing(GameObject body, HazardType type, Vector3 appliedScale, Color bodyColor)
+        {
+            switch (type)
+            {
+                case HazardType.VenomousSnake:
+                    AddSnakeDetails(body, appliedScale, bodyColor);
+                    break;
+                case HazardType.Scorpion:
+                    AddScorpionDetails(body, appliedScale, bodyColor);
+                    break;
+                case HazardType.Trap:
+                    AddTrapDetails(body, appliedScale, bodyColor);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 사냥감(HuntableCreature, 육상형) 몸통 아래에 짧은 다리 4개를 붙인다. 지금까지는 몸통 캡슐 +
+        /// 눈 2개뿐이라, 사람처럼 서서 배치되는 위험 요소(곰/식인종) 캡슐과 실루엣이 겹쳐 "이게 잡을
+        /// 수 있는 사냥감인지 위험 요소인지" 구분이 잘 안 됐다. 짧은 네 다리를 더하면 사족보행 동물
+        /// 실루엣이 되어 사람 형태(위험 요소)와 한눈에 구분된다. 물고기(preferShoreline)에는 다리가
+        /// 어울리지 않으므로 이 메서드는 육상 동물 쪽에서만 호출해야 한다.
+        /// </summary>
+        public static void AddQuadrupedLegs(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            Color legColor = bodyColor * 0.85f;
+            Vector3[] legLocalPositions =
+            {
+                new Vector3(0.18f, -0.55f, 0.22f),
+                new Vector3(-0.18f, -0.55f, 0.22f),
+                new Vector3(0.18f, -0.55f, -0.22f),
+                new Vector3(-0.18f, -0.55f, -0.22f),
+            };
+
+            for (int i = 0; i < legLocalPositions.Length; i++)
+                AddCompensatedCapsule(body.transform, legLocalPositions[i], new Vector3(0.08f, 0.35f, 0.08f), appliedScale, legColor, $"Leg{i}");
+        }
+    }
+}

@@ -809,7 +809,10 @@
     "자원 노드 텍스처 종류 세분화(leaf/metal 추가)는 v0.01.068에서 완료. 3D 캐릭터/자원 모델을 프리미티브 대신 실제 메시로 교체하는 것은 여전히 장기 과제로 남아있음.",
     "자원 노드가 전부 동일한 큐브라 실루엣으로 구분이 안 되던 문제는 v0.01.069에서 GetNodeShape/AddResourceDetailParts로 12종 자원마다 다른 프리미티브 조합을 쓰도록 수정해 해결(사용자 직접 피드백으로 발견 - batch305to323VisualPolishAndResourceShapes 참고). 사냥감(HuntableCreature)과 위험요소(HazardSpawner)도 동일한 문제(전부 캡슐/구 실루엣)가 남아있을 수 있어 다음 배치에서 점검 후보로 고려할 것.",
     "다음 배치 후보: 사냥감/위험요소도 종별 프리미티브 실루엣이 충분히 구분되는지 재점검, 부력통/비상식량/연료/엔진부품처럼 GetItemCategoryColor상 전부 '일반 재료'(갈색)로 뭉뚱그려지는 아이템들에 형태 외에 색상 구분도 추가할지 검토.",
-    "v0.01.070: 자원 산포 반경(scatterRadius)이 섬 규모(Small/Medium/Large/ExtraLarge)와 무관하게 전 규모 공통 고정값이라, 정확히는 섬 크기별로 반경을 비례시키는 게 이상적이나 기존 아키텍처(스포너가 island.size는 알지만 실제 반지름 값 자체는 WorldMapManager 안에 private로 갇혀있음)를 유지한 채 절대값만 10배로 맞춤 - 추후 GetSizeScale을 public화하거나 island 인스턴스에 실제 반지름을 저장해 산포 반경을 섬별로 정확히 비례시키는 리팩터링 후보"
+    "v0.01.070: 자원 산포 반경(scatterRadius)이 섬 규모(Small/Medium/Large/ExtraLarge)와 무관하게 전 규모 공통 고정값이라, 정확히는 섬 크기별로 반경을 비례시키는 게 이상적이나 기존 아키텍처(스포너가 island.size는 알지만 실제 반지름 값 자체는 WorldMapManager 안에 private로 갇혀있음)를 유지한 채 절대값만 10배로 맞춤 - 추후 GetSizeScale을 public화하거나 island 인스턴스에 실제 반지름을 저장해 산포 반경을 섬별로 정확히 비례시키는 리팩터링 후보",
+    "희귀 자원(금속조각/부력통/엔진부품)에 발광이나 파티클 같은 시각적 희귀도 강조 장치를 추가할지 검토 필요(#338/#366)",
+    "PlayerController에 가감속 곡선(Lerp/SmoothDamp)을 추가해 이동감을 다듬을지 검토 필요(#379) - 현재는 즉각 시작/정지",
+    "DebugHud에 현재 섬 반지름/규모 필드를 추가해 밸런스 조정 시 QA 편의성을 높일지 검토(#384)"
   ],
   "batch345And344UserFeedbackResourceVarietyAndIslandSize": {
     "summary": "사용자가 자원 노드 모양 다양화(v0.01.069) 라이브 확인 직후 추가로 남긴 두 가지 피드백을 반영한 배치. userReport 원문: '자원류 같은경우 같은 종류의 자원이라도 보여지는 모양은 종류가 다양하게 보여졌으면 좋겠어. 그리고 섬 크기의 정의가 소가 지금 크기의 10배는 커져야할거 같아.'",
@@ -843,6 +846,50 @@
     "tallResourceSightBlock_330_360": {
       "finding": "대나무 실린더 기본 높이 2 x scale.y(1.05, jitter 최대 1.25 적용 시 최대 약 2.6) → 실제 높이 최대 약 5.2 월드 유닛까지 가능. 섬이 10배 확대된 이후에도 플레이어 카메라 높이 대비 크게 두드러지진 않으나 근접 시 시야를 일부 가릴 수 있음(대나무 숲처럼 빽빽하게 배치되면 더 두드러짐).",
       "verdict": "의도된 자연스러운 지형지물 가림으로 간주, 별도 수정 없음. 야자잎은 옆으로 퍼지는 형태라 시야 방해 영향 적음"
+    }
+  },
+  "batch333To342SecondPassVisualAndDocReview": {
+    "endingCutscene_333_361": {
+      "finding": "EndingChecker에 배경 아트+승리 팡파르+금색 강조 텍스트로 구성된 승리 화면은 이미 존재(OnGUI 기반, v0.01.058 이전 구현). 카메라 팬/디졸브 같은 진짜 컷씬 연출은 없음.",
+      "verdict": "즉시 버그는 아니며 신규 콘텐츠 성격이라 #729(새로운 엔딩) 등 신규 콘텐츠 탐색 카테고리로 이관, 이번 배치는 조사만"
+    },
+    "boatAircraftShelterSilhouette_334to336_362to364": {
+      "finding": "배/경비행기 잔해/쉼터/물증류기는 v0.01.066~068에서 이미 텍스처·보조 파츠 디테일이 여러 차례 추가됨(StructureVisualBuilder 공용 진입점). 이번 재점검에서 코드상 추가 결함 없음을 재확인."
+    },
+    "inventoryIconSilhouetteMatch_337_365": {
+      "finding": "인벤토리/제작 UI 아이콘은 ItemData.icon(Sprite) 고정 이미지, 월드 노드는 GetNodeShape 프리미티브 조합 - 서로 다른 렌더링 경로라 완전한 실루엣 일치는 애초에 불가능한 구조. 다만 아이콘이 색상(GetItemCategoryColor)과 형태 모티프(예: 나뭇가지 아이콘=막대기 글리프)를 공유하도록 만들어졌던 v0.01.066 설계 의도상 문제 없음으로 판단"
+    },
+    "rareResourceVisualRarity_338_366": {
+      "finding": "금속조각/부력통/엔진부품 등 희귀 자원이 일반 자원과 크기/색상 강조 없이 동일한 스케일 규칙(0.85~1.25 지터)을 공유. 희귀도를 시각적으로 강조하는 장치(예: 은은한 발광, 파티클)는 아직 없음",
+      "verdict": "신규 폴리시 아이디어로 openQuestions에 기록, 이번 배치 코드 변경 없음"
+    }
+  },
+  "batch369to384IslandScaleBalanceDeepDive": {
+    "summary": "섬 10배 확대(v0.01.070) 이후 실제로 영향받는 수치들을 코드 레벨에서 하나씩 추적한 배치. #369~384.",
+    "islandTravelIsInstantTeleport_371_382": {
+      "finding": "IslandTravel.TryTravelTo → TeleportPlayerToIsland가 목적지 좌표로 CharacterController를 잠깐 끄고 즉시 순간이동시킴을 코드로 확인. 공식 이동 수단(미니맵에서 섬 선택)은 거리와 무관하게 이동 '시간'이 0초임.",
+      "implication": "baseDistanceStep/oceanSize를 10배로 키운 것은 미니맵 배치감·수동으로 헤엄쳐 건너려는 플레이어의 체감 거리에만 영향을 주고, 정식 이동 루프의 페이싱에는 영향이 없음. 수동 수영으로 건너려 하면 swimSpeed=3 기준 base 거리(1200)만 편도 약 400초(6.6분)가 걸려 사실상 보트 UI 사용을 강하게 유도하는 구조 - 의도된 디자인으로 판단, 변경 없음"
+    },
+    "minimapScale_372": {
+      "finding": "radarWorldRadius가 v0.01.070에서 400→4000으로 baseDistanceStep과 동일 비율(10배) 이미 조정되어 있음을 재확인, 추가 조정 불필요"
+    },
+    "survivalTickFrameRate_374": {
+      "finding": "Campfire.Tick 등 시간 기반 로직이 프레임 카운트가 아닌 Time.deltaTime(실제 경과 초) 누적 방식이라 프레임레이트와 무관하게 정확함을 코드로 확인, 드리프트 문제 없음"
+    },
+    "craftingIsInstant_376": {
+      "finding": "CraftingSystem.TryCraft는 코루틴/대기 없이 동기 즉시 처리. 제작 대기시간이라는 개념 자체가 없음(의도된 단순화, 이전 배치에서도 동일 결론)"
+    },
+    "playerControllerNoAccelCurve_379": {
+      "finding": "PlayerController에 Lerp/SmoothDamp/velocity 보간이 전혀 없어 이동 입력이 그대로 속도로 즉시 반영됨(가감속 곡선 없음, 아케이드식 즉각 시작/정지). 버그는 아니며 스타일 선택으로 판단, openQuestions에 향후 폴리시 후보로만 기록"
+    },
+    "hazardsHaveNoChaseAI_380": {
+      "finding": "HazardSource는 OnTriggerEnter/Stay 기반 접촉 판정만 있고 추적/탐지 로직이 전혀 없음(전부 제자리 고정형 위험요소). '탐지 범위'라는 개념 자체가 존재하지 않음 - 설계상 Stranded Deep류 정적 인카운터를 의도한 것으로 판단, 변경 없음"
+    },
+    "boatMaterialVsResourceCount_381": {
+      "finding": "섬 10배 확대 배치에서 IslandResourceSpawner.baseCount(자원 노드 개수)는 건드리지 않고 scatterRadius(퍼지는 반경)만 키웠음을 코드로 재확인 - 섬당 자원 총량은 확대 전과 동일, 배 제작 재료 요구량과의 균형에 영향 없음"
+    },
+    "debugHudMissingIslandRadius_384": {
+      "finding": "DebugHud에 섬 반지름/규모 관련 필드가 없음을 확인. QA 편의용 필드라 게임플레이에 영향은 없으나, 향후 밸런스 조정 시 유용할 수 있어 openQuestions에 추가 후보로 기록"
     }
   }
 }

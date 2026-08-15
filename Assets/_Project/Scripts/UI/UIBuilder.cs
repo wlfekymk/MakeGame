@@ -134,40 +134,94 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// 아이템 분류 카테고리. 인벤토리 UI의 정렬/필터 순환 순서와 아이콘 배경색 규칙이 함께 이 값을 기준으로 삼는다.
+        /// 개선(#9): 이전에는 InventoryUI.GetCategory와 UIBuilder.GetItemCategoryColor가 동일한 우선순위 판정
+        /// 로직을 각자 구현하고 있어, 한쪽만 고치면 조용히 어긋날 위험이 있었다. 이 열거형과 GetItemCategory를
+        /// 단일 소스로 두고 양쪽 모두 이걸 참조하게 통합했다. 필터 인덱스 계산(InventoryUI의
+        /// (ItemCategory)(currentFilterIndex - 1))이 정수값에 의존하므로, 각 값의 순서/번호는 절대 바꾸면 안 된다.
+        /// </summary>
+        public enum ItemCategory
+        {
+            Weapon = 0,
+            Cure = 1,
+            Food = 2,
+            Drink = 3,
+            Placeable = 4,
+            Vehicle = 5,
+            Material = 6,
+        }
+
+        /// <summary>
+        /// 아이템 하나의 분류 카테고리를 판정한다. GetItemCategoryColor(색상 규칙)와 InventoryUI(정렬/필터)가
+        /// 공통으로 사용하는 단일 판정 로직이다. item이 null인 호출은 이 프로젝트 안에서 나오지 않으므로
+        /// (호출부가 미리 null 체크를 하거나 null이 아님을 보장) 방어적으로만 Material로 폴백한다.
+        /// </summary>
+        public static ItemCategory GetItemCategory(MakeGame.Data.ItemData item)
+        {
+            if (item == null)
+                return ItemCategory.Material;
+
+            if (item.isWeapon)
+                return ItemCategory.Weapon;
+
+            // 버그 수정: 붕대/부목/해독제 같은 치료 아이템이 별도 분류가 없어 전부 맨 아래
+            // "일반 채집 재료"로 취급됐다. 별도 카테고리로 분리해 인벤토리 UI 카테고리 점과
+            // 아이콘 배경 색이 일치하게 했다.
+            if (item.curesBleeding || item.curesPoison || item.curesBrokenBone)
+                return ItemCategory.Cure;
+
+            if (item.hungerRestoreAmount > 0f)
+                return ItemCategory.Food;
+
+            if (item.thirstRestoreAmount > 0f)
+                return ItemCategory.Drink;
+
+            if (item.isPlaceable)
+                return ItemCategory.Placeable;
+
+            if (item.blockedFromLargeIslandsByCurrent)
+                return ItemCategory.Vehicle;
+
+            return ItemCategory.Material;
+        }
+
+        /// <summary>
         /// 아이템의 종류(무기/음식/음료/설치형/일반 재료)에 따라 아이콘 배경색을 정한다.
         /// 실제 아이콘 이미지가 없는 상태에서 최소한의 시각적 구분을 주기 위한 임시 규칙이다.
+        /// 분류 판정 자체는 GetItemCategory에 위임하고, 여기서는 카테고리별 색상만 담당한다.
         /// </summary>
         public static Color GetItemCategoryColor(MakeGame.Data.ItemData item)
         {
             if (item == null)
                 return new Color(0.5f, 0.5f, 0.5f, 1f);
 
-            if (item.isWeapon)
-                return new Color(0.8f, 0.25f, 0.25f, 1f); // 빨강: 무기
+            switch (GetItemCategory(item))
+            {
+                case ItemCategory.Weapon:
+                    return new Color(0.8f, 0.25f, 0.25f, 1f); // 빨강: 무기
 
-            // 버그 수정: 붕대/부목/해독제 같은 치료 아이템이 별도 색 분기가 없어 전부 맨 아래
-            // "갈색: 일반 채집 재료"로 표시됐다. 새로 만든 아이콘(초록 배경)과 색이 어긋나던 문제라,
-            // 아이콘과 동일한 초록으로 맞춰 인벤토리 UI 카테고리 색상 점과 아이콘 배경이 일치하게 했다.
-            if (item.curesBleeding || item.curesPoison || item.curesBrokenBone)
-                return new Color(0.31f, 0.66f, 0.48f, 1f); // 초록: 의료 아이템
+                case ItemCategory.Cure:
+                    return new Color(0.31f, 0.66f, 0.48f, 1f); // 초록: 의료 아이템
 
-            if (item.hungerRestoreAmount > 0f)
-                return new Color(0.85f, 0.55f, 0.2f, 1f); // 주황: 음식
+                case ItemCategory.Food:
+                    return new Color(0.85f, 0.55f, 0.2f, 1f); // 주황: 음식
 
-            if (item.thirstRestoreAmount > 0f)
-                return new Color(0.25f, 0.55f, 0.85f, 1f); // 파랑: 음료
+                case ItemCategory.Drink:
+                    return new Color(0.25f, 0.55f, 0.85f, 1f); // 파랑: 음료
 
-            if (item.isPlaceable)
-                return new Color(0.3f, 0.7f, 0.6f, 1f); // 청록: 설치형(빌드) 아이템
+                case ItemCategory.Placeable:
+                    return new Color(0.3f, 0.7f, 0.6f, 1f); // 청록: 설치형(빌드) 아이템
 
-            if (item.blockedFromLargeIslandsByCurrent)
-                return new Color(0.6f, 0.5f, 0.85f, 1f); // 보라: 이동 수단(고무보트 등)
+                case ItemCategory.Vehicle:
+                    return new Color(0.6f, 0.5f, 0.85f, 1f); // 보라: 이동 수단(고무보트 등)
 
-            // 품질 개선(#327): 나뭇가지~엔진부품까지 8종이 넘는 "일반 재료"가 전부 똑같은 갈색
-            // 한 가지로만 표시돼, 인벤토리/제작 UI에서 실루엣 아이콘이 아니면 재료 계열을 구분할
-            // 방법이 없었다. 재질 계열(나무/돌/금속/식물·천/기계부품)별로 색조를 살짝 나눠서
-            // IslandResourceSpawner가 월드에 심는 실제 오브젝트 색상과 동일한 기준으로 일치시켰다.
-            return GetMaterialSubCategoryColor(item.itemName);
+                default:
+                    // 품질 개선(#327): 나뭇가지~엔진부품까지 8종이 넘는 "일반 재료"가 전부 똑같은 갈색
+                    // 한 가지로만 표시돼, 인벤토리/제작 UI에서 실루엣 아이콘이 아니면 재료 계열을 구분할
+                    // 방법이 없었다. 재질 계열(나무/돌/금속/식물·천/기계부품)별로 색조를 살짝 나눠서
+                    // IslandResourceSpawner가 월드에 심는 실제 오브젝트 색상과 동일한 기준으로 일치시켰다.
+                    return GetMaterialSubCategoryColor(item.itemName);
+            }
         }
 
         /// <summary>

@@ -27,6 +27,12 @@ namespace MakeGame.Systems
         /// <summary>현재 게임 오버 상태인지 여부.</summary>
         public bool isGameOver = false;
 
+        // 성능 개선(#5): OnGUI가 매 프레임 호출될 때마다 new GUIStyle(...)로 새 인스턴스를 만들고 있었다.
+        // UI/StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱 패턴을 적용해, 최초 1회만 만들고
+        // 이후에는 캐시된 스타일을 재사용한다.
+        private GUIStyle titleStyle;
+        private GUIStyle subStyle;
+
         /// <summary>
         /// 매 프레임 생존 수치의 사망 여부를 감시하다가, 사망을 감지하면 게임 오버 상태로 전환한다.
         /// 이미 게임 오버 상태이면 재시작 입력을 감시한다.
@@ -97,19 +103,7 @@ namespace MakeGame.Systems
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
 
-            var titleStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 48,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            titleStyle.normal.textColor = Color.red;
-
-            var subStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 20,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            subStyle.normal.textColor = Color.white;
+            EnsureStyles();
 
             GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "게임 오버", titleStyle);
             GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), GetDeathMessage(), subStyle);
@@ -146,6 +140,30 @@ namespace MakeGame.Systems
                 default:
                     return "무인도에서 생존하지 못했습니다.";
             }
+        }
+
+        /// <summary>
+        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
+        /// 캐시해둔다(UI/StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
+        /// </summary>
+        private void EnsureStyles()
+        {
+            if (titleStyle != null)
+                return;
+
+            titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 48,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            titleStyle.normal.textColor = Color.red;
+
+            subStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 20,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            subStyle.normal.textColor = Color.white;
         }
     }
 }

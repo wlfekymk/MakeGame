@@ -40,6 +40,12 @@ namespace MakeGame.Systems
         private Texture2D backgroundTexture;
         private bool backgroundLoadAttempted;
 
+        // 성능 개선(#5): OnGUI가 매 프레임 호출될 때마다 new GUIStyle(...)로 새 인스턴스를 만들고 있었다.
+        // UI/StatusEffectWarningUI.EnsureStyles()와 동일한 지연 캐싱 패턴을 적용해, 최초 1회만 만들고
+        // 이후에는 캐시된 스타일을 재사용한다.
+        private GUIStyle titleStyle;
+        private GUIStyle subStyle;
+
         [Header("탈출에 필요한 비축 물자")]
         [Tooltip("상하지 않는 비축 식량 아이템 (없으면 식량 조건을 검사하지 않는다)")]
         public ItemData nonPerishableFoodItem;
@@ -181,23 +187,35 @@ namespace MakeGame.Systems
                 GUI.color = Color.white;
             }
 
-            var titleStyle = new GUIStyle(GUI.skin.label)
+            EnsureStyles();
+
+            GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "탈출 성공!", titleStyle);
+            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), endingMessage, subStyle);
+            GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), $"[{continueKey}] 키를 눌러 계속하기", subStyle);
+        }
+
+        /// <summary>
+        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
+        /// 캐시해둔다(UI/StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
+        /// </summary>
+        private void EnsureStyles()
+        {
+            if (titleStyle != null)
+                return;
+
+            titleStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 48,
                 alignment = TextAnchor.MiddleCenter,
             };
             titleStyle.normal.textColor = new Color(1f, 0.85f, 0.2f); // 금색: 승리 강조
 
-            var subStyle = new GUIStyle(GUI.skin.label)
+            subStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 20,
                 alignment = TextAnchor.MiddleCenter,
             };
             subStyle.normal.textColor = Color.white;
-
-            GUI.Label(new Rect(0, Screen.height / 2f - 80, Screen.width, 60), "탈출 성공!", titleStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f, Screen.width, 40), endingMessage, subStyle);
-            GUI.Label(new Rect(0, Screen.height / 2f + 40, Screen.width, 40), $"[{continueKey}] 키를 눌러 계속하기", subStyle);
         }
     }
 }

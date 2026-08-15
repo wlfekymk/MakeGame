@@ -39,6 +39,13 @@ namespace MakeGame.Systems
         private AudioClip clipOceanAmbient;
         private AudioClip clipRainAmbient;
 
+        // 품질 개선(#18): PlayCraftSuccess() 하나가 "치료 성공"/"취침 성공"/"모닥불 점화 성공" 3곳에서
+        // 그대로 재사용되고 있어 상황이 구분되지 않던 문제를 보완하는 전용 클립들. 기존 clipCraftSuccess는
+        // 그대로 남겨둔다(다른 소유 파일에서 여전히 호출 중이므로 삭제/변경 금지).
+        private AudioClip clipHealSuccess;
+        private AudioClip clipSleepSuccess;
+        private AudioClip clipCampfireLit;
+
         /// <summary>
         /// 싱글턴 인스턴스를 초기화하고, 씬 전환에도 파괴되지 않게 한 뒤 재생용 AudioSource와
         /// 절차적 효과음 클립들을 준비한다.
@@ -97,6 +104,11 @@ namespace MakeGame.Systems
         /// <summary>
         /// 각 상황에 사용할 절차적 효과음 클립들을 미리 생성해둔다.
         /// 주파수/길이 값은 사운드 성격에 맞춰 임의로 정한 것으로, 추후 실제 오디오 에셋으로 교체할 수 있다.
+        /// 품질 개선(#18): 파도/비 앰비언트 루프가 예전엔 4초 고정이라 반복 티가 났다. 44100Hz 기준으로
+        /// 파도는 18초(약 793,800 샘플 ≈ 3.0MB), 비는 12초(약 529,200 샘플 ≈ 2.0MB)로 늘려 순환 체감을
+        /// 줄였다(둘 다 float[] 임시 배열 기준 추정치이며, AudioClip 자체도 비슷한 크기의 네이티브 버퍼를
+        /// 하나 더 들고 있으므로 두 클립 합쳐 런타임에 약 10MB 내외를 차지한다 - 매 프레임이 아니라
+        /// Awake 시 한 번만 생성되므로 이 정도 크기/생성 시간은 무리 없는 수준이다).
         /// </summary>
         private void BuildClips()
         {
@@ -109,8 +121,13 @@ namespace MakeGame.Systems
             clipStageComplete = ProceduralAudioClipGenerator.CreateChord(new float[] { 523f, 659f, 784f }, 0.4f); // 배 제작 단계 완료: 3화음 팡파르
             clipSaveOrLoad = ProceduralAudioClipGenerator.CreateBeep(1046f, 0.06f); // 저장/불러오기: 짧은 확인음
             clipBreak = ProceduralAudioClipGenerator.CreateBeep(420f, 0.16f, 70f); // 도구/무기 파손: 뚝 끊기듯 빠르게 떨어지는 저음
-            clipOceanAmbient = ProceduralAudioClipGenerator.CreateOceanAmbientLoop(4f); // 파도 배경음 루프
-            clipRainAmbient = ProceduralAudioClipGenerator.CreateRainAmbientLoop(4f); // 비 배경음 루프 (WeatherSystem이 비가 올 때만 재생)
+            clipOceanAmbient = ProceduralAudioClipGenerator.CreateOceanAmbientLoop(18f); // 파도 배경음 루프 (4초 -> 18초로 확장, 저주파 2중 주기로 불균일하게)
+            clipRainAmbient = ProceduralAudioClipGenerator.CreateRainAmbientLoop(12f); // 비 배경음 루프 (4초 -> 12초로 확장. WeatherSystem이 비가 올 때만 재생)
+
+            // 품질 개선(#18): PlayCraftSuccess 재사용 대신 상황별로 구분되는 전용 SFX.
+            clipHealSuccess = ProceduralAudioClipGenerator.CreateChord(new float[] { 392f, 494f, 587f }, 0.3f); // 치료 성공: 배 제작 완료(523/659/784)보다 한 옥타브 낮고 차분한 3화음
+            clipSleepSuccess = ProceduralAudioClipGenerator.CreateBeep(440f, 0.5f, 220f); // 취침 성공: 다른 효과음보다 훨씬 길게(0.5초) 늘여 서서히 가라앉는 저음 - "잠드는" 느낌
+            clipCampfireLit = ProceduralAudioClipGenerator.CreateBeep(150f, 0.15f, 600f); // 모닥불 점화: 낮은음에서 확 타오르듯 빠르게 상승하는 스윕음
         }
 
         /// <summary>자원 채집 성공 시 재생한다.</summary>
@@ -142,6 +159,25 @@ namespace MakeGame.Systems
         /// 없어, 전투 중 손도끼가 갑자기 없어진 이유를 플레이어가 알아채기 어려웠다. 파손 시 재생한다.
         /// </summary>
         public void PlayBreak() => PlaySfx(clipBreak);
+
+        /// <summary>
+        /// 품질 개선(#18): 치료 아이템(붕대/해독제/부목) 사용 성공 시 재생한다. 예전에는 PlayCraftSuccess를
+        /// 그대로 재사용해 "제작"과 "치료"가 같은 소리로 구분이 안 됐다. 호출부 교체는
+        /// ConsumptionSystem.cs(systems-engineer 소유) 쪽에서 이뤄져야 한다.
+        /// </summary>
+        public void PlayHealSuccess() => PlaySfx(clipHealSuccess);
+
+        /// <summary>
+        /// 품질 개선(#18): 쉼터에서 취침(밤 건너뛰기) 성공 시 재생한다. 예전에는 PlayCraftSuccess를
+        /// 그대로 재사용했다. 호출부 교체는 Shelter.cs(systems-engineer 소유) 쪽에서 이뤄져야 한다.
+        /// </summary>
+        public void PlaySleepSuccess() => PlaySfx(clipSleepSuccess);
+
+        /// <summary>
+        /// 품질 개선(#18): 모닥불 점화 성공 시 재생한다. 예전에는 PlayCraftSuccess를 그대로 재사용했다.
+        /// 호출부 교체는 Campfire.cs(systems-engineer 소유) 쪽에서 이뤄져야 한다.
+        /// </summary>
+        public void PlayCampfireLit() => PlaySfx(clipCampfireLit);
 
         /// <summary>지정한 효과음 클립을 sfxVolume 크기로 한 번 재생한다. 클립이 없으면 아무 것도 하지 않는다.</summary>
         private void PlaySfx(AudioClip clip)

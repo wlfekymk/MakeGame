@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using MakeGame.Data;
@@ -282,19 +283,62 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 이름으로 ItemData 에셋을 찾는다. 별도의 Resources 등록 없이도, 씬의 여러 컴포넌트(인벤토리 시작 아이템,
-        /// 배 제작 재료 설계, 제작 레시피 등)가 이미 참조 중인 ItemData는 메모리에 로드돼 있으므로
-        /// FindObjectsOfTypeAll로 찾을 수 있다.
+        /// 이름 → ItemData 조회 캐시. 최초 조회 시 1회만 구축하고 이후에는 이 캐시를 재사용한다.
+        /// null이면 아직 구축 전(EnsureItemDataCache가 채워야 함)임을 뜻한다.
+        /// </summary>
+        private Dictionary<string, ItemData> itemDataByName;
+
+        /// <summary>
+        /// 이름으로 ItemData 에셋을 찾는다.
+        /// 성능 개선(#4): 예전에는 Load()가 인벤토리/배 제작/경비행기 수리 재료를 복원할 때마다
+        /// (아이템 개수만큼 반복 호출되므로) 매번 Resources.FindObjectsOfTypeAll로 메모리의 모든 ItemData를
+        /// 처음부터 순회했다(O(n) 반복 호출 = O(n·m)). 최초 1회만 이름→ItemData 딕셔너리를 구축해
+        /// 캐싱해두고, 이후 호출은 O(1) 딕셔너리 조회로 처리한다.
+        /// 근본 한계(캐싱으로 해결되지 않는 부분)는 이 메서드가 아니라 EnsureItemDataCache의 XML 주석에
+        /// 남겨 두었다 - 코디네이터 보고의 [요청] 항목 참고.
         /// </summary>
         private ItemData FindItemDataByName(string itemName)
         {
+            EnsureItemDataCache();
+
+            itemDataByName.TryGetValue(itemName, out ItemData found);
+            return found;
+        }
+
+        /// <summary>
+        /// itemDataByName 캐시가 비어 있으면(최초 호출) Resources.FindObjectsOfTypeAll로 현재 메모리에
+        /// 로드돼 있는 모든 ItemData를 한 번 순회해 이름→ItemData 딕셔너리를 구축한다.
+        /// [한계] FindObjectsOfTypeAll은 "지금 메모리에 로드된" 오브젝트만 찾을 수 있다 - 씬의 여러
+        /// 컴포넌트(인벤토리 시작 아이템, 배 제작/경비행기 재료 설계, 제작 레시피 등)가 이미 참조 중인
+        /// ItemData는 대부분 이 시점에 로드되어 있어 실제로는 대체로 잘 동작하지만, 만약 어떤 ItemData가
+        /// 정말로 아무 컴포넌트에서도 참조되지 않는다면(예: 저장 파일에만 이름이 남아있고 씬 어디에서도
+        /// 더 이상 연결돼 있지 않은 구버전 아이템) 여전히 못 찾는다. 이 근본 문제를 확실히 없애려면
+        /// 모든 ItemData를 Resources 폴더 아래로 옮기고 Resources.LoadAll&lt;ItemData&gt;("")로 전수
+        /// 로드하는 방식이 필요한데, 이번 배치에서는 실제 에셋 배치 구조를 확인할 수 없어 섣불리
+        /// 바꾸지 않았다(코디네이터 보고서의 [요청] 항목 참고).
+        /// </summary>
+        private void EnsureItemDataCache()
+        {
+            if (itemDataByName != null)
+                return;
+
+            itemDataByName = new Dictionary<string, ItemData>();
+
             var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
             foreach (var item in allItems)
             {
-                if (item.itemName == itemName)
-                    return item;
+                if (item == null || string.IsNullOrEmpty(item.itemName))
+                    continue;
+
+                // 이름이 같은 ItemData가 여러 개면(설정 실수 등) 먼저 발견된 것을 유지하고 경고만 남긴다.
+                if (itemDataByName.ContainsKey(item.itemName))
+                {
+                    Debug.LogWarning($"[SaveLoadController] 이름이 중복된 ItemData를 발견했습니다: {item.itemName}. 먼저 찾은 항목을 사용합니다.");
+                    continue;
+                }
+
+                itemDataByName.Add(item.itemName, item);
             }
-            return null;
         }
     }
 }

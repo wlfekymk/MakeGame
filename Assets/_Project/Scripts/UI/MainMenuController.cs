@@ -36,6 +36,13 @@ namespace MakeGame.UI
         /// </summary>
         private Texture2D backgroundTexture;
 
+        // 성능 개선(#6): OnGUI는 매 프레임 호출되는데, 그때마다 new GUIStyle(...)로 스타일 객체를
+        // 새로 만들면 타이틀 화면이 오래 켜져 있을 때 불필요한 GC 부담이 누적된다. StatusEffectWarningUI.
+        // EnsureStyles()와 동일하게 최초 1회만 만들고 이후에는 캐시된 스타일을 재사용한다.
+        private GUIStyle titleStyle;
+        private GUIStyle subStyle;
+        private GUIStyle buttonStyle;
+
         /// <summary>
         /// 시작하자마자 조작을 막고 시간을 멈춰 타이틀 화면 상태로 진입한다.
         /// 섬/월드 생성(WorldMapManager 등)은 Time.timeScale과 무관하게 Awake/Start에서 그대로 진행되므로,
@@ -120,19 +127,7 @@ namespace MakeGame.UI
                 return;
             }
 
-            var titleStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 52,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            titleStyle.normal.textColor = new Color(0.95f, 0.85f, 0.55f);
-
-            var subStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 18,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            subStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+            EnsureStyles();
 
             float centerX = Screen.width / 2f;
             float centerY = Screen.height / 2f;
@@ -140,7 +135,6 @@ namespace MakeGame.UI
             GUI.Label(new Rect(0, centerY - 180, Screen.width, 70), gameTitle, titleStyle);
             GUI.Label(new Rect(0, centerY - 120, Screen.width, 30), gameSubtitle, subStyle);
 
-            var buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 22 };
             float buttonWidth = 240f;
             float buttonHeight = 48f;
             float buttonX = centerX - buttonWidth / 2f;
@@ -156,6 +150,32 @@ namespace MakeGame.UI
 
             if (GUI.Button(new Rect(buttonX, centerY + 80, buttonWidth, buttonHeight), "종료", buttonStyle))
                 QuitGame();
+        }
+
+        /// <summary>
+        /// GUIStyle은 OnGUI 컨텍스트 안에서만 새로 만들 수 있으므로, 최초 호출 시점에 지연 생성해
+        /// 필드에 캐시해두고 이후에는 재사용한다(StatusEffectWarningUI.EnsureStyles와 동일한 패턴).
+        /// </summary>
+        private void EnsureStyles()
+        {
+            if (titleStyle != null)
+                return;
+
+            titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 52,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            titleStyle.normal.textColor = new Color(0.95f, 0.85f, 0.55f);
+
+            subStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 18,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            subStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+
+            buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 22 };
         }
     }
 }
