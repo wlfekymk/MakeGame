@@ -909,24 +909,32 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 섬 지형용 머티리얼이 지정되지 않았을 때 사용할 기본 모래색 URP Lit 머티리얼을 만든다.
+        /// 섬 지형용 머티리얼이 지정되지 않았을 때 사용할 기본 URP Lit 머티리얼을 만든다.
         /// radius: 이 섬의 실제 반지름(미터). UV가 0~1로 정규화돼 있어(IslandMeshGenerator),
         /// 타일 반복 횟수를 고정값으로 두면 섬이 커질수록 텍스처 한 칸이 늘어나 흐릿해 보인다.
-        /// 반지름에 비례해서 반복 횟수를 늘려 실제 모래 알갱이 크기가 섬 크기와 무관하게 일정하게 보이도록 한다.
+        /// 반지름에 비례해서 반복 횟수를 늘려 무늬 한 칸의 실제 크기가 섬 크기와 무관하게 일정하도록 한다.
+        ///
+        /// [B11] 기본색이 모래(0.76, 0.7, 0.5)에서 **Meadow Green(= IslandMeshGenerator.GrassCap 기준색)**
+        /// 으로 바뀌었다. 실기 "밝은 황갈색 각진 얼룩" 신고의 정체가 **지면 캡이 덮지 않은 자리로 비치는
+        /// 이 모래색 본체**였기 때문이다(값과 배제 근거는 IslandMeshGenerator.BuildGroundCaps 본문 주석).
+        /// 모래는 이제 전부 덮개(DrySandCap/WetSandCap)가 그리므로 지형 본체가 모래일 이유가 없고,
+        /// 본체를 풀밭과 같은 색으로 두면 **덮개에 어떤 구멍·틈·이음매가 생겨도 드러나는 것이 같은 초록**
+        /// 이라 같은 종류의 사고가 원리적으로 재발하지 않는다.
+        /// 텍스처/타일링도 GrassCap과 같은 규격("leaf", radius×0.75)으로 맞춘다 - 나중에
+        /// Resources/Textures가 실제로 추가되면 본체와 덮개의 무늬가 어긋나면 안 되기 때문이다
+        /// (현재 프로젝트에 Resources/Textures 폴더 자체가 없어 두 경로 모두 null 폴백이다).
         /// </summary>
         private Material CreateDefaultTerrainMaterial(float radius)
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
-            material.color = new Color(0.76f, 0.7f, 0.5f);
+            material.color = StructureVisualBuilder.MeadowGreen;
 
-            // 모래 그레인 노이즈 텍스처를 곱해 씌워, 밋밋한 단색 대신 표면에 자잘한 질감을 준다.
-            // (Resources/Textures/sand.png. 절차적으로 생성한 흑백 타일링 노이즈로, 색상은 위 material.color가 그대로 담당한다.)
-            var sandTexture = Resources.Load<Texture2D>("Textures/sand");
-            if (sandTexture != null)
+            var surfaceTexture = Resources.Load<Texture2D>("Textures/leaf");
+            if (surfaceTexture != null)
             {
-                material.mainTexture = sandTexture;
-                float tiling = radius * 1.5f; // 섬 크기 대비 타일 반복 횟수(반지름 비례)
+                material.mainTexture = surfaceTexture;
+                float tiling = radius * 0.75f; // GrassCap과 동일한 배수
                 material.mainTextureScale = new Vector2(tiling, tiling);
             }
             return material;

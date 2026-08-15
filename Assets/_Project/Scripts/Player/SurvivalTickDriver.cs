@@ -18,6 +18,10 @@ namespace MakeGame.Player
         [Tooltip("그늘 판정용 레이캐스트 최대 거리")]
         public float shadeCheckDistance = 20f;
 
+        [Tooltip("집(Lv2 이상 쉼터)의 홈 반경 안에 있을 때를 '그늘'로 취급할지 여부.\n" +
+            "켜면 지붕 아래가 아니어도 집 근처에서 일사병이 회복된다(허기·갈증·위험요소는 그대로 진행된다).")]
+        public bool homeRadiusCountsAsShade = true;
+
         [Tooltip("해수면 높이. PlayerController.waterLevel과 같은 값을 사용해야 한다 (잠수/산소 판정 기준).")]
         public float waterLevel = 0f;
 
@@ -51,7 +55,7 @@ namespace MakeGame.Player
             // WeatherSystem은 Bootstrap이 런타임 생성해서 씬에 인스턴스가 없다(AGENT_BRIEF 3장).
             // 그래서 인스펙터 연결이 불가능하고, systems가 추가한 public static Active로 받는다.
             bool isRaining = WeatherSystem.Active != null && WeatherSystem.Active.IsRaining;
-            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater(), isDaytime, isRaining);
+            survivalStats.Tick(Time.deltaTime, IsCurrentlyShaded(), IsCurrentlyUnderwater(), isDaytime, isRaining);
         }
 
         /// <summary>
@@ -65,6 +69,26 @@ namespace MakeGame.Player
         private bool IsCurrentlyUnderwater()
         {
             return (transform.position.y + headHeightOffset) < waterLevel;
+        }
+
+        /// <summary>
+        /// 일사병 판정에 넘길 최종 "그늘" 여부. 머리 위 레이캐스트(IsCurrentlyInShade)에 더해,
+        /// 집(Lv2 이상 쉼터)의 홈 반경 안이면 그늘로 친다.
+        ///
+        /// 왜 이렇게 단순한가: 이 프로젝트에는 "실내"라는 개념이 코드에 아예 없다(그늘 판정이 머리 위
+        /// 레이캐스트 1회뿐이었다 - Design_Settlement 0장). 벽 트리거/실내 볼륨을 새로 만드는 대신
+        /// Shelter가 들고 있는 반경과의 거리 비교 하나로 끝낸다.
+        ///
+        /// **압박을 0으로 만들지 않는다**: 여기서 켜지는 것은 일사병 회복뿐이고 허기·갈증·위험요소는
+        /// 집 안에서도 그대로 진행된다. 집의 가치는 "위협이 사라지는 것"이 아니라 "한동안 관리하지
+        /// 않아도 되는 것"이다.
+        /// </summary>
+        private bool IsCurrentlyShaded()
+        {
+            if (IsCurrentlyInShade())
+                return true;
+
+            return homeRadiusCountsAsShade && Shelter.IsInsideHome(transform.position);
         }
 
         /// <summary>

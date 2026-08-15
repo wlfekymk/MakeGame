@@ -269,7 +269,7 @@ namespace MakeGame.UI
 
             var shelter = target.GetComponent<Shelter>();
             if (shelter != null)
-                return BuildShelterPrompt(shelter, key, out main, out sub, out blocked);
+                return BuildShelterPrompt(shelter, inventory, key, out main, out sub, out blocked);
 
             return false;
         }
@@ -287,7 +287,7 @@ namespace MakeGame.UI
         /// 이유를 모르면 기능이 없는 것과 같기 때문이다. 판정(밤인지)과 실제 점프는 전부
         /// SurvivalClock/Shelter가 하고, 여기서는 그 값을 읽어 문장으로만 옮긴다.
         /// </summary>
-        private bool BuildShelterPrompt(Shelter shelter, string key,
+        private bool BuildShelterPrompt(Shelter shelter, PlayerInventory inventory, string key,
             out string main, out string sub, out bool blocked)
         {
             main = $"{key} 쉼터에서 취침";
@@ -304,8 +304,13 @@ namespace MakeGame.UI
 
             if (clock.IsDaytime)
             {
-                blocked = true;
-                sub = "밤에만 취침할 수 있다 - 밤에 다시 오면 아침까지 통째로 건너뛴다";
+                // [정착 배치 1] 낮에는 E가 취침이 아니라 **건축**이다(Shelter.TryBuildNext).
+                // 예전에는 "밤에만 취침할 수 있다"고 회색으로 막아 뒀는데, 이제 낮의 E는 실제로
+                // 동작하는 행동이라 막힌 것처럼 보이면 안 된다. 재료가 모자랄 때만 blocked로 둔다.
+                string next = shelter.DescribeNextBuildAction(inventory);
+                main = $"{key} 집 짓기 (Lv{shelter.level})";
+                sub = next;
+                blocked = !next.EndsWith("가능");
                 return true;
             }
 
@@ -323,7 +328,7 @@ namespace MakeGame.UI
 
             // HUD의 "N일차"와 같은 기준(0 = 1일차)으로 눈뜰 날짜를 표기한다.
             main = $"{key} 쉼터에서 취침 - {FormatSkipDuration(skipped)} 건너뛰기";
-            sub = $"{wakeDay + 1}일차 아침으로 이동 · 체력 {shelter.sleepHealAmount:F0} 회복 · 자는 동안 허기·갈증 소모 없음";
+            sub = $"{wakeDay + 1}일차 아침으로 이동 · 체력 {shelter.CurrentSleepHealAmount:F0} 회복 · 자는 동안 허기·갈증 소모 없음";
             return true;
         }
 

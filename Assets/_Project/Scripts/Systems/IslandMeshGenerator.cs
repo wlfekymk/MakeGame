@@ -142,7 +142,7 @@ namespace MakeGame.Systems
         /// <summary>
         /// 섬 지형 오브젝트 위에 (1) 내륙 풀밭 캡 메시와 (2) 초목(야자수/덤불/풀포기)을 배치한다.
         ///
-        /// 왜 필요했나: 지형은 단색 모래(#C2B280)로 칠한 메시 하나뿐이고 초목을 만드는 코드는 프로젝트
+        /// 왜 필요했나: 지형은 단색(당시 모래 #C2B280, B11부터 Meadow Green)으로 칠한 메시 하나뿐이고 초목을 만드는 코드는 프로젝트
         /// 어디에도 없었다(WorldMapManager.CreateDefaultTerrainMaterial / CreateProceduralIslandTerrain).
         /// 그래서 실제 게임에 들어가면 반지름 50~200m짜리 모래색 평지만 보였다.
         ///
@@ -232,7 +232,7 @@ namespace MakeGame.Systems
                     Shade(Color.Lerp(StructureVisualBuilder.MeadowGreen, StructureVisualBuilder.FrondGreen, 0.35f), 0.90f), "leaf"),
             };
 
-            // (1) 지면 색 구분: 정상부 밝은 풀 / 내륙 풀 / 모래(지형 원색) / 해안 젖은 모래의 4단.
+            // (1) 지면 색 구분: 정상부 밝은 풀 / 내륙 풀 / 마른 모래 / 젖은 모래의 4단(전부 덮개 메시다 - B11).
             //     난수 소비 2회(풀밭 경계 위상 2개)로 고정.
             float boundaryPhaseA = rng.NextFloat(0f, Mathf.PI * 2f);
             float boundaryPhaseB = rng.NextFloat(0f, Mathf.PI * 2f);
@@ -308,18 +308,24 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 지형 메시를 잘라내 만든 "지면 캡" 3장을 지형 바로 위에 덮어, 단색 모래였던 지면에 색 변화를 준다.
+        /// 지형 메시를 잘라내 만든 "지면 캡" 4장(B11에 3 → 4)을 지형 바로 위에 덮어, 단색이던 지면에 색 변화를 준다.
         ///
         /// 왜 머티리얼 교체가 아니라 덮개 메시인가: 지형 머티리얼은 WorldMapManager가 만들고(이 배치의
         /// 편집 범위 밖) 섬 전체에 하나만 적용되므로, 그것만으로는 해안과 내륙을 나눌 수 없다. 셰이더를
         /// 새로 만들 수도 없다. 그래서 WorldMapManager가 얕은 물 띠(ShorelineBand)를 별도 고리 메시로
         /// 해결한 것과 정확히 같은 방식 - 별도 메시 + 별도 머티리얼 - 을 그대로 따른다.
         ///
-        /// 3장의 구성(안쪽 → 바깥쪽):
+        /// 4장의 구성(안쪽 → 바깥쪽):
         ///   HighlandCap  : 섬 정상부의 밝은 풀. 고도(정점 y)로 잘라내 능선이 색으로 드러나게 한다.
         ///   GrassCap     : 내륙 풀밭. 경계는 각도에 따라 출렁여 자로 그은 원이 되지 않는다.
-        ///   WetSandCap   : 해안의 젖은 모래 띠. 모래 → 젖은 모래 → 얕은 물 띠(ShorelineBand)로 이어진다.
-        /// 이 3장 사이에 노출되는 원래 지형색(Island Sand)이 네 번째 톤 역할을 해, 지면이 총 4단으로 읽힌다.
+        ///   DrySandCap   : 마른 모래 해변.
+        ///   WetSandCap   : 해안의 젖은 모래 띠. 마른 모래 → 젖은 모래 → 얕은 물 띠(ShorelineBand)로 이어진다.
+        ///
+        /// [B11] 예전에는 "캡 3장 사이에 드러나는 지형 기본색(Island Sand)이 네 번째 톤"이었는데, 그 노출이
+        /// 실기 "황갈색 각진 얼룩" 신고의 정체였다(아래 BuildGroundCaps 본문 주석에 값과 근거). 지금은
+        /// **지형 본체가 GrassCap과 같은 초록**이고 모래는 전부 덮개다. 즉 덮개에 구멍이 나도 드러나는 것이
+        /// 같은 초록이라 얼룩이 될 수 없다 - 지면 4단은 유지하면서 실패 모드만 없앤 구조다.
+        /// GrassCap/DrySandCap/WetSandCap은 서로 겹치지 않는 정확한 여집합이고 합집합이 섬 전체다.
         /// </summary>
         private static void BuildGroundCaps(Transform surfaceRoot, GameObject islandObject, float radius,
             float phaseA, float phaseB)
@@ -339,7 +345,14 @@ namespace MakeGame.Systems
             // (주의: 지형은 y=f(x,z) 단일값 높이장이므로 캡을 +Y로 평행이동하면 경사가 아무리 급해도
             //  절대 지형에 파묻히지 않는다 - 경사면에서 수직 간격이 cos(경사각)배로 줄 뿐이다.
             //  실기에서 풀밭이 안 보였던 원인은 이 오프셋이 아니라 캡 색이었다. 아래 GrassCap 주석 참고.)
-            float capOffset = Mathf.Max(0.08f, peakHeight * 0.02f);
+            // [B14 디렉터] peakHeight 비례를 버리고 8cm 고정으로 되돌린다.
+            // terrainMaxHeight가 2.5 → 8로 오르면서 이 값이 0.165m가 됐는데, TerrainSampler.SnapToGround는
+            // **캡이 아니라 지형 콜라이더** 기준으로 스냅한다. 그 결과 눈에 보이는 지면(캡)이 배치물보다
+            // 0.165m 위에 있어, 납작한 자원 노드(천조각 0.05m · 금속조각 0.06m · 부싯돌 0.10m)가 통째로
+            // 캡 아래에 묻히고 풀포기도 절반 이상 잠겼다. "고쳤는데 안 보이더라"의 정체다.
+            // 8cm면 z-파이팅을 피하면서 가장 납작한 노드(0.05m)만 살짝 걸린다 — 스포너를 건드리는 것보다
+            // 부작용이 작다(스포너는 세이브 키를 쥔 파일이라 손대는 비용이 크다).
+            const float capOffset = 0.08f;
 
             // [B9 이음매 사고 원인] 실기에서 "지면 한가운데에 직선 경계의 사각형 얼룩"이 보고됐다.
             // 코드로 특정한 원인은 아래 HighlandCap의 고도 컷이다. 근거(값은 terrainMaxHeight=8 기준
@@ -352,10 +365,11 @@ namespace MakeGame.Systems
             //     경계가 X/Z축에 나란한 직선으로 잘린다. 게다가 캡 중심은 항상 섬 중심 = 플레이어
             //     시작 지점이라 그 직선이 화면 정중앙 지면에 온다. 신고 내용과 정확히 일치한다.
             // 배제한 후보(추측이 아니라 값으로 확인):
-            //   (a) z-파이팅: 캡 오프셋은 Grass 0.165 / Highland 0.225 / WetSand 0.082m로 6~8cm 벌어져
-            //       있고, 겹치는 쌍은 Grass↔Highland 하나뿐이다. reversed-Z 깊이에서 6cm는 100m
-            //       거리에서도 밀리미터 단위 여유가 있어 지글거림이 나올 수 없다. 실제 증상도 "지글"이
-            //       아니라 "고정된 직선 경계"였다.
+            //   (a) z-파이팅: 겹치는 캡 쌍은 Grass↔Highland 하나뿐이고 둘은 6cm 벌어져 있다. reversed-Z
+            //       깊이에서 6cm는 100m 거리에서도 밀리미터 단위 여유가 있어 지글거림이 나올 수 없다.
+            //       실제 증상도 "지글"이 아니라 "고정된 직선 경계"였다.
+            //       (B11 이후 값: Grass/DrySand/WetSand 0.165m 공통, Highland 0.225m. 앞의 셋은 서로
+            //        겹치지 않는 여집합이라 같은 높이여도 깊이 충돌 자체가 없다 - 아래 B11 주석 참고.)
             //   (c) 텍스처 타일링 경계: GrassCap과 HighlandCap은 UV 소스(지형 메시)와 타일 배수
             //       (radius×0.75)가 완전히 동일해 서로 어긋날 수 없고, 타일 경계라면 얼룩 하나가 아니라
             //       섬 전체에 2.7m 간격으로 반복돼야 한다.
@@ -393,15 +407,58 @@ namespace MakeGame.Systems
             float highlandDither = Mathf.Max(0.4f, peakHeight * 0.13f);   // 고도 기준 ±0.55m ≈ 평면상 ±6m
             float radialDither = radius * 0.05f;                          // 반지름 기준 ±2.5%R
 
+            // [B11 "황갈색 각진 조각" 원인규명 — 지면 캡 구조 자체를 뒤집는다]
+            //
+            // 신고: 초록 지면 위에 **밝은 황갈색 각진 조각**이 여러 개 뭉쳐 보인다. 색은 지형 기본색
+            // (0.76, 0.7, 0.5)와 같은 계열. 즉 "덮개"가 아니라 **덮개가 없는 구멍으로 비치는 지형 본체**다.
+            //
+            // 값으로 배제한 후보(재조사 금지):
+            //   · GrassCap 디더가 중심부 삼각형을 빠뜨렸을 가능성 → **불가능하다.**
+            //     GrassBoundaryRadius의 하한은 0.51R(=25.5m), 디더는 ±radius·0.05/2 = ±1.25m라
+            //     컷은 아무리 안쪽으로 와도 24.25m다. 중심 10m 안 삼각형은 어떤 Hash01 값에도 통과한다.
+            //   · 캡 좌표계가 밀렸을 가능성 → **아니다.** GenerateIslandMesh는 정점을 원점 대칭으로 굽고
+            //     CreateProceduralIslandTerrain은 그 메시를 담은 오브젝트의 world position만 옮긴다
+            //     (스케일 1, 자식 오프셋 0). 지형 메시 로컬 원점 = 섬 중심이 성립한다.
+            //   · WetSandCap이 내륙을 침범했을 가능성 → **아니다.** 안쪽 경계는 0.84R ± 1.0m = 41~43m다.
+            //
+            // 실제 원인: **"3장 사이에 노출되는 원래 지형색을 네 번째 톤으로 쓴다"는 설계 자체다.**
+            // GrassCap 바깥 끝(0.51~0.73R)과 WetSandCap 안쪽 끝(0.84R) 사이 = 시작 섬 기준 31~42m 고리가
+            // 통째로 맨 지형이고, 이것만으로 **섬 바닥 면적의 32%**다. 그 고리의 안쪽 경계는 삼각형 단위
+            // 디더로 들쭉날쭉해서 풀밭 쪽으로 삼각형이 하나씩 떨어져 나온다 — 신고된 "각진 조각"이 그것이다.
+            //   왜 "중심에서 10m"로 보였나: 시작 섬은 반지름 50m에 높이 8m인 돔이고 캡 중심 = 플레이어
+            //   시작 지점 = 돔 꼭대기다. 눈높이 1.6m에서 내려다본 부각은 r=10m에서 11.3°, r=31m에서 9.4°,
+            //   r=42m에서 10.3° — **10m부터 50m까지가 화면상 2.4° 안에 전부 겹친다.** 시점을 낮출수록 더
+            //   겹친다. 즉 "잔해(7m) 주변"과 "풀밭 경계(31m)"는 이 지형에서 눈으로 구분할 수 없다.
+            //
+            // 조치(구조 반전): **지형 본체를 초록(Meadow Green)으로 바꾸고, 모래를 덮개로 만든다.**
+            //   (1) WorldMapManager.CreateDefaultTerrainMaterial의 기본색 = Meadow Green = GrassCap 기준색.
+            //       → 캡에 구멍/틈/이음매가 생겨도 드러나는 것이 같은 초록이라 **원리적으로 안 보인다.**
+            //   (2) 사라진 마른 모래 띠를 DrySandCap으로 명시 생성한다(예전 노출 고리와 같은 색·같은 범위).
+            //   (3) 세 캡의 경계식을 **한 벌의 로컬 함수로 공유**해 서로 정확한 여집합이 되게 한다.
+            //       한쪽만 고쳐 틈이 벌어지는 사고(이번 건의 재발 경로)를 코드 구조로 막는 것이 목적이다.
+            //   (4) 겹치지 않는 세 캡은 **같은 yOffset**을 쓴다. 예전에는 Grass 0.165 / WetSand 0.082로
+            //       8cm 어긋나 있어, 낮은 시점에서 경계마다 떠 있는 턱과 그 아래 지형이 비쳤다.
+            //       같은 높이면 정점이 일치해 이음매가 아예 없다(겹치지 않으므로 z-파이팅도 없다).
+            //   HighlandCap만 GrassCap과 겹치므로 지금처럼 혼자 +0.06m 위에 둔다.
+            //
+            // 경계식 단일 소스. 세 캡이 이 두 함수만 보고 자기 구간을 정하므로 합집합이 항상 섬 전체다.
+            float GrassEdge(Vector3 centroid, float angle) =>
+                GrassBoundaryRadius(angle, radius, phaseA, phaseB) + (Hash01(centroid) - 0.5f) * radialDither;
+            float SandEdge(Vector3 centroid) =>
+                radius * 0.84f + (Hash01(centroid) - 0.5f) * radialDither * 0.8f;
+            // GrassEdge 최댓값 0.755R < SandEdge 최솟값 0.82R이라 두 경계가 교차할 수 없다
+            // = 마른 모래 띠의 폭이 어떤 각도에서도 0.065R 밑으로 내려가지 않는다(띠가 끊기지 않는다).
+
             // 내륙 풀밭. 예전 색은 Shade(PalmFiber, 0.82) = #79733E로, Island Sand(#C2B280)와 색상각이
             // 각각 54°/45°로 9°밖에 차이 나지 않는 같은 황토 계열에 휘도만 1.58배 낮은 값이었다.
             // 그래서 실기에서 "풀밭"이 아니라 "그늘진 모래"로 읽혀 캡이 있는지조차 확인되지 않았다.
             // Meadow Green(#8AA84F, 색상각 80°)으로 바꿔 색상 자체로 구분되게 한다.
             // toneCount 3: 같은 초록 한 장이 섬을 덮던 문제(아래 BuildCapLayer 주석) 해소용.
+            // [B11] 이제 지형 본체도 같은 Meadow Green이라, 이 캡은 "색을 덮는 판"이 아니라 "톤을 얹는 판"이다
+            //       - 빠진 삼각형이 있어도 그 자리에 같은 색이 있을 뿐이라 얼룩이 될 수 없다.
             BuildCapLayer(surfaceRoot, source, radius, "GrassCap", StructureVisualBuilder.MeadowGreen,
                 capOffset, radius * 0.75f, "leaf",
-                (centroid, distance, angle) => distance <=
-                    GrassBoundaryRadius(angle, radius, phaseA, phaseB) + (Hash01(centroid) - 0.5f) * radialDither,
+                (centroid, distance, angle) => distance <= GrassEdge(centroid, angle),
                 // 3톤 × 최대 0.50 혼합 = Meadow Green(색상각 80°) → 약 88° 사이의 색조 변주.
                 // 상대휘도는 세 톤 모두 0.609로 동일하다(ToneVariant) → 명도 단차 0%.
                 3, 0.50f, StructureVisualBuilder.FrondGreen);
@@ -417,14 +474,24 @@ namespace MakeGame.Systems
                     centroid.y >= peakHeight * 0.86f + (Hash01(centroid) - 0.5f) * highlandDither
                     && distance <= GrassBoundaryRadius(angle, radius, phaseA, phaseB));
 
-            // 해안의 젖은 모래. 바깥 한계 0.955R은 ShorelineBand(0.95R부터 시작하는 반투명 물 띠)와
-            // 겹치는 폭을 최소화하기 위한 값이라 그대로 두고(디더를 걸면 물 띠와 어긋난다),
-            // 안쪽(마른 모래와 만나는) 경계에만 디더를 건다.
-            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.80f),
-                capOffset * 0.5f, radius * 1.5f, "sand",
+            // [B11 신규] 마른 모래 해변. 예전에는 "캡을 안 덮어서 드러난 지형"이 이 역할을 했는데, 바로
+            // 그 노출이 이번 얼룩 신고의 정체였다. 같은 그림을 **명시적인 덮개**로 다시 만든다 -
+            // 색은 예전 지형 기본색과 같은 Island Sand(#C2B280)이므로 해변의 겉모습은 달라지지 않는다.
+            // 범위는 GrassCap의 정확한 여집합(안쪽) ~ WetSandCap의 정확한 여집합(바깥)이다.
+            BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", StructureVisualBuilder.IslandSand,
+                capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
-                    distance >= radius * 0.84f + (Hash01(centroid) - 0.5f) * radialDither * 0.8f
-                    && distance <= radius * 0.955f,
+                    distance > GrassEdge(centroid, angle) && distance < SandEdge(centroid),
+                // 젖은 모래와 같은 규칙의 2톤(채도만 내리는 색조 변주, 명도 단차 0%).
+                2, 0.18f, StructureVisualBuilder.WeatheredStone);
+
+            // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
+            // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
+            // 지금 그대로 두면 물가에 초록 테가 생긴다. 물 띠(ShorelineBand, 0.95R~)와 겹치는 구간은
+            // 반투명 얕은 물 아래로 젖은 모래가 비치는 그림이라 오히려 맞다.
+            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.80f),
+                capOffset, radius * 1.5f, "sand",
+                (centroid, distance, angle) => distance >= SandEdge(centroid),
                 2, 0.22f, StructureVisualBuilder.WeatheredStone);
         }
 

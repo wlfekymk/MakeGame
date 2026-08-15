@@ -131,10 +131,14 @@ namespace MakeGame.Systems
             }
 
             // 쉼터: 밤에 상호작용하면 취침해 아침까지 시간을 건너뛰고 소량 회복한다 (Shelter.TrySleep 참고).
+            // [정착 배치 1] 취침이 불가능한 시간대(= 낮)에는 같은 키가 **건축**이 된다: 빈 슬롯을 채우거나
+            // 다음 단계로 승급한다(Design_Settlement 2-2 "새 키 없음, 새 설치 절차 없음").
+            // 순서가 중요하다 - TrySleep을 먼저 시도해야 밤의 기존 동작이 100% 그대로 유지된다.
             var shelter = target.GetComponent<Shelter>();
             if (shelter != null)
             {
-                shelter.TrySleep(survivalClock, survivalStats);
+                if (!shelter.TrySleep(survivalClock, survivalStats))
+                    shelter.TryBuildNext(inventory);
                 return;
             }
         }

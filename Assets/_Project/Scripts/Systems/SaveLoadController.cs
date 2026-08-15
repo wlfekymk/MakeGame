@@ -519,6 +519,10 @@ namespace MakeGame.Systems
                     posY = sh.transform.position.y,
                     posZ = sh.transform.position.z,
                     rotY = sh.transform.eulerAngles.y,
+                    // 정착 배치 1: 단계와 슬롯. 슬롯은 좌표가 아니라 인덱스라 집 한 채가 여전히
+                    // StructureSaveEntry 1개 + 정수 1개로 끝난다(Design_Settlement 2-1).
+                    level = sh.level,
+                    slotMask = sh.slotMask,
                 });
             }
 
@@ -646,7 +650,15 @@ namespace MakeGame.Systems
 
             Vector3 savedPosition = new Vector3(entry.posX, entry.posY, entry.posZ);
             Vector3 spawnPosition = savedPosition - Vector3.up * roofHeight;
-            Instantiate(shelterPrefab, spawnPosition, Quaternion.Euler(0f, entry.rotY, 0f));
+            GameObject go = Instantiate(shelterPrefab, spawnPosition, Quaternion.Euler(0f, entry.rotY, 0f));
+
+            // 정착 배치 1: 단계/슬롯 복원. Awake는 이미 Lv1 비주얼을 그린 상태이므로 ApplySavedState가
+            // 값을 되돌린 뒤 BuildVisual로 다시 그린다(재료는 소모하지 않는다). level 0은 이 필드가
+            // 없던 옛 세이브라는 뜻이며 Lv1로 해석된다. 위치 보정은 Awake 1회뿐이라 여기서 다시
+            // 떠오르는 일은 없다.
+            var shelter = go.GetComponent<Shelter>();
+            if (shelter != null)
+                shelter.ApplySavedState(entry.level, entry.slotMask);
         }
 
         /// <summary>저장된 물 증류기 한 대를 waterStillPrefab으로 재생성하고 저장된 물의 양을 되돌린다.</summary>

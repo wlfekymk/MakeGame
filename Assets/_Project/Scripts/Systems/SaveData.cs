@@ -152,6 +152,19 @@ namespace MakeGame.Systems
 
         [Header("물 증류기 전용")]
         public float storedWater;
+
+        // ── 쉼터 전용 (정착 배치 1) ───────────────────────────────────────────────────────
+        // **추가만 했다.** 기존 필드는 하나도 제거·개명하지 않았다 - JsonUtility는 JSON에 없는 필드를
+        // 기본값으로 채우므로 필드 추가는 옛 세이브와 호환되지만(level 0 / slotMask 0으로 읽힌다),
+        // 제거·개명은 그 필드를 통째로 잃는 파괴적 변경이다(AGENT_BRIEF 3장).
+
+        [Header("쉼터 전용")]
+        [Tooltip("쉼터 단계(1=쉼터 / 2=오두막 / 3=집). 이 필드가 없던 옛 세이브는 0으로 읽히며," +
+            " Shelter.ApplySavedState가 0을 Lv1로 해석한다.")]
+        public int level;
+
+        [Tooltip("설치된 슬롯 비트마스크. bit0=문 / bit1=침상 / bit2=저장궤 (Shelter.SlotDoor 등 상수 참고).")]
+        public int slotMask;
     }
 
     /// <summary>
