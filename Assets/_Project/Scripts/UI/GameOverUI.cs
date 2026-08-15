@@ -23,6 +23,7 @@ namespace MakeGame.UI
         private SurvivalStats survivalStats;
         private SurvivalClock survivalClock;
         private WorldMapManager worldMapManager;
+        private CraftingSystem craftingSystem;
 
         private GameObject panelRoot;
         private Text messageLabel;
@@ -34,10 +35,11 @@ namespace MakeGame.UI
         private static readonly Color BodyGray = new Color(0.85f, 0.85f, 0.85f, 1f);    // 본문 보조 텍스트
         private static readonly Color UnknownGray = new Color(0.8f, 0.8f, 0.8f, 0.4f);  // Neutral Gray #CCCCCC 알파 0.4
 
-        // 아직 어디에서도 집계되지 않는 "제작한 물건 종류 수"(Design_Ending.md 4장). 판정/집계는 systems의
-        // 몫이고, 이 UI는 SetCraftedKindCount로 주입받은 값을 표시만 한다. 음수면 "아직 모른다"는 뜻이라
-        // 빈칸 대신 흐린 대시(— — —)를 보여준다 - 빈칸은 버그로 보이지만 흐린 대시는 "여기 뭔가 있는데
-        // 채워지지 않았다"로 읽힌다는 Design_Ending.md 3장(페이즈 3) 결정을 사망 화면에도 그대로 적용했다.
+        // "제작한 물건 종류 수"(Design_Ending.md 4장). 집계는 systems의 몫이고 이 UI는 표시만 한다.
+        // 이제 CraftingSystem.CraftedRecipeCount가 존재하므로 평소에는 그 값을 직접 읽고, 이 필드는
+        // SetCraftedKindCount로 값을 밀어 넣고 싶을 때의 덮어쓰기 용도로만 쓴다(음수 = 미주입).
+        // 둘 다 없으면 빈칸 대신 흐린 대시(— — —)를 보여준다 - 빈칸은 버그로 보이지만 흐린 대시는
+        // "여기 뭔가 있는데 채워지지 않았다"로 읽힌다는 Design_Ending.md 3장(페이즈 3) 결정을 그대로 적용.
         private int craftedKindCount = -1;
 
         // 게임 오버 상태는 한 씬 인스턴스 안에서 false→true로 딱 한 번만 바뀌고 다시 false로 돌아가지
@@ -72,6 +74,7 @@ namespace MakeGame.UI
                 : FindAnyObjectByType<SurvivalStats>();
             survivalClock = FindAnyObjectByType<SurvivalClock>();
             worldMapManager = FindAnyObjectByType<WorldMapManager>();
+            craftingSystem = FindAnyObjectByType<CraftingSystem>();
 
             BuildUI();
             SetOpen(false);
@@ -221,7 +224,14 @@ namespace MakeGame.UI
                     islandsText = $"{discovered} / {total}";
             }
 
-            string craftedText = craftedKindCount >= 0 ? $"{craftedKindCount}종" : unknown;
+            // 주입값이 있으면 그것을 우선하고, 없으면 CraftingSystem이 세고 있는 종류 수를 직접 읽는다.
+            // 이 카운터는 세이브에 저장되지 않아 불러오기 이후에는 0부터 다시 센다(집계 정책은
+            // CraftingSystem 소유 - 이 UI는 읽어서 보여주기만 한다).
+            string craftedText = unknown;
+            if (craftedKindCount >= 0)
+                craftedText = $"{craftedKindCount}종";
+            else if (craftingSystem != null)
+                craftedText = $"{craftingSystem.CraftedRecipeCount}종";
 
             statsLabel.text = $"생존 일수   {daysText}\n방문한 섬   {islandsText}\n제작한 물건   {craftedText}";
         }

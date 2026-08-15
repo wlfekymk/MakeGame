@@ -86,7 +86,12 @@ namespace MakeGame.Systems
             var waterStill = target.GetComponent<WaterStill>();
             if (waterStill != null)
             {
-                waterStill.CollectInto(survivalStats);
+                // 인벤토리를 명시적으로 넘기는 오버로드를 쓴다. 인자 1개짜리를 부르면 WaterStill이
+                // 상호작용할 때마다 FindAnyObjectByType<PlayerInventory>()로 씬 전체를 훑는데(첫 1회
+                // 이후에는 캐시되지만, 그 1회가 굳이 필요 없다), 여기 inventory는 이미 인스펙터에서
+                // 배선돼 있어 정답을 손에 들고도 다시 찾는 셈이었다. WaterStill 쪽 폴백은 프리팹을
+                // 단독으로 쓰는 경우를 위해 그대로 남겨 둔다 - 정상 경로에서만 타지 않게 하는 것이 목적.
+                waterStill.CollectInto(survivalStats, inventory);
                 return;
             }
 

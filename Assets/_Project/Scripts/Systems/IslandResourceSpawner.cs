@@ -128,11 +128,37 @@ namespace MakeGame.Systems
         private const float LandingCircleMaxRadius = 12f;
 
         /// <summary>
-        /// 착륙 원 첫 번째 노드의 기준 각도(도, +X축 기준 반시계). 3종을 120도 간격으로 벌려 놓되,
-        /// 시작 섬의 고정 배치물 두 개 - 경비행기 잔해(+6, -4 → 약 -34도)와 배 작업대(-6, -3 → 약 207도) -
-        /// 와 각도가 겹치지 않도록 20도에서 시작한다(20 / 140 / 260도).
+        /// 착륙 원 기준 각도(도, +X축 기준 반시계)의 **폴백값**. 시선 정보(landingCircleFacingYaw)가
+        /// 없을 때만 쓴다. 시작 섬의 고정 배치물 두 개 - 경비행기 잔해(+6, -4 → 약 -34도)와
+        /// 배 작업대(-6, -3 → 약 207도) - 와 각도가 겹치지 않도록 20도에서 시작한다.
+        /// 정상 경로(WorldMapManager가 시선을 넣어주는 경우)에서는 이 값이 쓰이지 않는다.
         /// </summary>
         private const float LandingCircleBaseAngle = 20f;
+
+        /// <summary>
+        /// 플레이어 시작 시선(Unity yaw, 도). WorldMapManager가 경비행기 잔해의 반대 방향을 계산해
+        /// 자원 배치 직전에 넣어준다. 값이 들어와 있으면 착륙 원의 첫 번째 노드(코코넛)가 그 방향,
+        /// 즉 **플레이어 정면**에 오도록 원 전체를 회전시킨다.
+        ///
+        /// null(미설정)이면 예전처럼 절대 각도 LandingCircleBaseAngle을 쓴다 - 이 스포너를
+        /// WorldMapManager 없이 단독으로 쓰는 경우 동작이 바뀌지 않게 하기 위한 폴백이다.
+        /// 직렬화 대상이 아니므로(private + Nullable) 씬 값이 이 필드를 덮을 일도 없다.
+        /// </summary>
+        private float? landingCircleFacingYaw = null;
+
+        /// <summary>
+        /// 기준 각도로부터 각 노드를 얼마나 벌려 놓을지(도). LandingCircleItemNames와 같은 순서다.
+        ///
+        /// 시선 정보가 있을 때 이 값은 Design_Onboarding.md 2장 배치표를 그대로 옮긴 것이 된다 -
+        /// 코코넛 **정면**(0도), 나뭇가지 **좌측**(+90도), 돌조각 **우측**(-90도).
+        /// (수학 각도계에서 +90도가 좌측인 이유: Unity yaw가 시계 방향이라 θ = 90 - yaw 변환이
+        /// 부호를 뒤집는다. GetLandingCircleBaseAngle 주석 참고.)
+        ///
+        /// 왜 균등 120도가 아닌가: 세 노드가 정면·좌·우로 서면 플레이어가 고개만 돌려 셋을 전부
+        /// 볼 수 있다. 120도 간격이면 하나는 항상 등 뒤로 가는데, 그 하나는 "존재하지 않는 것"과
+        /// 같다 - 등 뒤를 확인할 이유를 아직 배우지 못한 0분의 플레이어에게는 특히 그렇다.
+        /// </summary>
+        private static readonly float[] LandingCircleAngleOffsets = { 0f, 90f, -90f };
 
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.
@@ -192,9 +218,14 @@ namespace MakeGame.Systems
         /// <summary>
         /// 시작 섬 한정으로, 플레이어 시작 지점 주변에 기초 자원 3종(코코넛/나뭇가지/돌조각)을 확정 배치한다.
         ///
-        /// 시작 지점을 섬 중심(island.mapPosition)으로 잡는 근거: 씬의 Player 트랜스폼이 (0, 5, 0)이고
+        /// 시작 지점을 섬 중심(island.mapPosition)으로 잡는 근거: 씬의 Player 트랜스폼이 (0, 14, 0)이고
         /// WorldMapManager.GenerateStartingIsland가 0번 섬의 mapPosition을 Vector3.zero로 두므로, 두 지점의
         /// XZ 좌표가 정확히 같다(플레이어 시작 위치를 참조하는 별도 배선을 만들 필요가 없다).
+        /// 높이(y 5 → 14, 지형 기복 상향 대응)가 바뀌어도 이 배치는 XZ만 쓰고 TerrainSampler.SnapToGround로
+        /// 지면에 붙이므로 영향을 받지 않는다.
+        ///
+        /// 방향: SetLandingCircleFacingYaw가 호출됐다면 코코넛이 플레이어 정면, 나뭇가지가 좌측,
+        /// 돌조각이 우측에 온다(LandingCircleAngleOffsets / GetLandingCircleBaseAngle 참고).
         ///
         /// 결정성: UnityEngine.Random을 쓰지 않고 호출자가 넘긴 섬 전용 System.Random 스트림을 그대로
         /// 이어 쓴다. 같은 worldSeed면 RegenerateWorld(F9 불러오기) 후에도 같은 3개 위치가 재현된다.
@@ -205,7 +236,7 @@ namespace MakeGame.Systems
             List<ResourceNode> spawned, ref int spawnOrder)
         {
             float radius = Mathf.Clamp(landingCircleRadius, 3f, LandingCircleMaxRadius);
-            float angleStep = 360f / LandingCircleItemNames.Length;
+            float baseAngle = GetLandingCircleBaseAngle();
 
             for (int i = 0; i < LandingCircleItemNames.Length; i++)
             {
@@ -213,7 +244,10 @@ namespace MakeGame.Systems
                 if (entry == null)
                     continue; // 그 자원이 resourceEntries에 없으면 조용히 건너뛴다(설정 누락에 NRE로 죽지 않게).
 
-                float angle = (LandingCircleBaseAngle + i * angleStep + rng.NextFloat(-12f, 12f)) * Mathf.Deg2Rad;
+                // 지터는 ±12도로 그대로 둔다 - 격자처럼 보이지 않을 만큼은 흔들되, 정면에 둔 노드가
+                // 시야(60도 FOV) 밖으로 나갈 만큼은 흔들지 않는 폭이다.
+                float offset = i < LandingCircleAngleOffsets.Length ? LandingCircleAngleOffsets[i] : 0f;
+                float angle = (baseAngle + offset + rng.NextFloat(-12f, 12f)) * Mathf.Deg2Rad;
                 float distance = radius * rng.NextFloat(0.62f, 1f); // 너무 발밑에 붙지 않게 최소 62%는 띄운다.
                 Vector3 position = island.mapPosition + new Vector3(Mathf.Cos(angle) * distance, 0f, Mathf.Sin(angle) * distance);
                 position = TerrainSampler.SnapToGround(position);
@@ -221,6 +255,34 @@ namespace MakeGame.Systems
                 spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
                 spawnOrder++;
             }
+        }
+
+        /// <summary>
+        /// 착륙 원을 플레이어 시작 시선에 맞춰 회전시킨다. WorldMapManager가 시작 섬의 자원을 배치하기
+        /// **직전**에 호출한다(그 뒤에 부르면 이미 배치가 끝나 아무 효과가 없다).
+        /// </summary>
+        /// <param name="yawDegrees">플레이어가 바라볼 방향(Unity yaw, 도).</param>
+        public void SetLandingCircleFacingYaw(float yawDegrees)
+        {
+            landingCircleFacingYaw = yawDegrees;
+        }
+
+        /// <summary>
+        /// 착륙 원 첫 번째 노드의 기준 각도를 구한다.
+        ///
+        /// 좌표계 변환에 주의: Unity yaw는 +Z가 0도이고 시계 방향으로 증가하는데(정면 벡터가
+        /// (sin y, cos y)), 이 배치 코드는 (cos θ, sin θ)를 (x, z)로 쓰는 수학 각도를 쓴다.
+        /// 두 표현을 맞추면 θ = 90 - yaw 다. 이 한 줄을 틀리면 코코넛이 정면이 아니라 옆이나 등 뒤에
+        /// 놓이고, 증상이 "가끔 안 보인다"라서 원인을 찾기 어렵다.
+        ///
+        /// 시선 정보가 없으면 기존 절대 각도를 그대로 쓴다(동작 불변).
+        /// </summary>
+        private float GetLandingCircleBaseAngle()
+        {
+            if (!landingCircleFacingYaw.HasValue)
+                return LandingCircleBaseAngle;
+
+            return 90f - landingCircleFacingYaw.Value;
         }
 
         /// <summary>

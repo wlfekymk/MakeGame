@@ -46,6 +46,48 @@ namespace MakeGame.Systems
         /// </summary>
         public bool IsDaytime => TimeOfDay01 >= 0.25f && TimeOfDay01 <= 0.75f;
 
+        // ── 일몰 예고 (Design_Onboarding.md 6장, game-designer 요청) ─────────────────────────────
+        //
+        // 왜 필요한가: "첫 밤 사망은 허용한다. 다만 예고 없는 사망은 교육이 아니라 사고다"가 설계
+        // 결정이다. 밤이 온다는 사실을 밤이 오기 **전에** 알려야 한다.
+        //
+        // 이 클래스가 하는 일은 **시각 판정과 1회성 보장뿐**이다. 화면 표시는 UI 담당이므로 여기서는
+        // 이벤트(SunsetWarningRaised)와 상태(SunsetWarningFired)만 노출한다.
+        //
+        // 1회성을 "구독자 쪽 플래그"가 아니라 여기서 보장하는 이유: 구독자가 여럿이어도, 씬이 도중에
+        // UI를 새로 만들어도 예고는 정확히 한 번만 발생해야 한다. 매일 뜨면 소음이 되고, 소음이 되면
+        // 정작 첫날에 읽히지 않는다.
+
+        /// <summary>밤이 시작되는 TimeOfDay01 값. IsDaytime의 상한(0.75)과 같은 기준이다.</summary>
+        private const float NightStartTimeOfDay = 0.75f;
+
+        [Header("일몰 예고 (Design_Onboarding 6장)")]
+        [Tooltip("해가 기울기 시작했다고 판단하는 하루 진행률(0~1). 설계 기준값 0.65.\n" +
+            "밤 시작(0.75)보다 반드시 작아야 한다 - 크거나 같으면 예고가 밤보다 늦어져 의미가 없다.")]
+        public float sunsetWarningTimeOfDay = 0.65f;
+
+        [Tooltip("일몰 예고를 발생시킬 날짜(ElapsedDays 기준, 0 = 1일차). 이 날을 놓치면 예고는 다시 뜨지 않는다.")]
+        public int sunsetWarningDay = 0;
+
+        /// <summary>
+        /// 1일차 일몰 예고가 발생하는 순간 한 번만 호출된다(세션당 1회). UI가 구독해 안내 문구를 띄우면 된다.
+        /// 구독은 예고 시각(기본값 기준 1일차 390초 지점)보다 먼저 이뤄지기만 하면 되므로 OnEnable/Start 어느
+        /// 쪽이어도 늦지 않는다. 늦게 생성되는 UI를 위해 아래 SunsetWarningFired를 폴링해도 된다.
+        /// </summary>
+        public event System.Action SunsetWarningRaised;
+
+        /// <summary>
+        /// 일몰 예고가 이미 발생했거나(=표시할 때가 지났음) 발생 기회를 놓쳐 소진되었는지 여부.
+        /// 한 번 true가 되면 다시 false로 돌아가지 않는다.
+        /// </summary>
+        public bool SunsetWarningFired { get; private set; }
+
+        /// <summary>
+        /// 일몰 예고가 실제로 발생한 시각(Time.time). 아직 발생하지 않았으면 -1이다.
+        /// 이벤트를 놓친 UI가 "몇 초 전에 떴는지"를 계산해 표시 시간을 결정할 수 있도록 함께 노출한다.
+        /// </summary>
+        public float SunsetWarningTime { get; private set; } = -1f;
+
         /// <summary>
         /// 초기화 시점에 balanceConfig 폴백을 적용한다.
         /// </summary>
@@ -80,6 +122,44 @@ namespace MakeGame.Systems
         private void Update()
         {
             elapsedSeconds += Time.deltaTime;
+            UpdateSunsetWarning();
+        }
+
+        /// <summary>
+        /// 지정한 날(sunsetWarningDay)의 일몰 직전 구간에 들어서면 예고를 한 번만 발생시킨다.
+        ///
+        /// 세 가지 경우를 구분한다.
+        ///  (1) 아직 그 날이 오지 않음 → 아무 것도 하지 않고 기다린다.
+        ///  (2) 그 날의 예고 구간(threshold ~ 밤 시작) 안 → 발생시키고 소진 처리한다.
+        ///  (3) 그 날이 이미 지나감 → 조용히 소진 처리한다. 불러오기(SaveLoadController가
+        ///      elapsedSeconds를 되돌린다)로 5일차에서 시작한 플레이어에게 "곧 밤이 됩니다"를
+        ///      새삼 띄우지 않기 위해서다. 이미 밤을 여러 번 겪은 사람에게는 정보가 아니라 소음이다.
+        /// </summary>
+        private void UpdateSunsetWarning()
+        {
+            if (SunsetWarningFired)
+                return;
+
+            int day = ElapsedDays;
+            if (day < sunsetWarningDay)
+                return;
+
+            if (day > sunsetWarningDay)
+            {
+                SunsetWarningFired = true; // 기회를 놓쳤다 - 다시 뜨지 않도록 소진만 한다(이벤트 없음).
+                return;
+            }
+
+            // 밤 시작 직전까지로 상한을 둔다. 잘못된 설정값(0.75 이상)이 들어와도 예고가 밤보다
+            // 늦게 뜨는 일은 없게 만든다.
+            float threshold = Mathf.Clamp(sunsetWarningTimeOfDay, 0f, NightStartTimeOfDay - 0.001f);
+            float t = TimeOfDay01;
+            if (t < threshold || t >= NightStartTimeOfDay)
+                return;
+
+            SunsetWarningFired = true;
+            SunsetWarningTime = Time.time;
+            SunsetWarningRaised?.Invoke();
         }
     }
 }

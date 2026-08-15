@@ -623,6 +623,7 @@ MonoBehaviour:
   oceanSize: 40000
   seaLevel: 0
   terrainMaxHeight: 8
+  playerTransform: {fileID: 1925945766}
   terrainMaterial: {fileID: 0}
 --- !u!1 &1925945763
 GameObject:
@@ -689,7 +690,7 @@ MonoBehaviour:
   thirstDecayPerSecond: 0.08
   starvationDamagePerSecond: 1
   sunstroke: 0
-  sunstrokeGainPerSecond: 0.1
+  sunstrokeGainPerSecond: 0.25
   sunstrokeRecoveryPerSecond: 0.2
   sunstrokeDamagePerSecond: 0.5
   isPoisoned: 0
@@ -871,7 +872,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.ConsumptionSystem
   inventory: {fileID: 1925945764}
   survivalStats: {fileID: 1925945765}
-  rawFoodPoisonChance: 0.3
+  rawFoodPoisonChance: 0.15
 --- !u!114 &2000000006
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -60,6 +60,29 @@ namespace MakeGame.Systems
         [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
 
+        [Tooltip("시작 섬 중심을 기준으로 경비행기 잔해를 놓을 위치(오프셋). 플레이어 시작 회전을 이 반대\n" +
+                 "방향으로 잡는 계산에도 같은 값을 쓰므로, 잔해를 옮기면 시작 시선도 자동으로 따라온다.")]
+        public Vector3 aircraftWreckOffset = new Vector3(6f, 0f, -4f);
+
+        [Header("시작 시선 (Design_Onboarding 2장, game-designer 요청)")]
+        // 왜 회전을 코드에서 잡는가: 잔해는 런타임에 절차적으로 생성되므로 씬에서 "잔해 반대편"을
+        // 손으로 맞춰 둘 수가 없다. 잔해 위치가 바뀌면 씬에 박아둔 각도는 조용히 틀린 값이 된다.
+        // 같은 상수(aircraftWreckOffset)에서 두 값을 함께 유도해야 어긋나지 않는다.
+        //
+        // 왜 등 뒤인가(설계 근거): 경비행기 잔해는 재료 15개를 요구하는 엔드게임 오브젝트다. 0분에
+        // 정면으로 보이면 플레이어는 그것부터 조사하러 가고, "아직 아무것도 못 한다"는 좌절만 얻는다.
+        // 등 뒤에 두면 나중에 뒤를 돌아봤을 때 발견된다 - 발견 자체를 막는 게 아니라 발견 시점을
+        // 늦추는 것이 목적이다.
+        [Tooltip("게임 시작 시 경비행기 잔해 반대 방향을 보도록 회전시킬 플레이어 트랜스폼.\n" +
+                 "비워두면 씬에서 PlayerController를 한 번 찾아 쓴다. 그래도 없으면 회전을 건드리지 않는다.")]
+        public Transform playerTransform;
+
+        [Tooltip("시작 시 플레이어를 잔해 반대 방향으로 돌려세울지 여부. 끄면 씬에 직렬화된 회전을 그대로 쓴다.")]
+        public bool orientPlayerAwayFromWreck = true;
+
+        /// <summary>시작 시선을 이미 한 번 잡았는지 여부(불러오기로 월드를 재생성해도 다시 돌리지 않기 위함).</summary>
+        private bool startingFacingApplied = false;
+
         [Header("배 제작 엔딩")]
         [Tooltip("시작 섬에 배치할 배 작업대가 진행 상태를 갱신할 배 제작 시스템 (비워두면 작업대를 배치하지 않는다).\n" +
                  "작업대가 없으면 도면과 재료를 다 모아도 실제로 배를 조립할 방법이 없으므로 반드시 연결해야 한다.")]
@@ -314,11 +337,75 @@ namespace MakeGame.Systems
             };
 
             SpawnPlaceholder(startIsland);
+
+            // 자원 배치보다 먼저 시선을 확정한다. 착륙 원(IslandResourceSpawner)이 첫 노드를 플레이어
+            // 정면에 놓으려면 "정면이 어디인지"를 배치 시점에 알고 있어야 하기 때문이다.
+            ApplyStartingFacing();
+
             SpawnIslandContent(startIsland);
             SpawnAircraftWreck(startIsland);
             SpawnBoatWorkbench(startIsland);
             islands.Add(startIsland);
             return startIsland;
+        }
+
+        /// <summary>
+        /// 시작 시선을 확정한다. 플레이어를 경비행기 잔해의 정반대 방향으로 돌려세우고, 같은 방향을
+        /// 착륙 원 스포너에도 알려 첫 자원 노드(코코넛)가 플레이어 정면에 오게 한다.
+        ///
+        /// 위치는 손대지 않는다 - 씬의 시작 위치(현재 y 14, 지형 기복 상향 대응으로 5에서 올라간 값)를
+        /// 코드가 덮어쓰면 씬 조정이 조용히 무효가 된다. **회전만** 잡는다.
+        ///
+        /// 회전은 세션당 한 번만 적용한다(startingFacingApplied). RegenerateWorld(F9 불러오기)가
+        /// GenerateStartingIsland를 다시 부르는데, 그때 시선을 초기값으로 되돌리면 저장해 둔 시선을
+        /// 잃는다. 실제로 SaveLoadController.Load는 RegenerateWorld 직후에 저장된 회전을 다시
+        /// 적용하므로 최종 결과는 어차피 세이브 값이 이기지만, 그 순서에 기대지 않고 여기서 막는다.
+        /// </summary>
+        private void ApplyStartingFacing()
+        {
+            if (!orientPlayerAwayFromWreck)
+                return;
+
+            Vector3 towardWreck = aircraftWreckOffset;
+            towardWreck.y = 0f;
+
+            // 잔해가 시작 지점 바로 위에 있으면 "등 뒤"라는 개념이 성립하지 않는다(방향 0 벡터).
+            if (towardWreck.sqrMagnitude < 0.0001f)
+                return;
+
+            Vector3 facing = -towardWreck.normalized;
+            float yaw = Mathf.Atan2(facing.x, facing.z) * Mathf.Rad2Deg;
+
+            // 착륙 원 정렬은 회전 적용 여부와 무관하게 매번 갱신해 둔다(스포너가 값을 들고 있으므로
+            // 재생성 시에도 같은 값이 유지되고, 같은 worldSeed면 같은 자리에 다시 배치된다).
+            resourceSpawner?.SetLandingCircleFacingYaw(yaw);
+
+            if (startingFacingApplied)
+                return;
+
+            Transform target = ResolveStartingPlayerTransform();
+            if (target == null)
+                return;
+
+            target.rotation = Quaternion.Euler(0f, yaw, 0f);
+            startingFacingApplied = true;
+        }
+
+        /// <summary>
+        /// 시선을 잡을 플레이어 트랜스폼을 찾는다. 인스펙터 연결(playerTransform)이 있으면 그것을 쓰고,
+        /// 없으면 씬에서 PlayerController를 한 번만 찾아 캐시한다. 둘 다 없으면 null이고, 이때는
+        /// 회전을 건드리지 않아 씬에 직렬화된 값이 그대로 남는다(기능이 꺼진 것과 같다).
+        /// </summary>
+        private Transform ResolveStartingPlayerTransform()
+        {
+            if (playerTransform != null)
+                return playerTransform;
+
+            var controller = FindAnyObjectByType<PlayerController>();
+            if (controller != null)
+                playerTransform = controller.transform;
+
+            return playerTransform;
         }
 
         /// <summary>
@@ -366,7 +453,9 @@ namespace MakeGame.Systems
             if (aircraftRepair == null)
                 return;
 
-            Vector3 position = startIsland.mapPosition + new Vector3(6f, 0f, -4f);
+            // 오프셋을 필드로 뺐다(기본값은 기존과 동일한 6,0,-4). ApplyStartingFacing이 같은 값으로
+            // 플레이어 시작 시선을 계산하므로, 잔해를 옮겨도 "등 뒤" 관계가 자동으로 유지된다.
+            Vector3 position = startIsland.mapPosition + aircraftWreckOffset;
             position = TerrainSampler.SnapToGround(position);
 
             var go = new GameObject("AircraftWreck");

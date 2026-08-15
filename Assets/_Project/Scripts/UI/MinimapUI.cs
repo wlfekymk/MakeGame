@@ -442,9 +442,40 @@ namespace MakeGame.UI
             bool hasFood = HasItem(item => item.hungerRestoreAmount > 0f);
             bool hasWeapon = HasItem(item => item.isWeapon);
 
+            string note = GetToolNote(island.size, hasAxe);
+
             return $"{GetSizeKoreanName(island.size)} 섬 준비: "
                 + $"{Mark("손도끼", hasAxe)}  {Mark("물", hasWater)}  {Mark("음식", hasFood)}  {Mark("무기", hasWeapon)}"
-                + (hasAxe ? "" : "   (금속조각 채집에는 손도끼가 필요하다)");
+                + (string.IsNullOrEmpty(note) ? "" : $"   ({note})");
+        }
+
+        /// <summary>
+        /// 규모별로 정확한 도구 안내 문구를 고른다. 손도끼를 이미 들고 있으면 안내가 필요 없다.
+        ///
+        /// 버그 수정(qa 지적): 예전에는 대형/특대에 똑같이 "금속조각 채집에는 손도끼가 필요하다"만
+        /// 붙었다. 그런데 **특대 섬의 핵심 자원인 엔진부품은 requiresTool이 꺼져 있어 손도끼가 필요
+        /// 없다**(씬 실측 IslandResourceSpawner.resourceEntries - 엔진부품 minimumIslandSize 3 /
+        /// requiresTool 0). 손도끼가 없다는 이유로 특대 섬 여행을 미루게 만드는 이 문구는 힌트가
+        /// 아니라 함정이었다(사망 화면 회피 힌트와 같은 기준 - Design_Ending.md 5-3).
+        ///
+        /// 실측 기준:
+        ///   금속조각: minimumIslandSize 2(대형+) / requiresTool 1(손도끼)
+        ///   부력통  : minimumIslandSize 2(대형+) / requiresTool 0
+        ///   엔진부품: minimumIslandSize 3(특대 전용) / requiresTool 0
+        /// 금속조각은 특대에서도 나오므로(섬 규모 >= 최소 규모) 특대 문구에서도 손도끼의 쓸모는
+        /// 남겨두되, "없어도 이 섬의 목적은 달성된다"가 먼저 읽히게 순서를 뒤집었다.
+        /// </summary>
+        private string GetToolNote(IslandSize size, bool hasAxe)
+        {
+            if (hasAxe)
+                return "";
+
+            // 문구는 짧게 유지한다 - 이 라벨은 폭 500px / 폰트 12 한 줄 자리라, 길어지면 두 줄로
+            // 넘치면서 위쪽 섬 목록을 침범한다.
+            if (size == IslandSize.ExtraLarge)
+                return "엔진부품은 맨손으로 캔다, 손도끼는 금속조각용";
+
+            return "금속조각에는 손도끼, 부력통은 맨손";
         }
 
         /// <summary>체크리스트 항목 하나를 "이름 O"/"이름 X" 형태의 색 있는 조각으로 만든다.</summary>

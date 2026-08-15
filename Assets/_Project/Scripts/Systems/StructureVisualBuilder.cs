@@ -26,8 +26,22 @@ namespace MakeGame.Systems
         /// <summary>Salvage Metal #738094 — 금속조각·엔진부품 등 금속 계열 전체.</summary>
         public static readonly Color SalvageMetal = new Color(0.451f, 0.502f, 0.580f);
 
-        /// <summary>Palm Fiber #948C4C — 야자잎·천조각·노끈.</summary>
+        /// <summary>Palm Fiber #948C4C — 수확한 마른 섬유(야자잎 아이템·천조각·노끈). 살아 있는 초목에는 쓰지 않는다.</summary>
         public static readonly Color PalmFiber = new Color(0.580f, 0.549f, 0.298f);
+
+        /// <summary>
+        /// Frond Green #6BA83F — 살아 있는 초목의 잎(야자잎·덤불). ArtDirection 1.1의 9번째 색.
+        /// Medic Green(#4FA87A, 색상각 149°)과는 색상각이 95°로 54° 떨어져 있어 "치료·안전"의 청록 계열과
+        /// 섞이지 않고, Palm Fiber(수확한 마른 섬유)와는 살아 있는 잎/죽은 섬유로 용도가 갈린다.
+        /// </summary>
+        public static readonly Color FrondGreen = new Color(0.420f, 0.659f, 0.247f);
+
+        /// <summary>
+        /// Meadow Green #8AA84F — 지면 풀(풀밭 캡·풀포기). ArtDirection 1.1의 10번째 색.
+        /// Frond Green보다 노랗고 채도가 낮아(색상각 80°) 잎과 지면이 한 덩어리로 뭉치지 않으며,
+        /// Island Sand(#C2B280, 색상각 45°)와는 색상각이 35° 벌어져 모래/풀 경계가 색으로 읽힌다.
+        /// </summary>
+        public static readonly Color MeadowGreen = new Color(0.541f, 0.659f, 0.310f);
 
         /// <summary>Danger Red #CC3333 — 위험 신호(상어 등지느러미와 동일한 용도).</summary>
         public static readonly Color DangerRed = new Color(0.800f, 0.200f, 0.200f);

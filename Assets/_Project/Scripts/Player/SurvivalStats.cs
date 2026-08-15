@@ -185,6 +185,80 @@ namespace MakeGame.Player
         /// </summary>
         public DamageCause lastDamageCause = DamageCause.Unknown;
 
+        // ── 겪은 위기 횟수 (Design_Ending.md 4장, 엔딩/사망 화면 통계용) ──────────────────────────
+        //
+        // 설계 문서의 최초 제안은 "lastDamageCause가 Unknown → 유효값으로 바뀌는 전환을 센다"였는데,
+        // 실제 코드를 읽고 그 정의를 쓰지 않기로 했다. lastDamageCause는 한 번 유효값이 되면 다시
+        // Unknown으로 돌아가는 코드가 어디에도 없다(TakeDamage에서 단조적으로 덮어쓸 뿐이다).
+        // 그 정의를 그대로 구현하면 이 카운터는 한 세션에서 **영원히 1**이 된다 - 통계 칸이 항상
+        // "1회"로 고정되므로 없느니만 못하다.
+        //
+        // 대안으로 "원인이 바뀔 때마다 +1"도 검토했다가 버렸다. 중독과 출혈이 동시에 걸려 있으면
+        // UpdateStatusEffectDamage가 한 프레임 안에 Poison→Bleeding을 번갈아 호출해서, 초당 120회씩
+        // 카운터가 오른다.
+        //
+        // 채택한 정의: **위기 = 원인별 "에피소드"**. 어떤 원인의 피해가 graceSeconds 이상 끊긴 뒤
+        // 다시 들어오면 그때 1회로 센다. 원인마다 마지막 피격 시각을 따로 들고 있으므로
+        //   · 같은 곰에게 연속으로 맞으면 → **1회**. (질문에 대한 답: 타격 수가 아니라 사건 수를 센다.
+        //     "곰에게 습격당했다"는 한 번의 위기이지 3번의 위기가 아니다. 지속 피해(굶주림/중독)는
+        //     매 프레임 TakeDamage가 불리므로 타격 수를 세는 정의는 애초에 성립하지도 않는다.)
+        //   · 곰에게 맞다가 중독까지 되면 → 2회 (서로 다른 원인 = 서로 다른 위기).
+        //   · 굶주림으로 깎이다가 밥 먹고 회복한 뒤 나중에 또 굶으면 → 2회.
+        // 세이브에는 넣지 않는다(세이브 포맷 불변). 엔딩/사망은 한 세션 안에서 완결되므로 충분하다.
+
+        [Tooltip("같은 원인의 피해가 이 시간(초) 이상 끊겼다가 다시 들어오면 새로운 위기 1회로 센다.\n" +
+            "짧게 잡으면 지속 피해 한 번이 여러 번으로 쪼개지고, 길게 잡으면 별개의 습격이 하나로 합쳐진다.")]
+        public float crisisGraceSeconds = 8f;
+
+        /// <summary>DamageCause 항목 수. 원인별 마지막 피격 시각 배열의 크기로 쓴다(enum이 늘어나도 자동으로 따라간다).</summary>
+        private static readonly int DamageCauseCount = System.Enum.GetValues(typeof(DamageCause)).Length;
+
+        /// <summary>원인별 마지막 피격 시각(Time.time). NegativeInfinity로 시작해 첫 피해가 항상 새 위기로 잡히게 한다.</summary>
+        private float[] lastCrisisTimeByCause;
+
+        /// <summary>지금까지 겪은 위기 횟수(위 주석의 "에피소드" 정의).</summary>
+        private int crisisCount = 0;
+
+        /// <summary>
+        /// 지금까지 겪은 위기 횟수. Design_Ending.md 4장 통계 6번 항목의 데이터 출처다.
+        /// 읽기 전용이며, 세이브에 저장되지 않으므로 불러오기를 하면 이번 세션 값이 그대로 이어진다.
+        /// </summary>
+        public int CrisisCount => crisisCount;
+
+        /// <summary>
+        /// 원인별 마지막 피격 시각 배열을 준비한다. Awake보다 먼저 TakeDamage가 불릴 가능성
+        /// (다른 컴포넌트의 Awake에서 피해를 주는 경우 등)까지 감안해 TakeDamage에서도 한 번 더 확인한다.
+        /// </summary>
+        private void EnsureCrisisBuffer()
+        {
+            if (lastCrisisTimeByCause != null && lastCrisisTimeByCause.Length >= DamageCauseCount)
+                return;
+
+            lastCrisisTimeByCause = new float[DamageCauseCount];
+            for (int i = 0; i < lastCrisisTimeByCause.Length; i++)
+                lastCrisisTimeByCause[i] = float.NegativeInfinity;
+        }
+
+        /// <summary>
+        /// 이번 피해가 "새 위기의 시작"인지 판정하고, 맞으면 카운터를 올린다.
+        /// 원인별로 마지막 피격 시각을 따로 들고 있어, 동시에 진행 중인 두 상태 이상이 서로를
+        /// 새 위기로 만들어 버리는 문제가 생기지 않는다(위 주석 참고).
+        /// </summary>
+        private void RecordCrisis(DamageCause cause)
+        {
+            EnsureCrisisBuffer();
+
+            int index = (int)cause;
+            if (index < 0 || index >= lastCrisisTimeByCause.Length)
+                return;
+
+            float now = Time.time;
+            if (now - lastCrisisTimeByCause[index] > Mathf.Max(0f, crisisGraceSeconds))
+                crisisCount++;
+
+            lastCrisisTimeByCause[index] = now;
+        }
+
         /// <summary>
         /// 매 프레임(또는 일정 주기)마다 호출하여 허기/갈증 감소, 상태 이상으로 인한 피해 등
         /// 시간에 따른 생존 수치 변화를 처리한다.
@@ -288,7 +362,10 @@ namespace MakeGame.Player
             health = Mathf.Max(0f, health - amount);
 
             if (amount > 0f && cause != DamageCause.Unknown)
+            {
                 lastDamageCause = cause;
+                RecordCrisis(cause); // 겪은 위기 횟수(CrisisCount) 집계 - 판정 기준은 필드 선언부 주석 참고.
+            }
         }
 
         /// <summary>

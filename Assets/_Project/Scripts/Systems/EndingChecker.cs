@@ -6,6 +6,18 @@ using MakeGame.Managers;
 namespace MakeGame.Systems
 {
     /// <summary>
+    /// 달성한 엔딩의 종류. Design_Ending.md 2장이 두 엔딩의 연출(배경색/팡파르/통계 공개량)을 서로 다르게
+    /// 하도록 설계했는데, 지금까지는 화면 쪽에서 "어느 엔딩인지"를 알 수 있는 수단이 문자열 비교뿐이었다.
+    /// 문구가 바뀌면 조용히 깨지는 판정이므로 명시적인 종류 값으로 노출한다.
+    /// </summary>
+    public enum EndingKind
+    {
+        None,
+        Boat,      // 배를 만들어 떠나는 정공법 경로 - 제목 "귀환"
+        Aircraft,  // 경비행기를 수리해 떠나는 속성 경로 - 제목 "탈출"
+    }
+
+    /// <summary>
     /// 엔딩 달성 조건을 매 프레임 확인한다. 두 가지 엔딩 경로 중 먼저 달성한 쪽으로 게임을 종료시킨다.
     /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보
     ///    + 최소 경과 일수(requiredElapsedDays, Spec_11 기준 15일) 도달. 여러 단계를 밟아 꾸준히
@@ -87,8 +99,44 @@ namespace MakeGame.Systems
         /// <summary>엔딩 연출 화면이 현재 표시 중인지 여부.</summary>
         private bool showEndingUI = false;
 
+        // ── 엔딩 문구 (Design_Ending.md 2장·3장, ui-engineer 요청으로 제목/부제 분리) ──────────────
+        //
+        // 예전에는 TriggerEnding이 문장 한 줄("배를 타고 섬을 탈출했습니다!")만 받아 그대로 화면에
+        // 띄웠다. 설계 문서는 제목을 "탈출"/"귀환" 두 단어로 크게(48pt) 띄우고 마지막 문장을 그 아래
+        // 작게 붙이는 2단 구성을 요구하는데, 한 문자열로는 UI가 나눌 방법이 없다.
+        //
+        // 형식 결정: **문자열 안에 구분자를 넣지 않는다.** 제목과 부제를 별도 프로퍼티로 노출한다.
+        // "\n"이나 "|" 같은 구분자를 넣고 UI가 Split하게 하면, 문구에 그 문자가 섞이는 날 조용히
+        // 깨지고 두 파일을 동시에 봐야 원인을 알 수 있다. 분리된 값을 분리된 채로 넘기는 편이 싸다.
+        // 기존 EndingMessage는 제거하지 않고 두 값을 줄바꿈으로 이어 붙인 값으로 유지한다
+        // (UI/EndingUI.cs가 지금 이 프로퍼티를 읽고 있어 제거하면 컴파일이 깨진다).
+        //
+        // 문구는 Design_Ending.md 3장 페이즈 2/4 표기를 그대로 옮긴 것이다. 느낌표를 쓰지 않는 것이
+        // 문서의 명시적 결정이다("150분짜리 생존 게임의 마지막 문장이 감탄사면 무게가 안 맞는다").
+
+        /// <summary>배 엔딩 제목.</summary>
+        private const string BoatEndingTitle = "귀환";
+
+        /// <summary>배 엔딩 마지막 문장.</summary>
+        private const string BoatEndingSubtitle = "당신은 준비된 채로 떠났다.";
+
+        /// <summary>경비행기 엔딩 제목.</summary>
+        private const string AircraftEndingTitle = "탈출";
+
+        /// <summary>경비행기 엔딩 마지막 문장.</summary>
+        private const string AircraftEndingSubtitle = "섬은 아직 그 자리에 있다.";
+
         /// <summary>엔딩 연출 화면에 표시할 메시지.</summary>
         private string endingMessage = "";
+
+        /// <summary>엔딩 제목(두 단어). 아직 엔딩이 없으면 빈 문자열이다.</summary>
+        private string endingTitle = "";
+
+        /// <summary>엔딩 마지막 문장. 아직 엔딩이 없으면 빈 문자열이다.</summary>
+        private string endingSubtitle = "";
+
+        /// <summary>달성한 엔딩의 종류. 아직 엔딩이 없으면 None이다.</summary>
+        private EndingKind achievedEnding = EndingKind.None;
 
         /// <summary>엔딩이 이미 달성되었는지 여부.</summary>
         public bool EndingTriggered => endingTriggered;
@@ -104,6 +152,21 @@ namespace MakeGame.Systems
         /// 공개 접근자로 노출했다(GameOverController.GetDeathMessage()와 같은 목적).
         /// </summary>
         public string EndingMessage => endingMessage;
+
+        /// <summary>
+        /// 엔딩 제목("탈출" 또는 "귀환"). 크게 표시할 두 단어다. 엔딩 전에는 빈 문자열.
+        /// </summary>
+        public string EndingTitle => endingTitle;
+
+        /// <summary>
+        /// 엔딩의 마지막 문장(부제). 제목 아래 작게 표시할 한 줄이다. 엔딩 전에는 빈 문자열.
+        /// </summary>
+        public string EndingSubtitle => endingSubtitle;
+
+        /// <summary>
+        /// 달성한 엔딩의 종류. 연출/통계 공개량을 엔딩별로 다르게 하려면 문구를 비교하지 말고 이 값을 볼 것.
+        /// </summary>
+        public EndingKind AchievedEnding => achievedEnding;
 
         /// <summary>
         /// 초기화 시점에 balanceConfig 폴백을 적용한다.
@@ -170,13 +233,13 @@ namespace MakeGame.Systems
 
             if (CheckBoatEndingConditions())
             {
-                TriggerEnding("배를 타고 섬을 탈출했습니다!");
+                TriggerEnding(EndingKind.Boat, BoatEndingTitle, BoatEndingSubtitle);
                 return;
             }
 
             if (aircraftRepair != null && aircraftRepair.isRepairComplete)
             {
-                TriggerEnding("경비행기를 수리해 하늘로 섬을 탈출했습니다!");
+                TriggerEnding(EndingKind.Aircraft, AircraftEndingTitle, AircraftEndingSubtitle);
             }
         }
 
@@ -238,11 +301,20 @@ namespace MakeGame.Systems
         /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시키고,
         /// 화면에 승리 연출을 띄운 뒤 이동/상호작용을 잠시 멈춘다.
         /// </summary>
-        private void TriggerEnding(string message)
+        /// <param name="kind">달성한 엔딩의 종류(연출 분기용).</param>
+        /// <param name="title">크게 표시할 제목 두 단어.</param>
+        /// <param name="subtitle">제목 아래 작게 표시할 마지막 문장.</param>
+        private void TriggerEnding(EndingKind kind, string title, string subtitle)
         {
             endingTriggered = true;
-            endingMessage = message;
-            Debug.Log(message);
+            achievedEnding = kind;
+            endingTitle = title;
+            endingSubtitle = subtitle;
+
+            // 제목/부제를 분리해 노출하면서도, 아직 두 값을 따로 읽지 않는 호출부(UI/EndingUI.cs)가
+            // 예전과 같은 한 덩어리 문자열을 계속 받을 수 있도록 이어 붙인 값을 유지한다.
+            endingMessage = $"{title}\n{subtitle}";
+            Debug.Log($"[EndingChecker] 엔딩 달성: {kind} - {title} / {subtitle}");
             GameManager.Instance?.CompleteEnding();
 
             showEndingUI = true;

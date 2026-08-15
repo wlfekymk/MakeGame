@@ -220,8 +220,10 @@ namespace MakeGame.Systems
         /// 저장된 물을 수확한다. 기본 동작은 예전과 같이 "바로 마시기"(갈증 회복)이고,
         /// bottleModifierKey를 누른 채로 상호작용하면 대신 생수 아이템으로 담는다.
         ///
-        /// 호출부(InteractionController)는 이 에이전트의 소유 파일이 아니라 시그니처를 바꿀 수 없어,
-        /// 인벤토리는 아래 오버로드에서 자동으로 찾는다.
+        /// 인벤토리를 넘기지 않는 편의 오버로드. 씬의 정상 경로(InteractionController)는 이제
+        /// 배선된 inventory를 직접 넘기는 2인자 오버로드를 부르므로 이 경로를 타지 않는다.
+        /// 프리팹을 단독으로 쓰거나 인벤토리 참조가 없는 호출부를 위한 폴백으로만 남겨 둔다
+        /// (ResolveInventory의 FindAnyObjectByType은 여기서만 실행된다).
         /// </summary>
         public void CollectInto(SurvivalStats targetStats)
         {
