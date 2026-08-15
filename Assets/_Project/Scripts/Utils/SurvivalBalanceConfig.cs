@@ -9,17 +9,20 @@ namespace MakeGame.Data
     /// 조정하려면 스크립트 기본값과 씬/프리팹 오버라이드를 모두 찾아 다녀야 한다(#13 WaterStill
     /// 사고가 실제 사례).
     ///
-    /// 1단계(이번 배치) 범위: 이 클래스와 기본값만 만든다. 각 스크립트를 이 config를 참조하도록
-    /// 바꾸는 배선 작업은 하지 않는다 — Spec_15의 "안전 전환 순서" 3~5단계(선택적 참조 추가 →
-    /// qa-reviewer 검증 → 완전 전환)는 이후 배치에서 진행한다. 기존 MonoBehaviour의 public 필드는
-    /// 단 하나도 제거/치환하지 않았다.
+    /// 2단계(B3-11) 진행 상황: SurvivalStats가 이 config를 선택적(nullable) 참조로 배선했다(필드가
+    /// 0 이하로 미설정일 때만 config 값을 채우는 폴백 구조, SurvivalStats.ApplyBalanceConfigFallback
+    /// 참고). WaterStill/Campfire/WeatherSystem/HazardSpawner/EndingChecker/SurvivalClock은 아직
+    /// 배선하지 않았다. 기존 MonoBehaviour의 public 필드는 단 하나도 제거/치환하지 않았다.
     ///
     /// 기본값 출처: Docs/Balance_SceneSnapshot.md(씬/프리팹 실측값). 코드 기본값이 아니라 실측값을
-    /// 우선했다 — 예를 들어 hazard*Multiplier(1/1.5/2/2.5)는 HazardSpawner의 씬 실측값과 일치하고,
-    /// waterStillPerSecond/waterStillMaxStorage(0.10/12)는 Spec_13에서 확정된 교정값이며,
-    /// endingRequiredFoodCount/WaterCount/FuelCount(30/30/1)는 EndingChecker 씬 실측값과 일치한다.
-    /// 스냅샷에 실측되지 않은 항목(코코넛워터 과음 임계치, 식중독 확률, 모닥불 연료 소모/경험치,
-    /// 날씨 타이머)은 Spec_15 문서에 명시된 설계값을 그대로 썼다.
+    /// 우선했다 — 예를 들어 hazard*Multiplier는 HazardSpawner의 현재 기본값(1/1.75/2.5/3.25, B3-7
+    /// 상향 반영 - qa가 지적한 stale 값을 이 배치에서 갱신했다)과 일치하고, waterStillPerSecond/
+    /// waterStillMaxStorage(0.10/12)는 Spec_13에서 확정된 교정값이며, endingRequiredFoodCount/
+    /// WaterCount/FuelCount(30/30/1)는 EndingChecker 씬 실측값과 일치한다. 스냅샷에 실측되지 않은
+    /// 항목(코코넛워터 과음 임계치, 식중독 확률, 모닥불 연료 소모/경험치, 날씨 타이머)은 Spec_15
+    /// 문서에 명시된 설계값을 그대로 썼다.
+    /// [주의] config 필드를 수정할 때는 반드시 대응하는 스크립트의 현재 기본값과 대조할 것 - 이번
+    /// hazard*Multiplier처럼 원본 스크립트 기본값이 나중에 바뀌면 이 config만 조용히 stale해질 수 있다.
     /// </summary>
     [CreateAssetMenu(fileName = "SurvivalBalanceConfig", menuName = "MakeGame/Survival Balance Config")]
     public class SurvivalBalanceConfig : ScriptableObject
@@ -71,11 +74,16 @@ namespace MakeGame.Data
         public float weatherMaxRainSeconds = 100f;
         [Range(0f, 1f)] public float rainDimFactor = 0.55f;
 
+        // qa 지적(B3-11-1 stale 값): B3-7에서 HazardSpawner의 실제 기본값이 1/1.5/2/2.5 → 1/1.75/2.5/3.25로
+        // 올랐는데, 이 config는 갱신되지 않은 채 구값으로 남아 있었다. 지금은 SurvivalStats만 config를
+        // 참조해서(B3-11 1차 배선) 이 값을 아무도 읽지 않아 무해했지만, 다음 배치에서 HazardSpawner를
+        // 배선하는 순간 씬 실측값(1/1.75/2.5/3.25, Balance_SceneSnapshot.md)과 어긋나는 회귀가 될 뻔했다.
+        // HazardSpawner.cs의 현재 기본값과 정확히 일치시켰다.
         [Header("위험요소 규모별 배율")]
         public float hazardSmallMultiplier = 1f;
-        public float hazardMediumMultiplier = 1.5f;
-        public float hazardLargeMultiplier = 2f;
-        public float hazardExtraLargeMultiplier = 2.5f;
+        public float hazardMediumMultiplier = 1.75f;
+        public float hazardLargeMultiplier = 2.5f;
+        public float hazardExtraLargeMultiplier = 3.25f;
 
         [Header("배 엔딩 (#11 반영)")]
         public int endingRequiredFoodCount = 30;

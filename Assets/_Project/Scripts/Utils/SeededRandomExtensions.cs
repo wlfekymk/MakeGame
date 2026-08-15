@@ -7,12 +7,18 @@ namespace MakeGame.Data
     /// SharkSpawner)가 UnityEngine.Random 대신 쓰는 결정적(deterministic) 난수 유틸리티.
     ///
     /// 문제: 예전에는 모든 스포너가 전역 UnityEngine.Random을 그대로 썼다. WorldMapManager.Awake가
-    /// worldSeed로 UnityEngine.Random.InitState를 한 번 호출해 두긴 하지만, 그 뒤로 여러 스포너가
+    /// worldSeed로 UnityEngine.Random.InitState를 한 번 호출해 두긴 했지만, 그 뒤로 여러 스포너가
     /// "섬 A 자원 → 섬 A 위험요소 → 섬 A 도면 → 섬 A 사냥감 → 섬 B 자원 → ..." 순서로 같은 전역
     /// 스트림에서 난수를 이어 뽑는다. 이 순서 하나라도 어긋나면(예: 어떤 섬에 특정 자원이 하나 더/덜
     /// 나오거나, 스포너 호출 순서가 바뀌거나) 그 뒤 모든 섬의 난수 시퀀스가 통째로 밀려버려, 겉보기엔
     /// 같은 worldSeed인데도 재생성 결과가 달라질 수 있다 - 자원 노드 채집 상태를 "섬 인덱스 + 생성
     /// 순번"으로 저장하려면(B3-4) 이 재현성이 절대적으로 보장돼야 한다.
+    /// [후속(qa 지적, B3-4/B3-5 전제 붕괴 수정)] 스포너보다 한 계층 위인 섬 "크기"(IslandGenerator)와
+    /// "위치"(WorldMapManager.FindValidPosition)도 같은 문제를 그대로 갖고 있었고, 그 전역 스트림을
+    /// WeatherSystem도 함께 소비해 실행 순서가 보장되지 않는 상황에서 재현성이 깨질 수 있었다. 이제
+    /// WorldMapManager는 Random.InitState를 전혀 호출하지 않고, 섬 레이아웃도 이 클래스의 CreateForSalt로
+    /// 만든 전용 격리 스트림을 쓴다(WorldMapManager.islandLayoutRng 참고) - 전역 UnityEngine.Random은
+    /// 이제 이 프로젝트의 결정적 재생성 경로 어디에서도 쓰이지 않는다.
     ///
     /// 해결: 섬(또는 독립적인 스폰 그룹)마다 완전히 독립된 System.Random 인스턴스를 worldSeed와
     /// 섬 인덱스(또는 그룹 salt)를 조합한 시드로 새로 만든다. 각 섬의 난수 스트림이 서로 완전히

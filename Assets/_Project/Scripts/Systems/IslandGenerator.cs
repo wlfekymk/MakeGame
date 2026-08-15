@@ -40,7 +40,14 @@ namespace MakeGame.Systems
         /// </summary>
         /// <param name="islandIndex">지금 생성 중인 섬이 전체 초기 생성 순서에서 몇 번째(0부터)인지.</param>
         /// <param name="totalIslandCount">이번 초기 생성에서 만들 전체 섬 개수.</param>
-        public IslandSize GenerateNextIslandSize(int islandIndex, int totalIslandCount)
+        /// <param name="rng">WorldMapManager가 만들어 넘기는, 섬 레이아웃(크기+위치) 전용 결정적
+        /// System.Random 스트림. qa 지적(B3-4/B3-5 전제 붕괴) 반영: 예전에는 여기서 시드 없는
+        /// UnityEngine.Random(전역 스트림)을 썼는데, 그 전역 스트림을 WeatherSystem도 함께 소비하고
+        /// WeatherSystem의 Start()가 섬 생성 루프와 어느 순서로 실행될지 Unity가 보장하지 않아, 최초
+        /// 플레이와 불러오기(RegenerateWorld, 동기 호출이라 WeatherSystem 간섭 없음) 사이에 섬 크기 롤
+        /// 순서가 달라질 수 있었다. 전역 Random 대신 이 격리된 rng를 쓰면 다른 시스템이 그 사이 무엇을
+        /// 하든 완전히 무관해진다.</param>
+        public IslandSize GenerateNextIslandSize(int islandIndex, int totalIslandCount, System.Random rng)
         {
             // 버그 수정(#1 - 치명): spawnConfig가 Inspector에서 연결되지 않은 채로 호출되면 바로 아래에서
             // NullReferenceException이 터져 WorldMapManager.Start() 체인 전체가 멈추고 섬이 단 하나도
@@ -87,7 +94,7 @@ namespace MakeGame.Systems
             float extraLargeWeight = spawnConfig.GetBaseSpawnRate(IslandSize.ExtraLarge);
 
             float totalWeight = smallWeight + mediumWeight + largeWeight + extraLargeWeight;
-            float roll = Random.Range(0f, totalWeight);
+            float roll = rng.NextFloat(0f, totalWeight);
 
             IslandSize result;
             if (roll < smallWeight)

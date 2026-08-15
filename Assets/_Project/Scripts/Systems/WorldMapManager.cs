@@ -76,8 +76,41 @@ namespace MakeGame.Systems
                  "같은 섬 배치를 다시 만들어낼 수 있다. 0이면 실행할 때마다 무작위 시드를 새로 뽑는다.")]
         public int worldSeed = 0;
 
+        // qa 결함 수정(B3-4/B3-5 전제 붕괴 원인): 섬 "크기"(IslandGenerator.GenerateNextIslandSize)와
+        // "위치"(FindValidPosition)는 섬 콘텐츠 스포너(B3-3에서 이미 섬별 독립 스트림으로 격리됨)보다
+        // 한 계층 위에 있는데, 여전히 전역 UnityEngine.Random을 썼다. 이전엔 여기서 Random.InitState로
+        // 전역 스트림을 리셋해 "일단 재현되는 것처럼" 보였지만, 그 전역 스트림을 WeatherSystem도
+        // Random.Range로 함께 소비한다(StartClearPhase/StartRainPhase). WeatherSystem은
+        // [RuntimeInitializeOnLoadMethod]+sceneLoaded로 스스로 생성되므로 그 Start()가 이 섬 생성 루프
+        // 앞/중간/뒤 중 어느 시점에 실행될지 Unity가 보장하지 않는다 - 최초 플레이(비동기적 초기화 순서)와
+        // 불러오기(RegenerateWorld, 게임 도중 동기 호출이라 WeatherSystem 간섭이 없음) 사이에 전역
+        // 스트림 소비 이력이 달라져, 같은 worldSeed인데 섬 크기/위치가 달라질 수 있었다.
+        // 해결: 섬 레이아웃(크기+위치) 생성 전용 독립 System.Random 스트림을 이 매니저가 만들어(전역
+        // Random과 완전히 분리) GenerateNextIsland 안에서 크기 결정 다음 위치 결정 순서로 그대로
+        // 넘겨쓴다. 섬을 순서대로 하나씩 만드는 단일 루프이므로, 크기 롤 다음 위치 롤이 바로 이어지는
+        // "호출 순서에 의존하는 단일 스트림"이 두 개의 독립 스트림을 따로 관리하는 것보다 자연스럽고
+        // 구현도 단순하다(스트림 하나만 만들어서 그대로 두 메서드에 넘기면 됨). 이제 Random.InitState를
+        // 아예 호출하지 않으므로, 이 매니저가 WeatherSystem을 비롯한 다른 시스템의 전역 Random 상태를
+        // 더 이상 오염시키지 않는다(부수 효과 제거).
+        private System.Random islandLayoutRng;
+        private const int IslandLayoutSeedSalt = -2000000; // SharkSpawner.SharkSeedSalt(-1000000)와 겹치지 않는 별도 예약 salt.
+
         /// <summary>
-        /// 섬 생성보다 먼저 실행되어야 하므로 Awake에서 난수 시드를 고정한다.
+        /// 섬 레이아웃 전용 rng를 (재)시드하고, IslandGenerator의 누적 카운터(생성 개수/대형·특대 최소
+        /// 보장 카운트)도 함께 초기화한다. qa 결함 수정 겸 추가 발견: ResetGenerationState()가 지금까지
+        /// 어디서도 호출되지 않아, RegenerateWorld를 두 번째로 호출하면(예: F9 불러오기를 두 번 연속
+        /// 수행) IslandGenerator의 누적 카운터가 첫 생성 때 값을 그대로 들고 있어 같은 worldSeed라도
+        /// 대형/특대 섬 강제 배정 시점이 최초 생성과 달라질 수 있었다 - "같은 worldSeed면 항상 같은
+        /// 결과"라는 이번 수정의 전제 자체가 이 초기화 누락으로 다시 깨질 뻔했다.
+        /// </summary>
+        private void SeedIslandLayoutRng()
+        {
+            islandLayoutRng = SeededRandomExtensions.CreateForSalt(worldSeed, IslandLayoutSeedSalt);
+            islandGenerator?.ResetGenerationState();
+        }
+
+        /// <summary>
+        /// 섬 생성보다 먼저 실행되어야 하므로 Awake에서 worldSeed를 확정하고 섬 레이아웃 rng를 시드한다.
         /// worldSeed가 0(미지정)이면 이번 실행에 사용할 시드를 무작위로 뽑아 기록해둔다.
         /// 이후 SaveLoadController가 이 값을 저장 파일에 함께 기록해, 다음에 같은 섬 배치를 재현할 수 있게 한다.
         /// </summary>
@@ -86,7 +119,7 @@ namespace MakeGame.Systems
             if (worldSeed == 0)
                 worldSeed = System.Environment.TickCount;
 
-            Random.InitState(worldSeed);
+            SeedIslandLayoutRng();
         }
 
         /// <summary>
@@ -125,7 +158,7 @@ namespace MakeGame.Systems
             islands.Clear();
 
             worldSeed = seed;
-            Random.InitState(worldSeed);
+            SeedIslandLayoutRng();
 
             CreateOcean();
             GenerateStartingIsland();
@@ -306,14 +339,14 @@ namespace MakeGame.Systems
         public IslandInstance GenerateNextIsland(int islandIndex = 0, int totalIslandCount = 1)
         {
             IslandSize size = islandGenerator != null
-                ? islandGenerator.GenerateNextIslandSize(islandIndex, totalIslandCount)
+                ? islandGenerator.GenerateNextIslandSize(islandIndex, totalIslandCount, islandLayoutRng)
                 : IslandSize.Small;
 
             var newIsland = new IslandInstance
             {
                 islandId = islands.Count,
                 size = size,
-                mapPosition = FindValidPosition(),
+                mapPosition = FindValidPosition(islandLayoutRng),
                 isDiscovered = false,
                 isStartingIsland = false,
             };
@@ -341,15 +374,18 @@ namespace MakeGame.Systems
         /// 기존에 생성된 섬들과 최소 간격 이상 떨어진 새 위치를 찾는다.
         /// 시작 섬으로부터의 거리는 생성된 섬 개수에 비례해 점점 멀어진다 (섬이 늘어날수록 더 먼 바다로 확장).
         /// 정해진 횟수 안에 조건을 만족하는 위치를 못 찾으면 마지막 후보 위치를 그대로 반환한다.
+        /// qa 결함 수정: 시드 없는 전역 UnityEngine.Random 대신, 호출자(GenerateNextIsland)가 넘겨주는
+        /// 섬 레이아웃 전용 결정적 rng를 쓴다(WorldMapManager.islandLayoutRng 주석 참고) - 각도/거리
+        /// 재시도 루프까지 포함해 이 섬 하나를 배치하는 데 쓰이는 모든 난수 호출이 이 rng 하나로 통일된다.
         /// </summary>
-        private Vector3 FindValidPosition()
+        private Vector3 FindValidPosition(System.Random rng)
         {
             Vector3 candidate = Vector3.zero;
 
             for (int attempt = 0; attempt < maxPlacementAttempts; attempt++)
             {
-                float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
-                float distance = baseDistanceStep * islands.Count + Random.Range(-distanceJitter, distanceJitter);
+                float angle = rng.NextFloat(0f, 360f) * Mathf.Deg2Rad;
+                float distance = baseDistanceStep * islands.Count + rng.NextFloat(-distanceJitter, distanceJitter);
                 distance = Mathf.Max(distance, baseDistanceStep * 0.5f);
 
                 candidate = new Vector3(Mathf.Cos(angle) * distance, 0f, Mathf.Sin(angle) * distance);
