@@ -48,7 +48,10 @@ namespace MakeGame.Player
                 return;
 
             bool isDaytime = clock == null || clock.IsDaytime;
-            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater(), isDaytime);
+            // WeatherSystem은 Bootstrap이 런타임 생성해서 씬에 인스턴스가 없다(AGENT_BRIEF 3장).
+            // 그래서 인스펙터 연결이 불가능하고, systems가 추가한 public static Active로 받는다.
+            bool isRaining = WeatherSystem.Active != null && WeatherSystem.Active.IsRaining;
+            survivalStats.Tick(Time.deltaTime, IsCurrentlyInShade(), IsCurrentlyUnderwater(), isDaytime, isRaining);
         }
 
         /// <summary>

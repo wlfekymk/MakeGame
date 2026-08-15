@@ -64,6 +64,50 @@ namespace MakeGame.Systems
         [Tooltip("비가 올 때 안개 밀도. 너무 높으면 시야가 답답해지므로 낮게 유지")]
         public float rainFogDensity = 0.012f;
 
+        // ── [B9] 우천의 게임플레이 효과 ──────────────────────────────────────────
+        // 문제: 비는 실시간의 약 30%를 차지하는데(평균 주기 165초 맑음 + 70초 비 = 29.8%,
+        // Docs/Design_MidGameContent.md 1-2장) IsRaining을 읽는 곳이 광량/안개/빗소리뿐이라
+        // 게임 상태에 아무 영향이 없었다. 90~240초마다 오는 이벤트가 순수 장식이었다.
+        //
+        // 설계는 같은 문서 4장 "안 3"을 그대로 따른다(효과 3개 중 2개를 여기서 구현):
+        //   (1) 증류기 생산 3배 — 비 = 물 수급 기회. 우천 중 원정/제작을 나갈 이유가 생긴다.
+        //   (2) 모닥불 연료 소모 1.5배 — 비 = 불을 유지하기 나쁜 시간. 야간 사냥(안 2)과 정면 충돌시켜
+        //       "비 오는 밤은 사냥하기 나쁜 밤"이라는 판단을 매일 밤 다시 하게 만든다.
+        //   (3) 일사병 정지 — SurvivalStats/SurvivalTickDriver 소유가 아니라 여기서 못 한다. [요청]으로 올렸다.
+        //
+        // 구현 방식이 "필드를 곱하지 않고 Tick을 한 번 더 부르는 것"인 이유:
+        // WaterStill.waterPerSecond나 Campfire.secondsPerFuel을 직접 곱해두고 비가 그칠 때 되돌리는
+        // 방식은 이 프로젝트가 반복해서 사고를 낸 형태다 — 되돌리기 전에 씬 저장/재로드/파괴가 끼면
+        // 곱해진 값이 그대로 굳는다(AGENT_BRIEF 0장의 "코드 값과 직렬화 값이 갈라진다"). 대신
+        // 두 컴포넌트의 공개 API인 Tick(float)을 배수만큼의 추가 델타로 한 번 더 호출한다.
+        // 두 Tick 모두 델타에 선형인 순수 누적/차감이고(WaterStill.cs:150, Campfire.cs:92),
+        // 각자 자기 Update에서 이미 1배로 돌고 있으므로 여기서 (배수-1)배를 더하면 정확히 배수가 된다.
+        // 설정 필드는 하나도 건드리지 않으므로 비가 그치면 되돌릴 상태 자체가 없다.
+        [Header("우천 게임플레이 효과 (B9)")]
+        [Tooltip("비가 오는 동안 물 증류기(WaterStill) 생산 속도에 곱할 배율. 1이면 효과 없음")]
+        public float rainWaterStillMultiplier = 3f;
+
+        [Tooltip("비가 오는 동안 모닥불(Campfire) 연료 소모 속도에 곱할 배율. 1이면 효과 없음")]
+        public float rainCampfireFuelMultiplier = 1.5f;
+
+        [Tooltip("우천 효과 대상(증류기/모닥불) 목록을 다시 훑는 주기(초). 플레이어가 비 도중에 새로" +
+            " 설치한 구조물을 잡아내기 위한 것이라 짧을 필요가 없다")]
+        public float rainTargetRescanSeconds = 3f;
+
+        /// <summary>
+        /// 현재 살아 있는 WeatherSystem 인스턴스. Bootstrap이 런타임에 만들기 때문에 인스펙터로
+        /// 참조를 연결할 수단이 없어서, 다른 시스템이 IsRaining을 읽으려면 매번 FindAnyObjectByType을
+        /// 해야 했다. 이 정적 참조는 그 비용을 없애기 위한 것이다(AudioManager.Instance와 같은 패턴).
+        /// 씬이 다시 로드되면 새 인스턴스의 Awake가 덮어쓴다.
+        /// </summary>
+        public static WeatherSystem Active { get; private set; }
+
+        // 우천 효과 대상 캐시. 매 프레임 FindObjectsByType을 돌리면 비 오는 30% 구간 내내 GC/스캔
+        // 비용이 붙으므로 rainTargetRescanSeconds 주기로만 갱신한다.
+        private WaterStill[] rainWaterStills = System.Array.Empty<WaterStill>();
+        private Campfire[] rainCampfires = System.Array.Empty<Campfire>();
+        private float rainRescanTimer;
+
         private float phaseTimer;
         private float phaseDuration;
         private ParticleSystem rainParticles;
@@ -97,7 +141,18 @@ namespace MakeGame.Systems
         /// </summary>
         private void Awake()
         {
+            Active = this;
             ApplyBalanceConfigFallback();
+        }
+
+        /// <summary>
+        /// 씬 재로드로 이 인스턴스가 사라질 때 정적 참조를 정리한다. 새 인스턴스의 Awake가 먼저
+        /// 실행된 뒤 옛 인스턴스가 파괴되는 순서도 가능하므로, 반드시 "아직 나인 경우"에만 비운다.
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (Active == this)
+                Active = null;
         }
 
         /// <summary>
@@ -214,6 +269,60 @@ namespace MakeGame.Systems
                     followTarget.position.y + rainHeightAboveTarget,
                     followTarget.position.z);
             }
+
+            if (IsRaining)
+                ApplyRainGameplayEffects(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// [B9] 비가 오는 동안만 매 프레임 실행되는 게임플레이 효과. 위 필드 주석의 설계 근거대로
+        /// 대상 컴포넌트의 설정 필드는 건드리지 않고 공개 Tick(float)을 추가 델타로 한 번 더 부른다.
+        /// 배율이 1 이하면 추가 델타가 0 이하가 되어 그 효과는 통째로 건너뛴다(효과 끄기 = 배율 1).
+        /// 대상이 하나도 없으면(증류기·모닥불 미설치) 아무 일도 일어나지 않는다 — 초반 플레이는 그대로다.
+        /// </summary>
+        private void ApplyRainGameplayEffects(float deltaTime)
+        {
+            if (deltaTime <= 0f)
+                return;
+
+            rainRescanTimer -= deltaTime;
+            if (rainRescanTimer <= 0f)
+            {
+                rainRescanTimer = Mathf.Max(0.5f, rainTargetRescanSeconds);
+                // 비활성 오브젝트는 제외한다(꺼져 있는 모닥불/증류기가 비를 맞을 이유가 없다).
+                // 정렬은 필요 없으므로 SortMode.None — SaveLoadController가 쓰는 것과 같은 API다.
+                // [B13] FindObjectsSortMode를 받는 오버로드는 Unity 6에서 obsolete다(CS0618).
+                // 프로젝트의 다른 호출부(DayNightCycle:169, SaveLoadController 전부)와 같은
+                // 1인자 형태로 맞춘다 - 정렬이 필요 없는 호출이라 동작도 동일하다.
+                rainWaterStills = FindObjectsByType<WaterStill>(FindObjectsInactive.Exclude);
+                rainCampfires = FindObjectsByType<Campfire>(FindObjectsInactive.Exclude);
+            }
+
+            // 증류기: 빗물을 받아 생산이 빨라진다. WaterStill.Tick은 maxStorage로 클램프하므로
+            // 배수를 걸어도 저장 상한을 넘지 않는다(넘칠 걱정 없이 안전하게 가속만 된다).
+            float extraStillSeconds = (rainWaterStillMultiplier - 1f) * deltaTime;
+            if (extraStillSeconds > 0f)
+            {
+                for (int i = 0; i < rainWaterStills.Length; i++)
+                {
+                    WaterStill still = rainWaterStills[i];
+                    if (still != null)
+                        still.Tick(extraStillSeconds);
+                }
+            }
+
+            // 모닥불: 빗속에서 연료가 빨리 탄다. Campfire.Tick은 꺼져 있으면 즉시 return하고,
+            // 연료가 0이 되면 스스로 isLit을 내린다 — 즉 "비가 오래 오면 불이 꺼진다"가 자동으로 성립한다.
+            float extraFuelSeconds = (rainCampfireFuelMultiplier - 1f) * deltaTime;
+            if (extraFuelSeconds > 0f)
+            {
+                for (int i = 0; i < rainCampfires.Length; i++)
+                {
+                    Campfire fire = rainCampfires[i];
+                    if (fire != null)
+                        fire.Tick(extraFuelSeconds);
+                }
+            }
         }
 
         /// <summary>맑은 날씨로 전환한다. 비 파티클과 빗소리를 멈춘다.</summary>
@@ -247,6 +356,10 @@ namespace MakeGame.Systems
             IsRaining = true;
             phaseTimer = 0f;
             phaseDuration = Random.Range(minRainSeconds, maxRainSeconds);
+
+            // [B9] 비가 시작되는 프레임에 대상 목록을 즉시 훑도록 타이머를 0으로 만든다.
+            // (맑은 동안 설치/철거된 증류기·모닥불이 캐시에 반영돼 있지 않기 때문)
+            rainRescanTimer = 0f;
 
             if (followTarget != null)
                 transform.position = followTarget.position + Vector3.up * rainHeightAboveTarget;

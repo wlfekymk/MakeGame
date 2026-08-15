@@ -17,8 +17,14 @@ namespace MakeGame.Systems
         [Tooltip("사냥에 필요한 도구 (창). 비워두면 도구 없이도 시도할 수 있다.")]
         public ItemData requiredTool;
 
+        // [B9] 12 → 20. Docs/Design_MidGameContent.md 4장 "안 1(a) 파우셋 유량 재조정"의 지정값이다.
+        // 씬/프리팹 어디에도 HuntableCreature 인스턴스가 없고(런타임에 CreatureSpawner가 만든다)
+        // CreatureSpawner.CreatureEntry에도 대응 필드가 없으므로, 이 코드 기본값이 곧 실동작값이다
+        // (AGENT_BRIEF 0장의 "씬 값이 이긴다"가 적용되지 않는 경우 — 확인 완료).
+        // 근거: 씬 experiencePerLevel 100 기준 20이면 사냥 5회 = 1레벨. 채집(ResourceNode)과의 XP
+        // 유량 격차를 좁혀, 레벨이 빨리 오르는 쪽이 "밖에 나가 사냥하는 쪽"이 되게 한다.
         [Tooltip("사냥 성공 시 지급할 사냥(Hunting) 스킬 경험치")]
-        public float huntExperience = 12f;
+        public float huntExperience = 20f;
 
         [Tooltip("사냥 시도 성공 확률 (0~1)")]
         [Range(0f, 1f)]
@@ -26,6 +32,28 @@ namespace MakeGame.Systems
 
         [Tooltip("잡히거나 도망친 뒤 다시 나타나기까지 걸리는 시간(초)")]
         public float respawnSeconds = 90f;
+
+        // ── [B9] 야간 사냥 (Docs/Design_MidGameContent.md 4장 "안 2. 밤을 판다") ────────────
+        // 왜: 같은 문서 0장 계산대로 이 게임의 길이는 74.5분~147분 사이에서 플레이어가 고르는 값인데,
+        // 밤에 살 수 있는 것이 하나도 없어서 전원이 취침(=74.5분)을 고른다. 밤 5분에는 이미
+        // "총 플레이 +5분"이라는 가격표가 붙어 있고 진열대만 비어 있었다.
+        // 무엇: 사냥감을 야행성으로 만든다. 밤에는 성공률 +0.2, 수확량 +1.
+        // 그래서: 취침(실시간 0초 + HP + 안전) vs 야간 사냥(실시간 5분 + 식량 2배 + 사냥/요리 XP + 위험)이
+        // 처음으로 정면 경쟁하는 선택지가 된다.
+        // 값의 출처: 두 필드 모두 문서 지정값이며 CreatureSpawner.CreatureEntry에 같은 이름의 필드를
+        // 추가해 종류별로 덮어쓸 수 있게 했다. 씬 creatureEntries에는 아직 이 키가 없으므로
+        // 엔트리 쪽 코드 기본값(0.2 / 1)이 그대로 전달된다 — 디렉터 조치 없이도 동작한다.
+        [Tooltip("밤(SurvivalClock.IsDaytime == false)에 사냥 성공 확률에 더할 보너스. 0이면 밤낮 차이 없음")]
+        public float nightSuccessBonus = 0.2f;
+
+        [Tooltip("밤에 사냥 성공 시 추가로 더 주는 수확 개수. 0이면 밤낮 차이 없음")]
+        public int nightYieldBonus = 1;
+
+        // Docs/Design_MidGameContent.md 4장 "안 1(b) 레벨 페이로드" — 사냥 레벨이 성공률로 되돌아온다.
+        // Lv10에서 +0.27이라 물고기(0.6)는 0.87, 육상(0.7)은 0.97이 되고, 밤 보너스와 겹치면
+        // Clamp01에 걸린다. 상한을 넘겨도 확률이 깨지지 않도록 TryHunt에서 반드시 클램프한다.
+        [Tooltip("사냥 스킬 레벨 1당(Lv1 초과분) 성공 확률에 더할 값")]
+        public float huntingLevelSuccessBonus = 0.03f;
 
         // B3-3: ResourceNode/HazardSource와 동일한 목적의 안정적 식별자. CreatureSpawner가 섬별 결정적
         // System.Random을 쓰게 되어, 같은 worldSeed면 항상 같은 (islandIndex, spawnOrder)에 같은
@@ -39,6 +67,12 @@ namespace MakeGame.Systems
         private bool isCaught = false;
         private float respawnTimer = 0f;
         private bool headBuilt = false;
+
+        // [B9] 밤/낮 판정용 SurvivalClock 캐시. 개체가 섬당 4~10마리라 매 사냥 시도마다
+        // FindAnyObjectByType을 도는 것은 피하고 싶지만, 시계가 없는 테스트 씬도 성립해야 하므로
+        // "찾아봤는지" 플래그를 따로 둬서 null 결과도 캐시한다(매번 재탐색 방지).
+        private SurvivalClock cachedClock;
+        private bool clockLookupDone = false;
 
         /// <summary>현재 사냥을 시도할 수 있는 상태인지(아직 잡히지 않았는지) 여부.</summary>
         public bool IsAvailable => !isCaught;
@@ -145,10 +179,28 @@ namespace MakeGame.Systems
             if (toolItem != null)
                 inventory.UseItem(toolItem); // 시도 자체로 도구 내구도 소모 (성공 여부와 무관)
 
-            bool success = Random.value < successChance;
+            // [B9] 성공 확률 = 기본값 + 사냥 레벨 보너스 + 야간 보너스. 세 항을 더한 뒤 반드시 클램프한다
+            // (Lv10 + 밤이면 육상 사냥감이 0.7 + 0.27 + 0.2 = 1.17로 1을 넘는다).
+            bool isNight = IsNightNow();
+            float chance = successChance;
+            if (skills != null)
+                chance += huntingLevelSuccessBonus * (skills.GetLevel(SkillType.Hunting) - 1);
+            if (isNight)
+                chance += nightSuccessBonus;
+            chance = Mathf.Clamp01(chance);
+
+            bool success = Random.value < chance;
             if (success && yieldItem != null)
             {
-                inventory.AddItem(yieldItem);
+                // 야간 수확량 보너스. 인벤토리 AddItem은 1개씩 넣는 API라 개수만큼 반복한다
+                // (스택 용량/무게 규칙을 우회하지 않기 위해 일부러 루프로 같은 경로를 통과시킨다).
+                int yieldCount = 1;
+                if (isNight && nightYieldBonus > 0)
+                    yieldCount += nightYieldBonus;
+
+                for (int i = 0; i < yieldCount; i++)
+                    inventory.AddItem(yieldItem);
+
                 if (skills != null)
                     skills.AddExperience(SkillType.Hunting, huntExperience);
 
@@ -158,6 +210,22 @@ namespace MakeGame.Systems
             }
 
             return success;
+        }
+
+        /// <summary>
+        /// [B9] 지금이 밤인지 판정한다. SurvivalClock.IsDaytime(TimeOfDay01 0.25~0.75가 낮)의 반대다.
+        /// 시계가 없는 씬에서는 항상 낮으로 취급해 야간 보너스가 조용히 꺼진다
+        /// (SurvivalTickDriver가 clock == null을 "항상 낮"으로 다루는 것과 같은 규칙).
+        /// </summary>
+        private bool IsNightNow()
+        {
+            if (!clockLookupDone)
+            {
+                cachedClock = FindAnyObjectByType<SurvivalClock>();
+                clockLookupDone = true;
+            }
+
+            return cachedClock != null && !cachedClock.IsDaytime;
         }
     }
 }

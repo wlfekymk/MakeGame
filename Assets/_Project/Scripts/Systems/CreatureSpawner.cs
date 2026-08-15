@@ -34,6 +34,19 @@ namespace MakeGame.Systems
 
             [Tooltip("물고기처럼 해안 근처에 배치할지 여부. true면 흩뿌림 반경 바깥쪽 가장자리에 가깝게 배치한다.")]
             public bool preferShoreline = false;
+
+            // [B9] 야간 사냥 보너스(Docs/Design_MidGameContent.md 4장 "안 2"). 종류별로 야행성 정도를
+            // 다르게 줄 수 있도록 엔트리에 둔다. HuntableCreature의 같은 이름 필드로 그대로 전달된다.
+            // ⚠️ 이 두 필드는 리스트의 **끝에 추가**했다. 씬 creatureEntries(SampleScene.unity:1244~1256)에는
+            // 아직 이 YAML 키가 없는데, Unity는 직렬화된 키가 없는 필드에 대해 C# 필드 초기값을 그대로
+            // 남기므로 씬을 고치지 않아도 0.2 / 1이 살아 있다(디렉터 조치는 선택 사항).
+            // 엔트리 개수·순서는 손대지 않았다 — spawnOrder는 실제 생성된 개체의 러닝 카운터라
+            // 필드 추가만으로는 세이브 키 매핑이 1도 움직이지 않는다.
+            [Tooltip("밤에 사냥 성공 확률에 더할 보너스. 0이면 이 종류는 밤낮 차이가 없다")]
+            public float nightSuccessBonus = 0.2f;
+
+            [Tooltip("밤에 사냥 성공 시 추가로 더 주는 수확 개수. 0이면 이 종류는 밤낮 차이가 없다")]
+            public int nightYieldBonus = 1;
         }
 
         [Tooltip("섬에 등장 가능한 사냥감/물고기 종류와 기본 개체 수 목록")]
@@ -185,6 +198,10 @@ namespace MakeGame.Systems
             creature.requiredTool = entry.requiredTool;
             creature.successChance = entry.successChance;
             creature.respawnSeconds = entry.respawnSeconds;
+            // [B9] 야간 사냥 보너스 전달. 난수를 소비하지 않는 순수 대입이라 rng 시퀀스와 spawnOrder에
+            // 아무 영향이 없다(세이브 재현성 유지).
+            creature.nightSuccessBonus = entry.nightSuccessBonus;
+            creature.nightYieldBonus = entry.nightYieldBonus;
             creature.islandIndex = islandIndex;
             creature.spawnOrder = spawnOrder;
             return creature;

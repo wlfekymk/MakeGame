@@ -293,13 +293,16 @@ namespace MakeGame.Player
         /// <param name="isUnderwater">현재 수면 아래(잠수 중)인지 여부 (산소 감소 판정용)</param>
         /// <param name="isDaytime">현재 태양이 떠 있는 낮 시간대인지 여부 (일사병 증가 판정용, 기본값 true는
         /// 밤/낮 주기가 없는 호출부와의 하위 호환을 위함 - 항상 낮인 것처럼 취급해 기존 동작을 유지한다)</param>
-        public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false, bool isDaytime = true)
+        /// <param name="isRaining">비가 오는 중인지 (일사병 정지용). 기본값 false는 날씨를 모르는
+        /// 호출부와의 하위 호환 - 비가 안 오는 것처럼 취급해 기존 동작을 유지한다.</param>
+        public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false, bool isDaytime = true,
+            bool isRaining = false)
         {
             if (IsDead)
                 return;
 
             UpdateHungerAndThirst(deltaTime);
-            UpdateSunstroke(deltaTime, isInShade, isDaytime);
+            UpdateSunstroke(deltaTime, isInShade, isDaytime, isRaining);
             UpdateStatusEffectDamage(deltaTime);
             UpdateOxygen(deltaTime, isUnderwater);
             UpdateHealthRegen(deltaTime);
@@ -353,8 +356,14 @@ namespace MakeGame.Player
         /// 햇빛이 없으므로 낮과 같은 속도로(태양 없이 식는다는 의미로) 회복되며, 오직 '그늘 밖 + 낮'
         /// 조합에서만 실제로 증가한다.
         /// </summary>
-        private void UpdateSunstroke(float deltaTime, bool isInShade, bool isDaytime)
+        private void UpdateSunstroke(float deltaTime, bool isInShade, bool isDaytime, bool isRaining)
         {
+            // [B13] 비가 오는 동안에는 증가도 회복도 하지 않는다. 회복까지 주면 비가 공짜 안전지대가
+            // 되어, 우천이 "불이 꺼지고 시야가 나빠지는 불리한 이벤트"라는 설계와 정반대가 된다.
+            // 멈추기만 해도 플레이어에게는 "지금은 밖에서 일할 수 있는 시간"으로 읽힌다.
+            if (isRaining)
+                return;
+
             if (isInShade || !isDaytime)
                 sunstroke = Mathf.Max(0f, sunstroke - sunstrokeRecoveryPerSecond * deltaTime);
             else

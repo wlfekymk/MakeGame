@@ -76,6 +76,30 @@ namespace MakeGame.Systems
             " 마릿수를 면적에 비례해 계산한다. 0 이하면 위험 요소를 배치하지 않는다.")]
         public float hazardsPerTenThousandSquareMeters = 2f;
 
+        /// <summary>
+        /// [B9] 마릿수 하드 캡의 코드 상수 기본값. maxHazardsPerIsland가 미설정(0 이하)일 때 쓴다.
+        /// 20인 근거(셋 다 같은 방향을 가리킨다):
+        ///  (1) 기획 — 오늘의 명목 마릿수 상한은 특대 섬 16마리다(아래 ComputeHazardCount 표).
+        ///      20은 그 1.25배라 "디렉터가 특대 위험도를 조금 더 올린다"까지는 통과시키되,
+        ///      GetSizeDangerWeight의 최대 트림 4배가 만들어낼 수 있는 64마리는 확실히 막는다.
+        ///  (2) 성능 — SpawnSingleHazard는 개체마다 StructureVisualBuilder.CreateColorMaterial을
+        ///      호출하고 그 메서드는 캐시 없이 매번 new Material을 만든다(StructureVisualBuilder.cs:103).
+        ///      보조 파츠까지 세면 위험요소 1마리당 머티리얼이 약 5~7개다(곰 6 / 벌떼 6 / 상어 5).
+        ///      특대 섬에는 이미 자원 노드 약 100개와 사냥감 약 10마리가 함께 깔린다 →
+        ///      16마리면 위험요소 몫이 약 96개, 20마리면 약 120개. 64마리면 위험요소 하나만으로
+        ///      약 384개가 되어 AGENT_BRIEF 4장이 경고하는 "섬당 400 머티리얼" 선을 단독으로 넘는다.
+        ///  (3) 체감 — Design_MidGameContent.md 3장의 목표는 "섬 체류 30분 기대 조우 2.2회"다.
+        ///      16↔20은 그 안에서 오차 범위지만 64는 목표의 4배라 다른 게임이 된다.
+        /// 0 이하를 "상한 없음"이 아니라 "미설정"으로 해석하는 것은 의도된 것이다 — 이 프로젝트의
+        /// 다른 0 이하 판정(GetMultiplier/GetScatterRadius/ApplyBalanceConfigFallback)과 규칙을 맞추고,
+        /// 필드를 0으로 비워 상한을 통째로 꺼버리는 사고를 원천 차단한다.
+        /// </summary>
+        public const int DefaultMaxHazardsPerIsland = 20;
+
+        [Tooltip("섬 하나에 배치할 위험 요소 마릿수의 절대 상한. 밀도·규모 트림을 곱한 결과가 이 값을" +
+            " 넘으면 여기서 잘린다. 0 이하로 두면 미설정으로 보고 코드 상수(20)를 쓴다 — 0은 '상한 없음'이 아니다.")]
+        public int maxHazardsPerIsland = DefaultMaxHazardsPerIsland;
+
         // 긴급 정정(#2 회귀 수정): 이 필드들을 한 차례 제거하고 IslandSizeMetrics 직접 호출로 바꿨었는데,
         // 실제 배포된 SampleScene.unity에 이 컴포넌트가 배치되어 있고 이 필드들에 코드 기본값과 다른
         // 값(디자이너가 조정한 실제 밸런스 값)이 직렬화되어 있다는 사실이 뒤늦게 확인되었다. 필드를
@@ -228,6 +252,11 @@ namespace MakeGame.Systems
         /// 밀도가 양수인데 반올림 결과가 0이 되는 경우(아주 작은 섬)에는 최소 1마리를 보장한다 —
         /// 위험 요소가 아예 없는 섬은 "면제"가 아니라 버그로 읽히기 때문이다.
         /// 밀도 자체가 0 이하면(디자이너가 의도적으로 끈 경우) 0을 그대로 돌려준다.
+        ///
+        /// [B9] 마지막에 maxHazardsPerIsland로 하드 캡을 건다. 면적 비례 공식은 입력(밀도 · 규모 트림)이
+        /// 둘 다 인스펙터에서 자유롭게 조정 가능한 값이라, 곱이 커지면 마릿수가 상한 없이 따라 커진다.
+        /// 오늘의 씬 값에서는 특대 16마리로 캡(20)에 닿지 않으므로 이 줄은 실동작을 바꾸지 않는다 —
+        /// 순수하게 오설정 방어다. 캡 값의 근거는 DefaultMaxHazardsPerIsland 주석 참고.
         /// </summary>
         private int ComputeHazardCount(IslandSize size)
         {
@@ -242,6 +271,11 @@ namespace MakeGame.Systems
             int count = Mathf.RoundToInt(hazardsPerTenThousandSquareMeters * areaInTenThousandSqm * GetSizeDangerWeight(size));
             if (count < 1)
                 count = 1;
+
+            int cap = maxHazardsPerIsland > 0 ? maxHazardsPerIsland : DefaultMaxHazardsPerIsland;
+            if (count > cap)
+                count = cap;
+
             return count;
         }
 

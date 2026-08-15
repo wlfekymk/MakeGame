@@ -22,7 +22,7 @@ namespace MakeGame.Systems
         // 이 값은 씬에 직렬화돼 있지 않다 - DayNightCycle은 RuntimeInitializeOnLoadMethod로 매번 새로
         // 생성되므로(아래 Bootstrap 참고) 이 코드 기본값이 곧 실제 게임에 적용되는 값이다.
         [Tooltip("밤 동안의 최소 조명 강도 (완전한 암흑은 아니고 은은하게 남겨둔다)")]
-        public float nightIntensity = 0.10f;
+        public float nightIntensity = 0.18f;
 
         [Tooltip("한낮의 조명 색상 (밝은 백색광)")]
         public Color dayColor = new Color(1f, 0.98f, 0.92f);
@@ -77,7 +77,7 @@ namespace MakeGame.Systems
         public Color duskDawnAmbient = new Color(0.38f, 0.29f, 0.25f);
 
         [Tooltip("한밤중의 환경광. 이 값이 밤의 '최소 가시성 바닥'이다 - 0에 가까우면 실루엣조차 안 보인다.")]
-        public Color nightAmbient = new Color(0.10f, 0.12f, 0.18f);
+        public Color nightAmbient = new Color(0.16f, 0.18f, 0.26f);
 
         [Tooltip("켜면 하늘색과 같은 색의 옅은 거리 안개를 깔아 수평선에서 바다와 하늘이 이어지게 한다.")]
         public bool enableAtmosphericFog = true;
