@@ -62,9 +62,9 @@ namespace MakeGame.Systems
         // 면적당 자원 밀도가 오히려 옅어지는 문제가 있었다(맵 스케일을 10배로 키운 배치 이후 발견).
         // 아래 배율을 면적비에 맞춰 올려서 섬 크기와 무관하게 체감 밀도가 비슷하게 유지되도록 했다.
         public float smallMultiplier = 1f;
-        public float mediumMultiplier = 3.24f;
-        public float largeMultiplier = 7.84f;
-        public float extraLargeMultiplier = 16f;
+        public float mediumMultiplier = 2f;
+        public float largeMultiplier = 3f;
+        public float extraLargeMultiplier = 4f;
 
         [Header("섬 규모별 산포 반경")]
         // 버그 수정 (#1003/#1006): 예전에는 scatterRadius가 섬 규모와 무관하게 값 하나(80f)뿐이었다.
@@ -72,10 +72,10 @@ namespace MakeGame.Systems
         // 지형 밖(바다)까지 자원이 튀어나가고 특대 섬은 중심 근처에만 자원이 몰려 대부분의 면적이 텅
         // 비어 보이는 문제가 있었다. 각 섬 지형 반지름의 80%(해안에 자원이 물에 잠기지 않도록 여백 확보)
         // 에 맞춰 규모별 반경을 따로 뒀다.
-        public float smallScatterRadius = 40f;
-        public float mediumScatterRadius = 72f;
-        public float largeScatterRadius = 112f;
-        public float extraLargeScatterRadius = 160f;
+        public float smallScatterRadius = 80f;
+        public float mediumScatterRadius = 80f;
+        public float largeScatterRadius = 80f;
+        public float extraLargeScatterRadius = 80f;
 
         /// <summary>
         /// 지정한 섬 인스턴스 위에 규모에 맞는 개수만큼 자원 노드를 생성한다.

@@ -7,8 +7,9 @@ namespace MakeGame.Systems
 {
     /// <summary>
     /// 엔딩 달성 조건을 매 프레임 확인한다. 두 가지 엔딩 경로 중 먼저 달성한 쪽으로 게임을 종료시킨다.
-    /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보.
-    ///    여러 단계를 밟아 꾸준히 자원을 모으는 정공법 경로.
+    /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보
+    ///    + 최소 경과 일수(requiredElapsedDays, Spec_11 기준 15일) 도달. 여러 단계를 밟아 꾸준히
+    ///    자원을 모으는 정공법 경로.
     /// 2) 경비행기 수리 엔딩: 시작 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
     ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete가 true가 되는 순간 확정된다.
     /// </summary>
@@ -22,6 +23,17 @@ namespace MakeGame.Systems
 
         [Tooltip("비축 물자를 확인할 인벤토리")]
         public PlayerInventory inventory;
+
+        [Header("배 엔딩 경과 일수 조건 (Spec_11)")]
+        [Tooltip("배 엔딩의 경과 일수 조건 판정에 사용할 게임 내 시계. 비워두면 이 조건을 검사할 수 없어" +
+            " 경고를 남기고 조건을 만족한 것으로 안전하게 처리한다(HasElapsedRequiredDays 참고).")]
+        public SurvivalClock survivalClock;
+
+        [Tooltip("배 엔딩에 필요한 최소 경과 일수 (Spec_11 기준 15일)")]
+        public int requiredElapsedDays = 15;
+
+        /// <summary>survivalClock 미연결 경고를 이미 한 번 남겼는지 여부 (매 프레임 로그 스팸 방지용).</summary>
+        private bool survivalClockMissingWarned = false;
 
         [Header("엔딩 연출")]
         [Tooltip("엔딩 달성 시 잠시 비활성화할 이동/시점 컨트롤러")]
@@ -99,7 +111,10 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 배 엔딩의 모든 조건(배 100% 완성, 식량/식수 30일치, 연료)을 만족하는지 확인한다.
+        /// 배 엔딩의 모든 조건(배 100% 완성, 식량/식수 30일치, 연료, 최소 경과 일수)을 만족하는지 확인한다.
+        /// 경과 일수 조건 추가(B2-2, Spec_11): 배를 지나치게 빨리(초반 몇 시간 만에) 완성해 탈출해버리면
+        /// 생존 게임의 긴장감을 충분히 느끼기 전에 끝나버린다는 기획 의도를 반영해, 최소 경과 일수
+        /// (requiredElapsedDays) 조건을 추가했다.
         /// </summary>
         private bool CheckBoatEndingConditions()
         {
@@ -118,7 +133,35 @@ namespace MakeGame.Systems
             bool hasEnoughFuel = fuelItem == null
                 || inventory.GetItemCount(fuelItem) >= requiredFuelCount;
 
-            return boatComplete && hasEnoughFood && hasEnoughWater && hasEnoughFuel;
+            bool hasElapsedEnoughDays = HasElapsedRequiredDays();
+
+            return boatComplete && hasEnoughFood && hasEnoughWater && hasEnoughFuel && hasElapsedEnoughDays;
+        }
+
+        /// <summary>
+        /// 배 엔딩에 필요한 최소 경과 일수(requiredElapsedDays) 조건을 만족했는지 확인한다.
+        /// 치명 결함 예방(B2-2): survivalClock이 Inspector에서 아직 연결되지 않은 채로 이 메서드가
+        /// 무방비로 참조하면 NullReferenceException이 터져 EndingChecker.Update() 전체가 멈추고
+        /// 배/경비행기 두 엔딩 경로 모두 더 이상 확인되지 않는다(IslandGenerator.spawnConfig 미연결
+        /// 버그와 동일한 함정). 미연결 상태면 최초 1회만 Debug.LogError로 원인을 남기고, 이 조건 하나
+        /// 때문에 배 엔딩이 영원히 막히는 소프트락을 만들지 않도록 조건을 만족한 것으로 안전하게
+        /// 처리한다(연결되는 즉시 정상적으로 경과 일수를 검사하게 된다).
+        /// </summary>
+        private bool HasElapsedRequiredDays()
+        {
+            if (survivalClock == null)
+            {
+                if (!survivalClockMissingWarned)
+                {
+                    Debug.LogError($"[EndingChecker] survivalClock이 연결되지 않았습니다. 배 엔딩의 경과 일수" +
+                        $"({requiredElapsedDays}일) 조건을 검사할 수 없어 이 조건을 만족한 것으로 처리합니다. " +
+                        "Inspector에서 SurvivalClock을 연결하세요.");
+                    survivalClockMissingWarned = true;
+                }
+                return true;
+            }
+
+            return survivalClock.ElapsedDays >= requiredElapsedDays;
         }
 
         /// <summary>

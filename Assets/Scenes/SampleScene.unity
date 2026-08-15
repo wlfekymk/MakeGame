@@ -668,6 +668,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
   - {fileID: 11400000, guid: 1a4a40095456c6449952232cb9a583d2, type: 2}
   - {fileID: 11400000, guid: 57c8b75b1a78d9b45ae04aaa7355d08a, type: 2}
+  - {fileID: 11400000, guid: 3e5f88728e114bd689d243715c2450b0, type: 2}
   items: []
 --- !u!114 &1925945765
 MonoBehaviour:
@@ -1034,6 +1035,8 @@ MonoBehaviour:
   requiredWaterCount: 30
   fuelItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
   requiredFuelCount: 1
+  survivalClock: {fileID: 2000000009}
+  requiredElapsedDays: 15
 --- !u!114 &2000000011
 MonoBehaviour:
   m_ObjectHideFlags: 0

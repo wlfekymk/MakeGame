@@ -130,9 +130,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 94a6ddd538d628149ad289a78c665f3b, type: 3}
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.WaterStill
-  waterPerSecond: 0.3
+  waterPerSecond: 0.1
   storedWater: 0
-  maxStorage: 20
+  maxStorage: 12
 --- !u!1 &100000010
 GameObject:
   m_ObjectHideFlags: 0

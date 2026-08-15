@@ -58,10 +58,10 @@ namespace MakeGame.Systems
         // WorldMapManager.GetSizeScale의 지형 반지름(50/90/140/200)과 어긋나 있어서, 소형 섬에서는
         // 사냥감이 바다 쪽에 배치될 수 있었고 특대 섬에서는 중심 근처로만 몰렸다. IslandResourceSpawner/
         // HazardSpawner와 동일하게 각 섬 지형 반지름의 80%에 맞춰 규모별 반경을 따로 뒀다.
-        public float smallScatterRadius = 40f;
-        public float mediumScatterRadius = 72f;
-        public float largeScatterRadius = 112f;
-        public float extraLargeScatterRadius = 160f;
+        public float smallScatterRadius = 90f;
+        public float mediumScatterRadius = 90f;
+        public float largeScatterRadius = 90f;
+        public float extraLargeScatterRadius = 90f;
 
         /// <summary>
         /// 지정한 섬에 규모에 맞는 개체 수만큼 사냥감/물고기를 배치한다.

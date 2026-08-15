@@ -9,14 +9,18 @@ namespace MakeGame.Systems
     /// </summary>
     public class WaterStill : MonoBehaviour
     {
+        // 밸런스 하향(B2-1, Spec_13): 물 증류기가 담수 확보를 지나치게 손쉽게 만들어 갈증 관리 긴장감을
+        // 떨어뜨린다는 판단으로 생산 속도와 저장량을 낮췄다. [디렉터 조치 요청] 실측 결과 실제 오버라이드가
+        // Prefabs/WaterStill.prefab에 있으므로(0.3f/20f), 이 코드 기본값만으로는 게임에 반영되지 않는다 -
+        // 프리팹 쪽 값도 함께 바꿔야 한다.
         [Tooltip("초당 생산되는 물의 양")]
-        public float waterPerSecond = 0.3f;
+        public float waterPerSecond = 0.10f;
 
         [Tooltip("현재 저장된 물의 양")]
         public float storedWater = 0f;
 
         [Tooltip("최대로 저장할 수 있는 물의 양")]
-        public float maxStorage = 20f;
+        public float maxStorage = 12f;
 
         /// <summary>
         /// 생성 직후 캡슐 하나뿐인 밋밋한 프리팹 대신, 바스킷+지지대+집수 돔으로 구성된

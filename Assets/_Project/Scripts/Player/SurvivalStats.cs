@@ -41,6 +41,14 @@ namespace MakeGame.Player
         /// <summary>산소 비율이 이 값 미만이면 위험 경고를 표시한다.</summary>
         public const float LowOxygenRatio = 0.25f;
 
+        // 추가 작업(B2-9): SurvivalHudUI가 허기/갈증/일사병/산소의 최대치 100을 UI 쪽에서 직접 알고
+        // 있다가 자체적으로 나눠 써서(비율 계산), 이 시스템의 최대치가 바뀌면 UI가 조용히 어긋날 위험이
+        // 있었다. LowHealthRatio 등과 동일한 이유로 게임 규칙에 속하는 값이므로 SurvivalStats가 단일
+        // 소스로 노출한다(UI 쪽 교체는 ui-engineer가 진행). 아래 허기/갈증/일사병/산소 상한 계산도
+        // 이 상수를 참조하도록 함께 정리했다(반환값은 기존과 동일하게 100).
+        /// <summary>허기/갈증/일사병/산소 수치의 최대값(공통 상한, 0~100 스케일).</summary>
+        public const float MaxStatValue = 100f;
+
         [Header("체력")]
         [Tooltip("현재 체력 (0이 되면 사망)")]
         public float health = 100f;
@@ -150,7 +158,7 @@ namespace MakeGame.Player
             if (isUnderwater)
                 oxygen = Mathf.Max(0f, oxygen - oxygenDrainPerSecond * deltaTime);
             else
-                oxygen = Mathf.Min(100f, oxygen + oxygenRecoveryPerSecond * deltaTime);
+                oxygen = Mathf.Min(MaxStatValue, oxygen + oxygenRecoveryPerSecond * deltaTime);
 
             if (isUnderwater && oxygen <= 0f)
                 TakeDamage(drowningDamagePerSecond * deltaTime, DamageCause.Drowning);
@@ -181,9 +189,9 @@ namespace MakeGame.Player
             if (isInShade || !isDaytime)
                 sunstroke = Mathf.Max(0f, sunstroke - sunstrokeRecoveryPerSecond * deltaTime);
             else
-                sunstroke = Mathf.Min(100f, sunstroke + sunstrokeGainPerSecond * deltaTime);
+                sunstroke = Mathf.Min(MaxStatValue, sunstroke + sunstrokeGainPerSecond * deltaTime);
 
-            if (sunstroke >= 100f)
+            if (sunstroke >= MaxStatValue)
                 TakeDamage(sunstrokeDamagePerSecond * deltaTime, DamageCause.Sunstroke);
         }
 
@@ -226,7 +234,7 @@ namespace MakeGame.Player
         /// </summary>
         public void ConsumeFood(float amount)
         {
-            hunger = Mathf.Min(100f, hunger + amount);
+            hunger = Mathf.Min(MaxStatValue, hunger + amount);
         }
 
         /// <summary>
@@ -234,7 +242,7 @@ namespace MakeGame.Player
         /// </summary>
         public void ConsumeWater(float amount)
         {
-            thirst = Mathf.Min(100f, thirst + amount);
+            thirst = Mathf.Min(MaxStatValue, thirst + amount);
         }
 
         /// <summary>

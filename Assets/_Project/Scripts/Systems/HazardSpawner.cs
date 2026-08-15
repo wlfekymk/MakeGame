@@ -44,10 +44,10 @@ namespace MakeGame.Systems
         // 값 하나(100f)뿐이었다. WorldMapManager.GetSizeScale의 지형 반지름(50/90/140/200)과 어긋나 있어서,
         // 소형 섬에서는 위험 요소가 지형 밖(바다)에 배치될 수 있었고 특대 섬에서는 중심 근처로만 몰렸다.
         // IslandResourceSpawner와 동일하게 각 섬 지형 반지름의 80%에 맞춰 규모별 반경을 따로 뒀다.
-        public float smallScatterRadius = 40f;
-        public float mediumScatterRadius = 72f;
-        public float largeScatterRadius = 112f;
-        public float extraLargeScatterRadius = 160f;
+        public float smallScatterRadius = 100f;
+        public float mediumScatterRadius = 100f;
+        public float largeScatterRadius = 100f;
+        public float extraLargeScatterRadius = 100f;
 
         /// <summary>
         /// 지정한 섬에 규모와 확률에 따라 위험 요소를 배치한다. 시작 섬에는 배치하지 않는다.
