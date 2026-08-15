@@ -17,7 +17,7 @@ MonoBehaviour:
   starvationDamagePerSecond: 1
   sunstrokeGainPerSecond: 0.1
   sunstrokeRecoveryPerSecond: 0.2
-  sunstrokeDamagePerSecond: 0.5
+  sunstrokeDamagePerSecond: 1
   poisonDamagePerSecond: 0.8
   bleedingDamagePerSecond: 1.2
   healthRegenThreshold: 50
@@ -27,7 +27,7 @@ MonoBehaviour:
   drowningDamagePerSecond: 3
   coconutOverdoseThreshold: 40
   rawFoodPoisonChance: 0.3
-  campfireSecondsPerFuel: 30
+  campfireSecondsPerFuel: 90
   campfireCookingExperience: 8
   waterStillPerSecond: 0.1
   waterStillMaxStorage: 12

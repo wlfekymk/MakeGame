@@ -99,6 +99,24 @@ namespace MakeGame.Systems
         /// <summary>엔딩 연출 화면이 현재 표시 중인지 여부.</summary>
         private bool showEndingUI = false;
 
+        /// <summary>엔딩 연출(암전→제목→통계→마지막 문장)이 끝났는지 여부. UI가 알려준다.</summary>
+        private bool endingPresentationFinished = false;
+
+        /// <summary>엔딩 화면이 열린 실시간 시각(Time.unscaledTime). 아래 안전장치 계산용.</summary>
+        private float endingShownAtUnscaledTime = 0f;
+
+        /// <summary>
+        /// 연출 완료 통지가 오지 않아도 이 시간(실시간 초)이 지나면 continueKey를 받아준다.
+        ///
+        /// 안전장치인 이유: 지금 씬(SampleScene.unity)에는 EndingUI가 **아직 배선돼 있지 않다**
+        /// (씬 YAML 전수 검색 결과 EndingUI 컴포넌트 0개). UI가 없는 상태에서 엔딩이 나면 화면에는
+        /// 아무것도 뜨지 않고 Time.timeScale만 0으로 멈추므로, 연출 완료 통지를 무한정 기다리면
+        /// 플레이어가 빠져나올 수단이 사라진다(복구 불가능한 정지 화면). 설계상 연출 총 길이는 약 7초
+        /// (Design_Ending.md 3장)이므로 10초면 정상 연출을 자르지 않으면서 최악을 막는다.
+        /// Time.timeScale이 0이라 반드시 unscaled 시간으로 재야 한다.
+        /// </summary>
+        private const float ContinueKeyFallbackSeconds = 10f;
+
         // ── 엔딩 문구 (Design_Ending.md 2장·3장, ui-engineer 요청으로 제목/부제 분리) ──────────────
         //
         // 예전에는 TriggerEnding이 문장 한 줄("배를 타고 섬을 탈출했습니다!")만 받아 그대로 화면에
@@ -169,6 +187,27 @@ namespace MakeGame.Systems
         public EndingKind AchievedEnding => achievedEnding;
 
         /// <summary>
+        /// [ui-engineer 요청] 엔딩 연출이 끝나 "계속하기"를 받아도 되는 상태인지 여부.
+        /// UI가 마지막 페이즈(마지막 문장 + 계속하기 버튼)까지 도달했을 때
+        /// <see cref="MarkEndingPresentationFinished"/>로 true가 된다. 엔딩이 새로 확정될 때마다
+        /// false로 초기화된다.
+        /// </summary>
+        public bool EndingPresentationFinished => endingPresentationFinished;
+
+        /// <summary>
+        /// [ui-engineer 요청] "연출이 끝났다"를 알리는 지점. UI(EndingUI)가 마지막 페이즈에 도달했을 때
+        /// — 정상 재생으로 끝났든 건너뛰기로 마지막 상태로 점프했든 — 한 번 부르면 된다.
+        /// 이때부터 continueKey(기본 Space)가 엔딩 화면을 닫는다.
+        ///
+        /// 여러 번 불러도 안전하다(단순 대입). 엔딩 화면이 떠 있지 않을 때 부른 값은
+        /// 다음 TriggerEnding에서 false로 되돌아가므로 다음 엔딩에 새지 않는다.
+        /// </summary>
+        public void MarkEndingPresentationFinished()
+        {
+            endingPresentationFinished = true;
+        }
+
+        /// <summary>
         /// 초기화 시점에 balanceConfig 폴백을 적용한다.
         /// </summary>
         private void Awake()
@@ -216,14 +255,20 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 먼저 만족되는 쪽을 트리거한다.
+        /// 매 프레임 두 엔딩 경로의 조건을 확인하고, 성립한 것 중 우선순위가 높은 쪽을 트리거한다
+        /// (동시 성립 규칙은 ResolveAchievableEnding 주석 참고 - 검사 "순서"가 아니라 명시적 우선순위다).
         /// 엔딩 연출 화면이 떠 있는 동안에는 계속하기 입력만 감시한다.
         /// </summary>
         private void Update()
         {
             if (showEndingUI)
             {
-                if (Input.GetKeyDown(continueKey))
+                // [수정] 연출이 끝나기 전의 continueKey는 무시한다. 예전에는 이 키가 곧바로
+                // DismissEndingUI를 불러서, 연출 1~3페이즈(암전/제목/통계 공개) 중에 Space를 누르면
+                // "건너뛰기"가 아니라 엔딩 화면 자체가 닫혀 통계를 한 번도 못 보고 게임으로 돌아갔다.
+                // 건너뛰기는 UI(EndingUI)가 담당하고, 이 키는 연출이 끝난 뒤의 "화면 닫기"만 맡는다.
+                // 게임 규칙(엔딩 조건/결과)은 전혀 바뀌지 않는다 - 입력을 받는 시점만 늦춘다.
+                if (Input.GetKeyDown(continueKey) && CanAcceptContinueKey())
                     DismissEndingUI();
                 return;
             }
@@ -231,16 +276,74 @@ namespace MakeGame.Systems
             if (endingTriggered)
                 return;
 
+            EndingKind kind = ResolveAchievableEnding();
+            if (kind != EndingKind.None)
+                TriggerEnding(kind);
+        }
+
+        /// <summary>
+        /// 이번 프레임에 성립한 엔딩 중 **우선순위가 가장 높은 것**을 고른다. 아무것도 성립하지 않으면 None.
+        ///
+        /// [디렉터 결정 - 배 우선은 의도다] 두 조건이 같은 프레임에 동시에 성립할 수 있다(배 조건이
+        /// 15일 경과로 오래 대기하는 동안 경비행기 수리를 끝내두면 실제로 일어난다). 예전에는 Update가
+        /// 배를 먼저 검사하고 return 하는 **코드 순서의 부산물**로 배가 이겼고, 그것이 판단인지 우연인지
+        /// 코드에서 읽을 수 없었다(qa-reviewer 지적).
+        ///
+        /// 확정: **동시 성립 시 배 엔딩("귀환")을 보여준다.** 배는 3단계 누적 + 도면 3장 + 비축 물자 +
+        /// 경과 15일을 요구하는 훨씬 긴 경로다(Design_Progression.md 4장: 경비행기가 재료 4배·시간
+        /// 3~5배 싸다). 둘 다 달성했다면 더 어려운 쪽의 결말을 보여주는 것이 플레이어가 실제로 한 일에
+        /// 대한 정확한 응답이다.
+        ///
+        /// 구현도 순서에 의존하지 않게 바꿨다 - 아래 두 if의 위치를 뒤바꿔도 결과가 뒤집히지 않는다.
+        /// 우선순위는 GetEndingPriority 한 곳에만 있다.
+        /// </summary>
+        private EndingKind ResolveAchievableEnding()
+        {
+            EndingKind best = EndingKind.None;
+
+            // 두 조건 모두 읽기 전용 판정이라(인벤토리 개수 조회 / bool 필드 읽기) 둘 다 평가해도
+            // 부작용이 없다. 먼저 성립한 쪽에서 빠져나가지 않는 이유가 이것이다.
             if (CheckBoatEndingConditions())
-            {
-                TriggerEnding(EndingKind.Boat, BoatEndingTitle, BoatEndingSubtitle);
-                return;
-            }
+                best = HigherPriority(best, EndingKind.Boat);
 
             if (aircraftRepair != null && aircraftRepair.isRepairComplete)
+                best = HigherPriority(best, EndingKind.Aircraft);
+
+            return best;
+        }
+
+        /// <summary>두 엔딩 종류 중 우선순위가 높은 쪽을 돌려준다(동점이면 a).</summary>
+        private static EndingKind HigherPriority(EndingKind a, EndingKind b)
+        {
+            return GetEndingPriority(b) > GetEndingPriority(a) ? b : a;
+        }
+
+        /// <summary>
+        /// 동시 성립 시의 우선순위. **값이 클수록 먼저 보여준다.** 이 게임의 엔딩 우선순위를 정의하는
+        /// 유일한 지점이므로, 순서를 바꾸고 싶으면 여기 숫자만 고치면 된다(Update의 검사 순서가 아니라).
+        /// </summary>
+        private static int GetEndingPriority(EndingKind kind)
+        {
+            switch (kind)
             {
-                TriggerEnding(EndingKind.Aircraft, AircraftEndingTitle, AircraftEndingSubtitle);
+                case EndingKind.Boat: return 2;      // 더 긴 경로 - 동시 성립 시 이쪽을 보여준다
+                case EndingKind.Aircraft: return 1;
+                default: return 0;                   // None
             }
+        }
+
+        /// <summary>
+        /// 지금 continueKey를 받아 엔딩 화면을 닫아도 되는지 판단한다.
+        /// (1) UI가 연출 종료를 알렸거나, (2) 통지가 오지 않은 채 ContinueKeyFallbackSeconds가 지났으면 받는다.
+        /// (2)는 UI가 씬에 없거나 연출 코루틴이 죽었을 때 정지 화면에 갇히지 않기 위한 안전장치다
+        /// (ContinueKeyFallbackSeconds 주석 참고).
+        /// </summary>
+        private bool CanAcceptContinueKey()
+        {
+            if (endingPresentationFinished)
+                return true;
+
+            return Time.unscaledTime - endingShownAtUnscaledTime >= ContinueKeyFallbackSeconds;
         }
 
         /// <summary>
@@ -301,11 +404,12 @@ namespace MakeGame.Systems
         /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시키고,
         /// 화면에 승리 연출을 띄운 뒤 이동/상호작용을 잠시 멈춘다.
         /// </summary>
-        /// <param name="kind">달성한 엔딩의 종류(연출 분기용).</param>
-        /// <param name="title">크게 표시할 제목 두 단어.</param>
-        /// <param name="subtitle">제목 아래 작게 표시할 마지막 문장.</param>
-        private void TriggerEnding(EndingKind kind, string title, string subtitle)
+        /// <param name="kind">달성한 엔딩의 종류(연출 분기용). 제목/부제는 이 값에서 결정된다.</param>
+        private void TriggerEnding(EndingKind kind)
         {
+            string title = kind == EndingKind.Aircraft ? AircraftEndingTitle : BoatEndingTitle;
+            string subtitle = kind == EndingKind.Aircraft ? AircraftEndingSubtitle : BoatEndingSubtitle;
+
             endingTriggered = true;
             achievedEnding = kind;
             endingTitle = title;
@@ -317,6 +421,10 @@ namespace MakeGame.Systems
             Debug.Log($"[EndingChecker] 엔딩 달성: {kind} - {title} / {subtitle}");
             GameManager.Instance?.CompleteEnding();
 
+            // 연출은 이제 막 시작한다. UI가 끝냈다고 알려줄 때까지 continueKey를 받지 않는다.
+            endingPresentationFinished = false;
+            endingShownAtUnscaledTime = Time.unscaledTime;
+
             showEndingUI = true;
             if (playerController != null)
                 playerController.enabled = false;
@@ -324,7 +432,10 @@ namespace MakeGame.Systems
                 interactionController.enabled = false;
 
             Time.timeScale = 0f;
-            AudioManager.Instance?.PlayStageComplete(); // 승리 팡파르 재생
+
+            // [수정] 팡파르를 여기서 울리지 않는다. 연출은 암전 1초로 시작하므로(Design_Ending.md 3장
+            // 페이즈 1) 여기서 소리를 내면 화면에 아무것도 뜨기 전에 소리부터 난다 - 그림과 소리가
+            // 어긋난다. 페이즈 2(배경 + 제목 등장)에서 UI가 AudioManager.PlayEndingFanfare()를 부른다.
         }
 
         /// <summary>
@@ -336,6 +447,7 @@ namespace MakeGame.Systems
         public void DismissEndingUI()
         {
             showEndingUI = false;
+            endingPresentationFinished = false; // 다음 엔딩은 다시 연출부터 시작한다
             Time.timeScale = 1f;
 
             if (playerController != null)

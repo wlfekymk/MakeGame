@@ -227,11 +227,16 @@ namespace MakeGame.UI
             // 주입값이 있으면 그것을 우선하고, 없으면 CraftingSystem이 세고 있는 종류 수를 직접 읽는다.
             // 이 카운터는 세이브에 저장되지 않아 불러오기 이후에는 0부터 다시 센다(집계 정책은
             // CraftingSystem 소유 - 이 UI는 읽어서 보여주기만 한다).
-            string craftedText = unknown;
-            if (craftedKindCount >= 0)
-                craftedText = $"{craftedKindCount}종";
-            else if (craftingSystem != null)
-                craftedText = $"{craftingSystem.CraftedRecipeCount}종";
+            //
+            // [디렉터 결정] 그래서 0은 "정말 아무것도 안 만들었다"와 "불러온 뒤로 집계가 없다"를
+            // 구분할 수 없다. "(이번 세션)" 같은 접미사를 붙이지 않고, 값이 0일 때만 다른 미집계
+            // 항목과 똑같이 흐린 대시로 표시한다 - 1종 이상이면 그 값 자체는 언제나 정확하므로
+            // 그대로 보여준다. 불러오기 여부를 UI가 알아내려고 시스템을 건드리지 않는다.
+            int craftedKinds = craftedKindCount >= 0
+                ? craftedKindCount
+                : (craftingSystem != null ? craftingSystem.CraftedRecipeCount : -1);
+
+            string craftedText = craftedKinds > 0 ? $"{craftedKinds}종" : unknown;
 
             statsLabel.text = $"생존 일수   {daysText}\n방문한 섬   {islandsText}\n제작한 물건   {craftedText}";
         }

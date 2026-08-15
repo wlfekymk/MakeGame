@@ -55,6 +55,11 @@ namespace MakeGame.Systems
         // 지속 중 반복 재생은 금지 - PlayStatusOnset의 재발동 가드 주석 참고.
         private AudioClip clipStatusOnset;
 
+        // [ui-engineer 요청] 엔딩 연출 전용 팡파르. 배 제작 "단계 완료"(clipStageComplete)를 그대로
+        // 재사용하면 150분짜리 플레이의 마지막 소리가 중간 진행 알림과 똑같아진다 - 게임의 마지막
+        // 한 번에만 쓰는 소리를 따로 둔다.
+        private AudioClip clipEndingFanfare;
+
         /// <summary>
         /// 싱글턴 인스턴스를 초기화하고, 씬 전환에도 파괴되지 않게 한 뒤 재생용 AudioSource와
         /// 절차적 효과음 클립들을 준비한다.
@@ -145,6 +150,12 @@ namespace MakeGame.Systems
             // 상태 이상 시작: 반음 이내로 붙인 두 음의 맥놀이. 협화음인 축하음(523/659/784)·치료음
             // (392/494/587)과 같은 화음 계열이지만 불협이라 귀에는 정반대로("불길함") 읽힌다.
             clipStatusOnset = ProceduralAudioClipGenerator.CreateWarningBeat(466f, 14f, 0.34f);
+
+            // 엔딩 팡파르: 단계 완료(523/659/784, 0.4초)와 같은 C장3화음이되 한 옥타브 위 도(1046)를
+            // 얹어 4음으로 넓히고 길이를 1.2초로 늘였다. "같은 계열의 소리인데 더 크고 더 길다"가
+            // 마지막이라는 신호가 된다. 새 음색을 만들지 않는 편이 게임 전체 사운드와 어긋나지 않는다.
+            clipEndingFanfare = ProceduralAudioClipGenerator.CreateChord(
+                new float[] { 523f, 659f, 784f, 1046f }, 1.2f);
         }
 
         /// <summary>자원 채집 성공 시 재생한다.</summary>
@@ -167,6 +178,20 @@ namespace MakeGame.Systems
 
         /// <summary>배 제작 단계를 완료했을 때 재생한다.</summary>
         public void PlayStageComplete() => PlaySfx(clipStageComplete);
+
+        /// <summary>
+        /// [ui-engineer 요청] 엔딩 연출의 **팡파르**. 화면이 검게 덮인 뒤 배경색과 제목이 떠오르는
+        /// 페이즈 2에서 UI가 직접 부른다(Design_Ending.md 3장).
+        ///
+        /// 예전에는 EndingChecker.TriggerEnding이 PlayStageComplete()를 즉시 불렀는데, 연출은 암전
+        /// 1초로 시작하므로 화면에 아무것도 뜨기 전에 소리부터 나서 그림과 소리가 어긋났다. 그 호출은
+        /// 제거했고, 타이밍은 이제 전적으로 UI가 정한다.
+        ///
+        /// Time.timeScale = 0 에서도 정상 재생된다 - Unity의 오디오 재생은 timeScale의 영향을 받지 않는다
+        /// (엔딩 화면은 항상 timeScale 0이므로 이 점이 중요하다).
+        /// 엔딩 1회당 1번만 부를 것(1.2초짜리라 겹쳐 울리면 소리가 뭉개진다).
+        /// </summary>
+        public void PlayEndingFanfare() => PlaySfx(clipEndingFanfare);
 
         /// <summary>저장 또는 불러오기가 완료됐을 때 재생한다.</summary>
         public void PlaySaveOrLoadFeedback() => PlaySfx(clipSaveOrLoad);

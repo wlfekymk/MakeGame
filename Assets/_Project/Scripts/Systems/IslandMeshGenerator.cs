@@ -112,12 +112,26 @@ namespace MakeGame.Systems
         /// <summary>
         /// 섬 하나에 배치할 수 있는 초목 인스턴스(야자수 1그루 / 덤불 1개 / 풀포기 1개를 각각 1로 센다)의
         /// 절대 상한. 특대 섬(반지름 200m)의 면적은 12만 m²가 넘어서, 밀도만 보고 배치하면 초목이 수천
-        /// 개까지 늘어나 프레임이 죽는다. 규모별 개수 공식(BuildIslandSurface)이 커봐야 정확히 이 값에
-        /// 닿도록 잡혀 있고, 공식이 나중에 바뀌더라도 이 상한이 항상 마지막에 한 번 더 강제된다.
-        /// 렌더러 개수 기준으로는 최대 406개(야자수 16×13 + 덤불 40×3 + 풀 78×1)다 - 형태 품질을 올리면서
-        /// (B8: 굽은 줄기 3단 + 2단 꺾인 잎) 그루 수를 줄여 예전(42×5+60×2+78×1=408)과 같은 예산에 맞췄다.
+        /// 개까지 늘어나 프레임이 죽는다. 공식이 나중에 바뀌더라도 이 상한이 항상 마지막에 한 번 더 강제된다.
+        ///
+        /// [B9 정정 — 이 주석은 거짓이었다] 직전 값은 180이었고 "규모별 개수 공식이 커봐야 정확히 이 값에
+        /// 닿도록 잡혀 있다"고 적혀 있었는데 **사실이 아니었다**. 당시 공식의 최대 요청치는
+        /// palm 16 + bush 40 + tuft 78 = 134라서 상한 180에 46 모자랐고, 아래 트림 블록은 **단 한 번도
+        /// 발동한 적이 없는 도달 불가 코드**였다. 이 프로젝트는 틀린 주석이 실제 사고를 만든 전력이 있어
+        /// (scatterRadius / 자원 배율) 주석을 사실에 맞추는 대신 **값을 주석에 맞춘다** — 아래 상한과
+        /// 규모별 상한의 합을 정확히 일치시켜, 트림 블록이 실제로 살아 있는 가드가 되게 한다.
+        ///
+        /// 현재 값 220 = 야자수 16 + 덤불 48 + 풀포기 156 (전부 특대 섬 R=200에서의 상한).
+        /// 즉 특대 섬은 정확히 이 값에 닿고, 누군가 공식을 조금이라도 올리는 순간 트림이 발동한다.
+        ///
+        /// 예산 근거(특대 섬 실측, B9 저폴리 교체 후):
+        ///   삼각형 10,512 (야자수 5,760 + 덤불 2,880 + 풀 1,872) — 교체 전 157,824에서 **-93%**
+        ///   렌더러 508 (16×13 + 48×3 + 156×1) — 교체 전 406에서 +25%
+        /// 삼각형이 15배 남았으므로 개수를 늘렸는데, **늘린 것은 저폴리가 된 덤불·풀뿐**이고 야자수 16은
+        /// 그대로 뒀다. 야자수는 저폴리 교체 대상이 아니어서 여전히 그루당 360삼각형 / 렌더러 13개로
+        /// 가장 비싸고(현재 삼각형의 55%), 그루 수 16은 B8에서 디렉터가 렌더러 예산을 보고 정한 값이다.
         /// </summary>
-        public const int MaxVegetationInstancesPerIsland = 180;
+        public const int MaxVegetationInstancesPerIsland = 220;
 
         /// <summary>
         /// 섬 지형 오브젝트 위에 (1) 내륙 풀밭 캡 메시와 (2) 초목(야자수/덤불/풀포기)을 배치한다.
@@ -132,7 +146,9 @@ namespace MakeGame.Systems
         /// 콜라이더가 수천 개 늘어나고, (b) 이후 누군가 판정 규칙을 손대는 순간 "불러오기 후 모든
         /// 아이템이 하늘로 떠오르는" 사고가 재발한다. 그래서 프리미티브를 만들고 콜라이더를 지우는
         /// (Destroy가 프레임 끝까지 지연되는) 방식조차 쓰지 않고, 아예 콜라이더가 생기지 않는 경로
-        /// (GetPrimitiveMesh + 빈 GameObject + MeshFilter/MeshRenderer)로 만든다.
+        /// (공유 메시 + 빈 GameObject + MeshFilter/MeshRenderer)로 만든다. 공유 메시는 내장 프리미티브
+        /// (GetPrimitiveMesh)이거나 이 클래스가 만든 저폴리 메시(GetLowPolyLobeMesh/GetGrassBladeMesh)이며,
+        /// 후자는 프리미티브를 거치지 않으므로 콜라이더가 한 프레임도 존재하지 않는다.
         ///
         /// [결정성] 배치에 UnityEngine.Random을 일절 쓰지 않는다. 호출자가 넘긴 섬별 System.Random
         /// 스트림만 소비하며, 소비 횟수도 (반지름 → 개수)가 정해지면 고정이라 같은 worldSeed면 항상
@@ -165,12 +181,50 @@ namespace MakeGame.Systems
             // 실기에서 야자수가 통째로 마른 나무처럼 보였다. 근거: Palm Fiber의 상대휘도는 137, 줄기에 쓰던
             // Driftwood(#8C6640)는 107 - 차이가 1.28배뿐인 데다 색상각도 55°/29°로 둘 다 노랑~주황 계열이라
             // 줄기와 잎이 한 덩어리로 뭉쳤다. ArtDirection 1.1에 초목 전용 Frond Green/Meadow Green을
-            // 추가하고(디렉터 승인), 줄기는 Driftwood의 어두운 단계로 낮춰 명도 대비를 1.75배로 벌린다.
+            // 추가하고(디렉터 승인), 줄기는 Driftwood를 어둡게+진하게 눌러 명도 대비를 벌린다.
             // (Palm Fiber는 "수확한 마른 섬유" 아이템 색으로 의미를 유지한다 - 기존 8색의 뜻은 그대로다.)
-            Material trunkMaterial = StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.Driftwood, 0.78f), "wood");
-            Material frondMaterial = StructureVisualBuilder.CreateColorMaterial(StructureVisualBuilder.FrondGreen, "leaf");
-            Material bushMaterial = StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.FrondGreen, 0.82f), "leaf");
-            Material tuftMaterial = StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.86f), "leaf");
+            //
+            // [B9 줄기 색 재조정] 직전 값 Shade(Driftwood, 0.78) = #6D5032 는 명도 대비(1.75배)는 얻었지만
+            // 하늘을 배경으로 실루엣이 잡히면 거의 검은 막대로 보였다. 원인은 명도가 아니라 채도다 -
+            // Shade()는 세 채널을 같은 비율로 곱하므로 HSV 채도(0.54)는 그대로 두고 명도만 0.549→0.427로
+            // 깎는다. 그 결과 유채색량(chroma = max-min)이 76 → 59로 줄어, 밝은 배경 앞에서 색상 정보가
+            // 남지 않는 "검은 실루엣"이 됐다. 그래서 이번에는 명도를 조금만 되돌리고(×0.93) 채도를
+            // 20% 올려(#82582D) 어두운 채로도 "갈색"이 읽히게 한다.
+            //   명도 V 0.427 → 0.510(+19%) · 채도 S 0.541 → 0.654 · chroma 59 → 85(+44%)
+            //   상대휘도 84 → 94, 잎(Frond Green 147)과의 대비 1.75배 → 1.57배
+            //   (실루엣이 뭉쳤던 예전 조합은 1.28배, 순정 Driftwood라도 1.37배뿐이다 - 1.57배는 그 위다.
+            //    게다가 줄기 색상각 30° / 잎 95°로 65° 벌어져 있어 대비가 명도 단독에 기대지 않는다.)
+            //   하늘(daySkyTint #73A6D9, 색상각 210°) 앞에서는 거의 보색이라 실루엣이 색으로 분리되고,
+            //   지면(Meadow Green 155 / Island Sand 178) 앞에서는 여전히 1.65~1.89배 어두워 분리된다.
+            Material trunkMaterial = StructureVisualBuilder.CreateColorMaterial(PalmBarkColor, "wood");
+
+            // 잎/덤불/풀을 각각 단색 한 장으로 칠하면 같은 초록이 반지름 200m를 덮어 "한 톤"으로 읽힌다.
+            // 프리미티브(=렌더러) 개수를 늘리지 않고 톤만 늘리는 유일한 방법이 머티리얼 장수를 늘려
+            // 인스턴스마다 돌려 쓰는 것이다. SRP 배처는 머티리얼이 아니라 셰이더 변형 단위로 묶으므로
+            // 머티리얼이 4장 → 8장이 되어도 배칭은 깨지지 않는다(파츠마다 새로 만들면 400장이 되어
+            // 깨지는 것과는 자릿수가 다르다).
+            // 변주는 "명도"가 아니라 "색상"으로 준다 - 명도를 깎으면 위에서 확보한 줄기-잎 대비가
+            // 같이 무너지기 때문이다. Frond Green ↔ Meadow Green 사이를 조금 섞어 황록/청록 쪽으로만
+            // 흔들고 상대휘도는 147~150으로 유지한다.
+            var frondMaterials = new[]
+            {
+                StructureVisualBuilder.CreateColorMaterial(StructureVisualBuilder.FrondGreen, "leaf"),
+                StructureVisualBuilder.CreateColorMaterial(
+                    Color.Lerp(StructureVisualBuilder.FrondGreen, StructureVisualBuilder.MeadowGreen, 0.35f), "leaf"),
+            };
+            var bushMaterials = new[]
+            {
+                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.FrondGreen, 0.82f), "leaf"),
+                StructureVisualBuilder.CreateColorMaterial(
+                    Shade(Color.Lerp(StructureVisualBuilder.FrondGreen, StructureVisualBuilder.MeadowGreen, 0.40f), 0.90f), "leaf"),
+            };
+            var tuftMaterials = new[]
+            {
+                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.86f), "leaf"),
+                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.98f), "leaf"),
+                StructureVisualBuilder.CreateColorMaterial(
+                    Shade(Color.Lerp(StructureVisualBuilder.MeadowGreen, StructureVisualBuilder.FrondGreen, 0.35f), 0.90f), "leaf"),
+            };
 
             // (1) 지면 색 구분: 정상부 밝은 풀 / 내륙 풀 / 모래(지형 원색) / 해안 젖은 모래의 4단.
             //     난수 소비 2회(풀밭 경계 위상 2개)로 고정.
@@ -183,10 +237,18 @@ namespace MakeGame.Systems
             //     [B8] 야자수 1그루가 렌더러 5개(줄기1+잎4)에서 13개(줄기3+잎5×2)로 늘었다. 렌더러 총량을
             //     예전과 같은 수준(약 400)으로 묶어두기 위해 그루 수 상한을 42 → 16으로 내려 상쇄한다
             //     (디렉터 지시: "잎 1장당 프리미티브를 늘리려면 나무 수를 줄여서 상쇄해라").
-            //     덤불도 렌더러 2 → 3이라 상한을 60 → 40으로 낮췄다.
+            //     [B9] 덤불 로브와 풀포기를 내장 Sphere(768삼각형)에서 저폴리 메시(20 / 12삼각형)로
+            //     교체해 삼각형이 15배 남았다. 남은 예산은 **저폴리가 된 쪽에만** 쓴다 -
+            //     덤불 40 → 48, 풀포기 78 → 156. 야자수 16은 그대로다(교체 대상이 아니라 여전히
+            //     그루당 360삼각형 / 렌더러 13개로 가장 비싸고, 16은 렌더러 예산을 보고 정한 값이다).
+            //     세 상한의 합 16+48+156 = 220 = MaxVegetationInstancesPerIsland로 정확히 맞춰,
+            //     아래 트림 블록이 도달 불가 코드가 아니라 살아 있는 가드가 되게 했다.
+            //     하한(4/12/20)은 IslandSizeMetrics의 최소 반지름이 50이라 현재 어떤 섬에서도 발동하지
+            //     않는다 - 반지름 공식이 바뀔 때를 대비한 방어값이라는 뜻이며, 상한과 달리 "닿는" 값이
+            //     아니다(주석이 사실과 어긋나지 않도록 명시해 둔다).
             int palmCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.12f), 4, 16);
-            int bushCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.28f), 8, 40);
-            int tuftCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.55f), 14, 78);
+            int bushCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.24f), 12, 48);
+            int tuftCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.78f), 20, 156);
 
             int requested = palmCount + bushCount + tuftCount;
             if (requested > MaxVegetationInstancesPerIsland)
@@ -217,13 +279,16 @@ namespace MakeGame.Systems
                 Vector2 jitter = rng.NextInsideUnitCircle() * 11f;
                 Vector3 spot = center + new Vector3(jitter.x, 0f, jitter.y);
                 spot = ClampToIslandRing(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f);
-                CreatePalm(root.transform, TerrainSampler.SnapToGround(spot), rng, trunkMaterial, frondMaterial);
+                // 머티리얼 선택은 인덱스로만 한다 - rng를 한 번이라도 더 소비하면 같은 worldSeed에서
+                // 숲 배치가 통째로 밀려 재현성이 깨진다(파일 상단 [결정성] 주석).
+                CreatePalm(root.transform, TerrainSampler.SnapToGround(spot), rng, trunkMaterial,
+                    frondMaterials[i % frondMaterials.Length]);
             }
 
             for (int i = 0; i < bushCount; i++)
             {
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.8f, radius * 0.50f);
-                CreateBush(root.transform, TerrainSampler.SnapToGround(spot), rng, bushMaterial);
+                CreateBush(root.transform, TerrainSampler.SnapToGround(spot), rng, bushMaterials[i % bushMaterials.Length]);
             }
 
             for (int i = 0; i < tuftCount; i++)
@@ -231,7 +296,7 @@ namespace MakeGame.Systems
                 // 풀포기만 풀밭 경계 밖(모래)까지 나갈 수 있게 둔다 - 해안가에 듬성듬성 난 풀처럼 보여
                 // 풀밭과 모래의 경계선이 자로 그은 원처럼 보이지 않게 하는 역할이다.
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.5f, radius * 0.70f);
-                CreateGrassTuft(root.transform, TerrainSampler.SnapToGround(spot), rng, tuftMaterial);
+                CreateGrassTuft(root.transform, TerrainSampler.SnapToGround(spot), rng, tuftMaterials[i % tuftMaterials.Length]);
             }
         }
 
@@ -269,27 +334,63 @@ namespace MakeGame.Systems
             //  실기에서 풀밭이 안 보였던 원인은 이 오프셋이 아니라 캡 색이었다. 아래 GrassCap 주석 참고.)
             float capOffset = Mathf.Max(0.08f, peakHeight * 0.02f);
 
+            // [B9 이음매 사고 원인] 실기에서 "지면 한가운데에 직선 경계의 사각형 얼룩"이 보고됐다.
+            // 코드로 특정한 원인은 아래 HighlandCap의 고도 컷이다. 근거(값은 terrainMaxHeight=8 기준
+            // 실제 메시를 재현해 계산):
+            //   · 지형 높이 = maxHeight·cos(t·π/2) + perlin(x·0.05, z·0.05)·2·(1-t)
+            //   · 정상부(고도 컷이 걸리는 t≤0.33 구간)에서 코사인 항의 낙차는 0.92~1.07m인데
+            //     펄린 항의 진폭은 1.33~1.38m다 → 컷 등고선을 결정하는 것은 반지름이 아니라 펄린이다.
+            //   · 그 펄린은 noiseScale 0.05, 즉 격자 한 칸이 정확히 20m인 축 정렬(axis-aligned) 격자다.
+            //     시작 섬(반지름 50)에서 캡 지름은 33m = 격자 1.7칸 → 캡이 사실상 펄린 격자 한 칸이 되어
+            //     경계가 X/Z축에 나란한 직선으로 잘린다. 게다가 캡 중심은 항상 섬 중심 = 플레이어
+            //     시작 지점이라 그 직선이 화면 정중앙 지면에 온다. 신고 내용과 정확히 일치한다.
+            // 배제한 후보(추측이 아니라 값으로 확인):
+            //   (a) z-파이팅: 캡 오프셋은 Grass 0.165 / Highland 0.225 / WetSand 0.082m로 6~8cm 벌어져
+            //       있고, 겹치는 쌍은 Grass↔Highland 하나뿐이다. reversed-Z 깊이에서 6cm는 100m
+            //       거리에서도 밀리미터 단위 여유가 있어 지글거림이 나올 수 없다. 실제 증상도 "지글"이
+            //       아니라 "고정된 직선 경계"였다.
+            //   (c) 텍스처 타일링 경계: GrassCap과 HighlandCap은 UV 소스(지형 메시)와 타일 배수
+            //       (radius×0.75)가 완전히 동일해 서로 어긋날 수 없고, 타일 경계라면 얼룩 하나가 아니라
+            //       섬 전체에 2.7m 간격으로 반복돼야 한다.
+            // 조치: 고도 컷을 "삼각형 단위 디더"로 흩뜨려 연속된 직선 경계가 아예 생길 수 없게 하고,
+            //       밝기 단차도 1.18배 → 1.10배로 낮춘다. 원형 경계(GrassCap/WetSandCap)에도 같은
+            //       디더를 얇게 걸어 네 캡의 경계 처리를 한 방식으로 통일한다.
+
+            // 캡 경계를 흩뜨리는 폭. 삼각형 하나(2~5m)보다 넓은 띠에 걸쳐 포함/제외가 섞이게 만들어
+            // 경계가 선이 아니라 점묘(stipple)로 읽히게 하는 것이 목적이다.
+            float highlandDither = Mathf.Max(0.4f, peakHeight * 0.13f);   // 고도 기준 ±0.55m ≈ 평면상 ±6m
+            float radialDither = radius * 0.05f;                          // 반지름 기준 ±2.5%R
+
             // 내륙 풀밭. 예전 색은 Shade(PalmFiber, 0.82) = #79733E로, Island Sand(#C2B280)와 색상각이
             // 각각 54°/45°로 9°밖에 차이 나지 않는 같은 황토 계열에 휘도만 1.58배 낮은 값이었다.
             // 그래서 실기에서 "풀밭"이 아니라 "그늘진 모래"로 읽혀 캡이 있는지조차 확인되지 않았다.
             // Meadow Green(#8AA84F, 색상각 80°)으로 바꿔 색상 자체로 구분되게 한다.
+            // toneCount 3: 같은 초록 한 장이 섬을 덮던 문제(아래 BuildCapLayer 주석) 해소용.
             BuildCapLayer(surfaceRoot, source, radius, "GrassCap", StructureVisualBuilder.MeadowGreen,
                 capOffset, radius * 0.75f, "leaf",
-                (centroid, distance, angle) => distance <= GrassBoundaryRadius(angle, radius, phaseA, phaseB));
+                (centroid, distance, angle) => distance <=
+                    GrassBoundaryRadius(angle, radius, phaseA, phaseB) + (Hash01(centroid) - 0.5f) * radialDither,
+                3, 0.06f);
 
             // 정상부의 밝은 풀. 반지름이 아니라 고도로 잘라내, 지형 굴곡(펄린 노이즈로 생긴 등성이)이
             // 그대로 색 경계가 된다 - 원형으로 잘라내면 또 하나의 완벽한 동심원이 생겨 인공적으로 보인다.
             // 0.86은 코사인 지형에서 대략 0.34R 안쪽(정상부)에 해당한다(cos(0.34·π/2) ≈ 0.86).
-            BuildCapLayer(surfaceRoot, source, radius, "HighlandCap", Shade(StructureVisualBuilder.MeadowGreen, 1.18f),
+            // 디더 항이 이 배치의 핵심 수정이다 - 없으면 컷이 펄린 격자(20m 축 정렬)를 그대로 따라간다.
+            BuildCapLayer(surfaceRoot, source, radius, "HighlandCap", Shade(StructureVisualBuilder.MeadowGreen, 1.10f),
                 capOffset + 0.06f, radius * 0.75f, "leaf",
-                (centroid, distance, angle) => centroid.y >= peakHeight * 0.86f
+                (centroid, distance, angle) =>
+                    centroid.y >= peakHeight * 0.86f + (Hash01(centroid) - 0.5f) * highlandDither
                     && distance <= GrassBoundaryRadius(angle, radius, phaseA, phaseB));
 
             // 해안의 젖은 모래. 바깥 한계 0.955R은 ShorelineBand(0.95R부터 시작하는 반투명 물 띠)와
-            // 겹치는 폭을 최소화하기 위한 값이다.
+            // 겹치는 폭을 최소화하기 위한 값이라 그대로 두고(디더를 걸면 물 띠와 어긋난다),
+            // 안쪽(마른 모래와 만나는) 경계에만 디더를 건다.
             BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.80f),
                 capOffset * 0.5f, radius * 1.5f, "sand",
-                (centroid, distance, angle) => distance >= radius * 0.84f && distance <= radius * 0.955f);
+                (centroid, distance, angle) =>
+                    distance >= radius * 0.84f + (Hash01(centroid) - 0.5f) * radialDither * 0.8f
+                    && distance <= radius * 0.955f,
+                2, 0.05f);
         }
 
         /// <summary>
@@ -300,20 +401,36 @@ namespace MakeGame.Systems
         /// 콜라이더는 붙이지 않는다(플레이어는 원래 지형 콜라이더 위를 걷는다).
         /// </summary>
         /// <param name="selector">(삼각형 무게중심, 중심축까지의 XZ 거리, 각도) → 이 삼각형을 포함할지.</param>
+        /// <param name="toneCount">
+        /// 캡 하나를 서브메시 몇 장으로 쪼개 서로 다른 밝기로 칠할지(1이면 기존과 100% 동일한 단색).
+        ///
+        /// [B9 "지형 색이 한 톤"] 캡 1장 = 단색 1개라, 같은 초록이 반지름 200m를 통째로 덮어 실기에서
+        /// 평평한 색판으로 보였다. 정점 색(URP Lit은 정점 색을 읽지 않는다)도, 캡 메시 추가(드로우콜과
+        /// 오브젝트가 캡마다 늘어난다)도 쓰지 않고 톤을 늘릴 수 있는 방법은 하나뿐이다 - 이미 만든 캡
+        /// 메시를 서브메시로 쪼개 머티리얼 슬롯만 늘리는 것. GameObject·MeshFilter·정점은 그대로 1벌이고
+        /// 늘어나는 것은 드로우콜 (toneCount-1)개뿐이다(섬당 총 +3). 초목 프리미티브 상한 180과는
+        /// 무관하다 - 프리미티브를 하나도 추가하지 않는다.
+        /// </param>
+        /// <param name="toneSpread">톤 사이의 밝기 폭(±비율). 0.06이면 0.94/1.00/1.06배.</param>
         private static void BuildCapLayer(Transform surfaceRoot, Mesh source, float radius, string name,
             Color color, float yOffset, float textureTiling, string textureName,
-            System.Func<Vector3, float, float, bool> selector)
+            System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.06f)
         {
             Vector3[] sourceVertices = source.vertices;
             int[] sourceTriangles = source.triangles;
             Vector2[] sourceUvs = source.uv;
             bool hasSourceUv = sourceUvs != null && sourceUvs.Length == sourceVertices.Length;
 
+            toneCount = Mathf.Clamp(toneCount, 1, 4);
+
             var remap = new Dictionary<int, int>(sourceVertices.Length);
             var vertices = new List<Vector3>();
             var uvs = new List<Vector2>();
-            var triangles = new List<int>();
+            var toneTriangles = new List<int>[toneCount];
+            for (int i = 0; i < toneCount; i++)
+                toneTriangles[i] = new List<int>();
 
+            int selectedCount = 0;
             for (int t = 0; t + 2 < sourceTriangles.Length; t += 3)
             {
                 int i0 = sourceTriangles[t];
@@ -326,19 +443,31 @@ namespace MakeGame.Systems
                 if (!selector(centroid, distance, angle))
                     continue;
 
-                triangles.Add(RemapVertex(i0, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
-                triangles.Add(RemapVertex(i1, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
-                triangles.Add(RemapVertex(i2, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
+                var bucket = toneTriangles[ToneIndex(centroid, toneCount)];
+                bucket.Add(RemapVertex(i0, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
+                bucket.Add(RemapVertex(i1, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
+                bucket.Add(RemapVertex(i2, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
+                selectedCount++;
             }
 
-            if (triangles.Count == 0)
+            if (selectedCount == 0)
                 return;
+
+            // 비어 있는 톤은 서브메시를 만들지 않는다(빈 서브메시는 드로우콜만 소모한다).
+            var usedTones = new List<int>(toneCount);
+            for (int i = 0; i < toneCount; i++)
+            {
+                if (toneTriangles[i].Count > 0)
+                    usedTones.Add(i);
+            }
 
             var mesh = new Mesh();
             mesh.name = $"Island{name}";
             mesh.SetVertices(vertices);
             mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(triangles, 0);
+            mesh.subMeshCount = usedTones.Count;
+            for (int s = 0; s < usedTones.Count; s++)
+                mesh.SetTriangles(toneTriangles[usedTones[s]], s);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
@@ -351,12 +480,24 @@ namespace MakeGame.Systems
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
 
             var renderer = go.AddComponent<MeshRenderer>();
-            var material = StructureVisualBuilder.CreateColorMaterial(color, textureName);
-            // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
-            // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
-            // WorldMapManager.CreateDefaultTerrainMaterial의 모래 타일링과 같은 계산 방식이다.
-            material.mainTextureScale = new Vector2(textureTiling, textureTiling);
-            renderer.sharedMaterial = material;
+            var materials = new Material[usedTones.Count];
+            for (int s = 0; s < usedTones.Count; s++)
+            {
+                // 톤 0 → -toneSpread, 마지막 톤 → +toneSpread로 균등 배분(toneCount 1이면 정확히 1.0배).
+                float factor = toneCount <= 1
+                    ? 1f
+                    : 1f + (usedTones[s] / (float)(toneCount - 1) - 0.5f) * 2f * toneSpread;
+                var material = StructureVisualBuilder.CreateColorMaterial(Shade(color, factor), textureName);
+                // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
+                // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
+                // WorldMapManager.CreateDefaultTerrainMaterial의 모래 타일링과 같은 계산 방식이다.
+                material.mainTextureScale = new Vector2(textureTiling, textureTiling);
+                // 톤마다 타일 위상을 어긋나게 해, 같은 그레인 무늬가 톤 경계에서 이어지며
+                // "색만 다른 같은 얼룩"으로 보이지 않게 한다.
+                material.mainTextureOffset = new Vector2(usedTones[s] * 0.37f, usedTones[s] * 0.19f);
+                materials[s] = material;
+            }
+            renderer.sharedMaterials = materials;
 
             // 지면에 몇 cm 떠 있는 덮개라 그림자를 드리우면 자기 그림자로 얼룩진다. 받기만 한다
             // (야자수 그림자는 풀밭 위에 정상적으로 떨어져야 한다).
@@ -524,6 +665,10 @@ namespace MakeGame.Systems
         /// 튀어나온 여러 덩이, (b) 폭이 높이보다 확실히 큰 납작한 비례 두 가지다. 로브를 3개로 늘리고
         /// 각 로브를 서로 다른 방향으로 기울여 윤곽선이 매끈한 곡선이 되지 않게 만든다.
         /// (돌은 기울지 않은 단일 덩어리다 - 색이 초록으로 바뀐 것과 합쳐 20m 밖에서도 갈린다.)
+        ///
+        /// [B9 저폴리 교체] 로브를 내장 Sphere(768삼각형)에서 정이십면체(20삼각형)로 바꿨다. 위 B8 실루엣
+        /// 규칙 - 기울인 로브 3개 · 폭 &gt;&gt; 높이 - 은 하나도 바꾸지 않는다(스케일·회전·오프셋 그대로).
+        /// 오히려 각진 면이 생겨 "매끈한 돌덩이"와의 구분이 강해진다. 난수 소비 순서·횟수도 그대로다.
         /// </summary>
         private static void CreateBush(Transform parent, Vector3 groundPosition, System.Random rng, Material material)
         {
@@ -536,7 +681,8 @@ namespace MakeGame.Systems
             bush.transform.position = groundPosition;
             bush.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
 
-            CreatePart(bush.transform, "Veg_BushMain", PrimitiveType.Sphere,
+            Mesh lobeMesh = GetLowPolyLobeMesh();
+            CreatePart(bush.transform, "Veg_BushMain", lobeMesh,
                 new Vector3(0f, height * 0.42f, 0f), new Vector3(width, height, width * 0.9f),
                 Quaternion.Euler(0f, 0f, rng.NextFloat(-10f, 10f)), material);
 
@@ -545,7 +691,7 @@ namespace MakeGame.Systems
                 Vector2 offset = rng.NextInsideUnitCircle() * (width * 0.34f);
                 float lobeScale = rng.NextFloat(0.50f, 0.76f);
                 // 로브를 본체보다 살짝 위로 올려 윤곽선 위쪽에 혹이 생기게 한다(돌은 이런 혹이 없다).
-                CreatePart(bush.transform, $"Veg_BushLobe{i}", PrimitiveType.Sphere,
+                CreatePart(bush.transform, $"Veg_BushLobe{i}", lobeMesh,
                     new Vector3(offset.x, height * rng.NextFloat(0.55f, 0.80f), offset.y),
                     new Vector3(width * lobeScale, height * lobeScale * 1.15f, width * lobeScale),
                     Quaternion.Euler(rng.NextFloat(-22f, 22f), 0f, rng.NextFloat(-22f, 22f)), material);
@@ -553,18 +699,24 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 풀포기 한 개(얇게 눌린 구체 1개). 가장 저렴한 파츠라 개수가 제일 많아 렌더러 1개를 유지한다.
+        /// 풀포기 한 개(잎 3장 부채꼴, 12삼각형). 가장 저렴한 파츠라 개수가 제일 많아 렌더러 1개를 유지한다.
         /// [B8] 두께를 폭의 80% → 30%로 줄이고 좌우로 살짝 눕혀, 위에서 봐도 "납작한 덩어리"가 아니라
         /// 풀잎 다발이 서 있는 것처럼 보이게 한다.
+        /// [B9] 그 "눌린 구"(768삼각형)를 같은 규격의 잎 부채꼴 메시(12삼각형)로 교체했다. 눌린 구가
+        /// 화면에서 실제로 하던 일이 "위로 솟은 납작한 잎 다발"이라 실루엣은 사실상 동일하고, 끝이
+        /// 뾰족해져 오히려 풀로 더 잘 읽힌다. 스케일·회전·위치 계산과 난수 소비는 한 줄도 바뀌지 않았다.
         /// </summary>
         private static void CreateGrassTuft(Transform parent, Vector3 groundPosition, System.Random rng, Material material)
         {
-            float width = rng.NextFloat(0.7f, 1.5f);
-            float height = rng.NextFloat(0.30f, 0.62f);
+            // [B9 디렉터 수정] 폭 0.7~1.5m 는 풀포기가 아니라 관목 크기였다(플레이어 몸통보다 넓다).
+            // 이 값은 이전에 "눌린 구"였을 때 잡은 것인데, 잎 판으로 바뀌면서 그 크기가 그대로 벽이 됐다.
+            // 실제 풀포기 비례로 되돌린다.
+            float width = rng.NextFloat(0.32f, 0.62f);
+            float height = rng.NextFloat(0.26f, 0.46f);
             float yaw = rng.NextFloat(0f, 360f);
             float lean = rng.NextFloat(-14f, 14f);
 
-            var tuft = CreatePart(parent, "Veg_GrassTuft", PrimitiveType.Sphere,
+            var tuft = CreatePart(parent, "Veg_GrassTuft", GetGrassBladeMesh(),
                 Vector3.zero, new Vector3(width, height, width * 0.30f),
                 Quaternion.Euler(0f, yaw, lean), material);
             tuft.transform.position = groundPosition + Vector3.up * (height * 0.35f);
@@ -586,13 +738,23 @@ namespace MakeGame.Systems
         private static GameObject CreatePart(Transform parent, string name, PrimitiveType primitiveType,
             Vector3 localPosition, Vector3 localScale, Quaternion localRotation, Material material)
         {
+            return CreatePart(parent, name, GetPrimitiveMesh(primitiveType),
+                localPosition, localScale, localRotation, material);
+        }
+
+        /// <summary>
+        /// 위와 같지만 내장 프리미티브 대신 이 클래스가 만든 저폴리 메시를 쓴다(B9).
+        /// 메시는 반드시 캐시된 공유 메시를 넘겨라 - 파츠마다 새 Mesh를 만들면 수백 개가 쌓인다.
+        /// </summary>
+        private static GameObject CreatePart(Transform parent, string name, Mesh mesh,
+            Vector3 localPosition, Vector3 localScale, Quaternion localRotation, Material material)
+        {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = localPosition;
             go.transform.localRotation = localRotation;
             go.transform.localScale = localScale;
 
-            Mesh mesh = GetPrimitiveMesh(primitiveType);
             if (mesh != null)
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
 
@@ -624,6 +786,167 @@ namespace MakeGame.Systems
 
         private static readonly Dictionary<PrimitiveType, Mesh> primitiveMeshCache = new Dictionary<PrimitiveType, Mesh>();
 
+        // ─────────────────────────────────────────────────────────────────────────
+        //  저폴리 초목 메시 (B9)  —  "가장 안 보이는 파츠가 삼각형 예산의 96%를 쓰던" 문제
+        // ─────────────────────────────────────────────────────────────────────────
+        //
+        // 실측(특대 섬, 교체 전): 풀포기 78×768 = 59,904 · 덤불 로브 120×768 = 92,160 ·
+        // 야자수 전체 5,760 → 합계 157,824. 즉 덤불+풀이 96%였다. 반면 야자수는 그루당 360삼각형
+        // (원기둥 3×80 + 큐브 10×12)뿐이라 애초에 싸다 - B8에서 "그루 수 42 → 16으로 상쇄했다"고
+        // 한 것은 렌더러 예산에는 맞았지만 삼각형 관점에서는 잘못된 곳을 줄인 것이었다.
+        //
+        // 내장 Sphere는 768삼각형짜리 UV 구다. 덤불 로브와 풀포기는 둘 다 비균일 스케일로 납작하게
+        // 눌러 쓰는 데다 대부분 5m 밖에서 보이므로, 그 정밀도가 화면에 도달하지 않는다
+        // (ArtDirection 2장 "폴리곤을 아낄 곳은 언제나 5m 밖에서 안 보이는 디테일").
+        //
+        // 두 메시 모두 **내장 Sphere와 동일한 로컬 규격**(지름 1, 중심 원점, [-0.5,0.5]^3)으로 만든다.
+        // 그래야 호출부의 스케일·회전·오프셋을 한 줄도 고치지 않고 그대로 쓸 수 있고, B8에서 확정한
+        // 실루엣 규칙(덤불: 기울인 로브 3개·폭>>높이 / 풀: 두께가 폭의 30%)이 그대로 보존된다.
+
+        /// <summary>
+        /// 덤불 로브용 저폴리 덩어리 = 정이십면체(20삼각형). 내장 Sphere 768삼각형의 1/38.
+        ///
+        /// 왜 정이십면체인가: 20삼각형만으로 실루엣이 거의 원에 가깝고(면이 균일해 어느 각도에서 봐도
+        /// 윤곽이 무너지지 않는다), 평면 셰이딩된 각진 면이 오히려 "매끈한 돌덩이와 덤불을 가른다"는
+        /// B8의 목표를 강화한다. 로우폴리/스타일라이즈드 방향(ArtDirection 0장)과도 정확히 맞는다.
+        ///
+        /// 평면 셰이딩을 위해 정점을 면마다 분리한다(60정점) - 정점 수는 삼각형과 달리 이 프로젝트의
+        /// 병목이 아니고, 공유 정점으로 부드럽게 셰이딩하면 20면짜리 저폴리가 찌그러진 구로 보인다.
+        /// </summary>
+        private static Mesh GetLowPolyLobeMesh()
+        {
+            if (lowPolyLobeMesh != null)
+                return lowPolyLobeMesh;
+
+            const float phi = 1.6180340f;
+            var basePoints = new[]
+            {
+                new Vector3(-1f, phi, 0f), new Vector3(1f, phi, 0f),
+                new Vector3(-1f, -phi, 0f), new Vector3(1f, -phi, 0f),
+                new Vector3(0f, -1f, phi), new Vector3(0f, 1f, phi),
+                new Vector3(0f, -1f, -phi), new Vector3(0f, 1f, -phi),
+                new Vector3(phi, 0f, -1f), new Vector3(phi, 0f, 1f),
+                new Vector3(-phi, 0f, -1f), new Vector3(-phi, 0f, 1f),
+            };
+            // 반지름 0.5 = 지름 1. 내장 Sphere와 같은 규격이라 호출부 스케일 의미가 바뀌지 않는다.
+            for (int i = 0; i < basePoints.Length; i++)
+                basePoints[i] = basePoints[i].normalized * 0.5f;
+
+            int[] faces =
+            {
+                0, 11, 5,  0, 5, 1,   0, 1, 7,   0, 7, 10,  0, 10, 11,
+                1, 5, 9,   5, 11, 4,  11, 10, 2, 10, 7, 6,  7, 1, 8,
+                3, 9, 4,   3, 4, 2,   3, 2, 6,   3, 6, 8,   3, 8, 9,
+                4, 9, 5,   2, 4, 11,  6, 2, 10,  8, 6, 7,   9, 8, 1,
+            };
+
+            lowPolyLobeMesh = BuildFlatShadedMesh("Veg_LobeIcosa", basePoints, faces, true);
+            return lowPolyLobeMesh;
+        }
+
+        /// <summary>
+        /// 풀포기용 저폴리 잎다발 = 부채꼴로 벌린 잎 3장(양면이라 12삼각형). 내장 Sphere의 1/64.
+        ///
+        /// 풀포기는 이미 "두께를 폭의 30%로 눌러 좌우로 눕힌" 형태라(B8), 눌린 구가 실제로 화면에서
+        /// 하던 일은 "위로 솟은 납작한 잎 다발"이었다. 그 실루엣은 평면 조합으로 그대로 재현되고,
+        /// 오히려 끝이 뾰족한 잎이 생겨 풀로 더 잘 읽힌다.
+        ///
+        /// 잎은 단면이라 뒷면에서 보이지 않으므로 감김을 뒤집은 사본을 함께 넣어 양면으로 만든다
+        /// (양면 셰이더나 두께가 있는 상자를 쓰는 것보다 싸다). 규격은 Sphere와 같은
+        /// [-0.5,0.5]^3 이라 호출부의 (width, height, width*0.30) 스케일 의미가 그대로 유지된다.
+        /// </summary>
+        private static Mesh GetGrassBladeMesh()
+        {
+            if (grassBladeMesh != null)
+                return grassBladeMesh;
+
+            var points = new List<Vector3>();
+            var faces = new List<int>();
+
+            // [B9 디렉터 수정] 잎 3장 × 폭 0.30 은 실기에서 "풀"이 아니라 **반투명 판때기**로 보였다.
+            // 원인은 지오메트리가 아니라 비례다 - 호출부 스케일(폭 0.7~1.5m)에 잎이 3장뿐이라
+            // 한 장이 0.5m 폭짜리 벽이 됐다. 잎을 늘리고 각각을 가늘게 해야 풀로 읽힌다.
+            // 잎 5장을 0°/40°/78°/118°/155°로 벌린다. 호출부가 z를 30%로 누르므로 결과는 부채꼴이 된다.
+            float[] yaws = { 0f, 40f, 78f, 118f, 155f };
+            float[] tipHeights = { 0.50f, 0.34f, 0.44f, 0.30f, 0.40f };   // 끝 높이를 다르게 해 윗변이 평평해지지 않게 한다
+            float[] tipOuts = { 0.30f, 0.18f, 0.38f, 0.16f, 0.26f };      // 바깥으로 벌어지는 정도
+
+            for (int i = 0; i < yaws.Length; i++)
+            {
+                float rad = yaws[i] * Mathf.Deg2Rad;
+                Vector3 outward = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+                Vector3 side = new Vector3(Mathf.Cos(rad), 0f, -Mathf.Sin(rad));
+
+                // 폭: 밑동 0.30 → 0.10, 끝 0.10 → 0.03. 잎이 "칼날"이 아니라 "풀잎"으로 읽히는 최소 비례다
+                // (높이 1.0 대비 폭 0.10 = 10:1). 이전 0.30은 3.3:1이라 판때기였다.
+                Vector3 b0 = side * -0.05f + outward * -0.03f + Vector3.down * 0.5f;
+                Vector3 b1 = side * 0.05f + outward * -0.03f + Vector3.down * 0.5f;
+                Vector3 t0 = side * -0.015f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
+                Vector3 t1 = side * 0.015f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
+
+                int b = points.Count;
+                points.Add(b0); points.Add(b1); points.Add(t1); points.Add(t0);
+                faces.Add(b); faces.Add(b + 1); faces.Add(b + 2);
+                faces.Add(b); faces.Add(b + 2); faces.Add(b + 3);
+                // 뒷면(감김 반대). 법선도 반대로 나오므로 양쪽에서 정상적으로 조명을 받는다.
+                faces.Add(b); faces.Add(b + 2); faces.Add(b + 1);
+                faces.Add(b); faces.Add(b + 3); faces.Add(b + 2);
+            }
+
+            // 잎은 닫힌 볼륨이 아니라 중심 기준 바깥 판정(ensureOutward)을 쓸 수 없다 - 감김을 그대로 둔다.
+            grassBladeMesh = BuildFlatShadedMesh("Veg_GrassBlades", points.ToArray(), faces.ToArray(), false);
+            return grassBladeMesh;
+        }
+
+        /// <summary>
+        /// 면마다 정점을 분리한 평면 셰이딩 메시를 만든다.
+        /// ensureOutward가 켜져 있으면 각 삼각형의 법선이 원점 바깥을 향하도록 감김을 바로잡는다
+        /// (닫힌 볼록 다면체에만 유효하다 - 이 프로젝트는 왼손 좌표계라 표준 인덱스 표를 그대로
+        /// 옮기면 안쪽을 향해 통째로 컬링되는 사고가 나기 쉬워, 표를 믿지 않고 계산으로 확정한다).
+        /// UV는 XY 평면 투영이다 - 표면 그레인 텍스처를 곱하는 용도라 정밀한 전개가 필요 없다.
+        /// </summary>
+        private static Mesh BuildFlatShadedMesh(string meshName, Vector3[] points, int[] faces, bool ensureOutward)
+        {
+            var vertices = new Vector3[faces.Length];
+            var uvs = new Vector2[faces.Length];
+            var triangles = new int[faces.Length];
+
+            for (int f = 0; f + 2 < faces.Length; f += 3)
+            {
+                Vector3 p0 = points[faces[f]];
+                Vector3 p1 = points[faces[f + 1]];
+                Vector3 p2 = points[faces[f + 2]];
+
+                if (ensureOutward && Vector3.Dot(Vector3.Cross(p1 - p0, p2 - p0), (p0 + p1 + p2) / 3f) < 0f)
+                {
+                    Vector3 swap = p1;
+                    p1 = p2;
+                    p2 = swap;
+                }
+
+                vertices[f] = p0;
+                vertices[f + 1] = p1;
+                vertices[f + 2] = p2;
+                uvs[f] = new Vector2(p0.x + 0.5f, p0.y + 0.5f);
+                uvs[f + 1] = new Vector2(p1.x + 0.5f, p1.y + 0.5f);
+                uvs[f + 2] = new Vector2(p2.x + 0.5f, p2.y + 0.5f);
+                triangles[f] = f;
+                triangles[f + 1] = f + 1;
+                triangles[f + 2] = f + 2;
+            }
+
+            var mesh = new Mesh { name = meshName };
+            mesh.vertices = vertices;
+            mesh.uv = uvs;
+            mesh.triangles = triangles;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static Mesh lowPolyLobeMesh;
+        private static Mesh grassBladeMesh;
+
         /// <summary>
         /// 팔레트 색의 명도만 바꾼 변주를 만든다(알파는 항상 1로 유지 - URP Lit Opaque에서 알파가
         /// 딸려 어두워지는 실수를 막는다). 새 색을 만드는 것이 아니라 같은 색의 밝기 단계다.
@@ -637,6 +960,70 @@ namespace MakeGame.Systems
                 Mathf.Clamp01(color.g * factor),
                 Mathf.Clamp01(color.b * factor),
                 1f);
+        }
+
+        /// <summary>
+        /// 명도(HSV의 V)와 색상각은 그대로 두고 채도(S)만 배율로 바꾼다.
+        ///
+        /// 왜 Shade로는 안 되는가: Shade는 세 채널에 같은 수를 곱하므로 HSV 채도가 정확히 보존된다.
+        /// 즉 "어둡게" 하면 명도만 떨어지고 유채색량(chroma = max-min)이 같이 줄어, 밝은 배경(하늘)
+        /// 앞에서 색상 정보가 남지 않는 검은 실루엣이 된다 - 야자수 줄기에서 실제로 일어난 일이다.
+        /// 채도를 따로 올릴 수단이 필요해서 짝이 되는 헬퍼를 둔다(새 팔레트 색을 만드는 것이 아니라
+        /// 같은 색상각 위의 변주라는 점은 Shade와 같다).
+        /// </summary>
+        private static Color Saturate(Color color, float factor)
+        {
+            float max = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+            float min = Mathf.Min(color.r, Mathf.Min(color.g, color.b));
+            if (max <= 0.0001f || max - min <= 0.0001f)
+                return new Color(color.r, color.g, color.b, 1f); // 무채색은 채도를 곱해도 무채색이다.
+
+            float saturation = Mathf.Clamp01((max - min) / max * factor);
+            float newMin = max * (1f - saturation);
+            float scale = (max - newMin) / (max - min);
+            return new Color(
+                Mathf.Clamp01(newMin + (color.r - min) * scale),
+                Mathf.Clamp01(newMin + (color.g - min) * scale),
+                Mathf.Clamp01(newMin + (color.b - min) * scale),
+                1f);
+        }
+
+        /// <summary>
+        /// 야자수 줄기(나무껍질) 색. Driftwood(#8C6640)의 명도를 0.93배로 낮추고 채도를 1.20배로 올린
+        /// 변주 = #82582D. 팔레트에 새 색을 추가한 것이 아니라 Driftwood의 한 단계다("목재" 의미 유지).
+        /// 수치 근거는 BuildIslandSurface의 머티리얼 생성 지점 주석에 있다.
+        /// </summary>
+        private static readonly Color PalmBarkColor =
+            Saturate(Shade(StructureVisualBuilder.Driftwood, 0.93f), 1.20f);
+
+        /// <summary>
+        /// 위치만으로 결정되는 0~1 해시. 난수 스트림을 소비하지 않으므로 재현성(같은 worldSeed = 같은
+        /// 숲/지형)에 아무 영향이 없고, 같은 지형 메시면 항상 같은 결과가 나온다.
+        /// 입력은 항상 섬 로컬 좌표(|x|,|z| ≤ radius ≤ 200)라 float 정밀도 문제가 생기지 않는다.
+        /// </summary>
+        private static float Hash01(Vector3 p)
+        {
+            float h = Mathf.Sin(p.x * 12.9898f + p.z * 78.233f + p.y * 37.719f) * 43758.5453f;
+            return h - Mathf.Floor(h);
+        }
+
+        /// <summary>
+        /// 캡 삼각형 하나를 어느 톤(서브메시)에 넣을지 고른다.
+        ///
+        /// 저주파 펄린(격자 ≈29m)으로 넓은 얼룩을 만들되, 삼각형 단위 해시를 크게 섞어 얼룩의 경계를
+        /// 점묘로 흩뜨린다. 이 디더가 없으면 펄린 격자가 축 정렬(axis-aligned)이라는 사실이 그대로
+        /// 드러나 직선 경계의 사각 얼룩이 생긴다 - HighlandCap에서 실제로 났던 사고와 같은 원인이다.
+        /// </summary>
+        private static int ToneIndex(Vector3 centroid, int toneCount)
+        {
+            if (toneCount <= 1)
+                return 0;
+
+            // 펄린은 실제로 0~1을 다 쓰지 않고 대략 0.25~0.75에 몰려 있어, 그대로 나누면 양 끝 톤이
+            // 거의 안 쓰인다. 1.6배로 펴서 세 톤이 고르게 나오게 한다.
+            float patch = (Mathf.PerlinNoise(centroid.x * 0.035f + 517f, centroid.z * 0.035f + 517f) - 0.5f) * 1.6f + 0.5f;
+            float dithered = Mathf.Clamp01(patch + (Hash01(centroid) - 0.5f) * 0.55f);
+            return Mathf.Clamp(Mathf.FloorToInt(dithered * toneCount), 0, toneCount - 1);
         }
     }
 }

@@ -692,7 +692,7 @@ MonoBehaviour:
   sunstroke: 0
   sunstrokeGainPerSecond: 0.25
   sunstrokeRecoveryPerSecond: 0.2
-  sunstrokeDamagePerSecond: 0.5
+  sunstrokeDamagePerSecond: 1
   isPoisoned: 0
   isBleeding: 0
   hasBrokenBone: 0

@@ -28,6 +28,16 @@ namespace MakeGame.UI
         [Tooltip("상태 이상이 새로 시작된 직후 강하게 강조하는 시간(초). 이 시간이 지나면 조용한 상시 표시로 물러난다.")]
         public float onsetEmphasisSeconds = 1.8f;
 
+        [Header("일몰 예고 (Design_Onboarding 6장)")]
+        [Tooltip("일몰 예고를 발생시키는 시계. 비워두면 씬에서 자동으로 찾는다.")]
+        public SurvivalClock survivalClock;
+
+        [Tooltip("일몰 예고 배너가 화면에 완전히 보이는 시간(초). 이 시간이 지나면 아래 fadeSeconds 동안 사라진다.")]
+        public float sunsetNoticeSeconds = 6f;
+
+        [Tooltip("일몰 예고 배너가 사라질 때의 페이드 시간(초).")]
+        public float sunsetFadeSeconds = 1.2f;
+
         // 상태 이상별 색(ArtDirection.md 1.1/1.2 팔레트 그대로).
         private static readonly Color BleedingColor = new Color(0.8f, 0.2f, 0.2f, 1f);   // Danger Red #CC3333
         private static readonly Color PoisonColor = new Color(0.5f, 0.85f, 0.2f, 1f);    // Toxic Green #80D933
@@ -35,10 +45,30 @@ namespace MakeGame.UI
         private static readonly Color SunstrokeColor = new Color(0.9f, 0.75f, 0.2f, 1f); // Sunstroke Gold #E6BF33
         private static readonly Color DrowningColor = new Color(0.3f, 0.85f, 0.8f, 1f);  // Oxygen Cyan #4CD9CC
 
+        // 일몰 예고 문구는 Docs/Design_Onboarding.md 6장 확정본을 그대로 쓴다(임의로 바꾸지 말 것).
+        private const string SunsetNoticeText = "곧 밤이 됩니다 — 불을 피우거나 안전한 곳으로";
+
+        // 안내 문구 색. 새 색을 만들지 않는다(ArtDirection.md 1장) - SurvivalHudUI의 목표 1줄,
+        // MinimapUI.statusLabel이 이미 "주목시키는 안내 문구"에 쓰고 있는 옅은 금색 그대로다.
+        private static readonly Color SunsetNoticeColor = new Color(1f, 0.9f, 0.4f, 1f);
+
         private GameObject panelRoot;
         private CanvasGroup canvasGroup;
         private Image backgroundImage;
         private Text messageLabel;
+
+        // 일몰 예고 배너. 상태 이상 배너와 같은 캔버스를 쓰고(새 캔버스를 만들지 않는다) 바로 아래
+        // 줄에 놓여, 둘이 동시에 떠도 서로 가리지 않는다. 표시/숨김은 상태 이상 쪽과 완전히 독립이다
+        // (상태 이상이 없다고 예고가 꺼지면 안 되고, 그 반대도 안 된다).
+        private GameObject sunsetPanelRoot;
+        private CanvasGroup sunsetCanvasGroup;
+
+        // 남은 표시 시간(초). 0 이하이면 배너가 닫혀 있다는 뜻이다.
+        private float sunsetRemaining = 0f;
+
+        // 실제로 구독한 시계. OnDestroy에서 반드시 같은 인스턴스에서 해제해야 하므로 따로 들고 있는다
+        // (survivalClock 공개 필드는 인스펙터에서 도중에 바뀔 수 있어 해제 대상 기준으로 쓸 수 없다).
+        private SurvivalClock subscribedClock;
 
         // 마지막으로 배너에 반영한 상태 이상 조합. 이 값들이 실제로 바뀐 프레임에만 BuildWarningMessage()로
         // 새 문자열을 만들어 대입한다(#7/#8과 동일한 캐싱 패턴) - 기존 OnGUI 코드는 배너가 떠 있는 동안
@@ -64,6 +94,68 @@ namespace MakeGame.UI
         {
             BuildUI();
             SetOpen(false);
+            SetSunsetOpen(false);
+
+            SubscribeSunsetWarning();
+        }
+
+        /// <summary>
+        /// 일몰 예고 이벤트를 구독한다. 이미 발생한 뒤에 이 UI가 만들어졌을 수도 있으므로
+        /// (SurvivalClock 주석이 명시한 폴링 경로) 그 경우는 남은 시간을 계산해 이어서 띄운다.
+        ///
+        /// SunsetWarningFired만 보면 안 된다 - 시계는 "예고할 날이 이미 지나갔다"(불러오기로 5일차
+        /// 시작 등)일 때도 이벤트 없이 Fired만 true로 소진한다. 실제 발생 여부는 SunsetWarningTime이
+        /// 0 이상인지로 구분해야 한다.
+        /// </summary>
+        private void SubscribeSunsetWarning()
+        {
+            if (survivalClock == null)
+                survivalClock = FindAnyObjectByType<SurvivalClock>();
+
+            if (survivalClock == null)
+                return;
+
+            subscribedClock = survivalClock;
+            subscribedClock.SunsetWarningRaised += OnSunsetWarningRaised;
+
+            // 구독 전에 이미 발생했다면 놓친 만큼을 빼고 남은 시간만 표시한다.
+            if (subscribedClock.SunsetWarningFired && subscribedClock.SunsetWarningTime >= 0f)
+            {
+                float elapsed = Time.time - subscribedClock.SunsetWarningTime;
+                float total = Mathf.Max(0f, sunsetNoticeSeconds) + Mathf.Max(0f, sunsetFadeSeconds);
+                float remaining = total - elapsed;
+                if (remaining > 0f)
+                {
+                    sunsetRemaining = remaining;
+                    SetSunsetOpen(true);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 구독을 반드시 해제한다. SurvivalClock은 씬 오브젝트라 씬 리로드 시 함께 파괴되지만,
+        /// 이 UI가 먼저 파괴되는 경우(오브젝트 비활성/파괴)에는 죽은 델리게이트가 시계에 남는다.
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (subscribedClock != null)
+            {
+                subscribedClock.SunsetWarningRaised -= OnSunsetWarningRaised;
+                subscribedClock = null;
+            }
+        }
+
+        /// <summary>
+        /// 일몰 예고가 발생한 순간 호출된다(세션당 1회 - 1회성 보장은 SurvivalClock의 책임이므로
+        /// 여기서 별도 게이트를 두지 않는다).
+        /// </summary>
+        private void OnSunsetWarningRaised()
+        {
+            // 경고음은 붙이지 않는다. PlayStatusOnset은 "출혈/중독이 시작됐다"는 위급 신호에 배정된
+            // 소리라(ArtDirection.md 4.2의 3단계 피드백), 아직 아무 피해도 없는 안내에 같은 소리를
+            // 쓰면 위급 신호의 의미가 희석된다.
+            sunsetRemaining = Mathf.Max(0f, sunsetNoticeSeconds) + Mathf.Max(0f, sunsetFadeSeconds);
+            SetSunsetOpen(true);
         }
 
         /// <summary>
@@ -104,6 +196,82 @@ namespace MakeGame.UI
             var shadow = messageLabel.gameObject.AddComponent<Shadow>();
             shadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
             shadow.effectDistance = new Vector2(1.5f, -1.5f);
+
+            BuildSunsetBanner(canvas.transform);
+        }
+
+        /// <summary>
+        /// 일몰 예고 배너를 상태 이상 배너와 같은 캔버스 아래에 만든다(새 캔버스를 만들지 않는다).
+        /// 배너 연출(반투명 배경 패널 + 그림자 있는 굵은 중앙 정렬 텍스트 + CanvasGroup 알파 제어)은
+        /// 위 BuildUI와 동일한 구성 그대로다. 위치만 상태 이상 배너 바로 아래 줄로 내려, 출혈 중에
+        /// 밤이 와도 두 문구가 겹치지 않는다.
+        /// </summary>
+        private void BuildSunsetBanner(Transform canvasTransform)
+        {
+            // 배경색도 새로 만들지 않고, 이미 있는 일사병 색(#E6BF33)을 어둡게 깐다 - 위 onsetColor를
+            // 0.55배로 깔던 것과 같은 방식이다. 밝은 금색을 그대로 깔면 흰 글씨가 묻힌다.
+            Color background = SunstrokeColor * 0.3f;
+            background.a = 0.8f;
+
+            var panel = UIBuilder.CreatePanel(
+                canvasTransform, "SunsetNoticeBanner",
+                anchorMin: new Vector2(0.5f, 1f), anchorMax: new Vector2(0.5f, 1f),
+                offsetMin: new Vector2(-450f, -112f), offsetMax: new Vector2(450f, -66f),
+                color: background);
+
+            sunsetPanelRoot = panel.gameObject;
+            sunsetCanvasGroup = sunsetPanelRoot.AddComponent<CanvasGroup>();
+
+            var label = UIBuilder.CreateText(panel, "Message", SunsetNoticeText, 16, SunsetNoticeColor, TextAnchor.MiddleCenter);
+            label.fontStyle = FontStyle.Bold;
+            label.horizontalOverflow = HorizontalWrapMode.Wrap;
+            var labelRt = label.rectTransform;
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = Vector2.zero;
+            labelRt.offsetMax = Vector2.zero;
+
+            var labelShadow = label.gameObject.AddComponent<Shadow>();
+            labelShadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            labelShadow.effectDistance = new Vector2(1.5f, -1.5f);
+        }
+
+        /// <summary>
+        /// 일몰 예고 배너의 남은 시간을 줄이고, 마지막 sunsetFadeSeconds 구간에서 서서히 사라지게 한다.
+        /// Time.timeScale이 0인 화면(설정/게임오버/엔딩) 위에서 타이머가 멈춰 배너가 영원히 남지
+        /// 않도록 unscaledDeltaTime을 쓴다(AGENT_BRIEF 4장 함정).
+        /// </summary>
+        private void UpdateSunsetNotice()
+        {
+            if (sunsetRemaining <= 0f)
+                return;
+
+            sunsetRemaining -= Time.unscaledDeltaTime;
+            if (sunsetRemaining <= 0f)
+            {
+                sunsetRemaining = 0f;
+                SetSunsetOpen(false);
+                return;
+            }
+
+            if (sunsetCanvasGroup != null)
+            {
+                float fade = Mathf.Max(0.0001f, sunsetFadeSeconds);
+                sunsetCanvasGroup.alpha = Mathf.Clamp01(sunsetRemaining / fade);
+            }
+        }
+
+        /// <summary>
+        /// 일몰 예고 배너를 열거나 닫는다. 열 때는 알파를 1로 되돌린다.
+        /// </summary>
+        private void SetSunsetOpen(bool open)
+        {
+            if (sunsetPanelRoot == null)
+                return;
+
+            sunsetPanelRoot.SetActive(open);
+            if (open && sunsetCanvasGroup != null)
+                sunsetCanvasGroup.alpha = 1f;
         }
 
         /// <summary>
@@ -112,6 +280,10 @@ namespace MakeGame.UI
         /// </summary>
         private void Update()
         {
+            // 일몰 예고는 상태 이상과 완전히 독립이다. survivalStats가 연결되지 않은 씬에서도(아래
+            // early return 경로) 예고는 정상적으로 뜨고 사라져야 하므로 반드시 먼저 처리한다.
+            UpdateSunsetNotice();
+
             if (survivalStats == null)
             {
                 SetOpen(false);

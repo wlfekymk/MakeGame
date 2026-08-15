@@ -76,7 +76,6 @@ namespace MakeGame.UI
         private CanvasGroup closingGroup;
         private Text closingLabel;
         private CanvasGroup footerGroup;
-        private Text hintLabel;
 
         private readonly CanvasGroup[] statGroups = new CanvasGroup[StatRowCount];
         private readonly Text[] statLabels = new Text[StatRowCount];
@@ -87,6 +86,24 @@ namespace MakeGame.UI
 
         /// <summary>연출이 진행 중인지(=아직 마지막 페이즈에 도달하지 않았는지).</summary>
         private bool presenting = false;
+
+        /// <summary>
+        /// 이번 엔딩 연출에서 팡파레를 이미 재생했는지. 클립이 1.2초라 두 번 겹치면 뭉개지므로
+        /// 재생 지점이 둘(정상 재생의 페이즈 2 / 페이즈 2 이전에 건너뛴 경우)이어도 실제 재생은
+        /// 반드시 1회여야 한다. BeginPresentation에서 false로 초기화된다.
+        /// </summary>
+        private bool fanfarePlayed = false;
+
+        /// <summary>
+        /// EndingChecker에 "연출이 끝났다"를 알릴 프레임 번호. -1이면 예약 없음.
+        ///
+        /// 건너뛰기는 키 입력으로 일어나는데, 그 통지를 같은 프레임에 보내면 EndingChecker.Update()가
+        /// **같은 Space 입력**을 이어서 "화면 닫기"로 읽어버린다(둘의 스크립트 실행 순서는 정해져 있지
+        /// 않다). 그러면 Space 한 번에 건너뛰기 + 닫기가 동시에 일어나 통계를 한 프레임도 못 본다 -
+        /// EndingChecker.Update 주석이 "예전 버그"로 적어둔 바로 그 증상이다. 그래서 건너뛰기 경로의
+        /// 통지만 다음 프레임으로 미룬다(정상 종료 경로는 키 입력과 무관하므로 즉시 알린다).
+        /// </summary>
+        private int markPresentationFinishedFrame = -1;
 
         /// <summary>
         /// 외부에서 주입된 "제작한 물건 종류 수". 음수면 미주입이라는 뜻이고, 그때는 씬의
@@ -243,8 +260,9 @@ namespace MakeGame.UI
             footerGroup.blocksRaycasts = false;
 
             string keyLabel = endingChecker != null ? endingChecker.continueKey.ToString() : "Space";
-            hintLabel = UIBuilder.CreateText(footer, "Hint", $"[{keyLabel}] 키를 눌러 계속하기", 16, BodyGray, TextAnchor.MiddleCenter);
-            PositionCentered(hintLabel.rectTransform, yOffset: -165f, width: 0f, height: 30f);
+            // 이 라벨은 만든 뒤로 내용이 바뀌지 않으므로 필드로 들고 있을 이유가 없다(지역 변수로 충분).
+            var hint = UIBuilder.CreateText(footer, "Hint", $"[{keyLabel}] 키를 눌러 계속하기", 16, BodyGray, TextAnchor.MiddleCenter);
+            PositionCentered(hint.rectTransform, yOffset: -165f, width: 0f, height: 30f);
 
             // 기존 키 입력(continueKey, 기본 Space)은 EndingChecker.Update()가 그대로 처리하므로 여기서는
             // 화면 표시만 담당하지만, 키보드가 없는 입력 방식(터치/게임패드 커서 등)도 지원하기 위해
@@ -281,13 +299,19 @@ namespace MakeGame.UI
         /// 패널을 열거나 닫고, 여는 순간에 문구/통계를 채운 뒤 연출 시퀀스를 시작한다.
         /// 연출 도중 아무 키나 누르면 마지막 페이즈로 즉시 건너뛴다 - 두 번째 플레이에서 7초를
         /// 강제로 앉혀두면 연출이 벌칙이 된다(Design_Ending.md 3장 스킵).
-        /// continueKey(기본 Space)만은 예외로 두는데, 그 키는 EndingChecker.Update()가 같은 프레임에
-        /// DismissEndingUI로 처리하는 "화면 닫기" 키이기 때문이다(아래 OnContinueClicked 주석 참고).
+        ///
+        /// [qa 지적 반영] 예전에는 continueKey(기본 Space)를 건너뛰기에서 제외했다. 이제 EndingChecker가
+        /// EndingPresentationFinished 이전의 continueKey를 무시하므로, 제외를 남겨두면 연출 중 Space가
+        /// 건너뛰기도 닫기도 아닌 완전 무반응이 된다. 제외를 지워 Space = 건너뛰기 →(다음 프레임부터)
+        /// Space = 닫기로 이어지게 한다. 두 동작이 한 번의 입력에 겹치지 않는 이유는
+        /// markPresentationFinishedFrame 주석 참고.
         /// </summary>
         private void Update()
         {
             if (endingChecker == null)
                 return;
+
+            FlushPendingPresentationFinished();
 
             bool showing = endingChecker.IsShowingEnding;
             if (showing != lastShowing)
@@ -305,8 +329,22 @@ namespace MakeGame.UI
             if (!showing || !presenting)
                 return;
 
-            if (Input.anyKeyDown && !Input.GetKeyDown(endingChecker.continueKey))
+            if (Input.anyKeyDown)
                 SkipToFinalState();
+        }
+
+        /// <summary>
+        /// 건너뛰기가 예약해 둔 "연출 종료" 통지를, 예약한 프레임이 되면 한 번 보낸다.
+        /// EndingChecker.MarkEndingPresentationFinished는 여러 번 불러도 안전하지만, 예약을 -1로
+        /// 되돌려 매 프레임 다시 부르지는 않는다.
+        /// </summary>
+        private void FlushPendingPresentationFinished()
+        {
+            if (markPresentationFinishedFrame < 0 || Time.frameCount < markPresentationFinishedFrame)
+                return;
+
+            markPresentationFinishedFrame = -1;
+            endingChecker.MarkEndingPresentationFinished();
         }
 
         /// <summary>
@@ -322,6 +360,11 @@ namespace MakeGame.UI
 
             ResetPresentationState();
             SetOpen(true);
+
+            // 엔딩 1회분의 상태를 새로 시작한다. 재시작 후 두 번째 엔딩에서 팡파레가 안 나거나
+            // 지난 연출의 통지 예약이 남아 도는 일이 없게 한다.
+            fanfarePlayed = false;
+            markPresentationFinishedFrame = -1;
 
             presenting = true;
             if (sequenceRoutine != null)
@@ -342,6 +385,7 @@ namespace MakeGame.UI
             }
 
             presenting = false;
+            markPresentationFinishedFrame = -1; // 화면이 닫힌 뒤에 뒤늦게 통지가 날아가지 않게 한다.
             SetOpen(false);
         }
 
@@ -374,6 +418,9 @@ namespace MakeGame.UI
             yield return FadeGroup(blackoutGroup, 0f, 1f, BlackoutDuration);
 
             // 페이즈 2 - 배경 크로스페이드 + 제목(1.0s → 2.5s)
+            // 소리도 여기서 시작한다. EndingChecker.TriggerEnding은 더 이상 PlayStageComplete를 부르지
+            // 않고(엔딩 확정 순간은 아직 암전이라 소리만 먼저 나면 어긋난다) 이 지점으로 위임했다.
+            PlayEndingFanfareOnce();
             yield return FadeGroup(backgroundGroup, 0f, 1f, BackgroundFadeDuration);
             yield return FadeGroup(titleGroup, 0f, 1f, TitleFadeDuration);
 
@@ -396,6 +443,23 @@ namespace MakeGame.UI
             EnableFooterInput();
             presenting = false;
             sequenceRoutine = null;
+
+            // 이 경로는 키 입력 없이 시간이 흘러 끝난 것이라 같은 프레임에 continueKey가 들어올 일이
+            // 없다. 지연 없이 바로 알려 Space가 곧장 화면을 닫을 수 있게 한다.
+            markPresentationFinishedFrame = -1;
+            endingChecker?.MarkEndingPresentationFinished();
+        }
+
+        /// <summary>
+        /// 엔딩 팡파레를 이번 연출에서 딱 한 번만 재생한다. AudioManager가 없으면 조용히 넘어간다.
+        /// </summary>
+        private void PlayEndingFanfareOnce()
+        {
+            if (fanfarePlayed)
+                return;
+
+            fanfarePlayed = true;
+            AudioManager.Instance?.PlayEndingFanfare();
         }
 
         /// <summary>
@@ -446,6 +510,14 @@ namespace MakeGame.UI
 
             EnableFooterInput();
             presenting = false;
+
+            // 페이즈 2에 닿기 전(암전 1초 안)에 건너뛰었다면 팡파레가 아직 안 울렸다. 그 경우에만
+            // 여기서 울린다 - PlayEndingFanfareOnce가 중복을 막으므로 두 번 나는 일은 없다.
+            PlayEndingFanfareOnce();
+
+            // 통지는 다음 프레임으로 미룬다. 지금 이 프레임의 키 입력(Space일 수 있다)을 EndingChecker가
+            // 이어서 "화면 닫기"로 읽으면 한 번의 입력이 건너뛰기와 닫기를 동시에 해버린다.
+            markPresentationFinishedFrame = Time.frameCount + 1;
         }
 
         /// <summary>계속하기 버튼이 실제로 눌릴 수 있게 만든다(연출이 끝났거나 건너뛴 뒤).</summary>
@@ -680,16 +752,19 @@ namespace MakeGame.UI
         /// 제작한 물건 종류 수. 주입값이 있으면 그것을, 없으면 CraftingSystem.CraftedRecipeCount를 읽는다.
         /// 이 카운터는 세이브에 저장되지 않으므로 불러오기 이후에는 0부터 다시 센다(집계 정책은
         /// CraftingSystem 소유 - 여기서는 읽어서 보여주기만 한다).
+        ///
+        /// [디렉터 결정] 그래서 0은 "정말 아무것도 안 만들었다"와 "불러온 뒤로 집계가 없다"를 구분할
+        /// 수 없다. "(이번 세션)" 같은 접미사를 붙이지 않고, 값이 0일 때만 다른 미집계 항목과 똑같이
+        /// 흐린 대시(UnknownValue)로 되돌린다 - 1종 이상이면 그 값 자체는 언제나 정확하므로 그대로
+        /// 보여준다. 불러오기 여부를 UI가 알아내려고 시스템을 건드리지 않는다.
         /// </summary>
         private string GetCraftedKindText()
         {
-            if (injectedCraftedKindCount >= 0)
-                return $"{injectedCraftedKindCount}종";
+            int craftedKinds = injectedCraftedKindCount >= 0
+                ? injectedCraftedKindCount
+                : (craftingSystem != null ? craftingSystem.CraftedRecipeCount : -1);
 
-            if (craftingSystem != null)
-                return $"{craftingSystem.CraftedRecipeCount}종";
-
-            return UnknownValue;
+            return craftedKinds > 0 ? $"{craftedKinds}종" : UnknownValue;
         }
 
         /// <summary>배 제작 전체 진행률(0~1 → 백분율).</summary>
