@@ -152,8 +152,28 @@ namespace MakeGame.Systems
         public void RegenerateWorld(int seed)
         {
             // 기존에 생성해 둔 섬/바다/자원/위험요소 등 이 매니저 아래의 모든 오브젝트를 제거한다.
+            // 버그 수정(F9 불러오기 후 모든 아이템이 하늘로 떠오르는 문제): Destroy()는 "이번 프레임
+            // 끝"에야 실제로 파괴되는데, 바로 아래에서 같은 프레임 안에 새 섬/자원/위험요소를 즉시
+            // 다시 생성한다. 그 사이 옛 오브젝트의 콜라이더가 물리 씬에 그대로 남아있는 채로 새 노드를
+            // 배치하다 보니, 새 노드 위치를 지면에 맞추는 TerrainSampler.SnapToGround의 레이가 지형이
+            // 아니라 아직 안 지워진 옛 노드의 윗면에 맞아 그 위에 새 노드가 얹히고, 불러오기를 반복할수록
+            // 계속 쌓여 올라갔다. SetActive(false)는 Destroy와 달리 즉시 반영되어 콜라이더가 그 순간
+            // 물리 씬에서 바로 빠지므로, Destroy를 예약하기 전에 먼저 비활성화해 이 프레임 내에도 새로
+            // 만드는 오브젝트가 옛 오브젝트와 물리적으로 부딪히지 않게 한다.
+            // 자식 순회 중에는 SetParent(null) 등으로 부모를 바꾸지 않는다 - 역순 인덱스 순회 도중
+            // transform.childCount/GetChild(i)가 가리키는 자식이 바뀌면 순회가 꼬일 수 있기 때문이다.
+            // [의존 관계 주의] 이 SetActive(false)는 물리 문제뿐 아니라 SaveLoadController.RestoreResourceNodes/
+            // RestoreHazardsAndCreatures가 "지금 active인 오브젝트 = 방금 새로 생성된 진짜 오브젝트, 지금
+            // inactive인 오브젝트 = 파괴 예정인 옛 오브젝트"를 구분하는 근거로도 그대로 쓰인다(해당 메서드들이
+            // FindObjectsInactive.Exclude로 조회하기 때문). 이 한 줄을 지우면 물리 버그가 되살아나는 것은
+            // 물론, 불러오기 시 자원/위험요소/사냥감의 채집·처치·포획 진행도가 옛 오브젝트에 잘못 복원됐다가
+            // 프레임 끝에 함께 사라지는 별개의 조용한 버그까지 함께 되살아난다 - 두 파일을 함께 확인할 것.
             for (int i = transform.childCount - 1; i >= 0; i--)
-                Destroy(transform.GetChild(i).gameObject);
+            {
+                GameObject child = transform.GetChild(i).gameObject;
+                child.SetActive(false);
+                Destroy(child);
+            }
 
             islands.Clear();
 

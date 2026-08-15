@@ -613,6 +613,20 @@ namespace MakeGame.Systems
         /// 클래스 주석과 IslandResourceSpawner.SpawnResourcesForIsland 주석을 참고 - 같은 worldSeed면
         /// 섬별 결정적 System.Random 스트림 덕분에 항상 같은 순번에 같은 노드가 나온다는 전제가 성립한다.
         /// 목록에 없는 노드는 손대지 않는다(스폰 직후의 기본값 그대로 = 온전한 상태이므로 맞다).
+        /// 버그 수정: 이 메서드는 WorldMapManager.RegenerateWorld 호출 직후, 같은 Load() 호출 안에서(=
+        /// 같은 프레임 안에서) 실행된다. Destroy()는 프레임 끝까지 지연되므로, 이 시점에는 RegenerateWorld가
+        /// 막 지운 "옛" 자원 노드와 방금 새로 생성한 "새" 자원 노드가 동일한 (islandIndex, spawnOrder) 키로
+        /// 동시에 씬에 존재할 수 있다. FindObjectsInactive.Include로 둘 다 주웠다면 어느 쪽이 딕셔너리에
+        /// 최종적으로 남는지가 Unity의 열거 순서에 암묵적으로 의존하게 되고, 하필 옛(파괴 예정) 노드가
+        /// 남으면 그 노드에 채집 상태를 복원한 뒤 프레임 끝에 함께 파괴되어 방금 복원한 진행도가 조용히
+        /// 사라진다. WorldMapManager.RegenerateWorld는 Destroy 예약 직전에 옛 오브젝트를 SetActive(false)로
+        /// 먼저 비활성화하므로(WorldMapManager.cs 주석 참고), "지금 active인 노드 = 방금 새로 생성된 진짜
+        /// 노드"라는 구분이 성립한다. FindObjectsInactive.Exclude로 바꿔 비활성 상태(=파괴 예정인 옛 노드)를
+        /// 아예 조회 대상에서 뺐다. ResourceNode 자신은 채집이 소진되어도 gameObject.SetActive(false)를
+        /// 스스로 호출하지 않으므로(ResourceNode.cs 확인 - Tick/Harvest 모두 데이터 필드만 바꾼다) Exclude로
+        /// 바꿔도 정상적으로 살아있는 노드가 걸러지는 부작용은 없다.
+        /// [주의] 이 필터링은 WorldMapManager.RegenerateWorld가 Destroy 전에 SetActive(false)를 호출한다는
+        /// 전제에 의존한다 - 그 SetActive(false) 호출이 나중에 제거되면 이 구분이 조용히 무너진다.
         /// </summary>
         private void RestoreResourceNodes(SaveData data)
         {
@@ -620,7 +634,7 @@ namespace MakeGame.Systems
                 return;
 
             var nodesByKey = new Dictionary<long, ResourceNode>();
-            foreach (var node in Object.FindObjectsByType<ResourceNode>(FindObjectsInactive.Include))
+            foreach (var node in Object.FindObjectsByType<ResourceNode>(FindObjectsInactive.Exclude))
             {
                 if (node.spawnOrder < 0)
                     continue;
@@ -673,13 +687,25 @@ namespace MakeGame.Systems
         /// (3) 오프라인 진행을 도입하려면 저장 시각(System.DateTime)을 SaveData에 별도로 추가해야 하는데,
         /// 이는 이번 B3-5 범위를 넘어서는 새 설계이고, 굳이 필요하다면 다음 배치에서 다른 시스템들과 함께
         /// 일관되게 재설계하는 편이 낫다고 판단했다.
+        /// 버그 수정: RestoreResourceNodes와 동일한 이유로 FindObjectsInactive.Include를 Exclude로 바꿨다.
+        /// 이 메서드도 WorldMapManager.RegenerateWorld 직후 같은 프레임에 실행되어, Destroy 예약만 되고
+        /// 아직 실제로 파괴되지 않은 옛 HazardSource/HuntableCreature가 새로 생성된 것과 같은 (islandIndex,
+        /// spawnOrder) 키로 공존할 수 있다 - Include였다면 처치/포획 상태가 하필 옛(파괴 예정) 개체에
+        /// 복원되어 프레임 끝에 함께 사라지는 조용한 진행도 손실이 생길 수 있었다. HazardSource는 처치돼도
+        /// SetVisualActive에서 Renderer/Collider의 enabled만 끄고 gameObject.SetActive(false)는 호출하지
+        /// 않으며(HazardSource.cs 확인), HuntableCreature는 잡혀도 데이터 필드(isCaught)만 바꿀 뿐 아예
+        /// SetActive를 호출하지 않으므로(HuntableCreature.cs 확인), "지금 active인 개체 = 방금 새로 생성된
+        /// 진짜 개체"라는 구분이 정상적인 게임플레이 상태(처치/포획 여부)와 상관없이 성립한다. 즉 Exclude로
+        /// 바꿔도 이미 처치/포획된 살아있는 개체가 걸러지는 부작용은 없다 - 씬에 남아있는 한 여전히 active다.
+        /// [주의] 이 필터링은 WorldMapManager.RegenerateWorld가 Destroy 전에 SetActive(false)를 호출한다는
+        /// 전제에 의존한다 - 그 SetActive(false) 호출이 나중에 제거되면 이 구분이 조용히 무너진다.
         /// </summary>
         private void RestoreHazardsAndCreatures(SaveData data)
         {
             if (data.defeatedHazards != null && data.defeatedHazards.Count > 0)
             {
                 var hazardsByKey = new Dictionary<long, HazardSource>();
-                foreach (var hazard in Object.FindObjectsByType<HazardSource>(FindObjectsInactive.Include))
+                foreach (var hazard in Object.FindObjectsByType<HazardSource>(FindObjectsInactive.Exclude))
                 {
                     if (hazard.spawnOrder < 0)
                         continue;
@@ -696,7 +722,7 @@ namespace MakeGame.Systems
             if (data.caughtCreatures != null && data.caughtCreatures.Count > 0)
             {
                 var creaturesByKey = new Dictionary<long, HuntableCreature>();
-                foreach (var creature in Object.FindObjectsByType<HuntableCreature>(FindObjectsInactive.Include))
+                foreach (var creature in Object.FindObjectsByType<HuntableCreature>(FindObjectsInactive.Exclude))
                 {
                     if (creature.spawnOrder < 0)
                         continue;
