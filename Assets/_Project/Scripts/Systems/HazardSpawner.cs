@@ -28,10 +28,11 @@ namespace MakeGame.Systems
     /// 폴백은 해당 필드가 0 이하(미설정)일 때만 적용되므로 씬 직렬화 값이 항상 이긴다. 즉 이 배선은
     /// GetMultiplier의 기존 3단 우선순위에 중간 단계를 하나 끼워 넣는 것과 같다:
     /// 씬/인스펙터 값 > balanceConfig > IslandSizeMetrics(최후 폴백).
-    /// [주의/실측 대조] Balance_SceneSnapshot.md 기준 씬 직렬화 값은 1/1.5/2/2.5인 반면, 이 스크립트의
-    /// 코드 기본값과 SurvivalBalanceConfig는 B3-7 상향안(1/1.75/2.5/3.25)을 담고 있어 서로 다르다.
-    /// 씬 값이 전부 양수라 폴백이 실행되지 않으므로 이 배선 자체는 실동작을 바꾸지 않지만, 어느 쪽이
-    /// 최종 밸런스인지는 기획 결정 사항이다(씬 값 갱신은 디렉터 담당).
+    /// [B30 실측 정정 - 아래 주석이 낡아 있었다] 이 주석에는 "씬 직렬화 값은 1/1.5/2/2.5라 코드/config와
+    /// 다르다"고 적혀 있었으나, SampleScene.unity:985-988을 직접 읽으면 지금은 1/1.75/2.5/3.25로
+    /// 코드 기본값·SurvivalBalanceConfig와 **세 곳이 모두 일치**한다(디렉터가 B3-7 상향안을 씬에 반영한
+    /// 뒤 주석만 남았다). 즉 GetSizeDangerWeight의 규모 트림은 네 규모 모두 정확히 1.0이다.
+    /// 씬 값이 전부 양수라 balanceConfig 폴백은 여전히 실행되지 않는다(씬 값이 이긴다).
     /// </summary>
     public class HazardSpawner : MonoBehaviour
     {
@@ -114,8 +115,8 @@ namespace MakeGame.Systems
         // 올리면 배 제작 재료를 구하러 반드시 가야 하는 후반 동선(대형/특대 섬)이 지나치게 가혹해진다.
         // 절충안으로 자원 곡선(1/2/3/4)과 기존 위험 곡선(1/1.5/2/2.5)의 산술 평균을 택했다:
         // (1+1)/2=1, (2+1.5)/2=1.75, (3+2)/2=2.5, (4+2.5)/2=3.25.
-        // 씬(SampleScene.unity)에도 1/1.5/2/2.5가 직렬화돼 있어 코드 기본값만으로는 반영되지 않는다 -
-        // 디렉터가 씬 값을 직접 맞춘다(코디네이터 보고 [디렉터 조치 요청] 항목 참고). 자원 배율
+        // [B30 실측 정정] 이 줄에는 "씬에 1/1.5/2/2.5가 직렬화돼 있어 반영되지 않는다"고 적혀 있었지만
+        // 지금 씬(SampleScene.unity:985-988)은 1/1.75/2.5/3.25다 - 이미 반영이 끝났다. 자원 배율
         // (IslandResourceSpawner의 smallMultiplier 등)은 이번 변경 대상이 아니므로 손대지 않았다.
         // [B8 의미 변경] 이 배율은 더 이상 "등장 확률에 곱하는 값"이 아니다. 마릿수는 이제 면적이 정하고,
         // 이 배율은 그 위에 얹는 **규모별 위험도 트림**으로 남는다(GetSizeDangerWeight 참고):
@@ -230,7 +231,7 @@ namespace MakeGame.Systems
                 if (entry == null)
                     continue;
 
-                Vector2 offset = rng.NextInsideUnitCircle() * radius;
+                Vector2 offset = GetScatterOffset(rng, entry.type, radius);
                 Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                 position = TerrainSampler.SnapToGround(position);
                 spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder));
@@ -239,6 +240,44 @@ namespace MakeGame.Systems
 
             return spawned;
         }
+
+        /// <summary>
+        /// [B30] 위험 요소 하나를 놓을 섬 중심 기준 오프셋(미터)을 뽑는다.
+        ///
+        /// 기본 규칙은 예전 그대로다 - 산포 원판 안의 균등 분포(NextInsideUnitCircle × radius).
+        /// 해안 선호 종류(현재 대왕 크랩)만 예외로, **이미 프로젝트에 있는 해안 배치 로직을 그대로
+        /// 재사용한다**: CreatureSpawner.SpawnCreaturesForIsland가 물고기(preferShoreline)에 쓰는
+        /// "방향은 무작위, 거리는 산포 반경의 바깥쪽 80~100%" 방식이다(CreatureSpawner.cs:110-112).
+        /// 산포 반경 자체가 지형 반지름의 80%이므로 지형 반지름 대비 64~80% 지점 = 물가 직전 띠다
+        /// (IslandMeshGenerator 기준 0.62R부터 모래밭이라 크랩은 확실히 모래 위에 선다).
+        ///
+        /// ⚠️ 난수 소비량: 해안 선호가 아닌 종류는 예전과 **완전히 동일하게 2회**만 소비한다.
+        /// 해안 선호일 때만 거리용 1회를 더 쓴다. 종류는 이 호출 직전 PickWeightedEntry가 이미
+        /// 정해 두므로 소비량이 결정적이고, 씬 hazardEntries에 대왕 크랩이 없는 동안에는 기존 월드의
+        /// 위험 요소 배치가 1cm도 움직이지 않는다(B3-3 재현성 규칙 유지).
+        /// </summary>
+        private Vector2 GetScatterOffset(System.Random rng, HazardType type, float radius)
+        {
+            Vector2 unit = rng.NextInsideUnitCircle();
+            if (!PrefersShoreline(type))
+                return unit * radius;
+
+            // 원점이 뽑히면 normalized가 (0,0)이라 섬 한가운데에 놓인다 - 방향만 필요하므로 대체값을 쓴다.
+            Vector2 direction = unit.sqrMagnitude > 0.000001f ? unit.normalized : Vector2.right;
+            return direction * radius * rng.NextFloat(ShorelineRadiusFraction, 1f);
+        }
+
+        /// <summary>
+        /// 해안선 근처에 배치해야 하는 위험 요소인지. 대왕 크랩은 조간대(물가) 생물이라 섬 안쪽 숲에서
+        /// 마주치면 종 자체가 거짓말이 된다 - 곰/식인종과 등장 지형이 갈려야 두 위협이 구분된다.
+        /// </summary>
+        private static bool PrefersShoreline(HazardType type)
+        {
+            return type == HazardType.GiantCrab;
+        }
+
+        /// <summary>해안 선호 배치의 최소 거리 비율(산포 반경 대비). CreatureSpawner의 물고기 배치와 같은 0.8이다.</summary>
+        private const float ShorelineRadiusFraction = 0.8f;
 
         /// <summary>
         /// [B8] 이 섬 규모에 배치할 위험 요소 총 마릿수를 산포 면적에 비례해 계산한다.
@@ -505,7 +544,8 @@ namespace MakeGame.Systems
         /// <summary>
         /// 위험 요소 종류별로 구분 가능한 형태/크기/색상을 반환한다.
         /// 곰=크고 진한 갈색 캡슐, 식인종=사람 크기의 적갈색 캡슐, 독사=길고 납작한 초록 캡슐(눕혀서 배치),
-        /// 전갈=작고 납작한 어두운 주황 캡슐, 벌떼=작은 노란 구체, 함정=땅에 깔린 어두운 회갈색 원판.
+        /// 전갈=작고 납작한 어두운 주황 캡슐, 벌떼=작은 노란 구체, 함정=땅에 깔린 어두운 회갈색 원판,
+        /// 대왕 크랩=넓고 낮은 적갈색 큐브(실제 형태는 절차 메시가 담당).
         /// </summary>
         private HazardVisualConfig GetVisualConfig(HazardType type)
         {
@@ -579,6 +619,29 @@ namespace MakeGame.Systems
                         rotationEuler = new Vector3(0f, 0f, 90f),
                         color = new Color(0.28f, 0.35f, 0.42f), // 어두운 청회색
                         groundOffset = 0f // SharkSpawner가 이미 해수면 아래 정확한 위치를 계산해 넘겨준다
+                    };
+
+                case HazardType.GiantCrab:
+                    // [B30] 대왕 크랩. 몸통 프리미티브는 **큐브**다(다른 종류처럼 캡슐이 아니다):
+                    //  - 판정 - 게는 넓고 낮은 실루엣이라 BoxCollider(1.6 × 0.9 × 1.4m)가 실제 형태와
+                    //    가장 가깝다. 캡슐이면 등딱지 좌우 끝이 판정 밖으로 삐져나온다.
+                    //  - 형태 - 보이는 몸통은 CreatureVisualBuilder.BuildCrabBody가 절차 메시로 갈아 끼우므로
+                    //    이 프리미티브의 원래 모양은 화면에 남지 않는다. 콜라이더만 남는다.
+                    // 크기/접지 높이는 숫자를 여기 다시 적지 않고 CreatureVisualBuilder의 상수를 **직접
+                    // 참조**한다. 메시를 미터로 작성한 뒤 이 localScale로 나누기 때문에 두 값이 갈라지면
+                    // 게가 조용히 늘어나거나 눌리는데(이 프로젝트가 반복해서 낸 사고 유형), 참조로 두면
+                    // 그 사고가 원천적으로 불가능해진다.
+                    // groundOffset 0.45 = 큐브 높이(0.9)의 절반 → 콜라이더 바닥이 정확히 지면이고,
+                    // 메시의 발끝 8개도 같은 높이(y = -0.45)에 닿도록 작성돼 있다.
+                    // (다리와 집게는 큐브 콜라이더 밖까지 뻗는다 - 곰의 몸통 메시가 캡슐보다 긴 것과 같은
+                    //  의도된 상태다. 접촉 판정은 등딱지 부피에서만 잡힌다.)
+                    return new HazardVisualConfig
+                    {
+                        primitiveType = PrimitiveType.Cube,
+                        localScale = CreatureVisualBuilder.CrabGiantBodyScale,
+                        rotationEuler = Vector3.zero,
+                        color = new Color(0.72f, 0.28f, 0.18f), // 삶은 듯한 적갈색 갑각(식인종 #99593F보다 붉고 진하다)
+                        groundOffset = CreatureVisualBuilder.CrabGiantGroundOffset
                     };
 
                 default:

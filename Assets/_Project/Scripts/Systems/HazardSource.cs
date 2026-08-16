@@ -77,9 +77,23 @@ namespace MakeGame.Systems
             switch (hazardType)
             {
                 case HazardType.Bear:
-                    // 곰: 맷집이 가장 세다.
+                    // 곰: 살로 된 맹수 중에서는 맷집이 가장 세다(갑각을 두른 대왕 크랩만 이보다 단단하다).
                     isCombatTarget = true;
                     maxHealth = 50f;
+                    break;
+                case HazardType.GiantCrab:
+                    // [B30] 대왕 크랩: "느리지만 단단하다"를 기존 두 축(체력 / 접촉 피해)으로만 표현한다.
+                    //  - 체력 60: 기존 최대였던 곰 50보다 20% 위. 갑각이 이 종의 유일한 정체성이라
+                    //    맷집만큼은 목록 최상단에 두되, 새 수치대(예: 100)를 열지 않는다.
+                    //    무기 피해량 기준으로 곰보다 공격 1~2회가 더 든다는 정도의 차이다.
+                    //  - 접촉 피해 8: 지시대로 곰(10)보다 낮다. 벌떼/곰이 쓰는 코드 기본값 10과
+                    //    상어 18 사이의 기존 스케일 안에서 가장 아래를 잡은 값이고, 대신 곰/식인종과
+                    //    같은 출혈(ApplyBleeding)을 건다 - 집게에 베이는 상처가 게다운 위협 방식이다.
+                    //    "느리다"는 이동/추격 코드가 없는 정적 위험요소라는 기존 전제로 이미 표현된다
+                    //    (HazardSpawner의 마릿수 주석 참고) - 새 이동 파라미터를 만들지 않는다.
+                    isCombatTarget = true;
+                    maxHealth = 60f;
+                    directDamage = 8f;
                     break;
                 case HazardType.Cannibal:
                     // 식인종: 곰보다는 약하지만 여전히 위협적이다.
@@ -145,7 +159,7 @@ namespace MakeGame.Systems
             // SurvivalStats.TakeDamage 안에 걸면 굶주림/일사병 등 상시 피해에도 매번 발동해 버리므로,
             // 반드시 이 접촉 진입점에서만 트리거해야 한다 (CombatFeedbackUI 클래스 주석 참고).
             // [B7 디렉터] 피격 세기 3단계 연결 완료. GetContactDamage()가 곰 10 / 상어 18 / 벌떼 10 /
-            // 독사·전갈·함정 0을 돌려주고, CombatFeedbackUI가 이를 약/중/강으로 나눠 번쩍인다.
+            // 대왕 크랩 8(B30) / 독사·전갈·함정 0을 돌려주고, CombatFeedbackUI가 이를 약/중/강으로 나눠 번쩍인다.
             // 0을 "피격 아님"으로 버리지 않는다 - 독사·전갈·함정은 체력이 안 깎일 뿐 접촉은 일어났고,
             // 무반응은 이 프로젝트가 반복해서 낸 실패 패턴이다(가장 약한 단계로 반드시 표시된다).
             CombatFeedbackUI.Instance?.TriggerHit(GetContactDamage());
@@ -170,7 +184,10 @@ namespace MakeGame.Systems
 
                 case HazardType.Bear:
                 case HazardType.Cannibal:
-                    // 곰/식인종: 직접 피해 + 출혈을 유발한다.
+                case HazardType.GiantCrab:
+                    // 곰/식인종/대왕 크랩: 직접 피해 + 출혈을 유발한다.
+                    // 대왕 크랩의 피해량은 곰보다 낮게(8) ConfigureForType에서 정해지고, 여기서는
+                    // 분류만 공유한다 - 이 파일은 밸런스 수치를 두 곳에 적지 않는다.
                     target.TakeDamage(directDamage, DamageCause.Predator);
                     target.ApplyBleeding();
                     break;
@@ -218,6 +235,7 @@ namespace MakeGame.Systems
                 case HazardType.Cannibal:
                 case HazardType.BeeSwarm:
                 case HazardType.Shark:
+                case HazardType.GiantCrab:
                     return directDamage;
 
                 default:

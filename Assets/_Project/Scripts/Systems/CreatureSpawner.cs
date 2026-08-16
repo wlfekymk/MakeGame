@@ -47,6 +47,22 @@ namespace MakeGame.Systems
 
             [Tooltip("밤에 사냥 성공 시 추가로 더 주는 수확 개수. 0이면 이 종류는 밤낮 차이가 없다")]
             public int nightYieldBonus = 1;
+
+            // [B30] 게(소형 크랩) 표시. 켜면 물고기/육상 사냥감 대신 게 외형(CreatureVisualBuilder.BuildCrabBody,
+            // giant=false)으로 만들고, 배치는 해안선 선호로 강제된다(게는 조간대 생물이다 - 대왕 크랩이
+            // HazardSpawner.PrefersShoreline으로 같은 규칙을 쓰는 것과 짝이 맞는다).
+            //
+            // ⚠️ **이 필드는 리스트의 맨 끝에 추가했다.** 씬 creatureEntries(SampleScene.unity:1244~1256)에는
+            // 이 YAML 키가 없고, Unity는 직렬화된 키가 없는 필드에 C# 초기값을 그대로 남기므로 기존 두 항목
+            // (생고기/창/육상, 생선/도구없음/해안)은 false로 읽혀 예전과 100% 동일하게 동작한다.
+            // 기존 필드는 하나도 제거·개명·재정렬하지 않았다.
+            //
+            // ⚠️ 게 항목을 씬에 추가할 때도 **creatureEntries의 맨 끝**에 넣어야 한다. spawnOrder는 엔트리
+            // 인덱스가 아니라 실제로 스폰된 개체의 러닝 카운터이고 SaveLoadController가 (islandIndex,
+            // spawnOrder)를 세이브 키로 쓰기 때문에, 중간에 끼워 넣으면 그 뒤 모든 개체의 세이브 키가 밀린다.
+            // 이 스포너는 creatureEntries를 정렬하거나 필터링하지 않고 선언 순서대로만 순회한다(아래 foreach).
+            [Tooltip("이 항목을 게(소형 크랩)로 만들지 여부. 켜면 해안선 배치 + 게 외형이 된다.")]
+            public bool isCrab = false;
         }
 
         [Tooltip("섬에 등장 가능한 사냥감/물고기 종류와 기본 개체 수 목록")]
@@ -108,7 +124,11 @@ namespace MakeGame.Systems
                 for (int i = 0; i < count; i++)
                 {
                     // preferShoreline이면 반경의 바깥쪽 80~100% 지점에 배치해 해안에 가깝게 흉내낸다.
-                    float radiusScale = entry.preferShoreline ? rng.NextFloat(0.8f, 1f) : rng.NextValue01();
+                    // [B30] 게는 조간대 생물이라 항상 이 해안 경로를 탄다(PrefersShoreline 참고). 기존 항목은
+                    // isCrab가 false라 판정 결과가 예전과 같고, 두 분기 모두 rng draw를 정확히 1회 소비하므로
+                    // (NextFloat/NextValue01 둘 다 NextDouble 1회 - SeededRandomExtensions.cs:55·67)
+                    // 난수 시퀀스도 1칸도 밀리지 않는다.
+                    float radiusScale = PrefersShoreline(entry) ? rng.NextFloat(0.8f, 1f) : rng.NextValue01();
                     Vector2 offset = rng.NextInsideUnitCircle().normalized * radius * radiusScale;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
@@ -121,12 +141,18 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 사냥감/물고기 개체 하나를 실제로 생성한다. 시각화용 캡슐(육상 동물) 또는 구체(물고기) 프리미티브에
-        /// HuntableCreature 컴포넌트를 붙인다.
+        /// 사냥감/물고기/게 개체 하나를 실제로 생성한다. 시각화용 캡슐(육상 동물) 또는 구체(물고기·게)
+        /// 프리미티브에 HuntableCreature 컴포넌트를 붙인다.
         /// </summary>
         private HuntableCreature SpawnSingleCreature(CreatureEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
-            PrimitiveType primitiveType = entry.preferShoreline ? PrimitiveType.Sphere : PrimitiveType.Capsule;
+            // [B30] 종류는 셋이다: 게(isCrab) / 물고기(게가 아니면서 preferShoreline) / 육상 사냥감(그 외).
+            // 게도 물고기와 같은 Sphere 프리미티브를 쓴다 - 몸통 메시는 BuildCrabBody가 갈아 끼우고
+            // 남는 것은 SphereCollider뿐인데, 등딱지가 넓고 낮은 소형 게에는 구 판정이 가장 가깝다
+            // (대왕 크랩만 1.6m 등딱지라 큐브 판정을 쓴다 - HazardSpawner.GetVisualConfig 주석 참고).
+            bool isCrab = entry.isCrab;
+            bool isFish = !isCrab && entry.preferShoreline;
+            PrimitiveType primitiveType = (isCrab || isFish) ? PrimitiveType.Sphere : PrimitiveType.Capsule;
             GameObject go = GameObject.CreatePrimitive(primitiveType);
             go.transform.SetParent(parent);
 
@@ -136,7 +162,19 @@ namespace MakeGame.Systems
             float sizeJitter = rng.NextFloat(0.9f, 1.15f);
             Quaternion facing = Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
 
-            if (entry.preferShoreline)
+            if (isCrab)
+            {
+                // 규격은 **숫자를 옮겨 적지 않고** CreatureVisualBuilder의 상수를 직접 참조한다. 대왕 크랩을
+                // 놓는 HazardSpawner도 같은 상수를 참조하고 있어(HazardSpawner.cs:641·644), 규격이 한쪽만
+                // 바뀌어 게가 땅에 묻히거나 뜨는 이 프로젝트의 단골 사고가 원천 봉쇄된다.
+                go.transform.localScale = CreatureVisualBuilder.CrabSmallBodyScale * sizeJitter;
+                // 접지 높이에도 sizeJitter를 곱하는 것은 아래 물고기/육상과 같은 [B29] 규칙이다.
+                // (BuildCrabBody가 giant일 때만 하는 SnapPivotForJitter 보정은 그래서 소형에 필요 없다.)
+                go.transform.position = position + Vector3.up * (CreatureVisualBuilder.CrabSmallGroundOffset * sizeJitter);
+                go.transform.rotation = facing;
+                go.name = $"Crab_{entry.yieldItem.itemName}";
+            }
+            else if (isFish)
             {
                 go.transform.localScale = new Vector3(0.35f, 0.2f, 0.5f) * sizeJitter; // 납작하고 길쭉한 물고기 형태
                 // [B29] 띄우는 높이에도 sizeJitter를 곱한다. 몸통 바닥은 스케일에 비례해 내려가는데
@@ -153,9 +191,14 @@ namespace MakeGame.Systems
                 go.name = $"Creature_{entry.yieldItem.itemName}";
             }
 
-            Color bodyColor = entry.preferShoreline
-                ? new Color(0.35f, 0.55f, 0.65f) // 물고기: 청회색
-                : new Color(0.55f, 0.4f, 0.25f); // 육상 동물: 갈색
+            // 게 색은 대왕 크랩(0.72, 0.28, 0.18 - HazardSpawner.cs:643)보다 한 단계 옅고 주황에 가깝다.
+            // 같은 종류로 읽히되(같은 색 계열) 위협인지 사냥감인지는 크기와 밝기로 즉시 갈린다 -
+            // 아트 기준의 "형태로 구분한다"에 맞춰 색만으로 구분하게 두지 않는다.
+            Color bodyColor = isCrab
+                ? new Color(0.85f, 0.42f, 0.24f)   // 소형 크랩: 밝은 주황빛 갑각
+                : isFish
+                    ? new Color(0.35f, 0.55f, 0.65f) // 물고기: 청회색
+                    : new Color(0.55f, 0.4f, 0.25f); // 육상 동물: 갈색
 
             // [B29] 몸통 프리미티브를 절차 메시로 갈아 끼우고(사족보행 동물 / 방추형 물고기), 눈만
             // 파츠로 남긴다. 예전에는 육상 개체 하나가 캡슐 + 눈 2 + 머리 구체 + 다리 캡슐 4 = 8파츠였고
@@ -166,7 +209,14 @@ namespace MakeGame.Systems
             // 프리미티브 콜라이더는 파라메트릭이라 사냥 조준 판정 범위가 1mm도 변하지 않는다.
             // (배치 높이만 위에서 sizeJitter를 곱하도록 고쳤다 - 접지 오차 최대 0.09m 수정.)
             // 눈 좌표 검산은 CreatureVisualBuilder.BuildHuntableBody 주석 참고.
-            CreatureVisualBuilder.BuildHuntableBody(go, bodyColor, entry.preferShoreline);
+            //
+            // [B30] 게는 같은 자리에서 같은 방식으로 BuildCrabBody를 부른다(프리미티브를 만들고
+            // localScale/position/rotation을 정한 **직후** 1회). 두 함수 모두 콜라이더를 건드리지 않으므로
+            // 사냥 조준 판정 범위는 프리미티브 그대로다.
+            if (isCrab)
+                CreatureVisualBuilder.BuildCrabBody(go, bodyColor, false);
+            else
+                CreatureVisualBuilder.BuildHuntableBody(go, bodyColor, isFish);
 
             var creature = go.AddComponent<HuntableCreature>();
             creature.yieldItem = entry.yieldItem;
@@ -180,6 +230,17 @@ namespace MakeGame.Systems
             creature.islandIndex = islandIndex;
             creature.spawnOrder = spawnOrder;
             return creature;
+        }
+
+        /// <summary>
+        /// [B30] 이 항목을 해안 가장자리(산포 반경의 80~100%)에 놓아야 하는가.
+        /// 게는 조간대 생물이라 인스펙터 체크와 무관하게 항상 해안이다 - 섬 한가운데 숲에서 게가 나오면
+        /// 종 자체가 거짓말이 된다(HazardSpawner.PrefersShoreline이 대왕 크랩에 대해 쓰는 것과 같은 근거).
+        /// 배치 계산 자체는 물고기가 쓰던 기존 로직을 그대로 재사용하며 새로 만들지 않는다.
+        /// </summary>
+        private static bool PrefersShoreline(CreatureEntry entry)
+        {
+            return entry.preferShoreline || entry.isCrab;
         }
 
         /// <summary>

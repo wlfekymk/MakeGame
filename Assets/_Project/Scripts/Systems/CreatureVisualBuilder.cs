@@ -52,6 +52,32 @@ namespace MakeGame.Systems
         private static readonly Vector3 HuntLandScale = new Vector3(0.45f, 0.6f, 0.45f);
         private static readonly Vector3 HuntFishScale = new Vector3(0.35f, 0.2f, 0.5f);
 
+        // ── [B30] 게(대왕 크랩 / 소형 크랩)가 쓰는 몸통 규격 ──────────────────────────────
+        // 위의 다른 규격들과 달리 **public**이다. 대왕 크랩은 HazardSpawner가, 소형 크랩은
+        // CreatureSpawner가 각각 몸통 프리미티브를 만드는데, 두 스포너가 서로 다른 파일이라
+        // 숫자를 각자 적어 두면 한쪽만 바뀌었을 때 게가 조용히 늘어나거나 눌린다(이 파일 상단
+        // ⚠️ 주석의 사고 유형 그대로다). 스포너가 이 상수를 **직접 참조**하면 그 사고가 원천 봉쇄된다.
+        //
+        //   대왕: GameObject.CreatePrimitive(PrimitiveType.Cube)
+        //         localScale = CrabGiantBodyScale * sizeJitter
+        //         position   = 지면 + Vector3.up * CrabGiantGroundOffset  (HazardSpawner의 기존 규칙 그대로.
+        //                      jitter 보정은 BuildCrabBody가 안에서 처리한다)
+        //   소형: GameObject.CreatePrimitive(PrimitiveType.Sphere)
+        //         localScale = CrabSmallBodyScale * sizeJitter
+        //         position   = 지면 + Vector3.up * (CrabSmallGroundOffset * sizeJitter)
+        //                      (물고기/육상 사냥감과 같은 접지 규칙 - CreatureSpawner.cs:144·151)
+        /// <summary>대왕 크랩 몸통 프리미티브(큐브)의 localScale. HazardSpawner.GetVisualConfig와 같은 값이어야 한다.</summary>
+        public static readonly Vector3 CrabGiantBodyScale = new Vector3(1.6f, 0.9f, 1.4f);
+
+        /// <summary>소형 크랩 몸통 프리미티브(구)의 localScale. 사냥감 스포너가 이 값을 그대로 써야 한다.</summary>
+        public static readonly Vector3 CrabSmallBodyScale = new Vector3(0.30f, 0.18f, 0.30f);
+
+        /// <summary>대왕 크랩 피벗을 지면에서 띄우는 높이(m). 큐브 높이(0.9)의 절반 = 콜라이더 바닥이 지면.</summary>
+        public const float CrabGiantGroundOffset = 0.45f;
+
+        /// <summary>소형 크랩 피벗을 지면에서 띄우는 높이(m). 등딱지 아랫면과 발끝 사이가 6.2cm다.</summary>
+        public const float CrabSmallGroundOffset = 0.062f;
+
         /// <summary>
         /// 이 클래스가 나눠 준 공유 머티리얼 목록. ApplySharedMaterial이 예전 머티리얼을 파괴할 때
         /// "이건 공유본이라 절대 파괴하면 안 된다"를 판정하는 데 쓴다(공유본을 파괴하면 그 색을 쓰는
@@ -323,6 +349,11 @@ namespace MakeGame.Systems
                 case HazardType.BeeSwarm:
                     AddBeeSwarmDetails(body, appliedScale, bodyColor);
                     break;
+                case HazardType.GiantCrab:
+                    // [B30] 대왕 크랩은 사냥감 소형 크랩과 **같은 메시 제작기**를 쓴다(giant 플래그만 다르다).
+                    // 파츠 이름은 EyeL/EyeR 두 개뿐이라 위 다른 종류들과 겹치지 않는다.
+                    BuildCrabBody(body, bodyColor, true);
+                    break;
             }
         }
 
@@ -519,6 +550,51 @@ namespace MakeGame.Systems
             ApplySharedMaterial(body, bodyColor, "bark");
             ReshapeSphere(body.transform, "EyeL", HuntLandScale, new Vector3(0.048f, 0.030f, 0.412f), 0.026f, EyeBlack, "noise");
             ReshapeSphere(body.transform, "EyeR", HuntLandScale, new Vector3(-0.048f, 0.030f, 0.412f), 0.026f, EyeBlack, "noise");
+        }
+
+        // ── 게 (대왕 크랩 = 위험 요소 / 소형 크랩 = 사냥감) ──────────────────────────────
+        /// <summary>
+        /// [B30] 게 한 마리의 외형을 완성한다. **BuildHuntableBody와 완전히 같은 사용 방식**이다 -
+        /// 스포너가 프리미티브를 만들어 localScale/position/rotation을 정한 **직후** 한 번 부르면 된다.
+        /// 콜라이더는 어느 경로에서도 건드리지 않는다(메시 교체는 MeshFilter만 바꾸고, 프리미티브
+        /// 콜라이더는 파라메트릭이라 접촉/사냥 판정 범위가 1mm도 변하지 않는다).
+        ///
+        /// giant = false → 등딱지 폭 0.22m의 소형 크랩(사냥감). 몸통 규격은 CrabSmallBodyScale.
+        /// giant = true  → 등딱지 폭 1.60m의 대왕 크랩(위험 요소). 몸통 규격은 CrabGiantBodyScale.
+        ///
+        /// 대왕은 소형의 단순 확대가 아니다(CreatureMeshLibrary.CrabBodyUnit 주석의 표 참고):
+        /// 집게가 등딱지 대비 1.39배 크고, 등딱지에 돌기 8개와 긁힌 자국 3줄이 메시에 파여 있다.
+        ///
+        /// 파츠: 몸통(1) + 자루눈 끝의 눈알 2 = **3개**. 등딱지·집게·다리 8개·눈자루는 전부 몸통 메시
+        /// 한 장 안에 있다(다리를 파츠로 만들면 개체당 8개가 늘어난다 - B29가 없앤 바로 그 비용이다).
+        /// 머티리얼도 새로 만들지 않는다 - 색+텍스처 조합당 하나인 공유 캐시에서 받아 쓴다.
+        ///
+        /// jitter 접지 보정은 giant일 때만 한다. HazardSpawner는 groundOffset에 sizeJitter를 곱하지
+        /// 않지만(SnapPivotForJitter 주석 참고) CreatureSpawner는 곱하기 때문이다 - 소형에서도 보정하면
+        /// 이중 보정이 되어 오히려 발이 뜬다.
+        /// </summary>
+        public static void BuildCrabBody(GameObject body, Color bodyColor, bool giant)
+        {
+            if (body == null)
+                return;
+
+            Vector3 nominal = giant ? CrabGiantBodyScale : CrabSmallBodyScale;
+            float unit = giant ? CreatureMeshLibrary.CrabGiantHalfWidth : CreatureMeshLibrary.CrabSmallHalfWidth;
+
+            ApplyBodyMesh(body, CreatureMeshLibrary.CrabBodyUnit(giant));
+            // 갑각에는 돌 텍스처가 어울린다(딱딱하고 오돌토돌한 표면). 텍스처가 없으면 CreateColorMaterial이
+            // 조용히 단색으로 넘어가므로 안전하다.
+            ApplySharedMaterial(body, bodyColor, "rock");
+
+            if (giant)
+                SnapPivotForJitter(body, body.transform.localScale, nominal, CrabGiantGroundOffset);
+
+            // 자루눈: 눈자루는 메시에 있고, 그 끝의 눈알만 구체 파츠다.
+            // 위치/지름은 등딱지 반폭(unit) 배수로 적어, 대왕과 소형이 정확히 같은 비율을 갖는다.
+            Vector3 eye = new Vector3(0.2375f * unit, 0.660f * unit, 0.505f * unit);
+            float eyeDiameter = 0.130f * unit;
+            ReshapeSphere(body.transform, "EyeL", nominal, eye, eyeDiameter, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", nominal, new Vector3(-eye.x, eye.y, eye.z), eyeDiameter, EyeBlack, "noise");
         }
 
         /// <summary>
@@ -1210,6 +1286,346 @@ namespace MakeGame.Systems
 
             builder.ScaleVertices(new Vector3(1f / 0.35f, 1f / 0.2f, 1f / 0.5f));
             return Store("fish", builder.Finish("Cre_FishBody"));
+        }
+
+        // ── 게 (대왕 크랩 = 위험 요소 / 소형 크랩 = 사냥감) ──────────────────────────────
+        /// <summary>대왕 크랩 등딱지 반폭(m). 등딱지 폭 1.60m.</summary>
+        public const float CrabGiantHalfWidth = 0.80f;
+
+        /// <summary>소형 크랩 등딱지 반폭(m). 등딱지 폭 0.22m.</summary>
+        public const float CrabSmallHalfWidth = 0.11f;
+
+        // ── 등딱지 제어점 ──
+        // 아래 세 표의 숫자는 전부 **등딱지 반폭(unit)의 배수**다. 그래서 대왕(unit 0.80)과
+        // 소형(unit 0.11)이 같은 표 하나를 공유하고, 두 크기의 비율이 구조적으로 어긋날 수 없다.
+        // z = 앞뒤 위치(+가 앞) · half = 그 위치의 반폭 · dome = 등이 볼록하게 솟는 높이.
+        //
+        // 위에서 본 실루엣: 뒤 0.325 → 앞 1.0으로 넓어지는 **사다리꼴**이고(앞쪽이 넓다), 맨 앞
+        // 한 줄만 0.825로 깎아 모서리가 칼처럼 뾰족해지는 것을 막는다. 가로:세로 = 1.60 : 0.96 = 1.67.
+        // 옆에서 본 실루엣: 최고점이 반폭의 0.375배(대왕 0.30m)뿐인 **낮고 넓은** 지붕이다.
+        // 게와 거미를 가르는 첫 번째 신호가 이 "넓고 낮다"이므로 dome을 함부로 올리지 말 것.
+        private static readonly float[] CrabShellZ = { -0.55f, -0.40f, -0.20f, 0f, 0.20f, 0.375f, 0.525f, 0.65f };
+        private static readonly float[] CrabShellHalf = { 0.325f, 0.50f, 0.6875f, 0.825f, 0.925f, 0.9875f, 1f, 0.825f };
+        private static readonly float[] CrabShellDome = { 0.125f, 0.2375f, 0.325f, 0.375f, 0.375f, 0.325f, 0.2375f, 0.125f };
+
+        /// <summary>등딱지 아랫면의 깊이(테두리 평면 아래, unit 배수). 껍질에 두께가 있어야 옆에서 "테"가 보인다.</summary>
+        private const float CrabShellUnderside = 0.2125f;
+
+        /// <summary>
+        /// 집게 어깨(몸통 부착점, unit 배수 · 오른쪽 기준). 집게 크기 배수는 **이 점을 중심으로** 곱하므로,
+        /// 작은 집게(왼쪽)도 어깨만은 항상 같은 자리에 붙어 있다.
+        /// </summary>
+        private static readonly Vector3 CrabClawShoulder = new Vector3(0.65f, -0.025f, 0.525f);
+
+        /// <summary>다리 4쌍의 부착 z(unit 배수)와 쌍별 길이 배수. 앞다리가 가장 길고 뒤로 갈수록 짧아진다.</summary>
+        private static readonly float[] CrabLegZ = { 0.325f, 0.075f, -0.175f, -0.40f };
+        private static readonly float[] CrabLegLength = { 1f, 0.95f, 0.87f, 0.78f };
+
+        /// <summary>대왕 전용 등딱지 돌기 8개의 위치(u = 앞뒤 0~1, t = 좌우 -1~1).</summary>
+        private static readonly float[] CrabBumpU = { 0.30f, 0.30f, 0.52f, 0.52f, 0.72f, 0.72f, 0.88f, 0.88f };
+        private static readonly float[] CrabBumpT = { -0.60f, 0.60f, -0.80f, 0.80f, -0.88f, 0.88f, -0.52f, 0.52f };
+
+        /// <summary>게 한 마리를 만드는 데 필요한 값 묶음(전부 미터 또는 unit 배수).</summary>
+        private struct CrabShape
+        {
+            public float unit;         // 등딱지 반폭(m). 모든 좌표의 기준 단위.
+            public float ground;       // 지면의 y(m, 피벗 기준이라 음수). 발끝이 정확히 여기 닿는다.
+            public float clawScale;    // 집게 크기 배수(어깨 기준). 대왕이 크다.
+            public float legThickness; // 다리 굵기 배수. 작은 개체는 다리가 실처럼 사라지지 않게 굵힌다.
+            public bool battleScars;   // 등딱지 돌기 + 긁힌 자국(대왕 전용).
+            public int slices;         // 등딱지 앞뒤 분할 수.
+            public int lateral;        // 등딱지 좌우 분할 수.
+        }
+
+        /// <summary>
+        /// 게 몸통 한 장(등딱지 + 집게 2 + 다리 8 + 눈자루 2). 파츠는 눈알 2개뿐이다.
+        ///
+        /// 규격: 대왕 = 큐브(localScale 1.6 × 0.9 × 1.4 · 피벗 지면 위 0.45m → **지면 = -0.45**),
+        ///       소형 = 구(localScale 0.30 × 0.18 × 0.30 · 피벗 지면 위 0.062m → **지면 = -0.062**).
+        /// 좌표는 미터로 작성하고 마지막에 규격으로 나눈다(이 파일의 공통 규칙).
+        /// 몸통에 회전이 없어서(rotationEuler 0) 미터 좌표의 뜻이 그대로다: +y = 위, +z = 앞, +x = 오른쪽.
+        ///
+        /// 실루엣을 만드는 네 가지:
+        ///   1. 넓고 낮은 사다리꼴 등딱지 - 위에서 보면 앞이 넓고(폭:길이 = 1.67:1), 옆에서 보면 높이가
+        ///      폭의 0.19배뿐이다. 이 "낮다"가 없으면 거미로 읽힌다.
+        ///   2. 크기가 다른 집게 2개 - 오른쪽이 크고 왼쪽은 그 0.62배다. 좌우 대칭이면 게로 안 읽힌다.
+        ///      집게발 두 개는 끝 사이가 반폭의 0.44배만큼 **벌어져** 있다(닫힌 집게는 몽둥이로 보인다).
+        ///   3. 다리 8개의 꺾인 관절 - 몸 옆에서 등딱지 위(+0.20 unit)까지 올라갔다가 바깥으로 꺾여
+        ///      내려와 발끝이 지면에 닿는다. 곧은 막대 8개면 그것도 거미다.
+        ///   4. 자루눈 2개 - 등딱지 앞쪽 위로 반폭의 0.39배만큼 솟는다(눈알만 별도 파츠).
+        ///
+        /// 대왕과 소형의 차이(단순 확대가 아니다):
+        ///   | 항목        | 대왕            | 소형            |
+        ///   | 등딱지 폭   | 1.60m           | 0.22m           |
+        ///   | 집게 배수   | 1.00 (상대적으로 크다) | 0.72     |
+        ///   | 다리 굵기   | 1.00            | 1.35 (작아도 보이게) |
+        ///   | 등딱지 표면 | 돌기 8 + 긁힌 자국 3줄 | 매끈함    |
+        ///   | 분할 수     | 15 × 13         | 9 × 9           |
+        /// </summary>
+        public static Mesh CrabBodyUnit(bool giant)
+        {
+            string key = giant ? "crabGiant" : "crabSmall";
+            Mesh cached;
+            if (TryGetCached(key, out cached))
+                return cached;
+
+            var shape = new CrabShape
+            {
+                unit = giant ? CrabGiantHalfWidth : CrabSmallHalfWidth,
+                ground = giant ? -CreatureVisualBuilder.CrabGiantGroundOffset : -CreatureVisualBuilder.CrabSmallGroundOffset,
+                clawScale = giant ? 1f : 0.72f,
+                legThickness = giant ? 1f : 1.35f,
+                battleScars = giant,
+                slices = giant ? 15 : 9,
+                lateral = giant ? 13 : 9,
+            };
+
+            var builder = new Builder();
+            AddCrabShell(builder, shape);
+
+            for (int i = 0; i < CrabLegZ.Length; i++)
+            {
+                AddCrabLeg(builder, shape, 1f, CrabLegZ[i], CrabLegLength[i]);
+                AddCrabLeg(builder, shape, -1f, CrabLegZ[i], CrabLegLength[i]);
+            }
+
+            AddCrabClaw(builder, shape, 1f, shape.clawScale);          // 큰 집게(오른쪽)
+            AddCrabClaw(builder, shape, -1f, shape.clawScale * 0.62f); // 작은 집게(왼쪽)
+
+            AddCrabEyestalk(builder, shape, 1f);
+            AddCrabEyestalk(builder, shape, -1f);
+
+            if (shape.battleScars)
+                AddCrabBumps(builder, shape);
+
+            Vector3 nominal = giant
+                ? CreatureVisualBuilder.CrabGiantBodyScale
+                : CreatureVisualBuilder.CrabSmallBodyScale;
+            builder.ScaleVertices(new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z));
+            return Store(key, builder.Finish(giant ? "Cre_GiantCrabBody" : "Cre_SmallCrabBody"));
+        }
+
+        /// <summary>등딱지 제어 표를 u(0 = 뒤, 1 = 앞)에서 선형 보간해 읽는다.</summary>
+        private static void SampleCrabShell(float u, out float z, out float half, out float dome)
+        {
+            int last = CrabShellZ.Length - 1;
+            float f = Mathf.Clamp01(u) * last;
+            int i = Mathf.Clamp(Mathf.FloorToInt(f), 0, last - 1);
+            float t = f - i;
+            z = Mathf.Lerp(CrabShellZ[i], CrabShellZ[i + 1], t);
+            half = Mathf.Lerp(CrabShellHalf[i], CrabShellHalf[i + 1], t);
+            dome = Mathf.Lerp(CrabShellDome[i], CrabShellDome[i + 1], t);
+        }
+
+        /// <summary>지정한 z(unit 배수)에서의 등딱지 반폭(unit 배수). 다리 부착점을 껍질에 붙이는 데 쓴다.</summary>
+        private static float CrabHalfWidthAtZ(float z)
+        {
+            int last = CrabShellZ.Length - 1;
+            for (int i = 0; i < last; i++)
+            {
+                if (z <= CrabShellZ[i + 1])
+                    return Mathf.Lerp(CrabShellHalf[i], CrabShellHalf[i + 1], Mathf.InverseLerp(CrabShellZ[i], CrabShellZ[i + 1], z));
+            }
+            return CrabShellHalf[last];
+        }
+
+        /// <summary>
+        /// 등딱지 윗면의 점 하나(미터). u = 앞뒤(0~1), t = 좌우(-1~1).
+        /// 단면은 반원이 아니라 dome × sqrt(1-t²) 곡선이라, 가운데가 부드럽게 볼록하고 가장자리(t = ±1)에서
+        /// 높이가 정확히 0이 된다 - 그래서 테두리와 아랫면이 틈 없이 붙는다.
+        /// </summary>
+        private static Vector3 CrabShellPoint(CrabShape s, float u, float t)
+        {
+            float z, half, dome;
+            SampleCrabShell(u, out z, out half, out dome);
+
+            float nx = half * t;
+            float y = dome * Mathf.Sqrt(Mathf.Max(0f, 1f - t * t));
+            if (s.battleScars)
+                y = Mathf.Max(0f, y - CrabScarDepth(nx, z)); // 0 아래로는 파지 않는다(테두리가 뒤집히면 껍질이 갈라진다)
+
+            return new Vector3(nx * s.unit, y * s.unit, z * s.unit);
+        }
+
+        /// <summary>
+        /// 대왕 등딱지에 파인 긁힌 자국 3줄의 깊이(unit 배수). 파츠(검은 띠)가 아니라 **등딱지 자체를 판다** -
+        /// B28/B29에서 대나무 마디·뱀 비늘을 파츠에서 반지름 변화로 옮긴 것과 같은 기법이다.
+        /// </summary>
+        private static float CrabScarDepth(float nx, float nz)
+        {
+            float scar = 0f;
+            scar += CrabGroove(nx, nz, -0.10f, 0.42f, 0.95f, -0.55f, 1.05f, 0.075f, 0.055f);
+            scar += CrabGroove(nx, nz, 0.12f, 0.30f, 0.80f, -0.75f, 0.85f, 0.060f, 0.045f);
+            scar += CrabGroove(nx, nz, -0.55f, -0.30f, 0.35f, 0.95f, 0.70f, 0.055f, 0.040f);
+            return scar;
+        }
+
+        /// <summary>
+        /// 선분 하나를 따라 파인 홈의 깊이. 가로 방향은 가우시안, 끝은 선형으로 잦아들어 계단이 생기지 않는다.
+        /// 난수를 쓰지 않으므로(재현성 규칙) 어떤 분할 수에서도 같은 자국이 나온다.
+        /// </summary>
+        private static float CrabGroove(float nx, float nz, float px, float pz, float dx, float dz,
+            float length, float halfWidth, float depth)
+        {
+            float magnitude = Mathf.Sqrt(dx * dx + dz * dz);
+            if (magnitude < 0.0001f || halfWidth <= 0f)
+                return 0f;
+
+            dx /= magnitude;
+            dz /= magnitude;
+
+            float ox = nx - px;
+            float oz = nz - pz;
+            float along = ox * dx + oz * dz;
+            float across = ox * -dz + oz * dx;
+
+            float endFade = Mathf.Clamp01(Mathf.Min(along, length - along) / (halfWidth * 2f));
+            if (endFade <= 0f)
+                return 0f;
+
+            float ratio = across / halfWidth;
+            return depth * endFade * Mathf.Exp(-ratio * ratio);
+        }
+
+        /// <summary>등딱지 껍질(윗면 + 아랫면 + 테두리 4면)을 메시에 굽는다.</summary>
+        private static void AddCrabShell(Builder builder, CrabShape s)
+        {
+            int slices = Mathf.Max(3, s.slices);
+            int lateral = Mathf.Max(3, s.lateral);
+            float under = CrabShellUnderside * s.unit;
+
+            var top = new Vector3[slices, lateral];
+            var bottom = new Vector3[slices, lateral];
+            for (int i = 0; i < slices; i++)
+            {
+                float u = (float)i / (slices - 1);
+                for (int j = 0; j < lateral; j++)
+                {
+                    float t = (float)j / (lateral - 1) * 2f - 1f;
+                    Vector3 point = CrabShellPoint(s, u, t);
+                    top[i, j] = point;
+                    bottom[i, j] = new Vector3(point.x, -under, point.z);
+                }
+            }
+
+            for (int i = 0; i + 1 < slices; i++)
+            {
+                for (int j = 0; j + 1 < lateral; j++)
+                {
+                    builder.AddQuad(top[i, j], top[i, j + 1], top[i + 1, j + 1], top[i + 1, j], Vector3.up, false);
+                    builder.AddQuad(bottom[i, j], bottom[i, j + 1], bottom[i + 1, j + 1], bottom[i + 1, j], Vector3.down, false);
+                }
+            }
+
+            // 좌우 테두리(윗면 가장자리 y = 0 → 아랫면). 옆에서 봤을 때 껍질 두께로 읽히는 부분이다.
+            for (int i = 0; i + 1 < slices; i++)
+            {
+                builder.AddQuad(top[i, 0], top[i + 1, 0], bottom[i + 1, 0], bottom[i, 0], Vector3.left, false);
+                builder.AddQuad(top[i, lateral - 1], top[i + 1, lateral - 1],
+                    bottom[i + 1, lateral - 1], bottom[i, lateral - 1], Vector3.right, false);
+            }
+
+            // 앞뒤 끝면.
+            for (int j = 0; j + 1 < lateral; j++)
+            {
+                builder.AddQuad(top[0, j], top[0, j + 1], bottom[0, j + 1], bottom[0, j], Vector3.back, false);
+                builder.AddQuad(top[slices - 1, j], top[slices - 1, j + 1],
+                    bottom[slices - 1, j + 1], bottom[slices - 1, j], Vector3.forward, false);
+            }
+        }
+
+        /// <summary>
+        /// 다리 하나(부착 → 무릎 → 발목 → 발끝). 무릎이 등딱지 위(+0.20 unit)까지 솟았다가 바깥으로
+        /// 꺾여 내려오는 **관절**이 게 다리의 전부다. 발끝은 굵기까지 계산해 지면(s.ground)에 정확히 닿는다.
+        /// </summary>
+        private static void AddCrabLeg(Builder builder, CrabShape s, float side, float z, float lengthFactor)
+        {
+            float u = s.unit;
+            float half = CrabHalfWidthAtZ(z);
+            float thickness = s.legThickness;
+            float footRadius = 0.020f * u * thickness;
+
+            Vector3[] leg =
+            {
+                new Vector3(side * (half - 0.05f) * u, -0.125f * u, z * u),
+                new Vector3(side * (half + 0.375f * lengthFactor) * u, 0.200f * u * lengthFactor, (z + 0.02f) * u),
+                new Vector3(side * (half + 0.525f * lengthFactor) * u, -0.275f * u, (z - 0.03f) * u),
+                new Vector3(side * (half + 0.455f * lengthFactor) * u, s.ground + footRadius, (z - 0.05f) * u),
+            };
+            float[] radii =
+            {
+                0.075f * u * thickness,
+                0.058f * u * thickness,
+                0.040f * u * thickness,
+                footRadius,
+            };
+            builder.AddTube(leg, radii, 5, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>
+        /// 집게 하나(위팔 → 팔꿈치 → 손목 → 납작한 손바닥 → 벌린 집게발 2개).
+        /// scale은 어깨(CrabClawShoulder)를 중심으로 곱하므로, 작게 만들어도 어깨는 몸통에 붙어 있다.
+        /// </summary>
+        private static void AddCrabClaw(Builder builder, CrabShape s, float side, float scale)
+        {
+            float radiusUnit = s.unit * scale;
+
+            builder.AddTube(new[]
+            {
+                CrabClawPoint(s, side, scale, new Vector3(0.650f, -0.025f, 0.525f)),
+                CrabClawPoint(s, side, scale, new Vector3(1.075f, -0.125f, 0.775f)),
+                CrabClawPoint(s, side, scale, new Vector3(0.980f, -0.075f, 0.960f)),
+            }, new[] { 0.125f * radiusUnit, 0.113f * radiusUnit, 0.100f * radiusUnit }, 6, true, true, 1f, Vector3.one);
+
+            // 손바닥: 위아래로 납작한 판(두께 0.225 unit). 게 집게의 "두툼함"이 여기서 나온다.
+            builder.AddBlade(new[]
+            {
+                CrabClawPoint(s, side, scale, new Vector3(0.825f, -0.075f, 0.900f)),
+                CrabClawPoint(s, side, scale, new Vector3(1.175f, -0.075f, 0.975f)),
+                CrabClawPoint(s, side, scale, new Vector3(1.250f, -0.075f, 1.325f)),
+                CrabClawPoint(s, side, scale, new Vector3(0.925f, -0.075f, 1.375f)),
+            }, Vector3.up, 0.225f * radiusUnit);
+
+            // 벌린 집게발 2개. 끝 사이가 0.44 unit(대왕 0.35m) 벌어져 있어 멀리서도 "집게"로 읽힌다.
+            builder.AddTube(new[]
+            {
+                CrabClawPoint(s, side, scale, new Vector3(0.930f, -0.075f, 1.330f)),
+                CrabClawPoint(s, side, scale, new Vector3(0.870f, -0.040f, 1.800f)),
+            }, new[] { 0.088f * radiusUnit, 0.014f * radiusUnit }, 5, true, true, 1f, Vector3.one);
+            builder.AddTube(new[]
+            {
+                CrabClawPoint(s, side, scale, new Vector3(1.200f, -0.075f, 1.310f)),
+                CrabClawPoint(s, side, scale, new Vector3(1.310f, -0.075f, 1.750f)),
+            }, new[] { 0.080f * radiusUnit, 0.014f * radiusUnit }, 5, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>집게 좌표(unit 배수, 오른쪽 기준)를 어깨 기준으로 scale배 한 뒤 미터/좌우로 옮긴다.</summary>
+        private static Vector3 CrabClawPoint(CrabShape s, float side, float scale, Vector3 raw)
+        {
+            Vector3 scaled = CrabClawShoulder + (raw - CrabClawShoulder) * scale;
+            return new Vector3(side * scaled.x * s.unit, scaled.y * s.unit, scaled.z * s.unit);
+        }
+
+        /// <summary>자루눈 하나. 등딱지 앞쪽 표면에서 솟는다(끝의 눈알은 파츠라 여기 없다).</summary>
+        private static void AddCrabEyestalk(Builder builder, CrabShape s, float side)
+        {
+            Vector3 root = CrabShellPoint(s, 0.762f, side * 0.200f);
+            root.y -= 0.030f * s.unit; // 뿌리를 껍질 속에 살짝 묻어 이음매에 틈이 보이지 않게 한다.
+            Vector3 tip = new Vector3(side * 0.2375f * s.unit, 0.625f * s.unit, 0.500f * s.unit);
+            builder.AddTube(new[] { root, tip }, new[] { 0.056f * s.unit, 0.044f * s.unit }, 5, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>대왕 등딱지의 돌기 8개(바깥·위를 향한 짧은 뿔). 표면 함수로 뿌리를 잡아 항상 껍질에 붙는다.</summary>
+        private static void AddCrabBumps(Builder builder, CrabShape s)
+        {
+            for (int i = 0; i < CrabBumpU.Length; i++)
+            {
+                Vector3 surface = CrabShellPoint(s, CrabBumpU[i], CrabBumpT[i]);
+                Vector3 outward = new Vector3(CrabBumpT[i] * 0.45f, 1f, 0f).normalized;
+                Vector3 root = surface - outward * (0.030f * s.unit);
+                Vector3 tip = surface + outward * (0.115f * s.unit);
+                builder.AddTube(new[] { root, tip }, new[] { 0.072f * s.unit, 0.008f * s.unit }, 5, true, true, 1f, Vector3.one);
+            }
         }
 
         // ── 메시 빌더 ────────────────────────────────────────────────────────────────

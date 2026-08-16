@@ -982,6 +982,8 @@ MonoBehaviour:
     baseChance: 0.2
   - type: 6
     baseChance: 0.1
+  - type: 9
+    baseChance: 0.12
   smallMultiplier: 1
   mediumMultiplier: 1.75
   largeMultiplier: 2.5
@@ -1254,6 +1256,13 @@ MonoBehaviour:
     successChance: 0.6
     respawnSeconds: 60
     preferShoreline: 1
+  - yieldItem: {fileID: 11400000, guid: 358830a65ae94744b1565a47670653c6, type: 2}
+    requiredTool: {fileID: 0}
+    baseCount: 2
+    successChance: 0.65
+    respawnSeconds: 45
+    preferShoreline: 1
+    isCrab: 1
   smallMultiplier: 1
   mediumMultiplier: 1.5
   largeMultiplier: 2
