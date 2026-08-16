@@ -91,11 +91,83 @@ namespace MakeGame.Systems
         //   groundOffset 0.90 = 높이의 절반 → 콜라이더 바닥이 정확히 지면이고, 메시의 발바닥 4개도
         //   같은 높이(y = -0.90)에 닿도록 작성돼 있다.
         // (털 다발·발톱·꼬리는 큐브 밖으로 조금 삐져나온다 - 대왕 크랩의 다리/집게와 같은 의도된 상태다.)
-        /// <summary>곰 몸통 프리미티브(큐브)의 localScale(m). HazardSpawner.GetVisualConfig와 같은 값이어야 한다.</summary>
-        public static readonly Vector3 BearBodyScale = new Vector3(0.86f, 1.80f, 2.56f);
+        // ※ 위 문단의 숫자는 전부 **절차 폴백 곰**의 실측값이다(아래 BearProcedural*).
+        //
+        // ── [B36] 실물 3D 모델(bear_adult.obj)이 들어오면서 곰 규격이 **두 벌**이 됐다 ──────────
+        // 두 벌은 한 세션 안에서 절대 섞이지 않는다: 모델 에셋이 있으면 곰은 전부 모델로 만들어지고
+        // (절차 메시는 한 장도 굽지 않는다), 없으면 전부 절차 메시로 만들어진다. 그래서 아래 두
+        // 공개 멤버(BearBodyScale/BearGroundOffset)는 "지금 세션에서 실제로 쓰이는 쪽"을 돌려주고,
+        // 스포너·추격 AI·모션이 전부 이 하나를 읽으므로 규격이 갈라지는 사고가 구조적으로 없다.
+        //
+        // ⚠️ 절차 쪽 두 상수를 바꾸면 **폴백 곰이 부서진다**(직접 확인함):
+        //   · BearProceduralBodyScale.y - 보이는 파츠는 전부 1/nominal로 상쇄돼(MeterSpacePart /
+        //     ReshapeSphere / BearPawUnit의 ScaleVertices) 겉모습이 안 변한다. 콜라이더 높이만 바뀐다.
+        //   · BearProceduralGroundOffset - 이쪽은 다르다. CreatureMeshLibrary.BearGround가 이 값이고,
+        //     발바닥 y(BearSoleCenterY)가 여기서 나온다. 반면 다리 하부 끝(y -0.745/-0.770)은 상수라
+        //     0.90 → 0.61로 줄이면 발이 다리에서 20cm 떠오르고 정강이가 지면을 뚫는다.
+        //   즉 이 두 값은 **함께만** 의미가 있고, 절차 곰(코끝~엉덩이 2.52m · 혹 1.78m)의 실측값이다.
+        //   모델 곰(높이 1.219m)에 맞춘 값은 아래 BearModel* 쪽에 따로 둔다.
 
-        /// <summary>곰 피벗을 지면에서 띄우는 높이(m). 큐브 높이(1.80)의 절반 = 콜라이더 바닥이 지면.</summary>
-        public const float BearGroundOffset = 0.90f;
+        /// <summary>절차 폴백 곰의 몸통 규격(m). 이 값은 절차 메시가 미터→로컬 변환에 쓰는 divisor다.</summary>
+        internal static readonly Vector3 BearProceduralBodyScale = new Vector3(0.86f, 1.80f, 2.56f);
+
+        /// <summary>절차 폴백 곰의 피벗 높이(m). CreatureMeshLibrary.BearGround가 이 값을 그대로 쓴다.</summary>
+        internal const float BearProceduralGroundOffset = 0.90f;
+
+        /// <summary>
+        /// 모델 곰(bear_adult.obj)의 몸통 규격(m). 실측 폭 0.981 × 높이 1.219 × 길이 2.562.
+        /// y만 1.80 → **1.22**로 낮췄다(모델 높이 1.219에 맞춘 값 - 예전 콜라이더는 몸보다 58cm 높았다).
+        /// x(0.86)와 z(2.56)는 **절대 바꾸지 않는다** - 곰 추격 AI의 접촉 사거리가 이 부피를 전제로
+        /// 튜닝돼 있다(HazardSource.bearAttackRange 주석의 "앞뒤 반폭 1.15~1.47m").
+        /// </summary>
+        private static readonly Vector3 BearModelBodyScale = new Vector3(0.86f, 1.22f, 2.56f);
+
+        /// <summary>모델 곰의 피벗 높이(m). 큐브 높이(1.22)의 절반 = 콜라이더 바닥이 정확히 지면이고,
+        /// 모델의 발바닥(로컬 y = 0)도 같은 지면에 닿는다.</summary>
+        private const float BearModelGroundOffset = 0.61f;
+
+        /// <summary>곰 몸통 프리미티브(큐브)의 localScale(m). HazardSpawner.GetVisualConfig와 같은 값이어야 한다.</summary>
+        public static Vector3 BearBodyScale
+        {
+            get { return HasBearModel ? BearModelBodyScale : BearProceduralBodyScale; }
+        }
+
+        /// <summary>곰 피벗을 지면에서 띄우는 높이(m). 큐브 높이의 절반 = 콜라이더 바닥이 지면.</summary>
+        public static float BearGroundOffset
+        {
+            get { return HasBearModel ? BearModelGroundOffset : BearProceduralGroundOffset; }
+        }
+
+        // ── [B36] 실물 곰 모델 ───────────────────────────────────────────────────────────
+        /// <summary>곰 모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).</summary>
+        private const string BearModelResourcePath = "Models/bear_adult";
+
+        private static GameObject bearModelPrefab;
+        private static bool bearModelProbed;
+        private static Material bearModelMaterial;
+
+        /// <summary>
+        /// 곰 모델 프리팹(없으면 null). Resources.Load는 **한 번만** 부른다 - 곰이 여러 마리 스폰되고
+        /// 규격 프로퍼티(BearBodyScale/BearGroundOffset)가 매 프레임 읽힐 수 있어서다.
+        /// </summary>
+        private static GameObject BearModelPrefab
+        {
+            get
+            {
+                if (!bearModelProbed)
+                {
+                    bearModelProbed = true;
+                    bearModelPrefab = Resources.Load<GameObject>(BearModelResourcePath);
+                }
+                return bearModelPrefab;
+            }
+        }
+
+        /// <summary>모델 에셋이 프로젝트에 있는가. false면 곰은 예전 그대로 절차 메시로 만들어진다.</summary>
+        public static bool HasBearModel
+        {
+            get { return BearModelPrefab != null; }
+        }
 
         /// <summary>
         /// [B33 텍스처 계약] 곰 겉털 결(grizzled, 무채색). Resources/Textures/bearfur.
@@ -217,6 +289,16 @@ namespace MakeGame.Systems
         /// </summary>
         private static void ApplySharedMaterial(GameObject go, Color color, string textureName)
         {
+            ApplySharedMaterial(go, Shared(color, textureName));
+        }
+
+        /// <summary>
+        /// [B36] 위 메서드의 공통부. 이미 만들어 둔 공유 머티리얼을 그대로 물릴 때 쓴다
+        /// (곰 모델처럼 색+텍스처 조합이 아니라 텍스처 세트 전체가 하나로 묶인 경우).
+        /// 예전 머티리얼 파괴 판정은 위와 **완전히 같은 가드**를 쓴다 - 아래 주석 참고.
+        /// </summary>
+        private static void ApplySharedMaterial(GameObject go, Material next)
+        {
             if (go == null)
                 return;
 
@@ -224,7 +306,6 @@ namespace MakeGame.Systems
             if (renderer == null)
                 return;
 
-            Material next = Shared(color, textureName);
             if (next == null || renderer.sharedMaterial == next)
                 return;
 
@@ -422,6 +503,11 @@ namespace MakeGame.Systems
         /// </summary>
         public static void AddBearDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
+            // [B36] 실물 모델이 있으면 그것 하나로 몸을 대신하고 아래 절차 파츠는 한 개도 만들지 않는다.
+            // 모델이 없는 환경(에셋 미포함 빌드/체크아웃)에서는 예전 경로가 그대로 돌아 곰이 사라지지 않는다.
+            if (BuildBearFromModel(body, appliedScale, bodyColor))
+                return;
+
             // 루트 = 다리 하단 + 발. 콜라이더가 붙은 오브젝트라 스케일이 절대 변하지 않는다.
             ApplyBodyMesh(body, CreatureMeshLibrary.BearPawUnit());
             ApplySharedMaterial(body, BearPawColor(bodyColor), BearPadTexture);
@@ -465,6 +551,164 @@ namespace MakeGame.Systems
             // 예전 방식의 귀 파츠는 메시에 들어갔다. 남아 있으면 머리 위에 혹 두 개로 겹치므로 지운다.
             RemoveLegacyPart(body.transform, "EarL");
             RemoveLegacyPart(body.transform, "EarR");
+        }
+
+        /// <summary>[B36] 모델 곰의 몸 자식 이름. CreatureMotion이 이 이름을 특별 취급하지는 않는다
+        /// (파츠 역할 이름 Hump/Limbs/Claws와 겹치지 않기만 하면 된다).</summary>
+        private const string BearModelPartName = "Model";
+
+        /// <summary>
+        /// [B36] 실물 곰 모델(bear_adult.obj)을 몸으로 붙인다. 붙였으면 true - 호출부는 절차 파츠를
+        /// 한 개도 만들지 않고 빠져나간다. 모델이 없으면 아무 것도 하지 않고 false다.
+        ///
+        /// ── 좌표 계약(에셋이 이미 이렇게 구워져 있다. 여기서 배율/회전을 다시 만지지 않는다) ────
+        ///   단위 = 미터 · +Y 위 · +Z 정면(주둥이) · +X 오른쪽 · **발바닥이 정확히 y = 0** · X/Z 중심 정렬.
+        ///   실측 0.981 × 1.219 × 2.562 m.
+        ///
+        /// ── 비균등 부모 스케일 처리(이 파일에서 사고가 나는 유일한 지점) ────────────────────
+        ///   루트 localScale = BearBodyScale(0.86 × 1.22 × 2.56) × sizeJitter로 **비균등**이다.
+        ///   자식을 그냥 붙이면 모델이 축마다 다르게 늘어난다. MeterSpacePart와 똑같이 자식 localScale을
+        ///   1/BearBodyScale로 두면 자식의 로컬 1단위 = 월드 1미터가 되고(sizeJitter만 살아남는다),
+        ///   모델은 구워진 그대로의 비율로 선다.
+        ///   **localRotation은 반드시 identity다.** 비균등 부모 스케일 × 자식 회전 = 전단(shear)이고,
+        ///   이 프로젝트에서 곰이 z축 0.39배로 찌부러졌던 사고의 원인이 정확히 그것이다.
+        ///   localPosition.y = -BearGroundOffset / BearBodyScale.y → 모델 발바닥이 정확히 지면에 닿는다
+        ///   (부모 스케일이 곱해지므로 월드로는 -groundOffset × jitter. 접지 규칙은 ReshapeSphere와 같다).
+        /// </summary>
+        private static bool BuildBearFromModel(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            GameObject prefab = BearModelPrefab;
+            if (prefab == null)
+                return false;
+
+            Vector3 nominal = BearModelBodyScale;
+            Material material = BearModelMaterial();
+
+            // 루트(콜라이더 소유자)는 큐브 프리미티브라 그대로 두면 갈색 상자가 모델을 감싼 채 보인다.
+            // 렌더러를 끄지 않고 **빈 메시**로 바꾸는 이유: HazardSource.SetVisualActive(true)가 재등장 때
+            // 자식 렌더러를 전부 다시 켜므로(enabled 기반 은닉은 되살아난다), 메시 쪽을 비워야 영구적이다.
+            ApplyBodyMesh(body, EmptyMesh());
+            // 스포너가 개체마다 새로 만든 1회용 머티리얼(MG~ 접두어)을 여기서 회수한다. 루트도 모델과
+            // 같은 공유본을 물려 이 세션의 곰 머티리얼이 정확히 한 장이 되게 한다(아무 것도 그리지 않는다).
+            ApplySharedMaterial(body, material);
+            SnapPivotForJitter(body, appliedScale, nominal, BearModelGroundOffset);
+
+            Transform existing = body.transform.Find(BearModelPartName);
+            GameObject model;
+            if (existing != null)
+            {
+                model = existing.gameObject;
+            }
+            else
+            {
+                model = Object.Instantiate(prefab);
+                model.name = BearModelPartName;
+                model.transform.SetParent(body.transform, false);
+            }
+
+            model.transform.localPosition = new Vector3(0f, -BearModelGroundOffset / nominal.y, 0f);
+            model.transform.localRotation = Quaternion.identity;   // ★ 전단 방지 - 절대 회전시키지 마라
+            model.transform.localScale = new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z);
+
+            var renderers = model.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null && material != null)
+                    renderers[i].sharedMaterial = material;
+            }
+
+            // 임포터 설정에 따라 모델에 콜라이더가 딸려 올 수 있다. 판정은 루트의 트리거 하나뿐이라는
+            // 규칙(이 파일 상단 주석)을 지키기 위해 자식 콜라이더는 전부 걷어낸다.
+            var colliders = model.GetComponentsInChildren<Collider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i] != null)
+                    Object.Destroy(colliders[i]);
+            }
+
+            // 스포너가 만들어 둔 임시 눈 구체는 모델에 눈이 이미 그려져 있어 필요 없다(머리 밖에 뜬다).
+            RemoveLegacyPart(body.transform, "EyeL");
+            RemoveLegacyPart(body.transform, "EyeR");
+            RemoveLegacyPart(body.transform, "EarL");
+            RemoveLegacyPart(body.transform, "EarR");
+            return true;
+        }
+
+        /// <summary>
+        /// [B36] 곰 모델 전용 URP Lit 머티리얼. **한 번만 만들어 모든 개체가 공유한다**
+        /// (곰은 섬마다 여러 마리 스폰된다 - 개체마다 만들면 SRP 배처가 죽는다는 이 파일 상단 주석 그대로).
+        ///
+        /// 셰이더를 찾는 방법은 StructureVisualBuilder.CreateColorMaterial과 **완전히 같다**
+        /// (Shader.Find("Universal Render Pipeline/Lit"), 없으면 "Standard"). 이름을 상상해서 적지 않는다.
+        /// 이름에 StructureVisualBuilder.RuntimeMaterialPrefix("MG~")를 붙이는 것도 같은 이유다 -
+        /// 이 접두어가 없는 머티리얼을 Destroy하면 내장 에셋을 파괴해 "Destroying assets is not permitted"가
+        /// 쏟아진다(ApplySharedMaterial 주석의 54건 사고). 여기서 만든 것은 sharedMaterials에 등록해
+        /// 두므로 그 가드에 걸려 **절대 파괴되지 않는다**.
+        ///
+        /// metallic / smoothness는 원본 PBR 맵을 **일부러 쓰지 않는다**:
+        ///   · metallic 맵은 평균 21/255짜리 노이즈다. 곰은 금속이 아니므로 상수 0.
+        ///   · roughness 맵은 평균 140/255라 그대로 쓰면 젖은 플라스틱처럼 반들거린다. 털은 거의 무광이라
+        ///     smoothness 0.17 상수(StructureVisualBuilder.DefaultSmoothness와 같은 계열의 판단)로 고정한다.
+        /// </summary>
+        private static Material BearModelMaterial()
+        {
+            if (bearModelMaterial != null)
+                return bearModelMaterial;
+
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var material = new Material(shader != null ? shader : Shader.Find("Standard"));
+            material.name = StructureVisualBuilder.RuntimeMaterialPrefix + "BearModel";
+
+            // 알베도가 색을 전부 담고 있으므로 틴트는 흰색이다(곱해져 어두워지면 텍스처가 죽는다).
+            material.color = Color.white;
+
+            var albedo = Resources.Load<Texture2D>("Textures/bear_albedo");
+            if (albedo != null)
+            {
+                if (material.HasProperty("_BaseMap"))
+                    material.SetTexture("_BaseMap", albedo);
+                else
+                    material.mainTexture = albedo;  // Standard 폴백(_MainTex). URP에서는 위가 같은 슬롯이다
+            }
+
+            var normal = Resources.Load<Texture2D>("Textures/bear_normal");
+            if (normal != null && material.HasProperty("_BumpMap"))
+            {
+                material.SetTexture("_BumpMap", normal);
+                if (material.HasProperty("_BumpScale"))
+                    material.SetFloat("_BumpScale", 1f);
+                material.EnableKeyword("_NORMALMAP");
+            }
+
+            if (material.HasProperty("_Metallic"))
+                material.SetFloat("_Metallic", 0f);
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", BearModelSmoothness);
+            if (material.HasProperty("_Glossiness"))
+                material.SetFloat("_Glossiness", BearModelSmoothness);
+
+            bearModelMaterial = material;
+            sharedMaterials.Add(material);   // 공유본 = 파괴 금지 목록
+            return material;
+        }
+
+        /// <summary>[B36] 곰 털의 반사도. 0.15~0.2 구간(원본 roughness 맵은 쓰지 않는다).</summary>
+        private const float BearModelSmoothness = 0.17f;
+
+        /// <summary>
+        /// [B36] 정점이 0개인 공유 메시. 모델 곰의 루트(콜라이더 소유자)가 큐브를 그리지 않게 만든다.
+        /// 렌더러를 끄는 대신 메시를 비우는 이유는 BuildBearFromModel 주석 참고.
+        /// </summary>
+        private static Mesh emptyMesh;
+
+        private static Mesh EmptyMesh()
+        {
+            if (emptyMesh == null)
+            {
+                emptyMesh = new Mesh();
+                emptyMesh.name = "Cre_Empty";
+            }
+            return emptyMesh;
         }
 
         /// <summary>
@@ -801,8 +1045,13 @@ namespace MakeGame.Systems
         /// <summary>어깨 혹 단면의 좌우 눌림. 혹 폭 = 0.290 × 2 × 0.86 = 0.499m.</summary>
         private const float BearHumpFlatten = 0.86f;
 
-        /// <summary>지면의 y(피벗 기준, m). 발바닥 4개와 발톱 끝이 전부 이 값을 기준으로 잡혀 있다.</summary>
-        private const float BearGround = -CreatureVisualBuilder.BearGroundOffset;
+        /// <summary>
+        /// 지면의 y(피벗 기준, m). 발바닥 4개와 발톱 끝이 전부 이 값을 기준으로 잡혀 있다.
+        /// [B36] **절차** 규격을 직접 참조한다(BearGroundOffset이 아니다). 이 파일의 곰 메시는 모델
+        /// 에셋이 없는 세션에서만 구워지므로 그때의 피벗 높이는 항상 0.90이고, 반대로 여기에 모델
+        /// 규격(0.61)이 들어오면 발바닥만 29cm 떠올라 다리 하부(끝이 상수 y -0.745/-0.770)에서 빠진다.
+        /// </summary>
+        private const float BearGround = -CreatureVisualBuilder.BearProceduralGroundOffset;
 
         /// <summary>
         /// 6각 단면 관의 바닥 "면" 깊이 배수(cos 30°). 6각은 270°에 정점이 없어 바닥이 칼날이 아니라
@@ -1062,7 +1311,9 @@ namespace MakeGame.Systems
             AddBearHindPaw(builder, -1f);
 
             // 루트 전용이라 **여기서만** 규격으로 나눈다(아래 두 공간 주석 참고).
-            Vector3 nominal = CreatureVisualBuilder.BearBodyScale;
+            // [B36] BearGround와 같은 이유로 **절차** 규격을 직접 참조한다 - 이 메시는 정적 캐시라
+            // 한 번 구우면 세션 내내 남는데, 모델 규격(y 1.22)으로 나뉘면 폴백 곰이 세로로 늘어난다.
+            Vector3 nominal = CreatureVisualBuilder.BearProceduralBodyScale;
             builder.ScaleVertices(new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z));
             return Store("bearPaw", builder.Finish("Cre_BearPaw"));
         }

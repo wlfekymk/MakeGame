@@ -26,7 +26,9 @@ namespace MakeGame.UI
         public static BuildMenuUI Instance { get; private set; }
 
         /// <summary>
-        /// 핫바에 늘어놓을 부품 순서. **배치 26에서 계단이 해금됐다** - 다섯 칸 전부 실제로 지을 수 있다.
+        /// 핫바에 늘어놓을 부품 순서. **배치 26에서 계단이, 배치 38에서 지붕이 해금됐다** - 여섯 칸
+        /// 전부 실제로 지을 수 있다. **새 부품은 끝에만 붙인다** - 숫자키와 아이콘 순서가 이 배열 하나로
+        /// 정해지므로, 중간에 끼우면 손에 익은 단축키가 통째로 밀린다.
         /// </summary>
         private static readonly BuildPieceType[] SlotTypes =
         {
@@ -35,9 +37,10 @@ namespace MakeGame.UI
             BuildPieceType.Doorway,
             BuildPieceType.Window,
             BuildPieceType.Stair,
+            BuildPieceType.Roof,
         };
 
-        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5).</summary>
+        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5, 지붕 = 6).</summary>
         private static readonly KeyCode[] SelectKeys =
         {
             KeyCode.Alpha1,
@@ -45,6 +48,7 @@ namespace MakeGame.UI
             KeyCode.Alpha3,
             KeyCode.Alpha4,
             KeyCode.Alpha5,
+            KeyCode.Alpha6,
         };
 
         // ── 치수 ────────────────────────────────────────────────────────────────
@@ -53,8 +57,14 @@ namespace MakeGame.UI
         private const float WindowPadding = 14f;
         private const float TitleBarHeight = 34f;
         private const float GridTop = TitleBarHeight + 8f;
-        private const float WindowWidth = 5f * SlotSize + 4f * SlotSpacing + WindowPadding * 2f; // 500
-        private const float WindowHeight = GridTop + SlotSize + 62f;                             // 192
+        /// <summary>
+        /// 창 폭은 **칸 수에서 계산한다**(예전에는 5칸을 상수로 박아 뒀다). 부품이 늘 때 배열만 고치면
+        /// 창이 따라 넓어지고, 칸이 창 밖으로 삐져나오는 일이 없다. SlotTypes가 위에 먼저 선언돼 있어
+        /// 정적 초기화 순서(선언 순서)상 안전하다.
+        /// </summary>
+        private static readonly float WindowWidth =
+            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing + WindowPadding * 2f; // 6칸 = 596
+        private const float WindowHeight = GridTop + SlotSize + 62f;                                 // 192
 
         // ── 색 (UIBuilder 표준 상수를 그대로 쓴다 - 새로 만들지 않는다) ─────────
         private static readonly Color DimGray = new Color(0.5f, 0.5f, 0.5f, 1f);
@@ -443,7 +453,7 @@ namespace MakeGame.UI
             KeyCode rotate = BuildingSystem.Instance != null ? BuildingSystem.Instance.rotateKey : KeyCode.Q;
 
             var hint = UIBuilder.CreateText(windowRt, "Hint",
-                $"[좌클릭] 설치 · [우클릭] 철거(재료 절반 반환) · [휠/{rotate}] 90도 회전 · [1~5] 부품 · [{exitKey}] 나가기",
+                $"[좌클릭] 설치 · [우클릭] 철거(재료 절반 반환) · [휠/{rotate}] 90도 회전 · [1~{SlotTypes.Length}] 부품 · [{exitKey}] 나가기",
                 11, HintGray, TextAnchor.MiddleCenter);
             hint.raycastTarget = false;
             hint.horizontalOverflow = HorizontalWrapMode.Overflow;

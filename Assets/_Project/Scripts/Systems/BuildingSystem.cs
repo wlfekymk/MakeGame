@@ -62,6 +62,9 @@ namespace MakeGame.Systems
     /// · 바닥은 셀 중심에 놓이며 **로컬 원점이 윗면**이라 position.y가 곧 사람이 딛는 높이다.
     /// · 벽/문/창문은 셀 모서리에 놓인다. 모서리는 (ex, ez, axis)로 canonical하게 표기한다 -
     ///   axis 0 = z가 일정한(= X축을 따라 뻗은) 모서리, axis 1 = x가 일정한 모서리.
+    /// · 지붕은 바닥과 같은 (셀, 층) 자리를 쓰지만 **딴 표(roofByKey)** 에 들어간다 - 천장이지 딛고 설
+    ///   바닥이 아니다. 로컬 원점이 처마 밑면이라 position.y가 곧 그 층의 천장 높이(= 벽 꼭대기)이고,
+    ///   회전이 곧 경사 방향이다. **지붕 위에는 아무것도 쌓지 않는다**(계속 위로 올리려면 바닥을 쓴다).
     /// · 계단은 셀 하나를 통째로 차지하고, **로컬 원점이 밑단의 앞 모서리**다(로컬 +Z로 2m 나아가며
     ///   2.5m 올라간다). 그래서 위치 = 셀 중심에서 바라보는 방향의 반대쪽 모서리 중점이다.
     ///
@@ -192,6 +195,12 @@ namespace MakeGame.Systems
         private readonly Dictionary<long, PlacedPiece> wallByKey = new Dictionary<long, PlacedPiece>();
         private readonly Dictionary<long, PlacedPiece> stairByKey = new Dictionary<long, PlacedPiece>();
 
+        /// <summary>
+        /// [배치 38] 지붕. 바닥과 **같은 격자 자리(셀 + 층)** 를 쓰지만 딴 표에 둔다 - 지붕은 천장이지
+        /// 딛고 설 바닥이 아니어서, 바닥 조회(TryGetFloorTopY)에 섞이면 지붕 위에 벽·계단이 서 버린다.
+        /// </summary>
+        private readonly Dictionary<long, PlacedPiece> roofByKey = new Dictionary<long, PlacedPiece>();
+
         /// <summary>레이가 맞은 콜라이더에서 조각 본체를 거슬러 찾기 위한 표(루트 Transform → 조각).</summary>
         private readonly Dictionary<Transform, PlacedPiece> pieceByRoot = new Dictionary<Transform, PlacedPiece>();
 
@@ -315,6 +324,7 @@ namespace MakeGame.Systems
                 case BuildPieceType.Doorway:
                 case BuildPieceType.Window:
                 case BuildPieceType.Stair:
+                case BuildPieceType.Roof:
                     return true;
                 default:
                     return false;
@@ -738,6 +748,10 @@ namespace MakeGame.Systems
                     ResolveStairTarget(space, point);
                     break;
 
+                case BuildPieceType.Roof:
+                    ResolveRoofTarget(space, point);
+                    break;
+
                 default:
                     ResolveWallTarget(space, point);
                     break;
@@ -910,7 +924,8 @@ namespace MakeGame.Systems
                 return;
             }
 
-            if (HasFloorAt(space, cellX, cellZ, targetLevel))
+            // 지붕도 그 자리의 천장이다 - 지붕을 덮은 칸 위에 바닥을 다시 얹지 못한다(배치 38).
+            if (HasCeilingAt(space, cellX, cellZ, targetLevel))
             {
                 blockReason = BuildBlockReason.Occupied;
                 return;
@@ -1152,9 +1167,18 @@ namespace MakeGame.Systems
 
             // 계단이 뚫고 올라가야 할 위층 바닥(= 계단 칸의 천장)이 이미 덮여 있으면 못 놓는다.
             // 반대 방향(바닥 먼저)은 ResolveFloorTarget이 막는다 - 양방향 대칭이다.
-            if (HasFloorAt(space, cellX, cellZ, landingLevel))
+            if (HasCeilingAt(space, cellX, cellZ, landingLevel))
             {
                 blockReason = BuildBlockReason.StairInTheWay;
+                return;
+            }
+
+            // 참 자리를 지붕이 이미 덮고 있으면 그 위에 바닥을 깔 수 없다 - 지붕을 먼저 걷어야 한다.
+            // (지붕은 바닥 표에 없으므로, 이 검사가 없으면 아래 targetNeedsLanding이 참이 되어
+            //  지붕과 같은 자리에 참 바닥이 자동으로 겹쳐 깔린다.)
+            if (HasRoofAt(space, landingX, landingZ, landingLevel))
+            {
+                blockReason = BuildBlockReason.Occupied;
                 return;
             }
 
@@ -1176,6 +1200,85 @@ namespace MakeGame.Systems
                     blockReason = space == BuildSpace.Deck ? BuildBlockReason.OffDeck : BuildBlockReason.NotOnGround;
                     return;
                 }
+            }
+
+            targetValid = true;
+            blockReason = BuildBlockReason.None;
+        }
+
+        /// <summary>
+        /// 지붕의 놓을 자리를 정한다. 지붕은 바닥처럼 **셀 하나**를 덮고, 로컬 원점이 처마 밑면이라
+        /// position.y가 곧 그 층의 천장 높이(= 벽 꼭대기 / 위층 바닥 윗면과 같은 평면)다.
+        ///
+        /// **지지 판정을 새로 만들지 않는다.** 이미 있는 두 규칙을 그대로 빌린다:
+        ///  (a) 이 칸에 딛고 설 바닥(갑판 포함)이 있으면 그 바닥이 이루는 층의 천장 = 바닥층 + 1.
+        ///  (b) 이 칸을 두른 네 모서리에 아래 벽이 있으면 그 벽의 꼭대기(<see cref="TryGetWallSupport"/>).
+        ///      배치 37의 "바닥이 없어도 아래 벽이 있으면 한 층"과 같은 근거이므로, 계단으로 올라간
+        ///      바닥 없는 층에도 지붕을 덮을 수 있다.
+        /// 둘 다 나오면 **더 높은 쪽**을 고른다. 지붕은 그 층에서 가장 위에 얹히는 물건이고, 벽 중간을
+        /// 겨눴을 때 TryGetWallSupport가 밑동과 꼭대기 사이에서 동률이 되는 것도 이걸로 풀린다.
+        /// </summary>
+        private void ResolveRoofTarget(BuildSpace space, Vector3 point)
+        {
+            int cellX = CellIndexOf(point.x);
+            int cellZ = CellIndexOf(point.z);
+
+            bool found = false;
+            int bestLevel = 0;
+            float bestY = 0f;
+
+            // (a) 바닥 지지 - 벽·계단이 쓰는 것과 완전히 같은 조회다.
+            SupportRef floorSupport = FindSupportNear(space, cellX, cellZ, point.y);
+            if (floorSupport.valid)
+            {
+                found = true;
+                bestLevel = floorSupport.level + 1;
+                bestY = floorSupport.y + LevelHeight;
+            }
+
+            // (b) 벽 지지. 조준점을 반 층 남짓 올려서 본다 - 벽 한가운데를 겨누면 그 벽의 밑동과
+            // 꼭대기가 정확히 같은 거리라, 원래 기준(가장 가까운 것)으로는 밑동(= 이 층의 바닥면)이
+            // 뽑힌다. 지붕은 벽 **위**에 얹히는 물건이라 그 동률을 위쪽으로 기울여야 한다.
+            float wallProbeY = point.y + LevelHeight * 0.6f;
+            for (int side = 0; side < 4; side++)
+            {
+                GetEdgeOfCell(cellX, cellZ, side, out int ex, out int ez, out int axis);
+                if (!TryGetWallSupport(space, ex, ez, axis, wallProbeY, out int level, out float y))
+                    continue;
+
+                if (found && level <= bestLevel)
+                    continue;
+
+                found = true;
+                bestLevel = level;
+                bestY = y;
+            }
+
+            if (!found)
+            {
+                blockReason = BuildBlockReason.NoSupportingFloor;
+                return;
+            }
+
+            hasTarget = true;
+            targetCellX = cellX;
+            targetCellZ = cellZ;
+            targetLevel = bestLevel;
+            targetAxis = NonWallAxis;
+            targetYaw = GetYawFor(BuildPieceType.Roof, NonWallAxis);
+            targetPosition = new Vector3(CellCenterCoord(cellX), bestY, CellCenterCoord(cellZ));
+
+            if (space == BuildSpace.Deck && !IsDeckCellInBounds(cellX, cellZ))
+            {
+                blockReason = BuildBlockReason.OffDeck;
+                return;
+            }
+
+            // 그 자리의 천장은 하나뿐이다(바닥이 이미 덮고 있으면 지붕을 겹쳐 놓지 않는다).
+            if (HasCeilingAt(space, cellX, cellZ, bestLevel))
+            {
+                blockReason = BuildBlockReason.Occupied;
+                return;
             }
 
             targetValid = true;
@@ -1219,11 +1322,12 @@ namespace MakeGame.Systems
         /// <summary>
         /// 부품의 최종 y 회전. 벽류는 모서리 방향이 회전을 결정하므로(그래야 모서리에 정확히 맞는다)
         /// 회전 입력은 앞뒤 뒤집기(180도)로만 쓴다. 바닥은 정사각형이라 90도 회전이 겉모습 문제이고,
-        /// **계단은 회전이 곧 올라가는 방향**이라 네 방향이 전부 의미가 다르다.
+        /// **계단은 회전이 곧 올라가는 방향**이고, **지붕은 회전이 곧 경사 방향**이라
+        /// 둘 다 네 방향이 전부 의미가 다르다.
         /// </summary>
         private float GetYawFor(BuildPieceType type, int axis)
         {
-            if (type == BuildPieceType.Floor || type == BuildPieceType.Stair)
+            if (type == BuildPieceType.Floor || type == BuildPieceType.Stair || type == BuildPieceType.Roof)
                 return rotationSteps * 90f;
 
             float baseYaw = axis == 0 ? 0f : 90f;
@@ -1438,6 +1542,21 @@ namespace MakeGame.Systems
         private bool HasFloorAt(BuildSpace space, int cellX, int cellZ, int level)
         {
             return TryGetFloorTopY(space, cellX, cellZ, level, out float _);
+        }
+
+        /// <summary>그 칸 그 층에 지붕이 있는지. **딛고 설 수 있는 면이 아니다**(바닥 조회와 섞지 마라).</summary>
+        private bool HasRoofAt(BuildSpace space, int cellX, int cellZ, int level)
+        {
+            return roofByKey.ContainsKey(PieceKey(space, cellX, cellZ, level, NonWallAxis));
+        }
+
+        /// <summary>
+        /// 그 칸 그 층을 이미 무언가가 덮고 있는지(바닥 또는 지붕). 한 자리의 천장은 하나뿐이라는
+        /// 규칙을 한 곳에 모아 둔 것이다 - 바닥과 지붕은 서로의 자리를 빼앗지 않는다.
+        /// </summary>
+        private bool HasCeilingAt(BuildSpace space, int cellX, int cellZ, int level)
+        {
+            return HasFloorAt(space, cellX, cellZ, level) || HasRoofAt(space, cellX, cellZ, level);
         }
 
         /// <summary>
@@ -1818,6 +1937,14 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 지붕도 벽이 받치는 물건이다(배치 38). 같은 원칙 - 아래를 먼저 부수면 지붕이 허공에 뜬다.
+            if (IsWallType(piece.type) && HasRoofOnWall(piece))
+            {
+                Debug.LogWarning("[BuildingSystem] 이 벽 위에 지붕이 얹혀 있어 부술 수 없다. 지붕부터 철거하라.");
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
             if (!CollectRefund(piece.type, refundBuffer))
             {
                 Debug.LogWarning("[BuildingSystem] 돌려줄 재료의 ItemData를 찾지 못해 철거를 취소했다" +
@@ -1856,11 +1983,30 @@ namespace MakeGame.Systems
             return type == BuildPieceType.Wall || type == BuildPieceType.Doorway || type == BuildPieceType.Window;
         }
 
+        /// <summary>
+        /// 이 벽 위에 지붕이 얹혀 있는지. 모서리 (ex,ez,axis)는 셀 두 개가 나눠 쓰므로 양쪽 다 본다
+        /// (GetEdgeOfCell의 역함수 - axis 0이면 (ex,ez)와 (ex,ez-1), axis 1이면 (ex,ez)와 (ex-1,ez)).
+        /// </summary>
+        private bool HasRoofOnWall(PlacedPiece wall)
+        {
+            int roofLevel = wall.level + 1;
+            if (HasRoofAt(wall.space, wall.cellX, wall.cellZ, roofLevel))
+                return true;
+
+            int nx = wall.axis == 0 ? wall.cellX : wall.cellX - 1;
+            int nz = wall.axis == 0 ? wall.cellZ - 1 : wall.cellZ;
+            return HasRoofAt(wall.space, nx, nz, roofLevel);
+        }
+
         /// <summary>이 바닥이 사라지면 공중에 뜨는 조각이 있는지 확인한다.</summary>
         private bool HasLoadAbove(PlacedPiece floor)
         {
             // 바로 위층 바닥.
             if (floorByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level + 1, NonWallAxis)))
+                return true;
+
+            // 이 바닥만 보고 얹은 지붕(벽 없는 정자 형태). 벽이 함께 받치고 있어도 순서를 지키게 한다.
+            if (HasRoofAt(floor.space, floor.cellX, floor.cellZ, floor.level + 1))
                 return true;
 
             // 이 바닥을 딛고 선 계단.
@@ -2056,6 +2202,10 @@ namespace MakeGame.Systems
                     stairByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
+                case BuildPieceType.Roof:
+                    roofByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    break;
+
                 default:
                     wallByKey[PieceKey(space, cellX, cellZ, level, axis)] = piece;
                     break;
@@ -2083,6 +2233,10 @@ namespace MakeGame.Systems
                     stairByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
+                case BuildPieceType.Roof:
+                    roofByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    break;
+
                 default:
                     wallByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, piece.axis));
                     break;
@@ -2108,6 +2262,7 @@ namespace MakeGame.Systems
             floorByKey.Clear();
             wallByKey.Clear();
             stairByKey.Clear();
+            roofByKey.Clear();
             pendingDeckEntries.Clear();
             structureVersion++;
         }
@@ -2195,7 +2350,8 @@ namespace MakeGame.Systems
             if (entry == null)
                 return;
 
-            if (entry.type < (int)BuildPieceType.Floor || entry.type > (int)BuildPieceType.Stair)
+            // 상한은 **열거형의 마지막 값**이다. 옛 세이브(0~4)는 그대로 통과하고, 새 지붕(5)만 더 읽힌다.
+            if (entry.type < (int)BuildPieceType.Floor || entry.type > (int)BuildPieceType.Roof)
             {
                 Debug.LogWarning($"[BuildingSystem] 알 수 없는 부품 종류 {entry.type} 를 건너뛴다.");
                 return;
@@ -2218,6 +2374,9 @@ namespace MakeGame.Systems
                     break;
                 case BuildPieceType.Stair:
                     occupied = stairByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    break;
+                case BuildPieceType.Roof:
+                    occupied = roofByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
                     break;
                 default:
                     occupied = wallByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, entry.axis));
@@ -2254,15 +2413,22 @@ namespace MakeGame.Systems
         /// 탐색이 방 안에서 끝난다. 1x1 오두막부터 여러 칸짜리 방까지 같은 규칙으로 잡히고,
         /// 벽 없는 데크는 첫 걸음에 새므로 즉시 실외가 된다(문·창문은 벽류로 쳐서 막힌 것으로 본다).
         ///
-        /// **지붕도 요구한다**: 방을 이루는 모든 칸의 바로 위층에 바닥이 있어야 한다(지붕 전용 부품이
-        /// 없고 위층 바닥이 곧 지붕이다). 계단이 선 칸만 예외로 둔다 - 계단은 위층으로 뚫려 있는 것이
-        /// 정상이고, 그 구멍 때문에 2층 집 전체가 실외가 되면 안 된다.
+        /// **천장도 요구한다**: 방을 이루는 모든 칸의 바로 위층에 **바닥 또는 지붕**이 있어야 한다
+        /// (배치 38 전에는 지붕 부품이 없어 위층 바닥만 천장으로 쳤다). 계단이 선 칸만 예외로 둔다 -
+        /// 계단은 위층으로 뚫려 있는 것이 정상이고, 그 구멍 때문에 2층 집 전체가 실외가 되면 안 된다.
         ///
         /// **지면과 뗏목 갑판 양쪽에서 동작한다.** 지면에서 실패하면 좌표를 갑판 로컬로 바꿔 한 번 더 본다.
         ///
         /// [배치 37] 벽이 아래 벽만으로도 설 수 있게 됐지만 **실내 판정은 바뀌지 않는다.** 시작 조건이
         /// TryGetFloorUnder(발밑 바닥)이고 탐색도 바닥이 있는 칸으로만 번지므로, 바닥 없이 벽만 두른
         /// 기둥은 어떤 경우에도 실내가 되지 않는다(비를 피하는 버그가 생기지 않는다).
+        ///
+        /// [배치 38] 지붕이 천장으로 인정되지만 **바뀐 것은 천장 검사 한 줄뿐이고 두 안전장치는 그대로다.**
+        ///  · "바닥 없이 벽만 세운 기둥": 지붕은 roofByKey에만 들어가고 바닥 조회(TryGetFloorTopY)에는
+        ///    절대 섞이지 않는다. 시작점 TryGetFloorUnder와 번짐 조건이 여전히 **진짜 바닥**만 보므로,
+        ///    바닥 없는 기둥은 지붕을 씌우든 말든 첫 줄에서 실외로 끝난다.
+        ///  · "지붕만 덜렁 있고 벽이 없는 경우": 옆면 검사는 그대로다 - 벽류가 없는 모서리를 넘었는데
+        ///    그쪽에 바닥도 없으면 곧바로 실외다. 지붕은 옆면을 막지 않으므로 벽 없는 지붕은 첫 걸음에 샌다.
         /// </summary>
         public static bool IsInsideEnclosedStructure(Vector3 worldPos)
         {
@@ -2353,8 +2519,8 @@ namespace MakeGame.Systems
                 int x = bfsCellX[head];
                 int z = bfsCellZ[head];
 
-                // 머리 위(바로 위층 바닥 = 지붕)가 없으면 실내가 아니다. 계단이 선 칸은 예외다.
-                if (!HasFloorAt(space, x, z, level + 1)
+                // 머리 위(바로 위층의 바닥 **또는 지붕**)가 없으면 실내가 아니다. 계단이 선 칸은 예외다.
+                if (!HasCeilingAt(space, x, z, level + 1)
                     && !stairByKey.ContainsKey(PieceKey(space, x, z, level, NonWallAxis)))
                     return false;
 

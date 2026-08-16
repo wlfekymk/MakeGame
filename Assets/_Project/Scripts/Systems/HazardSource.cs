@@ -47,6 +47,48 @@ namespace MakeGame.Systems
         [Tooltip("이 섬(또는 스폰 그룹) 안에서 몇 번째로 생성됐는지(생성 순번, 0부터).")]
         public int spawnOrder = -1;
 
+        // ─────────────────────────────────────────────────────────────────────────────
+        //  [B35] 곰 추격 AI 튜닝 값. 곰(HazardType.Bear)에만 쓰이고 다른 위험 요소는 읽지도 않는다.
+        //  (다른 종류는 Start에서 AI를 초기화하지 않으므로 비용이 정확히 0이다.)
+        // ─────────────────────────────────────────────────────────────────────────────
+
+        [Header("곰 추격 AI (곰 전용)")]
+        [Tooltip("플레이어를 처음 발견하는 반경(m). 이 안 + 시야각 안이어야 경계로 넘어간다.")]
+        public float bearDetectRadius = 18f;
+
+        [Tooltip("한 번 붙은 뒤 놓치는 반경(m). 반드시 발견 반경보다 커야 한다(히스테리시스 - 경계선에서 상태가 떠는 것을 막는다).")]
+        public float bearLoseRadius = 27f;
+
+        [Tooltip("정면 기준 시야 반각(도). 이보다 옆/뒤에 있으면 발견 반경 안이어도 못 본다.")]
+        public float bearViewHalfAngle = 65f;
+
+        [Tooltip("시야각을 무시하고 기척만으로 알아채는 근접 반경(m). 뒤로 몰래 붙어도 이 거리에서는 들킨다.")]
+        public float bearCloseSenseRadius = 6f;
+
+        [Tooltip("앞발을 내려칠 수 있는 거리(m). 이 안에 들어오면 공격 상태로 넘어간다.")]
+        public float bearAttackRange = 2.8f;
+
+        [Tooltip("처음 서 있던 자리에서 이 거리(m) 이상 벌어지면 추격을 포기하고 복귀한다.")]
+        public float bearLeashRadius = 42f;
+
+        [Tooltip("추격 최고 속도(m/s). Start에서 PlayerController.moveSpeed를 읽어 그보다 아주 조금 빠르게 덮어쓴다.")]
+        public float bearChaseSpeed = 5.3f;
+
+        [Tooltip("배회/복귀할 때의 속도(m/s). 무거운 짐승의 어슬렁거림이라 걷기보다 느리다.")]
+        public float bearWanderSpeed = 1.2f;
+
+        [Tooltip("가속도(m/s²). 곰은 즉시 최고속에 닿지 않는다 - 이 값이 '무겁다'의 대부분이다.")]
+        public float bearAcceleration = 3f;
+
+        [Tooltip("감속도(m/s²). 가속보다 빠르지만 즉시 멈추지는 않는다.")]
+        public float bearDeceleration = 6.5f;
+
+        [Tooltip("추격/공격 중 방향을 트는 속도(도/초).")]
+        public float bearChaseTurnSpeed = 130f;
+
+        [Tooltip("배회/복귀 중 방향을 트는 속도(도/초).")]
+        public float bearWanderTurnSpeed = 65f;
+
         private bool isDefeated = false;
         private float respawnTimer = 0f;
         private float contactCooldownTimer = 0f;
@@ -165,6 +207,9 @@ namespace MakeGame.Systems
             if (hazardType != HazardType.Bear)
                 return;
 
+            // [B35] 추격 AI는 시각 파츠 유무와 무관하게 붙인다(아래 숨쉬기/모션은 자식이 있어야 의미가 있다).
+            InitBearAI();
+
             int count = transform.childCount;
             if (count <= 0)
                 return;
@@ -226,6 +271,14 @@ namespace MakeGame.Systems
             if (breathParts != null && !isDefeated)
                 UpdateBearBreathing();
 
+            // [B35] 곰 추격 AI. 세 가지 조건에서 **아예 돌지 않는다**:
+            //  · timeScale <= 0 (타이틀/설정/엔딩/사망 화면) - 이동도 상태 갱신도 전부 정지한다.
+            //    숨쉬기(unscaledDeltaTime)와 달리 AI는 게임 시간에 묶여야 한다.
+            //  · isDefeated (SetVisualActive(false) 구간) - 안 보이는 곰이 돌아다니면 안 된다.
+            //  · 곰이 아닌 위험 요소 - bearAiReady가 곰에서만 true다.
+            if (bearAiReady && !isDefeated && Time.timeScale > 0f)
+                UpdateBearAI(Time.deltaTime);
+
             if (!isDefeated)
                 return;
 
@@ -240,6 +293,11 @@ namespace MakeGame.Systems
                 // [B34] 다시 나타났으니 모션도 되살린다(처치 시 원자세로 되돌린 뒤 꺼 뒀다).
                 if (bearMotion != null)
                     bearMotion.enabled = true;
+
+                // [B35] 재등장은 쓰러진 자리가 아니라 처음 서 있던 자리에서 한다. 쓰러진 자리는
+                // 플레이어가 방금 싸운 곳(대개 자기 거점 앞)이라, 그 자리에 그대로 되살아나면
+                // 120초마다 거점 안에서 곰이 솟는다.
+                ResetBearAI(true);
             }
         }
 
@@ -445,6 +503,11 @@ namespace MakeGame.Systems
                     bearMotion.enabled = true;
                 }
             }
+
+            // [B35] 추격 상태도 함께 되돌린다. 세이브에는 곰의 위치가 들어 있지 않고(스포너가 같은
+            // 시드로 같은 자리에 다시 놓는다) 이 메서드는 Start보다 먼저 불릴 수 있으므로,
+            // bearAiReady가 아직 false면 ResetBearAI가 알아서 아무 일도 하지 않는다.
+            ResetBearAI(!defeated);
         }
 
         /// <summary>
@@ -498,7 +561,7 @@ namespace MakeGame.Systems
         /// </summary>
         private void OnTriggerEnter(Collider other)
         {
-            TryApplyContactDamage(other, true);
+            TryApplyContactDamage(other);
         }
 
         /// <summary>
@@ -508,19 +571,19 @@ namespace MakeGame.Systems
         private void OnTriggerStay(Collider other)
         {
             if (contactCooldownTimer <= 0f)
-                TryApplyContactDamage(other, false);
+                TryApplyContactDamage(other);
         }
 
         /// <summary>
         /// 물리쳐지지 않은 상태일 때만 접촉 대상에게 위험 효과를 적용하고, 쿨다운을 초기화한다.
         ///
-        /// [B34] firstContact는 곰의 연출 분기에만 쓰인다(피해 계산은 예전 그대로 두 경로가 완전히 같다).
-        /// 위험 요소에는 이동/추격 코드가 없어 "다가온다/때린다"를 알 수 있는 지점이 접촉뿐이라,
-        /// 지금은 접촉의 처음/지속을 그 두 상태의 대역으로 쓴다. 추격 AI가 생기면 PlayCharge는
-        /// 접촉이 아니라 추격 시작 지점으로 옮겨야 한다.
+        /// [B35] 예전에 있던 firstContact 분기(첫 접촉 = PlayCharge)를 제거했다. 그건 추격 AI가 없던
+        /// 시절 "달려온다"를 표현할 자리가 접촉뿐이라 임시로 걸어 둔 것이고(B34 주석), 이제 돌진은
+        /// 실제 추격이 시작되는 지점(EnterBearState의 Chase 진입)에서 재생된다.
+        /// 접촉 순간에 남는 연출은 앞발 내려치기 하나뿐이다 - 실제로 맞은 순간이 그것이다.
+        /// 피해 계산은 예전과 1도 달라지지 않았다(두 진입 경로가 원래부터 완전히 같았다).
         /// </summary>
-        /// <param name="firstContact">이번이 접촉이 시작된 순간인지(OnTriggerEnter), 붙어 있는 동안의 반복 피격인지(OnTriggerStay).</param>
-        private void TryApplyContactDamage(Collider other, bool firstContact)
+        private void TryApplyContactDamage(Collider other)
         {
             if (isDefeated)
                 return;
@@ -534,12 +597,642 @@ namespace MakeGame.Systems
             AudioManager.Instance?.PlayDamage(); // 피해를 입었을 때 경고 효과음
 
             if (bearMotion != null)
+                bearMotion.PlaySlam(); // 앞발을 내려친다(이미 시퀀스 중이면 CreatureMotion이 무시한다)
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════════
+        //  [B35] 곰 추격 AI - 배회 → 경계 → 추격 → 공격 → 복귀
+        //
+        //  ── 왜 여기(HazardSource)인가 ─────────────────────────────────────────────
+        //  CreatureMotion은 **루트를 절대 건드리지 않는다**는 것이 그 파일 설계의 전부다(자식의
+        //  localPosition만 쓴다). 즉 루트 이동은 구조적으로 그쪽 일이 아니다. 루트(=트리거 콜라이더가
+        //  붙은 오브젝트)를 소유한 것은 이 컴포넌트이므로 이동/회전도 여기서 한다. 두 파일의 채널이
+        //  겹치지 않는다: 여기는 **루트의 position/rotation**, 저기는 **자식의 localPosition**,
+        //  숨쉬기는 **자식의 localScale**. 세 채널이 서로 덮어쓰지 않는다.
+        //
+        //  ── NavMesh를 쓰지 않는 이유 ───────────────────────────────────────────────
+        //  이 프로젝트의 씬 NavMesh Surface는 과거에 파괴된 이력이 있고 재구축이 보장되지 않는다.
+        //  대신 매 프레임 목표 방향으로 직접 옮기고 지면은 TerrainSampler로 스냅한다. 장애물 회피는
+        //  없고(대신 아래 지형 프로브가 절벽/물을 막는다) 지형 위를 걷는 것까지가 이 AI의 약속이다.
+        //
+        //  ── 회전은 y축 요(yaw)만 ──────────────────────────────────────────────────
+        //  곰 루트의 localScale은 (0.86, 1.80, 2.56)으로 비균등이라, x/z로 기울이면 자식 월드 행렬이
+        //  S·R·S 꼴이 되어 전단(shear)으로 찌그러진다. 그래서 회전을 Quaternion.RotateTowards 같은
+        //  자유 회전으로 다루지 않고 **float 하나(bearYaw)로만** 들고 다니며 Quaternion.Euler(0, yaw, 0)로
+        //  통째로 덮어쓴다 - 어떤 경로로도 x/z 성분이 생길 수 없다.
+        //  (루트 회전 자체는 안전하다. 전단은 '비균등 스케일 **아래**에서 회전한 자식'에서만 생긴다.)
+        // ═════════════════════════════════════════════════════════════════════════════
+
+        /// <summary>곰의 행동 상태. 배회(Idle/Wander) → 경계 → 추격 → 공격 → 복귀.</summary>
+        private enum BearState
+        {
+            Idle,    // 제자리에 서서 다음 배회 지점을 기다린다
+            Wander,  // 처음 자리 주변을 어슬렁거린다
+            Alert,   // 발견 직후. 포효하며 플레이어 쪽으로 몸을 돌린다(아직 안 움직인다)
+            Chase,   // 달려간다
+            Attack,  // 사거리 안. 멈춰서 앞발을 내려친다
+            Return   // 놓쳤거나 너무 멀리 왔다. 처음 자리로 돌아간다
+        }
+
+        // ── 하드코딩 상수(인스펙터에 노출할 이유가 없는 내부 값) ──────────────────────
+
+        /// <summary>플레이어 이동 속도 대비 추격 속도 배율. 1.06 = "아주 조금 빠르다"(플레이어 5.0 → 곰 5.3).</summary>
+        private const float BearChaseSpeedRatio = 1.06f;
+
+        /// <summary>배회 반경(m). 처음 자리에서 이 안으로만 돌아다닌다.</summary>
+        private const float BearWanderRadius = 13f;
+
+        /// <summary>경계(포효) 상태로 버티는 시간(초). 이 사이에 플레이어는 도망칠 여유를 얻는다.</summary>
+        private const float BearAlertSeconds = 0.9f;
+
+        /// <summary>추격 중 돌진 연출을 다시 재생하기까지의 간격(초).</summary>
+        private const float BearChargeIntervalSeconds = 4.5f;
+
+        /// <summary>공격 상태에서 앞발을 내려치는 간격(초).</summary>
+        private const float BearSlamIntervalSeconds = 1.6f;
+
+        /// <summary>이탈 반경 밖에 이만큼(초) 계속 있으면 추격을 포기한다. 잠깐 스치는 것으로는 안 놓친다.</summary>
+        private const float BearLoseSeconds = 2.2f;
+
+        /// <summary>복귀 중 다시 달려들 수 있는 앵커 거리 비율. 이탈 경계에서 다시 덜덜 떠는 것을 막는다.</summary>
+        private const float BearReaggroLeashFraction = 0.7f;
+
+        /// <summary>진행 방향 앞을 얼마나 내다볼지(m). 곰 몸 길이의 절반쯤이라 벼랑에 발을 딛기 전에 멈춘다.</summary>
+        private const float BearProbeDistance = 1.3f;
+
+        /// <summary>프로브 거리 안에서 오를 수 있는 최대 높이차(m). 1.3m에 0.9m ≈ 35도.</summary>
+        private const float BearMaxClimbMeters = 0.9f;
+
+        /// <summary>프로브 거리 안에서 내려갈 수 있는 최대 낙차(m). 오르는 것보다는 관대하다.</summary>
+        private const float BearMaxDropMeters = 1.6f;
+
+        /// <summary>해수면에서 이만큼(m) 위까지가 "물가"다. 지면 높이가 이보다 낮으면 발을 딛지 않는다 - 곰은 바다로 걸어 들어가지 않는다.</summary>
+        private const float BearShoreMarginY = 0.55f;
+
+        /// <summary>지면을 따라 오르내릴 때의 수직 속도 상한(m/s). 프로브가 순간적으로 튀어도 곰이 순간이동하지 않는다.</summary>
+        private const float BearMaxVerticalSpeed = 12f;
+
+        /// <summary>목표 지점에 "도착했다"고 볼 거리(m).</summary>
+        private const float BearArriveDistance = 1.8f;
+
+        /// <summary>공격 중 플레이어에게 이만큼(m)까지는 계속 밀고 들어간다. 곰 몸 앞뒤 반폭보다 짧아야 트리거가 실제로 닿는다.</summary>
+        private const float BearPressDistance = 1.4f;
+
+        /// <summary>진행 방향과 몸 방향이 이만큼 어긋나면 속도를 깎는다(내적). 무거운 짐승은 옆으로 미끄러지지 않는다.</summary>
+        private const float BearAlignFullSpeedDot = 0.75f;
+
+        /// <summary>몸이 완전히 반대를 볼 때 남는 속도 비율. 제자리에서 도는 동안 앞으로 새지 않는다.</summary>
+        private const float BearMisalignedSpeedFactor = 0.15f;
+
+        /// <summary>막혔을 때 시도할 우회 각도(도). 0(정면)부터 좌우로 넓혀 간다.</summary>
+        private static readonly float[] BearSteerAngles = { 0f, 32f, -32f, 64f, -64f, 105f, -105f };
+
+        // ── 인스턴스 상태 ─────────────────────────────────────────────────────────────
+        private bool bearAiReady;             // 곰에서만 true. 다른 위험 요소는 AI 코드를 한 줄도 밟지 않는다
+        private BearState bearState = BearState.Idle;
+        private Vector3 bearHome;             // 처음 서 있던 자리(리쉬 앵커 · 복귀 지점)
+        private Vector3 bearWanderTarget;
+        private float bearYaw;                // 유일한 회전 성분. x/z는 존재하지 않는다
+        private float bearSpeed;              // 현재 속력(m/s). 가속/감속으로만 변한다
+        private float bearStateTimer;
+        private float bearLostTimer;
+        private float bearSlamTimer;
+        private float bearChargeTimer;
+        private float bearGroundY;            // 마지막으로 성공한 지면 높이. 프로브 기준 높이로도 쓴다
+        private bool bearGroundValid;
+        private float bearHoverOffset = CreatureVisualBuilder.BearGroundOffset; // 지면에서 루트 중심까지의 높이
+        private float bearSeaLevel;
+        private System.Random bearRng;        // 배회 지점 추첨용. UnityEngine.Random 금지(재현성 규칙)
+
+        // 플레이어는 씬에 하나뿐이라 곰마다 따로 찾을 이유가 없다. 파괴된 참조는 Unity의 null 비교로 걸러진다.
+        private static SurvivalStats cachedPlayerStats;
+        private static float cachedPlayerStatsTime = -999f;
+        private const float PlayerCacheSeconds = 2f;
+
+        // Physics.autoSyncTransforms가 false다. 곰이 루트를 옮긴 뒤 지형 레이를 쏘기 전에 한 번은 동기화해야
+        // 한다. 전역 호출이라 곰이 몇 마리든 프레임당 한 번이면 충분하다.
+        private static int bearPhysicsSyncFrame = -1;
+
+        /// <summary>
+        /// 곰 AI를 초기화한다. Start의 곰 분기에서만 불린다.
+        /// 여기서 정하는 것: 리쉬 앵커(처음 자리) · 지면에서 띄울 높이 · 해수면 · 추격 속도 · 배회 난수.
+        /// </summary>
+        private void InitBearAI()
+        {
+            bearHome = transform.position;
+            bearWanderTarget = bearHome;
+            bearYaw = transform.eulerAngles.y;   // 스포너가 준 yaw 지터를 그대로 이어받는다
+            bearSpeed = 0f;
+            bearState = BearState.Idle;
+
+            // 개체마다 다른(그러나 재실행해도 같은) 배회 패턴. UnityEngine.Random을 쓰지 않는다.
+            bearRng = new System.Random(islandIndex * 7919 + spawnOrder * 104729 + 31);
+
+            // 해수면. 못 찾으면 0(WorldMapManager.seaLevel 기본값 · PlayerController.waterLevel과 같은 값).
+            WorldMapManager world = FindAnyObjectByType<WorldMapManager>();
+            bearSeaLevel = world != null ? world.seaLevel : 0f;
+
+            // 추격 속도는 **플레이어에게서 읽어** 정한다. 숫자를 여기 다시 적으면 플레이어 속도를 고친
+            // 순간 곰이 조용히 못 따라오거나 순식간에 덮치는 존재가 된다(이 프로젝트가 반복해서 낸 사고
+            // 유형이라, 곰 몸 크기를 CreatureVisualBuilder 상수로 참조하는 것과 같은 방식을 쓴다).
+            // PlayerController는 **읽기만** 한다.
+            PlayerController controller = FindAnyObjectByType<PlayerController>();
+            if (controller != null && controller.moveSpeed > 0.1f)
+                bearChaseSpeed = Mathf.Clamp(controller.moveSpeed * BearChaseSpeedRatio, 1.5f, 8f);
+
+            // 지면에서 루트 중심까지의 높이를 실측해 둔다. 스포너가 넣은 groundOffset과 같아야 하지만,
+            // 실측해 두면 개체 크기 지터나 스포너 변경과 무관하게 항상 접지가 유지된다.
+            float groundY = SampleGroundY(bearHome.x, bearHome.z, bearHome.y, out bool hit, 40f, 60f);
+            bearGroundValid = hit;
+            if (hit)
             {
-                if (firstContact)
-                    bearMotion.PlayCharge();  // 달려들어 덮치는 첫 순간
-                else
-                    bearMotion.PlaySlam();    // 붙어 있는 동안 앞발을 내려친다
+                bearGroundY = groundY;
+                bearHoverOffset = Mathf.Clamp(bearHome.y - groundY, 0.1f, 4f);
             }
+            else
+            {
+                // 지형을 못 찾았다(아직 생성 전이거나 재생성 중). 스포너가 쓴 규격값을 그대로 쓰고,
+                // 지면을 다시 찾기 전까지는 아래 UpdateBearAI가 y를 한 번도 건드리지 않는다.
+                bearHoverOffset = CreatureVisualBuilder.BearGroundOffset;
+                bearGroundY = bearHome.y - bearHoverOffset;
+            }
+
+            bearStateTimer = 1.5f + (float)bearRng.NextDouble() * 3f;
+            bearAiReady = true;
+        }
+
+        /// <summary>
+        /// 곰을 처음 자리로 되돌리고 상태를 초기화한다. 처치 후 재등장/세이브 복원에서 부른다.
+        /// </summary>
+        /// <param name="teleportHome">처음 자리로 순간이동시킬지 여부(재등장 경로에서만 true).</param>
+        private void ResetBearAI(bool teleportHome)
+        {
+            if (!bearAiReady)
+                return;
+
+            bearState = BearState.Idle;
+            bearSpeed = 0f;
+            bearStateTimer = 2f;
+            bearLostTimer = 0f;
+            bearSlamTimer = 0f;
+            bearChargeTimer = 0f;
+            bearWanderTarget = bearHome;
+
+            if (!teleportHome)
+                return;
+
+            transform.position = bearHome;
+            transform.rotation = Quaternion.Euler(0f, bearYaw, 0f);
+
+            float groundY = SampleGroundY(bearHome.x, bearHome.z, bearHome.y, out bool hit, 40f, 60f);
+            bearGroundValid = hit;
+            if (hit)
+            {
+                bearGroundY = groundY;
+                transform.position = new Vector3(bearHome.x, groundY + bearHoverOffset, bearHome.z);
+            }
+        }
+
+        /// <summary>
+        /// 한 프레임의 상태 갱신 + 이동. Update에서 timeScale/처치 여부를 이미 걸러 준 뒤에만 불린다.
+        /// </summary>
+        private void UpdateBearAI(float dt)
+        {
+            if (dt <= 0f)
+                return;
+
+            // 방금 옮긴 트랜스폼에 레이캐스트하기 전 동기화(Physics.autoSyncTransforms가 false다).
+            // 전역 상태라 프레임당 한 번이면 곰이 몇 마리든 충분하다.
+            if (bearPhysicsSyncFrame != Time.frameCount)
+            {
+                Physics.SyncTransforms();
+                bearPhysicsSyncFrame = Time.frameCount;
+            }
+
+            Transform player = ResolvePlayerTransform();
+            Vector3 self = transform.position;
+
+            float distance = float.MaxValue;
+            bool inDetectCone = false;
+            if (player != null)
+            {
+                Vector3 flat = player.position - self;
+                flat.y = 0f;
+                distance = flat.magnitude;
+                inDetectCone = IsPlayerInDetectCone(flat, distance);
+            }
+
+            bool inLoseRange = distance <= bearLoseRadius;
+
+            Vector3 fromHome = self - bearHome;
+            fromHome.y = 0f;
+            float homeDistance = fromHome.magnitude;
+
+            bearStateTimer -= dt;
+            bearSlamTimer = Mathf.Max(0f, bearSlamTimer - dt);
+            bearChargeTimer = Mathf.Max(0f, bearChargeTimer - dt);
+
+            switch (bearState)
+            {
+                case BearState.Idle:
+                    if (inDetectCone)
+                    {
+                        EnterBearState(BearState.Alert);
+                        break;
+                    }
+                    DriveBear(self, 0f, bearWanderTurnSpeed, dt);
+                    if (bearStateTimer <= 0f)
+                    {
+                        PickBearWanderTarget();
+                        EnterBearState(BearState.Wander);
+                    }
+                    break;
+
+                case BearState.Wander:
+                {
+                    if (inDetectCone)
+                    {
+                        EnterBearState(BearState.Alert);
+                        break;
+                    }
+
+                    Vector3 toTarget = bearWanderTarget - self;
+                    toTarget.y = 0f;
+                    bool arrived = toTarget.magnitude <= BearArriveDistance;
+                    bool moved = DriveBear(bearWanderTarget, bearWanderSpeed, bearWanderTurnSpeed, dt);
+
+                    // 도착했거나 시간이 다 됐거나 사방이 막혔으면(물가/절벽에 코를 박았다) 쉬었다 다시 고른다.
+                    if (arrived || bearStateTimer <= 0f || !moved)
+                        EnterBearState(BearState.Idle);
+                    break;
+                }
+
+                case BearState.Alert:
+                    // 몸만 돌린다. 발은 아직 떼지 않는다 - 포효가 곧 경고이고, 이 0.9초가 도망칠 여유다.
+                    DriveBear(player != null ? player.position : self, 0f, bearChaseTurnSpeed, dt);
+
+                    if (!inLoseRange)
+                    {
+                        EnterBearState(BearState.Return);
+                        break;
+                    }
+                    if (bearStateTimer <= 0f)
+                        EnterBearState(BearState.Chase);
+                    break;
+
+                case BearState.Chase:
+                    if (player == null)
+                    {
+                        EnterBearState(BearState.Return);
+                        break;
+                    }
+
+                    if (distance <= bearAttackRange)
+                    {
+                        EnterBearState(BearState.Attack);
+                        break;
+                    }
+
+                    // 이탈 판정에 히스테리시스를 준다: 발견 반경(18)보다 넓은 이탈 반경(27) **밖에**
+                    // BearLoseSeconds 동안 계속 있어야 놓친다. 경계선을 오가는 것만으로는 안 풀린다.
+                    bearLostTimer = inLoseRange ? 0f : bearLostTimer + dt;
+                    if (bearLostTimer >= BearLoseSeconds || homeDistance > bearLeashRadius)
+                    {
+                        EnterBearState(BearState.Return);
+                        break;
+                    }
+
+                    // 달리는 동안 돌진 연출을 되풀이한다. 이미 시퀀스 중이면 CreatureMotion이 무시하지만,
+                    // 여기서도 물어보고 넘어가야 쿨다운이 헛돌지 않는다.
+                    if (bearChargeTimer <= 0f && bearMotion != null && !bearMotion.IsPlayingSequence)
+                    {
+                        bearMotion.PlayCharge();
+                        bearChargeTimer = BearChargeIntervalSeconds;
+                    }
+
+                    DriveBear(player.position, bearChaseSpeed, bearChaseTurnSpeed, dt);
+                    break;
+
+                case BearState.Attack:
+                    if (player == null || !inLoseRange)
+                    {
+                        EnterBearState(BearState.Return);
+                        break;
+                    }
+
+                    // 때리면서도 몸은 계속 붙인다. 공격 사거리(2.8m)에서 그냥 서 버리면 곰의 트리거
+                    // 콜라이더(몸 길이 2.56m → 앞뒤 반폭 약 1.15~1.47m + 플레이어 반지름)가 플레이어에
+                    // 닿지 않아서, 곰이 코앞에서 앞발만 휘두르고 실제로는 한 대도 못 때린다.
+                    // 그래서 BearPressDistance(1.4m)까지는 느리게 밀고 들어가고, 그 안에서만 선다.
+                    // (피해 자체는 예전과 똑같이 트리거 접촉 경로 하나만 담당한다 - 여기서 새로 주지 않는다.)
+                    float pressSpeed = distance > BearPressDistance ? bearWanderSpeed * 1.4f : 0f;
+                    DriveBear(player.position, pressSpeed, bearChaseTurnSpeed, dt);
+
+                    // 사거리를 조금 넉넉히(1.15배) 보고 판정한다 - 딱 경계에서 공격/추격이 떨지 않게.
+                    if (distance > bearAttackRange * 1.15f)
+                    {
+                        EnterBearState(BearState.Chase);
+                        break;
+                    }
+
+                    if (bearSlamTimer <= 0f && bearMotion != null)
+                    {
+                        bearMotion.PlaySlam();
+                        bearSlamTimer = BearSlamIntervalSeconds;
+                    }
+                    break;
+
+                case BearState.Return:
+                {
+                    // 돌아가는 길에도 다시 달려들 수 있다. 다만 리쉬 경계에서 추격/복귀가 덜덜 떨지 않도록
+                    // 앵커에서 충분히 안쪽(70%)에 있을 때만 다시 붙는다.
+                    if (inDetectCone && homeDistance <= bearLeashRadius * BearReaggroLeashFraction)
+                    {
+                        EnterBearState(BearState.Alert);
+                        break;
+                    }
+
+                    DriveBear(bearHome, bearWanderSpeed * 1.5f, bearWanderTurnSpeed, dt);
+                    if (homeDistance <= BearArriveDistance)
+                        EnterBearState(BearState.Idle);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 상태를 바꾸고 그 상태의 진입 동작(연출 · 타이머)을 한 번만 실행한다.
+        /// </summary>
+        private void EnterBearState(BearState next)
+        {
+            bearState = next;
+            bearLostTimer = 0f;
+
+            switch (next)
+            {
+                case BearState.Idle:
+                    // 다음 배회까지 2~6초 쉰다.
+                    bearStateTimer = 2f + (float)bearRng.NextDouble() * 4f;
+                    break;
+
+                case BearState.Wander:
+                    // 한 번 정한 목표를 최대 14초까지만 쫓는다(도중에 막히면 Idle로 빠진다).
+                    bearStateTimer = 8f + (float)bearRng.NextDouble() * 6f;
+                    break;
+
+                case BearState.Alert:
+                    // 발견하는 **순간** 포효한다. 상태 기계가 생기기 전에는 이 순간이 없었다.
+                    bearMotion?.PlayRoar();
+                    bearStateTimer = BearAlertSeconds;
+                    break;
+
+                case BearState.Chase:
+                    // 추격을 시작하는 **순간** 돌진한다. 예전에는 이 호출이 "첫 접촉"에 임시로 걸려 있었다
+                    // (TryApplyContactDamage 주석 참고) - 그 자리에서 여기로 옮긴 것이 이 배치의 핵심이다.
+                    bearMotion?.PlayCharge();
+                    bearChargeTimer = BearChargeIntervalSeconds;
+                    bearStateTimer = 0f;
+                    break;
+
+                case BearState.Attack:
+                    bearMotion?.PlaySlam();
+                    bearSlamTimer = BearSlamIntervalSeconds;
+                    bearStateTimer = 0f;
+                    break;
+
+                case BearState.Return:
+                    bearStateTimer = 0f;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 플레이어가 지금 "보이는지". 거리 + 시야각이고, 아주 가까우면 각도를 무시한다(기척).
+        /// 이미 붙은 상태(Alert/Chase/Attack)에서 놓치는 판정은 여기가 아니라 이탈 반경(bearLoseRadius)이
+        /// 담당한다 - 두 반경이 다른 것이 히스테리시스의 전부다.
+        /// </summary>
+        private bool IsPlayerInDetectCone(Vector3 flatToPlayer, float distance)
+        {
+            if (distance > bearDetectRadius)
+                return false;
+
+            if (distance <= bearCloseSenseRadius)
+                return true;   // 코앞이면 뒤에 있어도 안다
+
+            if (distance <= 0.0001f)
+                return true;
+
+            Vector3 direction = flatToPlayer / distance;
+            return Vector3.Angle(BearForward(), direction) <= bearViewHalfAngle;
+        }
+
+        /// <summary>bearYaw가 가리키는 수평 방향. transform.forward를 쓰지 않는 이유는 회전을 float 하나로만 들고 다니기 때문이다.</summary>
+        private Vector3 BearForward()
+        {
+            float rad = bearYaw * Mathf.Deg2Rad;
+            return new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+        }
+
+        /// <summary>
+        /// 이번 프레임의 회전 + 이동을 실제로 수행한다.
+        /// </summary>
+        /// <param name="targetPoint">바라보고 다가갈 지점(월드).</param>
+        /// <param name="targetSpeed">목표 속력(m/s). 0이면 제자리에서 방향만 튼다.</param>
+        /// <returns>실제로 앞으로 나아갔는지(false면 사방이 막혔거나 지면을 못 찾았다는 뜻).</returns>
+        private bool DriveBear(Vector3 targetPoint, float targetSpeed, float turnSpeed, float dt)
+        {
+            Vector3 self = transform.position;
+            Vector3 toTarget = targetPoint - self;
+            toTarget.y = 0f;
+
+            Vector3 desired = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : BearForward();
+
+            // 갈 수 있는 방향을 고른다. 정면이 물/절벽/지형 밖이면 좌우로 넓혀 가며 우회로를 찾는다.
+            bool blocked = false;
+            if (targetSpeed > 0.01f)
+            {
+                if (TryPickBearStep(desired, out Vector3 steered))
+                {
+                    desired = steered;
+                }
+                else
+                {
+                    // 사방이 막혔다. 방향은 목표 쪽으로 계속 틀되 발은 떼지 않는다.
+                    blocked = true;
+                    targetSpeed = 0f;
+                }
+            }
+
+            // ── 회전: y축 요만. float 하나로 들고 다니다 통째로 덮어쓰므로 x/z가 생길 수 없다. ──
+            float desiredYaw = Mathf.Atan2(desired.x, desired.z) * Mathf.Rad2Deg;
+            bearYaw = Mathf.MoveTowardsAngle(bearYaw, desiredYaw, turnSpeed * dt);
+            transform.rotation = Quaternion.Euler(0f, bearYaw, 0f);
+
+            Vector3 forward = BearForward();
+
+            // ── 속도: 즉시 최고속이 아니라 가속/감속을 거친다. 곰의 "무게"는 여기서 나온다. ──
+            // 몸이 진행 방향을 안 볼 때는 목표 속도를 깎는다 - 옆으로 미끄러지는 짐승은 가벼워 보인다.
+            float align = Vector3.Dot(forward, desired);
+            float alignFactor = Mathf.Lerp(BearMisalignedSpeedFactor, 1f,
+                Mathf.InverseLerp(-1f, BearAlignFullSpeedDot, align));
+            float cappedTarget = targetSpeed * alignFactor;
+
+            float rate = cappedTarget > bearSpeed ? bearAcceleration : bearDeceleration;
+            bearSpeed = Mathf.MoveTowards(bearSpeed, cappedTarget, rate * dt);
+
+            // ── 이동 + 접지 ────────────────────────────────────────────────────────
+            float step = bearSpeed * dt;
+            Vector3 nextXZ = step > 0.0001f ? self + forward * step : self;
+
+            // 목표 지점을 지나치지 않는다(제자리에서 앞뒤로 튀는 것을 막는다).
+            if (targetSpeed > 0.01f && step > 0.0001f && toTarget.magnitude < step)
+                nextXZ = new Vector3(targetPoint.x, self.y, targetPoint.z);
+
+            // 지난 프레임에 지면을 못 찾았다면(월드 재생성 등) 마지막 지면 높이 자체를 믿을 수 없으므로
+            // 프로브 범위를 크게 벌려 다시 잡는다. 좁은 범위(±8/12)로만 계속 찾으면 지형이 다른 높이로
+            // 다시 생성됐을 때 곰이 영원히 얼어붙는다.
+            float probeAbove = bearGroundValid ? 8f : 60f;
+            float probeBelow = bearGroundValid ? 12f : 90f;
+            float groundY = SampleGroundY(nextXZ.x, nextXZ.z, bearGroundY, out bool hit, probeAbove, probeBelow);
+
+            // ★ SnapToGround 실패 방어 ★
+            // TerrainSampler.SnapToGround는 "Island_" 콜라이더를 못 맞히면 **넘긴 좌표를 그대로**
+            // 돌려주고 호출자는 실패를 알 수 없다. 그래서 절대 나올 수 없는 센티넬 y를 넣어 보내고
+            // (SampleGroundY 참고) 그 값이 그대로 오면 실패로 판정한다. 실패했을 때는:
+            //   · **y를 한 번도 건드리지 않는다** → 허공으로 떨어지지도, 지형에 파묻히지도 않는다.
+            //   · **수평 이동도 취소한다** → 지형이 확인되지 않은 칸으로는 한 발도 딛지 않는다.
+            // (프로젝트에 이미 있는 RaftStructure.SampleTerrainHeight의 센티넬 판정과 같은 방식이다.)
+            if (!hit)
+            {
+                bearGroundValid = false;
+                bearSpeed = 0f;
+                return false;
+            }
+
+            // 물가 방어: 지면 자체가 해수면 근처면 그쪽으로는 발을 딛지 않는다. 곰은 바다로 걸어
+            // 들어가지 않는다(상어와 달리 곰은 물 밖 생물이고, 물에 들어가면 접지 계산도 무의미해진다).
+            if (groundY < bearSeaLevel + BearShoreMarginY)
+            {
+                bearSpeed = 0f;
+                return false;
+            }
+
+            bearGroundValid = true;
+            bearGroundY = groundY;
+
+            // 수직은 상한을 두고 따라간다. 지면이 순간적으로 튀어도 곰이 순간이동하지 않는다.
+            float targetY = groundY + bearHoverOffset;
+            float newY = Mathf.MoveTowards(self.y, targetY, BearMaxVerticalSpeed * dt);
+            transform.position = new Vector3(nextXZ.x, newY, nextXZ.z);
+
+            // step 크기로 판정하지 않는다: 가속 첫 프레임의 이동량은 프레임률이 높을수록 작아져서
+            // (240fps에서는 0.05mm) "못 갔다"로 잘못 읽히고, 그러면 곰이 배회를 시작하자마자 포기한다.
+            // "갈 곳이 있었는지"만 돌려준다.
+            return !blocked;
+        }
+
+        /// <summary>
+        /// 원하는 방향부터 좌우로 넓혀 가며 실제로 딛을 수 있는 방향을 찾는다. 전부 막히면 false.
+        /// </summary>
+        private bool TryPickBearStep(Vector3 desired, out Vector3 chosen)
+        {
+            for (int i = 0; i < BearSteerAngles.Length; i++)
+            {
+                Vector3 candidate = Quaternion.Euler(0f, BearSteerAngles[i], 0f) * desired;
+                if (IsBearStepAllowed(candidate))
+                {
+                    chosen = candidate;
+                    return true;
+                }
+            }
+
+            chosen = desired;
+            return false;
+        }
+
+        /// <summary>
+        /// 그 방향으로 BearProbeDistance만큼 나아간 지점이 딛을 만한지 본다.
+        /// 거부하는 세 가지: 지형이 없다(섬 밖) · 물가다 · 경사가 너무 급하다.
+        /// </summary>
+        private bool IsBearStepAllowed(Vector3 direction)
+        {
+            Vector3 probe = transform.position + direction * BearProbeDistance;
+            float y = SampleGroundY(probe.x, probe.z, bearGroundY, out bool hit);
+
+            if (!hit)
+                return false;                                   // 섬 밖 - 허공으로 나가지 않는다
+            if (y < bearSeaLevel + BearShoreMarginY)
+                return false;                                   // 물가 - 바다로 들어가지 않는다
+
+            float rise = y - bearGroundY;
+            if (rise > BearMaxClimbMeters)
+                return false;                                   // 절벽을 기어오르지 않는다
+            if (rise < -BearMaxDropMeters)
+                return false;                                   // 절벽에서 뛰어내리지 않는다
+
+            return true;
+        }
+
+        /// <summary>
+        /// 지정 XZ의 섬 지형 높이를 잰다. 지형을 못 맞히면 hit이 false이고 referenceY를 그대로 돌려준다.
+        ///
+        /// TerrainSampler.SnapToGround는 실패해도 넘긴 좌표를 그대로 돌려줘서 호출자가 실패를 알 수 없다.
+        /// 그래서 절대 나올 수 없는 y(referenceY - 100)를 센티넬로 넣어 보내고, 돌아온 y가 그대로면
+        /// "지형 없음"으로 판정한다. 레이는 센티넬이 아니라 **referenceY 기준**으로 above 위에서 시작해
+        /// below 아래까지만 훑으므로(길이 above+below), 센티넬을 쓰면서도 레이가 길어지지 않는다.
+        /// </summary>
+        private float SampleGroundY(float x, float z, float referenceY, out bool hit,
+            float above = 8f, float below = 12f)
+        {
+            const float SentinelDrop = 100f;
+
+            float sentinel = referenceY - SentinelDrop;
+            Vector3 result = TerrainSampler.SnapToGround(
+                new Vector3(x, sentinel, z), SentinelDrop + above, above + below);
+
+            // 실패하면 y가 센티넬 그대로다. 실제 지형이 referenceY - 100까지 내려갈 수는 없다
+            // (레이 자체가 referenceY - below까지만 닿고 below는 100보다 훨씬 작다).
+            hit = result.y > sentinel + 1f;
+            return hit ? result.y : referenceY;
+        }
+
+        /// <summary>
+        /// 플레이어(SurvivalStats를 가진 오브젝트)를 찾는다. 씬에 하나뿐이라 곰마다 찾지 않고 공유 캐시를 쓴다.
+        /// Unity 6.5: FindObjectsByType의 2인자/3인자 오버로드는 CS0618이라 여기서는 아예 쓰지 않는다.
+        /// </summary>
+        private static Transform ResolvePlayerTransform()
+        {
+            if (cachedPlayerStats != null && Time.unscaledTime - cachedPlayerStatsTime < PlayerCacheSeconds)
+                return cachedPlayerStats.transform;
+
+            cachedPlayerStats = FindAnyObjectByType<SurvivalStats>();
+            cachedPlayerStatsTime = Time.unscaledTime;
+            return cachedPlayerStats != null ? cachedPlayerStats.transform : null;
+        }
+
+        /// <summary>
+        /// 배회 목표를 처음 자리 주변에서 하나 고른다. 지형이 없거나 물가인 지점은 버리고 다시 뽑는다.
+        /// 여섯 번 안에 못 고르면 처음 자리로 돌아가는 것을 목표로 삼는다(항상 유효하다).
+        /// </summary>
+        private void PickBearWanderTarget()
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                double angle = bearRng.NextDouble() * 6.2831853;
+                double radius = BearWanderRadius * (0.35 + 0.65 * bearRng.NextDouble());
+                float x = bearHome.x + (float)(System.Math.Cos(angle) * radius);
+                float z = bearHome.z + (float)(System.Math.Sin(angle) * radius);
+
+                // 배회 목표는 최대 13m 떨어져 있어 높이차가 클 수 있다 - 프로브 범위를 넉넉히 잡는다.
+                float y = SampleGroundY(x, z, bearGroundY, out bool hit, 40f, 60f);
+                if (!hit || y < bearSeaLevel + BearShoreMarginY)
+                    continue;
+
+                bearWanderTarget = new Vector3(x, y + bearHoverOffset, z);
+                return;
+            }
+
+            bearWanderTarget = bearHome;
         }
     }
 }

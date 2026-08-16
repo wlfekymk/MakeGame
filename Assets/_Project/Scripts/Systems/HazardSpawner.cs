@@ -465,6 +465,9 @@ namespace MakeGame.Systems
                     // [B33] 곰은 아래 CreatureVisualBuilder.AddBearDetails가 이 두 파츠를 찾아 미터 단위로
                     // 다시 배치하고 크기도 지름 0.035m(beady eyes)로 다시 잡는다 - 여기 값은 곰에 한해
                     // 임시 자리이고, 파츠를 새로 만들지 않기 위해 존재한다. 식인종만 이 값을 그대로 쓴다.
+                    // [B36] 실물 모델 곰은 눈이 텍스처에 그려져 있어 이 두 파츠가 필요 없다 -
+                    // AddBearDetails가 모델 경로에서 지운다(여기서 분기하지 않는 이유: 모델 유무를
+                    // 아는 곳을 CreatureVisualBuilder 한 군데로 유지한다).
                     AddCompensatedSphere(go, new Vector3(0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeL");
                     AddCompensatedSphere(go, new Vector3(-0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeR");
                     break;
@@ -603,8 +606,17 @@ namespace MakeGame.Systems
                     // 크기/접지 높이는 숫자를 여기 다시 적지 않고 CreatureVisualBuilder의 상수를
                     // **직접 참조**한다(대왕 크랩과 같은 방식). 메시를 미터로 작성한 뒤 이 localScale로
                     // 나누기 때문에 두 값이 갈라지면 곰이 조용히 늘어나거나 눌린다.
-                    // groundOffset 0.90 = 큐브 높이(1.80)의 절반 → 콜라이더 바닥이 정확히 지면이고,
-                    // 메시의 발바닥 4개도 같은 높이(y = -0.90)에 닿도록 작성돼 있다.
+                    //
+                    // [B36] 이 두 값은 이제 **곰의 몸이 무엇이냐에 따라 갈린다**(CreatureVisualBuilder가
+                    // 판단해 하나만 돌려준다. 여기서 분기하지 마라):
+                    //   · 실물 모델(bear_adult.obj)이 있으면 (0.86, 1.22, 2.56) / 0.61
+                    //     - 모델 실측 높이 1.219m에 맞춘 값이다. 예전 콜라이더는 몸보다 58cm 높았다.
+                    //   · 모델이 없으면 예전 그대로 (0.86, 1.80, 2.56) / 0.90
+                    //     - 절차 메시 곰은 어깨 혹이 1.78m라 그 높이가 맞다.
+                    // 어느 쪽이든 groundOffset = 높이의 절반 → 콜라이더 바닥이 정확히 지면이고,
+                    // 발바닥(절차 메시 4개 / 모델의 y=0 면)도 같은 지면에 닿는다.
+                    // x(0.86)와 z(2.56)는 두 경우 모두 같다 - 곰 추격 AI의 접촉 사거리가 이 부피를
+                    // 전제로 튜닝돼 있어서 바꾸면 곰이 플레이어를 때리지 못한다(HazardSource 참고).
                     // (털 다발·발톱·꼬리는 큐브 밖으로 조금 삐져나온다 - 크랩의 다리/집게와 같다.)
                     return new HazardVisualConfig
                     {

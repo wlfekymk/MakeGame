@@ -3,7 +3,7 @@ using UnityEngine;
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 건축 부품(바닥/벽/문/창문/계단)의 실물 메시와 배치 미리보기(고스트)를 절차적으로 만든다.
+    /// 건축 부품(바닥/벽/문/창문/계단/지붕)의 실물 메시와 배치 미리보기(고스트)를 절차적으로 만든다.
     ///
     /// 이 프로젝트에는 3D 모델 에셋이 0개다(AGENT_BRIEF 1장). 따라서 전부 프리미티브 조합이며,
     /// 조립은 공용 도구인 <see cref="StructureVisualBuilder"/>를 그대로 재사용한다(색·텍스처·무광
@@ -18,6 +18,8 @@ namespace MakeGame.Systems
     ///  Wall / Doorway / Window : 셀 **모서리**. 로컬 원점 = 벽 **밑면** 중심.
     ///                            길이 = 로컬 X로 2m(±1), 높이 = +Y로 2.5m, 두께 = 로컬 Z로 ±0.06m.
     ///  Stair : 한 칸을 차지하고 밑면 원점에서 +Y 2.5m / +Z 2m로 올라간다.
+    ///  Roof  : 셀 **중심**. 로컬 원점 = 지붕 **밑면**(처마 밑면 = 그 층의 천장 평면). 두께는 전부
+    ///          원점 위(+Y)로 가고, 로컬 -Z가 낮은 쪽 / +Z가 높은 쪽이다(경사는 메시에 구워져 있다).
     /// 이 규약을 벗어나는 파츠는 하나도 없다(장식 결속만 두께 방향으로 ±0.06 경계에 딱 맞춘다).
     /// </summary>
     public static class BuildPieceVisualBuilder
@@ -46,6 +48,19 @@ namespace MakeGame.Systems
         // 경사로 콜라이더로 대체하는 것도 불가능하다(경사 51.3° > slopeLimit 45°).
         private const int StairStepCount = 9;
         private const float StairWidth = 1.80f;
+
+        // ── 지붕(한쪽으로 기운 shed roof) ────────────────────────────────────────
+        // 로컬 원점 = **처마 밑면**(y=0)이고 밑면은 셀 전체를 덮는 평면이다 - 즉 방 안에서 올려다보면
+        // 평평한 천장이고, 밖에서 보면 기운 지붕이다. 기울기는 **메시 정점에 구워 넣는다**:
+        // 부모 스케일이 비균등한 경우 회전한 자식은 전단(shear)으로 찌그러지므로, 이 프로젝트에서
+        // 기운 형상은 회전이 아니라 정점으로만 만든다(AGENT_BRIEF 4장).
+        private const float RoofRise = 0.75f;        // 낮은 쪽(-Z)에서 높은 쪽(+Z)까지 올라가는 높이 → 20.6도
+        private const float RoofSlabThickness = 0.16f; // 처마 끝 두께(= 천장 판의 두께)
+        private const float RoofBeamThickness = 0.18f; // 처마/마루 보의 굵기
+        private const int RoofColliderSteps = 4;       // 경사면을 근사하는 계단형 콜라이더 수
+
+        /// <summary>지붕 몸통 메시. 프로세스 전체에서 **하나만** 만들어 모든 지붕이 공유한다.</summary>
+        private static Mesh roofMesh;
 
         // ── 공유 머티리얼 ─────────────────────────────────────────────────────────
         private static Material postMaterial;    // 기둥/보 - 굵은 구조재
@@ -227,6 +242,7 @@ namespace MakeGame.Systems
                 case BuildPieceType.Doorway: BuildDoorway(root, post, plank, lashing); break;
                 case BuildPieceType.Window: BuildWindow(root, post, plank, lashing); break;
                 case BuildPieceType.Stair: BuildStair(root, post, plank); break;
+                case BuildPieceType.Roof: BuildRoof(root, post, plank, lashing); break;
                 default: BuildFloor(root, post, plank, lashing); break;
             }
         }
@@ -361,6 +377,81 @@ namespace MakeGame.Systems
             }
         }
 
+        /// <summary>
+        /// 지붕 7파츠: 기운 몸통(메시 1개) + 처마 보 + 마루 보 + 결속 4줄.
+        ///
+        /// 몸통은 프리미티브가 아니라 **정점에 경사를 구운 메시 하나**다. 큐브를 기울여 붙이면
+        /// (a) 부모 스케일이 비균등해지는 순간 전단으로 찌그러지고 (b) 기운 판의 옆구리가 열려
+        /// 삼각형 틈이 생긴다. 밑면(y=0)은 셀 전체를 덮는 평면이라 **방 안에서는 평평한 천장**으로
+        /// 보이고, 윗면만 -Z(낮은 쪽)에서 +Z(높은 쪽)로 올라간다. 옆면·마구리가 다 막혀 있어
+        /// 비스듬한 판 한 장을 얹었을 때 생기는 빈 틈이 없다.
+        ///
+        /// 보와 결속은 전부 축에 나란한 상자라 회전이 필요 없다(경사면에 눕는 부재는 만들지 않는다).
+        /// </summary>
+        private static void BuildRoof(Transform root, Material post, Material plank, Material lashing)
+        {
+            StructureVisualBuilder.CreateMeshPart(root, "RoofPanel", GetRoofMesh(),
+                Vector3.zero, Vector3.one, Quaternion.identity, plank);
+
+            float eaveY = RoofBeamThickness * 0.5f;
+            float ridgeY = RoofRise + RoofSlabThickness - RoofBeamThickness * 0.5f;
+
+            // 처마 보 / 마루 보. z를 셀 경계(±1)에 두어 절반이 밖으로 나오게 하면 얇은 처마 턱이 생긴다.
+            Part(root, "EaveBeam", new Vector3(0f, eaveY, -HalfCell),
+                new Vector3(BuildPieceCatalog.CellSize, RoofBeamThickness, RoofBeamThickness), post);
+            Part(root, "RidgeBeam", new Vector3(0f, ridgeY, HalfCell),
+                new Vector3(BuildPieceCatalog.CellSize, RoofBeamThickness, RoofBeamThickness), post);
+
+            for (int s = -1; s <= 1; s += 2)
+            {
+                // 처마 쪽 결속만 3cm 올려 감는다 - 그러지 않으면 띠의 아랫자락이 천장면(y=0) 밑으로
+                // 3cm 삐져나와, 방 안에서 올려다볼 때 천장에 혹 두 개가 달린 것처럼 보인다.
+                Part(root, s < 0 ? "EaveLashing_L" : "EaveLashing_R",
+                    new Vector3(0.72f * s, eaveY + 0.03f, -HalfCell),
+                    new Vector3(0.10f, RoofBeamThickness + 0.06f, RoofBeamThickness + 0.06f), lashing);
+
+                Part(root, s < 0 ? "RidgeLashing_L" : "RidgeLashing_R",
+                    new Vector3(0.72f * s, ridgeY, HalfCell),
+                    new Vector3(0.10f, RoofBeamThickness + 0.06f, RoofBeamThickness + 0.06f), lashing);
+            }
+        }
+
+        /// <summary>
+        /// 지붕 몸통 메시를 한 번만 만들어 캐시한다. 형상은 밑면이 평평하고 윗면만 기운 육면체
+        /// (쐐기)이며, 여섯 면이 전부 닫혀 있다. 감김은 WorldMeshBuilder가 기준 법선으로 맞춰 주므로
+        /// 인덱스 표를 손으로 적지 않는다(이 프로젝트가 왼손 좌표계라 표를 옮기면 안쪽으로 컬링된다).
+        /// </summary>
+        private static Mesh GetRoofMesh()
+        {
+            if (roofMesh != null)
+                return roofMesh;
+
+            const float h = HalfCell;
+            const float t = RoofSlabThickness;
+            const float r = RoofRise;
+
+            // 밑면 네 귀퉁이(y=0)와 윗면 네 귀퉁이(-Z쪽은 t, +Z쪽은 t+r).
+            var b0 = new Vector3(-h, 0f, -h);
+            var b1 = new Vector3(-h, 0f, h);
+            var b2 = new Vector3(h, 0f, h);
+            var b3 = new Vector3(h, 0f, -h);
+            var t0 = new Vector3(-h, t, -h);
+            var t1 = new Vector3(-h, t + r, h);
+            var t2 = new Vector3(h, t + r, h);
+            var t3 = new Vector3(h, t, -h);
+
+            var builder = new WorldMeshBuilder();
+            builder.AddQuad(b0, b1, b2, b3, Vector3.down, false);                       // 천장(방 안에서 보이는 면)
+            builder.AddQuad(t0, t1, t2, t3, new Vector3(0f, 2f * h, -r), false);        // 경사진 지붕면
+            builder.AddQuad(b0, b1, t1, t0, Vector3.left, false);                       // -X 마구리(사다리꼴)
+            builder.AddQuad(b3, b2, t2, t3, Vector3.right, false);                      // +X 마구리
+            builder.AddQuad(b0, b3, t3, t0, Vector3.back, false);                       // 낮은 쪽 처마 끝
+            builder.AddQuad(b1, b2, t2, t1, Vector3.forward, false);                    // 높은 쪽 마루 끝
+
+            roofMesh = builder.Finish("BuildRoofWedge");
+            return roofMesh;
+        }
+
         // ─────────────────────────────────────────────────────────────────────────
         //  콜라이더 (실물 전용)
         // ─────────────────────────────────────────────────────────────────────────
@@ -431,6 +522,22 @@ namespace MakeGame.Systems
                         float top = rise * (i + 1);
                         AddBox(root, new Vector3(0f, top * 0.5f, run * i + run * 0.5f),
                             new Vector3(StairWidth, top, run));
+                    }
+                    break;
+                }
+
+                case BuildPieceType.Roof:
+                {
+                    // 경사면을 네 단으로 근사한다(계단과 같은 방식 - 기운 BoxCollider를 쓰려면 회전이
+                    // 필요하고, 그 회전이 곧 전단 함정으로 이어진다). 단 사이 높이차는
+                    // RoofRise/4 = 0.19m라 stepOffset(0.3) 안이므로 지붕에 올라서도 걸리지 않는다.
+                    float segment = BuildPieceCatalog.CellSize / RoofColliderSteps;
+                    for (int i = 0; i < RoofColliderSteps; i++)
+                    {
+                        float centerZ = -HalfCell + segment * (i + 0.5f);
+                        float top = RoofSlabThickness + RoofRise * ((centerZ + HalfCell) / BuildPieceCatalog.CellSize);
+                        AddBox(root, new Vector3(0f, top * 0.5f, centerZ),
+                            new Vector3(BuildPieceCatalog.CellSize, top, segment));
                     }
                     break;
                 }

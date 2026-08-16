@@ -13,6 +13,11 @@ namespace MakeGame.Systems
     ///     루트를 1cm라도 움직이거나 돌리면 전투/접촉 판정이 함께 움직인다. 이 프로젝트는 그
     ///     원칙을 반복해서 명문화해 왔다(HazardSource의 벌떼 회전/곰 호흡 주석). 그래서 여기서는
     ///     **자식 시각 파츠의 localPosition만** 쓴다 - 판정은 1mm도 변하지 않는다.
+    ///     ※ [B35] 루트를 움직이는 주체가 생겼다: 곰 추격 AI(HazardSource의 "곰 추격 AI" 구획)가
+    ///       루트의 position/rotation을 소유한다. 그래도 이 제약은 그대로다 - 루트는 **콜라이더를
+    ///       소유한 쪽**이 옮겨야 판정과 몸이 함께 가고, 이 파일은 그 위에 얹히는 오프셋만 만든다.
+    ///       세 채널이 정확히 갈라져 있다: 루트 position/rotation(AI) · 자식 localPosition(여기) ·
+    ///       자식 localScale(HazardSource의 호흡). 서로 덮어쓰지 않는다.
     /// (2) **어떤 자식도 회전시키지 않는다.** 곰 루트의 localScale은 (0.86, 1.80, 2.56)으로 비균등이라,
     ///     그 아래에서 회전한 자식은 월드 행렬이 S·R·S 꼴이 되어 전단(shear)으로 찌그러진다
     ///     (CreatureVisualBuilder.MeterSpacePart의 "회전은 주지 않는다" 주석과 같은 이유).
@@ -44,6 +49,13 @@ namespace MakeGame.Systems
     ///   아래로는 훨씬 넉넉하다(다리가 몸통 안으로 더 들어갈 뿐이라 0.2m까지 안전하다).
     /// 그래서 포효는 "뒷다리로 완전히 일어서기"가 아니라 상체를 8.5cm 밀어 올리는 것까지다.
     /// 진짜로 일어서려면 전단 없는 모션 피벗(회전)이나 다리 늘이기가 먼저 있어야 한다 - 다음 배치 몫이다.
+    ///
+    /// ── [B36] 통짜 메시(실물 3D 모델) 예외 ──────────────────────────────────────────────
+    /// 곰이 bear_adult.obj로 만들어지면 위 파츠(Hump/Limbs/Claws)가 **하나도 없다** - 몸이 메시 한 장이다.
+    /// 이 파일은 그 상황에서 (a) 예외 없이 (b) 모델 자식 하나를 통째로 흔드는 것으로 자동 전환된다
+    /// (solidBody 필드 참고). 이음매가 없으니 위 진폭 상한은 적용되지 않고 2배로 키우되, 발바닥이 곧
+    /// 몸의 밑면이라 **아래로 내려가는 성분만 잘라** 위로만 뜨게 한다. 파츠 이름을 찾는 코드는 원래부터
+    /// null을 허용했으므로(FindPart / ApplyOffset의 null 가드) 그 경로는 한 줄도 바뀌지 않았다.
     /// </summary>
     public class CreatureMotion : MonoBehaviour
     {
@@ -107,6 +119,27 @@ namespace MakeGame.Systems
         /// <summary>다리 상부가 몸통 오프셋을 따라가는 비율. 어깨 여유와 무릎 여유를 반씩 나눠 쓰는 값이다.</summary>
         private const float LegFollow = 0.5f;
 
+        // ── [B36] 통짜 메시 모드 ────────────────────────────────────────────────────────
+        /// <summary>
+        /// 호출부가 파츠 역할(혹/다리/발톱)을 요청했는데 **하나도 찾지 못한** 상태.
+        /// 곰이 실물 3D 모델(bear_adult.obj)로 만들어지면 몸이 메시 한 장이라 이 파츠들이 존재하지 않는다.
+        /// 이때는 몸 전체(모델 자식 하나)를 통째로 흔드는 것 말고는 표현할 방법이 없고, 반대로
+        /// 클래스 주석의 '관절 여유' 상한(위 0.10m / 수평 0.035m)은 **적용되지 않는다** -
+        /// 그 숫자는 강체 조각들을 파묻어 이은 절차 곰에서 조각끼리 어긋날 수 있는 거리였기 때문이다.
+        /// 통짜 메시는 어긋날 이음매가 없으므로 진폭을 키워야 오히려 "미끄러지지 않고" 걷는 것으로 읽힌다.
+        /// </summary>
+        private bool solidBody;
+
+        /// <summary>통짜 메시일 때 모든 오프셋에 곱하는 배수. 걷기 상하 0.050 → 0.10m, 포효 0.085 → 0.17m.</summary>
+        private const float SolidBodyAmplitude = 2f;
+
+        /// <summary>
+        /// 통짜 메시일 때 허용하는 **최하점**(m). 절차 곰은 아래로 내려가도 다리가 몸통 안으로 더 들어갈 뿐이라
+        /// 여유가 넉넉했지만(웅크림 -0.080, 내려치기 -0.095), 모델 곰은 발바닥이 곧 몸의 밑면이라
+        /// 1cm만 내려가도 발이 지면을 파고든다. 그래서 아래 성분을 사실상 0으로 잘라 **위로만** 뜨게 한다.
+        /// </summary>
+        private const float SolidBodyMinRise = -0.01f;
+
         // ── 보행 상태 ──────────────────────────────────────────────────────────────────
         private Vector3 lastPosition;
         private float gaitPhase;
@@ -152,6 +185,13 @@ namespace MakeGame.Systems
             Transform lagging = FindPart(laggingPartName);
             Transform planted = FindPart(plantedPartName);
             Transform leg = FindPart(legPartName);
+
+            // [B36] 파츠를 **요청했는데 하나도 없다** = 몸이 메시 한 장인 모델 곰이다(위 solidBody 주석).
+            // 이름을 아예 넘기지 않은 호출부(다른 생물)는 요청 자체가 없으므로 예전 동작 그대로다.
+            bool requestedParts = !string.IsNullOrEmpty(laggingPartName)
+                || !string.IsNullOrEmpty(plantedPartName)
+                || !string.IsNullOrEmpty(legPartName);
+            solidBody = requestedParts && lagging == null && planted == null && leg == null;
 
             humpPart = lagging;
             humpBasePosition = lagging != null ? lagging.localPosition : Vector3.zero;
@@ -201,6 +241,10 @@ namespace MakeGame.Systems
         /// <summary>
         /// 곰 전용 편의 진입점. 파츠 이름/규격을 아는 곳을 한 군데로 모아 호출부가 실수하지 않게 한다.
         /// 이미 붙어 있으면 새로 만들지 않고 재사용한다(세이브 복원 등으로 두 번 불려도 안전하다).
+        ///
+        /// [B36] 세 이름은 **모델 곰에는 없다**(몸이 메시 한 장이다). 그래도 그대로 넘긴다 - Bind가
+        /// "요청했는데 하나도 없음"을 통짜 메시의 신호로 삼아 전신 모션으로 전환하기 때문이다.
+        /// BearBodyScale도 모델 유무에 따라 알아서 갈리므로(CreatureVisualBuilder) 여기는 손댈 곳이 없다.
         /// </summary>
         public static CreatureMotion AttachBear(GameObject body, float phaseSeed)
         {
@@ -235,7 +279,9 @@ namespace MakeGame.Systems
             voice.playOnAwake = false;
             voice.loop = false;
             voice.spatialBlend = 1f;             // 완전 3D - 곰이 있는 쪽에서 들려야 한다
-            voice.dopplerLevel = 0f;             // 위험요소는 제자리에 있으므로 도플러가 붙으면 어색하다
+            voice.dopplerLevel = 0f;             // [B35] 곰이 달리기 시작해도 0으로 둔다 - 절차 합성 클립은
+                                                 // 짧고 피치가 이미 세기에 따라 변해서, 도플러까지 얹으면
+                                                 // 포효/발소리의 음정이 추격 중에 널뛴다.
             voice.rolloffMode = AudioRolloffMode.Linear;
             voice.minDistance = 4f;
             voice.maxDistance = 45f;
@@ -264,8 +310,10 @@ namespace MakeGame.Systems
         /// 루트의 실제 이동량으로 보행 위상을 돌리고, 지금 걸음이 얼마나 "실려 있는지"(0~1)를 돌려준다.
         ///
         /// 위상을 시간이 아니라 **이동 거리**로 돌리는 것이 핵심이다. 속도가 변해도 걸음 간격이 거리에
-        /// 고정되므로 발이 미끄러지는 느낌이 나지 않는다. 지금 위험 요소는 이동 코드가 없어 거리가 늘
-        /// 0이지만(HazardSpawner 주석), 나중에 추격 AI가 붙으면 이 코드는 그대로 걸음이 된다.
+        /// 고정되므로 발이 미끄러지는 느낌이 나지 않는다.
+        /// [B35] 이 경로가 드디어 실제로 돈다 - 곰 추격 AI가 루트를 옮기기 시작해서, 배회(약 1.2m/s)와
+        /// 추격(약 5.3m/s)의 거리 차이가 그대로 진폭과 발 디딤 간격의 차이로 나온다. 이 파일은
+        /// 한 줄도 바뀌지 않았다(거리만 들어오면 되는 설계였다).
         /// 돌진 시퀀스는 제자리에서도 진동이 보여야 하므로 sequenceStrideBoost로 위상을 따로 돌린다.
         /// </summary>
         private float UpdateGait(float dt)
@@ -318,7 +366,17 @@ namespace MakeGame.Systems
                 Mathf.Sin(idleTime * 0.41f) * idleBobMeters,
                 0f) * idleWeight;
 
-            return walk + idle + sequenceOffset;
+            Vector3 total = walk + idle + sequenceOffset;
+
+            // [B36] 통짜 메시(모델 곰)는 이음매가 없어 진폭을 키울 수 있고, 대신 발바닥이 곧 몸의 밑면이라
+            // 아래로는 내려갈 수 없다. 배수를 먼저 곱한 뒤 최하점을 자른다(위 두 상수 주석 참고).
+            if (solidBody)
+            {
+                total *= SolidBodyAmplitude;
+                total.y = Mathf.Max(total.y, SolidBodyMinRise);
+            }
+
+            return total;
         }
 
         /// <summary>
