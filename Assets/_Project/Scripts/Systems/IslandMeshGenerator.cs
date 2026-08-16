@@ -16,10 +16,35 @@ namespace MakeGame.Systems
     /// </summary>
     public static class IslandMeshGenerator
     {
+        // ── [B22 물가 전이] 해안선을 원이 아니게 만드는 상수 ───────────────────────────
+        // 문제: 예전 높이식은 가장자리(t=1)에서 baseHeight도 노이즈도 정확히 0이라, 지형이
+        // **반지름 R의 완벽한 원 위에서 해수면(y=0)과 정확히 만났다.** 바다 평면도 y=0 불투명이라
+        // 모래와 바다가 자로 그은 원에서 딱 잘렸다("물가가 잘린다" 신고의 실체).
+        // 조치: 바깥 ShoreBandFraction 구간을 해수면 **아래로** 내리고, 그 구간에서만 살아나는
+        // 별도 펄린을 더한다. 그러면 눈에 보이는 물가는 메시의 바깥 테두리가 아니라
+        // **y=0 등고선**이 되고, 그 등고선은 노이즈 때문에 각도마다 들쭉날쭉해진다.
+        // 바깥 테두리(y<0)는 불투명한 바다 평면 아래에 잠겨 보이지 않는다.
+        //
+        // 중요: 메시의 **XZ 반경은 1mm도 바뀌지 않는다.** 정점 개수/인덱스/UV/삼각형 감는 방향도
+        // 그대로다. 즉 콜라이더 footprint·스포너 산포 반경(0.8R)·TerrainSampler 스냅은 전부 무영향이고,
+        // 바뀌는 것은 바깥 12% 구간의 y뿐이다(0.8R 지점은 shoreT=0이라 예전 값과 비트 단위로 동일).
+        /// <summary>해수면 아래로 내리기 시작하는 바깥 구간의 비율(t 기준). 0.12 = 바깥 12%.</summary>
+        private const float ShoreBandFraction = 0.12f;
+
+        /// <summary>메시 바깥 테두리(t=1)가 해수면 아래로 내려가는 깊이(m).</summary>
+        private const float ShoreSubmergeDepth = 1.8f;
+
+        /// <summary>물가 등고선을 흔드는 펄린의 주파수. 0.035 ≈ 격자 29m라 큰 섬에서도 만(灣)처럼 읽힌다.</summary>
+        private const float ShoreNoiseScale = 0.035f;
+
+        /// <summary>물가 등고선을 흔드는 진폭(m). 클수록 해안선이 더 들쭉날쭉해진다.</summary>
+        private const float ShoreNoiseAmplitude = 1.4f;
+
         /// <summary>
         /// 지정한 반지름과 최대 높이를 가진 둥근 언덕 모양의 섬 지형 메시를 생성한다.
         /// 중심에서 가장자리로 갈수록 코사인 곡선으로 완만하게 낮아지고,
         /// 펄린 노이즈로 자연스러운 굴곡을 더하되 가장자리에서는 노이즈를 줄여 매끄럽게 물과 맞닿게 한다.
+        /// 바깥 ShoreBandFraction 구간은 해수면 아래로 잠기며(위 상수 주석), 그 덕에 물가 경계가 원이 아니다.
         /// </summary>
         public static Mesh GenerateIslandMesh(float radius, float maxHeight, int ringCount = 6, int radialSegments = 24, float noiseScale = 0.05f, float noiseAmplitude = 2.0f)
         {
@@ -48,7 +73,25 @@ namespace MakeGame.Systems
                     float z = Mathf.Sin(angle) * r;
 
                     float noise = (Mathf.PerlinNoise(x * noiseScale + 1000f, z * noiseScale + 1000f) - 0.5f) * noiseAmplitude * (1f - t);
-                    float y = Mathf.Max(0f, baseHeight + noise);
+
+                    // 바깥 ShoreBandFraction 구간에서만 0 → 1로 자라는 진행도. 안쪽은 정확히 0이라
+                    // 이 블록 전체가 무효가 되고, 예전 높이식과 결과가 완전히 같다.
+                    float shoreT = Mathf.Clamp01((t - (1f - ShoreBandFraction)) / ShoreBandFraction);
+                    float y;
+                    if (shoreT <= 0f)
+                    {
+                        y = Mathf.Max(0f, baseHeight + noise);
+                    }
+                    else
+                    {
+                        // 제곱으로 내려서 물가 근처는 완만하고(걸어 들어갈 수 있는 얕은 경사)
+                        // 테두리로 갈수록 빠르게 깊어지게 한다.
+                        float submerge = ShoreSubmergeDepth * shoreT * shoreT;
+                        float shoreNoise =
+                            (Mathf.PerlinNoise(x * ShoreNoiseScale + 517f, z * ShoreNoiseScale + 517f) - 0.5f)
+                            * ShoreNoiseAmplitude * shoreT;
+                        y = baseHeight + noise - submerge + shoreNoise;
+                    }
 
                     vertices[index] = new Vector3(x, y, z);
                     uvs[index] = new Vector2(x / radius * 0.5f + 0.5f, z / radius * 0.5f + 0.5f);
@@ -455,6 +498,18 @@ namespace MakeGame.Systems
             // GrassEdge 최댓값 0.755R < SandEdge 최솟값 0.82R이라 두 경계가 교차할 수 없다
             // = 마른 모래 띠의 폭이 어떤 각도에서도 0.065R 밑으로 내려가지 않는다(띠가 끊기지 않는다).
 
+            // [B22] 모래를 마른 → 축축한 → 젖은 3단으로 나누기 위한 세 번째 경계.
+            // 디더 폭을 SandEdge(±2%R)보다 크게(±3.5%R) 잡은 이유: 여기는 링 간격이 넓은 구간이라
+            // (ringCount = clamp(R/5, 6, 40)이므로 R=200이면 삼각형 무게중심이 1.7%R 간격, R=50이면
+            // 3.3%R 간격) 디더가 링 간격보다 좁으면 경계가 링 선에 딱 붙어 **자로 그은 원**이 된다.
+            // 교차 안전성: 두 경계가 같은 Hash01(centroid)을 쓰므로 함께 움직인다. 삼각형 하나에서
+            //   DampEdge - SandEdge = 0.06R + (h-0.5)*(0.07-0.04)R ∈ [0.045R, 0.075R] > 0
+            // 이라 h가 무엇이든 절대 뒤집히지 않는다(뒤집히면 두 캡이 겹쳐 z-파이팅이 난다).
+            // 물가(y=0 등고선)는 지형 높이식상 0.93~0.97R 부근이므로, 가장 진한 젖은 모래 띠가
+            // 정확히 물에 닿는 구간에 온다.
+            float DampEdge(Vector3 centroid) =>
+                radius * 0.90f + (Hash01(centroid) - 0.5f) * radialDither * 1.4f;
+
             // 내륙 풀밭. 예전 색은 Shade(PalmFiber, 0.82) = #79733E로, Island Sand(#C2B280)와 색상각이
             // 각각 54°/45°로 9°밖에 차이 나지 않는 같은 황토 계열에 휘도만 1.58배 낮은 값이었다.
             // 그래서 실기에서 "풀밭"이 아니라 "그늘진 모래"로 읽혀 캡이 있는지조차 확인되지 않았다.
@@ -484,13 +539,26 @@ namespace MakeGame.Systems
                 // 젖은 모래와 같은 규칙의 2톤(채도만 내리는 색조 변주, 명도 단차 0%).
                 1);
 
+            // [B22 신규] 축축한 모래. 마른 모래와 젖은 모래 사이의 중간 단계다.
+            // 예전에는 마른(100%) → 젖은(80%) 두 단계뿐이라 밝기가 한 번에 20% 떨어져,
+            // 해변 한가운데에 **동심원 한 줄**이 그어진 것처럼 보였다. 88%를 사이에 끼워 단차를
+            // 20% → 12%/10%로 나눈다(경계마다 ±1.5~2%R 디더가 걸려 있어 선이 아니라 점묘로 읽힌다).
+            BuildCapLayer(surfaceRoot, source, radius, "DampSandCap", Shade(StructureVisualBuilder.IslandSand, 0.88f),
+                capOffset, radius * 1.5f, "sand",
+                (centroid, distance, angle) =>
+                    distance >= SandEdge(centroid) && distance < DampEdge(centroid),
+                1);
+
             // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
             // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
             // 지금 그대로 두면 물가에 초록 테가 생긴다. 물 띠(ShorelineBand, 0.95R~)와 겹치는 구간은
             // 반투명 얕은 물 아래로 젖은 모래가 비치는 그림이라 오히려 맞다.
-            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.80f),
+            // [B22] 안쪽 경계가 SandEdge → DampEdge로 밀렸고(위 DampSandCap이 그 사이를 채운다),
+            // 이 띠의 바깥쪽 절반은 이제 해수면 아래로 잠겨 불투명한 바다 평면에 가려진다 -
+            // 즉 화면에 남는 것은 "물에 막 닿은 가장 어두운 모래" 한 줄이다.
+            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.78f),
                 capOffset, radius * 1.5f, "sand",
-                (centroid, distance, angle) => distance >= SandEdge(centroid),
+                (centroid, distance, angle) => distance >= DampEdge(centroid),
                 1);
         }
 

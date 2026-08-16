@@ -54,15 +54,47 @@ namespace MakeGame.Systems
         [Tooltip("비 파티클을 플레이어(카메라) 머리 위 얼마나 높은 곳에 띄울지")]
         public float rainHeightAboveTarget = 15f;
 
-        /// <summary>현재 비가 오고 있는지 여부. DayNightCycle이 태양광 밝기 계산에 참고한다.</summary>
+        // ── [B22] 비의 존재감 ────────────────────────────────────────────────────
+        [Header("비 연출 (B22 — 게임플레이 수치와 무관)")]
+        [Tooltip("비가 시작/종료될 때 세기가 0↔1로 오르내리는 데 걸리는 시간(초, 실시간).\n" +
+            "0이면 예전처럼 한 프레임에 딱 켜지고 꺼진다.")]
+        public float rainFadeSeconds = 5f;
+
+        [Tooltip("최대 세기일 때의 빗줄기 초당 방출 개수. 수명 1.5초라 동시 생존 입자는 이 값의 1.5배다" +
+            "(maxParticles 1500 이내로 유지할 것).")]
+        public float rainEmissionRate = 700f;
+
+        [Tooltip("빗줄기가 비스듬히 내리게 만드는 수평 바람 속도(m/s, 월드 XZ). Stretched 빌보드가" +
+            " 속도 방향으로 늘어나므로 이 값이 곧 빗줄기의 기울기가 된다.")]
+        public Vector2 rainWind = new Vector2(2.6f, 1.4f);
+
+        [Tooltip("빗방울이 땅/수면에 부딪히는 물튀김 파티클을 켤지 여부.")]
+        public bool enableRainSplashes = true;
+
+        /// <summary>
+        /// 현재 비가 오고 있는지 여부(단계 전환 즉시 뒤집히는 논리값).
+        /// **게임플레이 효과(증류기/모닥불)는 지금도 오직 이 값만 본다** — 아래 RainIntensity01은
+        /// 순수 연출용이며 우천의 게임 수치에는 한 톨도 관여하지 않는다.
+        /// </summary>
         public bool IsRaining { get; private set; }
+
+        /// <summary>
+        /// [B22] 비 연출의 세기(0=완전 맑음, 1=최대 강우). IsRaining이 뒤집힌 뒤 rainFadeSeconds에 걸쳐
+        /// 서서히 따라간다. DayNightCycle이 광량/안개 보간에, 이 클래스가 파티클 방출량에 쓴다.
+        /// Time.timeScale이 0이 되는 순간(엔딩/사망)에도 연출이 멈추지 않도록 unscaledDeltaTime으로 진행한다.
+        /// </summary>
+        public float RainIntensity01 { get; private set; }
 
         [Header("퀄리티 개선: 비 오는 동안의 안개")]
         [Tooltip("비가 올 때 켤 안개 색(축축하고 뿌연 느낌)")]
         public Color rainFogColor = new Color(0.55f, 0.6f, 0.65f, 1f);
 
-        [Tooltip("비가 올 때 안개 밀도. 너무 높으면 시야가 답답해지므로 낮게 유지")]
-        public float rainFogDensity = 0.012f;
+        // [B22] 안개 모드가 Exponential → ExponentialSquared로 바뀌었다(DayNightCycle 주석 참고).
+        // 같은 밀도라도 exp2는 먼 거리에서 훨씬 급격히 짙어지므로 0.012를 그대로 두면 200m 앞이
+        // 통째로 벽이 된다(exp(-(0.012·200)²) = 0.3% 잔여). 0.006이면 100m 70% · 200m 24% · 300m 4%로,
+        // "비 오는 날 시야가 좁아진다"는 느낌은 그대로면서 길을 잃을 정도는 아니다.
+        [Tooltip("비가 올 때 안개 밀도(ExponentialSquared). 너무 높으면 시야가 답답해지므로 낮게 유지")]
+        public float rainFogDensity = 0.006f;
 
         // ── [B9] 우천의 게임플레이 효과 ──────────────────────────────────────────
         // 문제: 비는 실시간의 약 30%를 차지하는데(평균 주기 165초 맑음 + 70초 비 = 29.8%,
@@ -111,7 +143,15 @@ namespace MakeGame.Systems
         private float phaseTimer;
         private float phaseDuration;
         private ParticleSystem rainParticles;
+        private ParticleSystem rainSplashes;
         private Transform followTarget;
+
+        // 물튀김 파티클을 놓을 지면 높이. 매 프레임 레이캐스트하면 낭비라 주기적으로만 갱신한다.
+        private float splashGroundY;
+        private float splashProbeTimer;
+
+        /// <summary>물튀김 지면 높이를 다시 재는 주기(초). 걸어다니는 속도에서 이 정도면 충분히 따라온다.</summary>
+        private const float SplashProbeInterval = 0.3f;
 
         // 맑은 날씨로 돌아왔을 때 원래 안개 설정을 복원하기 위한 캐시.
         private bool originalFogEnabled;
@@ -222,13 +262,25 @@ namespace MakeGame.Systems
             main.startColor = new Color(0.75f, 0.82f, 0.92f, 0.55f);
             main.maxParticles = 1500;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
+            // [B22] Time.timeScale = 0이 되는 순간(엔딩/사망 화면)에 비가 얼어붙어 **공중에 멈춘
+            // 빗줄기 벽**이 되는 것을 막는다. AGENT_BRIEF 4장의 "연출은 unscaled로"와 같은 취지다.
+            main.useUnscaledTime = true;
 
             var emission = rainParticles.emission;
-            emission.rateOverTime = 500f;
+            emission.rateOverTime = 0f; // 세기(RainIntensity01)에 따라 Update에서 채운다
 
             var shape = rainParticles.shape;
             shape.shapeType = ParticleSystemShapeType.Box;
-            shape.scale = new Vector3(24f, 0.5f, 24f);
+            shape.scale = new Vector3(28f, 0.5f, 28f);
+
+            // [B22] 수평 바람. 빗줄기가 수직으로만 떨어지면 "화면에 붙은 선"처럼 보이는데, 조금만
+            // 기울여도 대기의 움직임이 읽힌다. Stretch 렌더 모드가 속도 벡터 방향으로 늘이므로
+            // 기울기와 길이가 자동으로 일치한다.
+            var velocity = rainParticles.velocityOverLifetime;
+            velocity.enabled = true;
+            velocity.space = ParticleSystemSimulationSpace.World;
+            velocity.x = new ParticleSystem.MinMaxCurve(rainWind.x * 0.8f, rainWind.x * 1.2f);
+            velocity.z = new ParticleSystem.MinMaxCurve(rainWind.y * 0.8f, rainWind.y * 1.2f);
 
             var renderer = rainParticles.GetComponent<ParticleSystemRenderer>();
             if (renderer != null)
@@ -248,6 +300,16 @@ namespace MakeGame.Systems
             }
 
             rainParticles.Stop();
+
+            // [B22] 땅/수면에 부딪히는 물튀김. 빗줄기만 있으면 비가 "카메라 앞에 떠 있는 레이어"로
+            // 보이고 월드에 닿지 않는다 - 지면에 닿는 신호가 하나 있어야 비가 세계 안에 있게 된다.
+            // 파티클 상한 60개짜리 시스템 하나뿐이라(섬 개수와 무관한 단일 인스턴스) 비용은 무시할 수준이다.
+            if (enableRainSplashes)
+            {
+                rainSplashes = EffectBuilder.CreateRainSplashes(transform);
+                if (rainSplashes != null)
+                    rainSplashes.Stop();
+            }
         }
 
         /// <summary>매 프레임 날씨 단계(맑음/비) 타이머를 진행시키고, 비가 올 때 파티클을 따라오게 한다.</summary>
@@ -262,7 +324,50 @@ namespace MakeGame.Systems
                     StartRainPhase();
             }
 
-            if (IsRaining && followTarget != null)
+            // [B22] 연출 세기는 논리 상태(IsRaining)를 rainFadeSeconds에 걸쳐 따라간다.
+            // unscaledDeltaTime을 쓰는 이유는 AGENT_BRIEF 4장 그대로 — 엔딩/사망으로 timeScale이 0이
+            // 되어도 진행 중이던 페이드가 첫 프레임에서 굳어버리지 않게 하기 위해서다.
+            float target = IsRaining ? 1f : 0f;
+            if (rainFadeSeconds <= 0f)
+            {
+                RainIntensity01 = target;
+            }
+            else
+            {
+                RainIntensity01 = Mathf.MoveTowards(
+                    RainIntensity01, target, Time.unscaledDeltaTime / rainFadeSeconds);
+            }
+
+            UpdateRainVisuals();
+
+            if (IsRaining)
+                ApplyRainGameplayEffects(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// [B22] 비 연출(에미터 위치 · 방출량 · 물튀김)을 RainIntensity01에 맞춰 갱신한다.
+        /// 게임플레이 수치는 전혀 건드리지 않는다.
+        /// </summary>
+        private void UpdateRainVisuals()
+        {
+            // 페이드 아웃 중에도 남은 빗줄기가 플레이어를 따라와야 한다(예전에는 IsRaining이 꺼지는
+            // 순간 에미터가 그 자리에 멈춰, 걸어가면 등 뒤에 비 기둥이 서 있었다).
+            if (followTarget == null)
+            {
+                var cam = Camera.main;
+                followTarget = cam != null ? cam.transform : null;
+            }
+
+            if (RainIntensity01 <= 0f)
+            {
+                if (rainParticles != null && rainParticles.isPlaying)
+                    rainParticles.Stop();
+                if (rainSplashes != null && rainSplashes.isPlaying)
+                    rainSplashes.Stop();
+                return;
+            }
+
+            if (followTarget != null)
             {
                 transform.position = new Vector3(
                     followTarget.position.x,
@@ -270,9 +375,54 @@ namespace MakeGame.Systems
                     followTarget.position.z);
             }
 
-            if (IsRaining)
-                ApplyRainGameplayEffects(Time.deltaTime);
+            if (rainParticles != null)
+            {
+                var emission = rainParticles.emission;
+                emission.rateOverTime = Mathf.Max(0f, rainEmissionRate) * RainIntensity01;
+                if (!rainParticles.isPlaying)
+                    rainParticles.Play();
+            }
+
+            UpdateRainSplashes();
         }
+
+        /// <summary>
+        /// [B22] 물튀김 파티클을 플레이어 발밑 지면(없으면 해수면)에 붙여 둔다.
+        /// 지면 높이는 TerrainSampler.SnapToGround로 찾는다 - 이 헬퍼는 이름이 "Island_"로 시작하는
+        /// 콜라이더만 지형으로 인정하므로 플레이어 자신의 캡슐이나 자원 노드에 맞지 않는다(그 함정을
+        /// 이미 한 번 겪고 만들어진 API다). 지형을 못 찾으면 입력 위치를 그대로 돌려주므로,
+        /// 그때는 바다 위로 보고 해수면(0)에 깐다.
+        /// </summary>
+        private void UpdateRainSplashes()
+        {
+            if (rainSplashes == null || followTarget == null)
+                return;
+
+            splashProbeTimer -= Time.unscaledDeltaTime;
+            if (splashProbeTimer <= 0f)
+            {
+                splashProbeTimer = SplashProbeInterval;
+
+                Vector3 probe = followTarget.position;
+                Vector3 snapped = TerrainSampler.SnapToGround(probe);
+                // SnapToGround는 지형을 못 찾으면 인자를 그대로 반환한다(y가 비트 단위로 같다).
+                splashGroundY = snapped.y < probe.y ? snapped.y : SeaLevelFallbackY;
+            }
+
+            rainSplashes.transform.position = new Vector3(
+                followTarget.position.x, splashGroundY + 0.05f, followTarget.position.z);
+
+            var splashEmission = rainSplashes.emission;
+            splashEmission.rateOverTime = SplashRateAtFullRain * RainIntensity01;
+            if (!rainSplashes.isPlaying)
+                rainSplashes.Play();
+        }
+
+        /// <summary>지형을 못 찾았을 때 물튀김을 깔 높이(=해수면). WorldMapManager.seaLevel 기본값과 같다.</summary>
+        private const float SeaLevelFallbackY = 0f;
+
+        /// <summary>최대 강우일 때 물튀김 초당 방출 개수. 수명 0.45초라 동시 생존은 약 20개다.</summary>
+        private const float SplashRateAtFullRain = 45f;
 
         /// <summary>
         /// [B9] 비가 오는 동안만 매 프레임 실행되는 게임플레이 효과. 위 필드 주석의 설계 근거대로
@@ -332,11 +482,14 @@ namespace MakeGame.Systems
             phaseTimer = 0f;
             phaseDuration = Random.Range(minClearSeconds, maxClearSeconds);
 
-            if (rainParticles != null)
-                rainParticles.Stop();
+            // [B22] 파티클 정지는 UpdateRainVisuals가 RainIntensity01이 0에 닿았을 때 처리한다.
+            // 여기서 즉시 Stop()하면 페이드 아웃(rainFadeSeconds)이 성립하지 않는다.
 
             // 퀄리티 개선: 비가 그치면 게임 시작 시점의 원래 안개 설정으로 정확히 되돌린다.
             // 단, DayNightCycle이 맑은 날 대기 안개를 직접 몰고 있으면 그쪽에 맡긴다(위 dayNight 주석 참고).
+            // [B22] 이제 DayNightCycle이 비 안개까지 RainIntensity01로 보간해서 몰기 때문에, 그쪽이
+            // 살아 있으면 여기서 손댈 것이 아무것도 없다. 아래 복원은 DayNightCycle이 없거나 대기 안개를
+            // 끈 구성(테스트 씬 등)에서만 도는 폴백이다.
             if (dayNight == null)
                 dayNight = FindAnyObjectByType<DayNightCycle>();
 
@@ -364,15 +517,19 @@ namespace MakeGame.Systems
             if (followTarget != null)
                 transform.position = followTarget.position + Vector3.up * rainHeightAboveTarget;
 
-            if (rainParticles != null)
-                rainParticles.Play();
+            // [B22] 파티클 Play/방출량과 안개는 세기(RainIntensity01)를 따라 UpdateRainVisuals /
+            // DayNightCycle이 서서히 올린다. 여기서 한 프레임에 최대치로 세팅하면 페이드가 무의미해진다.
+            // 폴백(DayNightCycle이 없거나 대기 안개를 끈 구성)일 때만 예전처럼 즉시 비 안개를 건다.
+            if (dayNight == null)
+                dayNight = FindAnyObjectByType<DayNightCycle>();
 
-            // 퀄리티 개선: 비가 오는 동안 얕은 안개를 깔아 습하고 흐린 분위기를 더한다.
-            // Exponential 모드를 써서 가까운 곳은 선명하고 먼 곳만 서서히 뿌옇게 가려지게 한다.
-            RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.Exponential;
-            RenderSettings.fogColor = rainFogColor;
-            RenderSettings.fogDensity = rainFogDensity;
+            if (dayNight == null || !dayNight.enableAtmosphericFog)
+            {
+                RenderSettings.fog = true;
+                RenderSettings.fogMode = FogMode.ExponentialSquared;
+                RenderSettings.fogColor = rainFogColor;
+                RenderSettings.fogDensity = rainFogDensity;
+            }
 
             AudioManager.Instance?.StartRainAmbient();
         }

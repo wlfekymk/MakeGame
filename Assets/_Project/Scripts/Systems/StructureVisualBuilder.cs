@@ -93,6 +93,40 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// 위 CreateVisualPart와 동작이 같지만, 머티리얼을 새로 만들지 않고 **호출자가 만들어 둔 것을 공유**한다.
+        ///
+        /// 왜 필요한가: Color 오버로드는 파츠 하나당 CreateColorMaterial을 한 번씩 부르므로 파츠 수만큼
+        /// 머티리얼 인스턴스가 생긴다. 구조물 하나가 파츠 5~10개일 때는 문제가 없었지만, 뗏목(RaftStructure)은
+        /// 완성 단계에서 파츠가 40개를 넘고 건조 단계가 바뀔 때마다 통째로 다시 만든다 - 그대로 두면 한
+        /// 오브젝트가 머티리얼을 수십 개씩 계속 새로 뱉어 SRP 배처가 죽는다(AGENT_BRIEF 4장 "머티리얼을
+        /// 파츠마다 만들지 마라"). 색/텍스처가 같은 파츠들이 머티리얼 하나를 공유하도록 하는 통로다.
+        ///
+        /// Color 오버로드와 시그니처가 겹치지 않는다(Color는 구조체, Material은 클래스라 서로 암시적
+        /// 변환이 없다) - 기존 호출부는 한 곳도 영향을 받지 않는다.
+        /// </summary>
+        public static GameObject CreateVisualPart(Transform parent, string name, PrimitiveType primitiveType,
+            Vector3 localPosition, Vector3 localScale, Material sharedMaterial, Quaternion? localRotation = null)
+        {
+            var go = GameObject.CreatePrimitive(primitiveType);
+            go.name = name;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPosition;
+            go.transform.localRotation = localRotation ?? Quaternion.identity;
+            go.transform.localScale = localScale;
+
+            // 시각 전용 파츠이므로 프리미티브 생성 시 자동으로 붙는 콜라이더는 제거한다(Color 오버로드와 동일).
+            var collider = go.GetComponent<Collider>();
+            if (collider != null)
+                Object.Destroy(collider);
+
+            var renderer = go.GetComponent<MeshRenderer>();
+            if (renderer != null && sharedMaterial != null)
+                renderer.sharedMaterial = sharedMaterial;
+
+            return go;
+        }
+
+        /// <summary>
         /// 지정한 단색의 기본 URP Lit 머티리얼을 만든다 (섬 지형 생성 시 사용한 것과 동일한 방식).
         /// 이 게임의 모든 프리미티브 기반 시각 파츠(쉼터/물증류기/모닥불/사냥감/위험요소 등)가
         /// 전부 이 메서드를 거치므로, 여기서 절차적 그레인 텍스처를 함께 곱해 씌우면

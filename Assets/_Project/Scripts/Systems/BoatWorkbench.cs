@@ -41,8 +41,18 @@ namespace MakeGame.Systems
         /// </summary>
         public bool TryBuild(PlayerInventory inventory)
         {
+            if (boatConstruction == null)
+                return false;
+
+            // [발견 후 수정] 이미 100% 완성된 배에 다시 E를 누르면 TryAdvanceStage가 매번 성공 처리되어
+            // 단계 완료 효과음(PlayStageComplete)이 눌릴 때마다 다시 울렸다. 완성 이후에는 투입할 재료도
+            // 남은 단계도 없으므로 여기서 끊는다. 엔딩 판정은 EndingChecker가 CanAdvanceStage로 따로
+            // 하므로(EndingChecker.cs:373) 이 가드가 엔딩을 막지 않는다.
+            if (boatConstruction.isFullyComplete)
+                return false;
+
             ContributeAvailableMaterials(inventory);
-            return boatConstruction != null && boatConstruction.TryAdvanceStage();
+            return boatConstruction.TryAdvanceStage();
         }
     }
 }

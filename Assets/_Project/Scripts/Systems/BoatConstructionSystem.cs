@@ -50,6 +50,75 @@ namespace MakeGame.Systems
         [Tooltip("현재 단계에서 확보(투입)한 재료 수량 목록")]
         public List<MaterialRequirement> collectedMaterialsForCurrentStage = new List<MaterialRequirement>();
 
+        [Header("실체 뗏목")]
+        // 새로 추가하는 필드다. 씬에는 이 키가 없으므로 코드 기본값(false)이 그대로 쓰인다.
+        // 기본값을 일부러 false(= 켜짐)로 잡았다 - 만약 어떤 이유로든 직렬화가 기본값을 못 살리고
+        // default(bool)로 떨어져도 뗏목이 조용히 사라지지 않는다.
+        [Tooltip("켜면 월드에 실체 뗏목(RaftStructure)을 만들지 않는다. 진행도 카운터만 남는 예전 동작.")]
+        public bool disableRaftStructure = false;
+
+        /// <summary>
+        /// 진행도(단계/도면/투입 재료)가 바뀔 때마다 발생한다. RaftStructure가 이걸 받아 외형을 즉시 갱신한다.
+        /// [주의] SaveLoadController.Load는 이 컴포넌트의 public 필드를 직접 대입해 복원하므로 이 이벤트가
+        /// 발생하지 않는다. 그래서 RaftStructure는 이벤트에만 의존하지 않고 주기적으로 진행도를 다시 읽는다
+        /// (불러오기 직후 외형이 옛 단계로 남는 것을 막는 안전망). SaveLoadController 쪽에서 복원 후
+        /// NotifyProgressChanged()를 한 번 불러 주면 그 폴링 지연(0.2초)도 사라진다.
+        /// </summary>
+        public event System.Action ProgressChanged;
+
+        /// <summary>이 세션에서 만들어진 실체 뗏목. 씬 직렬화 대상이 아니도록 필드가 아니라 프로퍼티로 둔다.</summary>
+        public RaftStructure Raft { get; private set; }
+
+        /// <summary>
+        /// 진행도 변화 통지. 외부(예: 세이브 복원)에서 필드를 직접 바꾼 뒤에도 부를 수 있도록 public이다.
+        /// </summary>
+        public void NotifyProgressChanged()
+        {
+            ProgressChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// 배가 "카운터"에서 "월드에 실제로 서 있는 구조물"이 되도록, 플레이 시작 시 뗏목 본체를 만든다.
+        /// 위치 확정(시작 섬 해안 찾기)은 RaftStructure가 스스로 한다 - 이 컴포넌트와 WorldMapManager는
+        /// 실행 순서가 보장되지 않아서, 여기서 섬을 읽으려 하면 아직 섬이 없을 수 있기 때문이다.
+        /// </summary>
+        private void Start()
+        {
+            EnsureRaftStructure();
+        }
+
+        /// <summary>
+        /// 실체 뗏목 오브젝트를 확보한다(이미 있으면 그대로 쓴다).
+        /// 씬 루트에 만든다 - WorldMapManager.RegenerateWorld(F9 불러오기)가 자기 자식을 전부 파괴하는데,
+        /// 이 컴포넌트가 WorldMapManager와 같은 Managers 오브젝트에 붙어 있을 수 있어 transform 아래에
+        /// 두면 불러오기 때 뗏목이 함께 지워진다.
+        /// </summary>
+        public RaftStructure EnsureRaftStructure()
+        {
+            if (disableRaftStructure)
+                return null;
+
+            if (Raft != null)
+                return Raft;
+
+            var existing = FindAnyObjectByType<RaftStructure>();
+            if (existing != null)
+            {
+                Raft = existing;
+                Raft.boatConstruction = this;
+                return Raft;
+            }
+
+            // 비활성 상태로 만들어 컴포넌트를 붙이고 참조를 채운 뒤 켠다. AddComponent는 Awake를 즉시
+            // 실행하므로, 켜기 전에 배선을 끝내야 RaftStructure가 Awake/OnEnable에서 null을 보지 않는다.
+            var go = new GameObject("RaftStructure");
+            go.SetActive(false);
+            Raft = go.AddComponent<RaftStructure>();
+            Raft.boatConstruction = this;
+            go.SetActive(true);
+            return Raft;
+        }
+
         /// <summary>
         /// 지정한 규모의 섬에서 현재 단계 도면을 습득할 수 있는지 확인한다.
         /// 1~2단계는 대형 섬, 3단계(최종)는 특대 섬에서만 습득 가능하다.
@@ -67,8 +136,11 @@ namespace MakeGame.Systems
         /// </summary>
         public void ObtainBlueprint(IslandSize islandSize)
         {
-            if (CanFindBlueprintOnIsland(islandSize))
-                hasCurrentStageBlueprint = true;
+            if (!CanFindBlueprintOnIsland(islandSize))
+                return;
+
+            hasCurrentStageBlueprint = true;
+            NotifyProgressChanged();
         }
 
         /// <summary>
@@ -96,6 +168,7 @@ namespace MakeGame.Systems
                 return false;
 
             AddCollected(item, quantity);
+            NotifyProgressChanged(); // 뗏목 외형이 재료를 넣은 그 프레임에 자란다.
             return true;
         }
 
@@ -162,12 +235,14 @@ namespace MakeGame.Systems
             if (currentStage >= TotalStages)
             {
                 isFullyComplete = true;
+                NotifyProgressChanged();
                 return true; // 3단계까지 모두 완료 - 배 100% 완성
             }
 
             currentStage++;
             hasCurrentStageBlueprint = false;
             collectedMaterialsForCurrentStage.Clear();
+            NotifyProgressChanged();
             return false;
         }
 
@@ -192,6 +267,53 @@ namespace MakeGame.Systems
                 return 1f;
 
             return (float)(currentStage - 1) / TotalStages;
+        }
+
+        /// <summary>
+        /// 현재 단계 안에서 필요한 재료를 얼마나 채웠는지(0~1). 재료 종류별 충족률의 평균이다.
+        /// 설계가 비어 있는 단계(요구 재료 0개)에서는 도면 보유 여부만으로 0 또는 0.5를 돌려준다 -
+        /// 그래야 진행이 0에 붙박이지 않는다.
+        /// </summary>
+        public float GetCurrentStageMaterialFraction()
+        {
+            var requirements = GetCurrentStageRequirements();
+
+            float sum = 0f;
+            int counted = 0;
+            for (int i = 0; i < requirements.Count; i++)
+            {
+                var required = requirements[i];
+                if (required == null || required.item == null || required.quantity <= 0)
+                    continue;
+
+                sum += Mathf.Clamp01((float)GetCollectedQuantity(required.item) / required.quantity);
+                counted++;
+            }
+
+            if (counted == 0)
+                return hasCurrentStageBlueprint ? 0.5f : 0f;
+
+            return sum / counted;
+        }
+
+        /// <summary>
+        /// 뗏목 외형이 쓰는 "세밀한" 진행률(0~1). GetOverallProgress는 완료된 단계 수만 세기 때문에
+        /// 3단계 게임에서 값이 0 / 0.33 / 0.67 / 1 네 개뿐이고, 그러면 재료를 넣어도 눈에 보이는 변화가
+        /// 없다. 여기서는 단계 안의 재료 충족률까지 섞어 훨씬 촘촘한 값을 만든다.
+        /// 씬 설계(단계별 재료 3종)에서는 1/9 단위로 움직인다.
+        ///
+        /// 완성 전에는 0.97로 상한을 둔다. 마지막 단계의 재료를 다 넣은 순간(아직 작업대에서 완성
+        /// 확정을 안 누른 상태)에 뗏목이 먼저 100% 모습이 되어버리면 완성 연출이 사라지기 때문이다.
+        /// GetOverallProgress는 UI/엔딩이 이미 쓰고 있으므로 건드리지 않는다.
+        /// </summary>
+        public float GetDetailedProgress()
+        {
+            if (isFullyComplete)
+                return 1f;
+
+            int completedStages = Mathf.Clamp(currentStage - 1, 0, TotalStages);
+            float progress = (completedStages + GetCurrentStageMaterialFraction()) / TotalStages;
+            return Mathf.Clamp(progress, 0f, 0.97f);
         }
     }
 }

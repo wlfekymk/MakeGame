@@ -255,7 +255,10 @@ namespace MakeGame.UI
                 return true;
             }
 
-            var workbench = target.GetComponent<BoatWorkbench>();
+            // [B22] GetComponent → GetComponentInParent. 뗏목은 승선 발판이 콜라이더를 가진
+            // 자식이라, 발판을 조준하면 프롬프트만 사라지고 E는 먹는 불일치가 났다.
+            // InteractionController.cs는 이미 InParent 기준이다.
+            var workbench = target.GetComponentInParent<BoatWorkbench>();
             if (workbench != null)
                 return BuildBoatWorkbenchPrompt(workbench, inventory, key, out main, out sub, out blocked);
 

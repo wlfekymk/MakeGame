@@ -375,6 +375,11 @@ namespace MakeGame.Systems
                     boatConstruction.collectedMaterialsForCurrentStage.Add(
                         new BoatConstructionSystem.MaterialRequirement { item = itemData, quantity = saved.count });
                 }
+
+                // [B22] 위 복원은 필드 직접 대입이라 ProgressChanged가 뜨지 않는다. RaftStructure는
+                // 0.2초 폴링 안전망을 갖고 있지만, 여기서 한 번 알려 주면 불러온 그 프레임에 뗏목
+                // 외형이 맞는 단계로 돌아온다. (systems-engineer 요청, 소유권상 감독이 넣는다.)
+                boatConstruction.NotifyProgressChanged();
             }
 
             if (aircraftRepair != null)

@@ -27,27 +27,55 @@ namespace MakeGame.Systems
         [Tooltip("한낮의 조명 색상 (밝은 백색광)")]
         public Color dayColor = new Color(1f, 0.98f, 0.92f);
 
-        [Tooltip("일출/일몰 무렵의 조명 색상 (붉은 노을빛)")]
-        public Color duskDawnColor = new Color(1f, 0.6f, 0.35f);
+        [Tooltip("일몰(황혼) 무렵의 조명 색상 (붉은 노을빛). [B22] 새벽은 아래 dawnColor를 따로 쓴다.")]
+        public Color duskDawnColor = new Color(1f, 0.52f, 0.26f);
 
-        [Tooltip("한밤중의 조명 색상 (푸르스름한 달빛)")]
-        public Color nightColor = new Color(0.4f, 0.5f, 0.7f);
+        // [B22] 새벽과 황혼을 같은 색으로 칠하면 하루가 좌우대칭이 되어 "지금이 아침인지 저녁인지"를
+        // 화면만 보고 알 수 없다. 실제 대기에서도 아침은 밤새 가라앉은 공기 때문에 더 차갑고 분홍/보라
+        // 쪽이고, 저녁은 낮 동안 달궈진 먼지 때문에 더 진한 주황/빨강 쪽이다. 색을 갈라두면 시간 감각이
+        // 생기고(디렉터 방향 "머물고 싶은 섬"의 리듬), 같은 골든아워 계산식을 그대로 재사용하므로 비용은 0이다.
+        [Tooltip("새벽(일출) 무렵의 조명 색상. 황혼보다 차갑고 분홍빛이 돈다.")]
+        public Color dawnColor = new Color(1f, 0.74f, 0.66f);
+
+        [Tooltip("한밤중의 조명 색상 (푸르스름한 달빛). [B22] 채도를 올려 '어두운 회색'이 아니라 '달빛 파랑'으로 읽히게 했다.")]
+        public Color nightColor = new Color(0.40f, 0.55f, 0.88f);
 
         [Header("하늘(스카이박스) 색조")]
         [Tooltip("낮 하늘의 색조 (Skybox/Procedural의 _SkyTint)")]
         public Color daySkyTint = new Color(0.45f, 0.65f, 0.85f);
 
-        [Tooltip("노을 무렵 하늘의 색조")]
-        public Color duskDawnSkyTint = new Color(0.85f, 0.5f, 0.35f);
+        [Tooltip("황혼(일몰) 무렵 하늘의 색조")]
+        public Color duskDawnSkyTint = new Color(0.88f, 0.44f, 0.30f);
 
-        [Tooltip("밤하늘의 색조 (짙은 남색)")]
-        public Color nightSkyTint = new Color(0.05f, 0.06f, 0.12f);
+        [Tooltip("새벽(일출) 무렵 하늘의 색조. 황혼보다 분홍/보라 쪽이다.")]
+        public Color dawnSkyTint = new Color(0.80f, 0.55f, 0.66f);
+
+        [Tooltip("밤하늘의 색조 (짙은 남색). [B22] 완전한 검정에 가깝지 않게 파랑을 조금 남긴다.")]
+        public Color nightSkyTint = new Color(0.06f, 0.09f, 0.20f);
 
         [Tooltip("낮 하늘의 노출(밝기)")]
         public float daySkyExposure = 1.15f;
 
         [Tooltip("밤하늘의 노출(밝기) - 별이 반짝일 정도로 어둡게")]
-        public float nightSkyExposure = 0.15f;
+        public float nightSkyExposure = 0.22f;
+
+        // [B22] Skybox/Procedural(기본 스카이박스)의 나머지 프로퍼티도 시간대에 맞춰 몬다.
+        // _AtmosphereThickness는 "대기를 얼마나 두껍게 통과해서 보는가"라 값이 커질수록 짧은 파장이
+        // 더 많이 산란돼 하늘 전체가 주황/빨강으로 물든다 - 노을이 예뻐지는 실제 물리 파라미터다.
+        // _SunSize는 태양 원반의 크기다. 지평선 근처에서 키우면 "크게 걸린 해"가 되어 노을이 극적으로 보인다.
+        // 둘 다 HasProperty로 걸러 쓰므로, 스카이박스가 Procedural이 아니어도 조용히 건너뛴다.
+        [Header("스카이박스 대기 (Skybox/Procedural 전용, 없으면 무시)")]
+        [Tooltip("한낮/한밤의 대기 두께. 1이 셰이더 기본값이다.")]
+        public float dayAtmosphereThickness = 1.0f;
+
+        [Tooltip("일출/일몰 정점의 대기 두께. 클수록 하늘이 붉게 타오른다.")]
+        public float goldenAtmosphereThickness = 2.1f;
+
+        [Tooltip("평소 태양 원반 크기(_SunSize). 셰이더 기본값 0.04.")]
+        public float daySunSize = 0.045f;
+
+        [Tooltip("일출/일몰 정점의 태양 원반 크기. 지평선에 크게 걸린 해를 만든다.")]
+        public float goldenSunSize = 0.10f;
 
         [Header("게임 시작 시각")]
         // [검은 하늘 원인규명] SurvivalClock.elapsedSeconds는 코드 기본값도 0이고 씬 직렬화 값도 0이라
@@ -76,15 +104,39 @@ namespace MakeGame.Systems
         [Tooltip("일출/일몰 무렵의 환경광(따뜻하고 채도가 낮은 색)")]
         public Color duskDawnAmbient = new Color(0.38f, 0.29f, 0.25f);
 
+        // [B22] 밝기 총량은 예전(0.16/0.18/0.26, 상대휘도 ≈0.176)과 거의 같게 두고 색상만 파랑 쪽으로
+        // 민다(0.12/0.16/0.30, 상대휘도 ≈0.166). "밤 = 안 보임"이 아니라 "밤 = 푸른 어둠"이라는
+        // 디렉터 지시를 지키면서, 실루엣 가독성(B4에서 확보한 것)은 그대로 유지하기 위한 값이다.
         [Tooltip("한밤중의 환경광. 이 값이 밤의 '최소 가시성 바닥'이다 - 0에 가까우면 실루엣조차 안 보인다.")]
-        public Color nightAmbient = new Color(0.16f, 0.18f, 0.26f);
+        public Color nightAmbient = new Color(0.12f, 0.16f, 0.30f);
+
+        [Tooltip("비가 올 때 환경광이 섞여 들어갈 색(채도 빠진 차가운 회색). 젖은 날의 흐린 빛을 만든다.")]
+        public Color rainAmbientTint = new Color(0.38f, 0.42f, 0.46f);
 
         [Tooltip("켜면 하늘색과 같은 색의 옅은 거리 안개를 깔아 수평선에서 바다와 하늘이 이어지게 한다.")]
         public bool enableAtmosphericFog = true;
 
-        [Tooltip("맑은 날의 거리 안개 밀도(Exponential). 카메라 far clip이 1000이라 이 정도면 " +
-            "가까운 곳은 선명하고 수평선만 옅게 흐려진다. WeatherSystem의 rainFogDensity와는 별개 값이다.")]
-        public float clearFogDensity = 0.0012f;
+        // [B22] FogMode.Exponential → ExponentialSquared로 바꿨다. Exponential은 밀도를 올리면
+        // 발밑부터 같이 뿌예져서 "가까운 건 선명하고 먼 것만 안개"가 되지 않는다(지수함수의 기울기가
+        // 거리 0에서 최대다). ExponentialSquared는 거리 제곱이라 근거리 감쇠가 거의 없고 먼 거리에서
+        // 급격히 짙어진다 - 값싼 원근감(과제 4번 "먼 풍경")을 얻는 정확한 도구다.
+        // 0.0016 기준 실제 값: 200m 96% 선명 · 500m 67% · 800m 36% · 1000m 8%.
+        // far clip이 1000이라 바다 평면이 잘리는 지점에서는 이미 거의 안개색 = 하늘색이라 이음매가 안 보인다.
+        [Tooltip("맑은 날의 거리 안개 밀도(ExponentialSquared). 카메라 far clip이 1000이라 이 정도면 " +
+            "가까운 곳은 선명하고 수평선만 짙게 흐려진다. WeatherSystem의 rainFogDensity와는 별개 값이다.")]
+        public float clearFogDensity = 0.0016f;
+
+        [Tooltip("새벽 안개 배수. 일출 정점에서 안개 밀도가 이만큼 배로 짙어져 아침 물안개가 깔린다.")]
+        public float dawnFogDensityMultiplier = 2.3f;
+
+        /// <summary>
+        /// [B22] 지금 시각/날씨에서 계산된 "맑은 날 기준" 안개 색. WeatherSystem이 비 안개로 서서히
+        /// 넘어갈 때 출발점으로 읽는다(둘이 매 프레임 RenderSettings를 서로 덮어쓰지 않게 하는 장치).
+        /// </summary>
+        public Color ClearFogColor { get; private set; } = Color.gray;
+
+        /// <summary>[B22] 지금 시각에서 계산된 "맑은 날 기준" 안개 밀도. WeatherSystem이 보간 출발점으로 읽는다.</summary>
+        public float ClearFogDensity { get; private set; }
 
         private Light sunLight;
         private SurvivalClock clock;
@@ -97,6 +149,13 @@ namespace MakeGame.Systems
         private Material skyboxInstance;
         private static readonly int SkyTintId = Shader.PropertyToID("_SkyTint");
         private static readonly int ExposureId = Shader.PropertyToID("_Exposure");
+
+        // [B22] Skybox/Procedural에만 있는 프로퍼티들. 다른 스카이박스면 HasProperty가 false라 건너뛴다.
+        // (URP에서 Built-in 전용 프로퍼티를 쓰면 조용히 무시되지만, Skybox/Procedural 셰이더 자체는
+        //  파이프라인 중립이라 URP에서도 그대로 동작한다 - 이 파일이 이미 _SkyTint/_Exposure로 검증한 경로다.)
+        private static readonly int AtmosphereThicknessId = Shader.PropertyToID("_AtmosphereThickness");
+        private static readonly int SunSizeId = Shader.PropertyToID("_SunSize");
+        private static readonly int GroundColorId = Shader.PropertyToID("_GroundColor");
 
         /// <summary>
         /// 버그 수정: 처음에는 RuntimeInitializeLoadType.AfterSceneLoad로 한 번만 생성했는데, 이
@@ -210,7 +269,12 @@ namespace MakeGame.Systems
                 lightPitch = 360f - lightPitch;
             sunLight.transform.rotation = Quaternion.Euler(lightPitch, 170f, 0f);
 
-            float rainMultiplier = (weather != null && weather.IsRaining) ? weather.rainDimFactor : 1f;
+            // [B22] 예전에는 IsRaining이 켜지는 프레임에 조도가 55%로 **한 프레임 만에 툭 떨어졌다**.
+            // WeatherSystem이 0~1로 서서히 오르내리는 RainIntensity01을 공개하므로 그 값으로 보간해
+            // 구름이 몰려오듯 어두워지게 한다. (게임플레이 효과는 여전히 IsRaining 불리언으로만
+            // 판정되고 이 값은 순수 연출이다 - 우천 수치는 한 개도 바뀌지 않는다.)
+            float rainIntensity = weather != null ? weather.RainIntensity01 : 0f;
+            float rainMultiplier = Mathf.Lerp(1f, weather != null ? weather.rainDimFactor : 1f, rainIntensity);
             sunLight.intensity = Mathf.Lerp(nightIntensity, dayIntensity, dayFactor) * rainMultiplier;
 
             // 일출/일몰(골든아워) 가중치. 예전에는 |dayFactor-0.5|의 선형 텐트라 폭이 너무 넓어서
@@ -220,13 +284,35 @@ namespace MakeGame.Systems
             float duskDawnBlend = 1f - Mathf.Abs(dayFactor - 0.5f) * 2f; // dayFactor=0.5(지평선)에서 1
             float goldenHour = Mathf.Pow(Mathf.Clamp01(duskDawnBlend), 2.5f);
 
+            // [B22] 오전(t<0.5)이면 새벽 색, 오후면 황혼 색을 고른다. goldenHour는 하루에 두 번
+            // 똑같이 솟는 값이라 이 분기 하나만으로 아침/저녁이 다른 색이 된다(추가 계산 0회).
+            bool isMorning = t < 0.5f;
+            Color goldenLight = isMorning ? dawnColor : duskDawnColor;
+            Color goldenSky = isMorning ? dawnSkyTint : duskDawnSkyTint;
+
             // 색상: 낮에는 백색광, 일출/일몰에는 노을빛, 밤에는 푸른 달빛으로 보간한다.
             Color baseColor = Color.Lerp(nightColor, dayColor, dayFactor);
-            sunLight.color = Color.Lerp(baseColor, duskDawnColor, goldenHour * 0.8f);
+            sunLight.color = Color.Lerp(baseColor, goldenLight, goldenHour * 0.8f);
 
             // 하늘도 태양광과 같은 dayFactor/goldenHour 리듬으로 색조와 노출을 보간한다.
             Color baseSky = Color.Lerp(nightSkyTint, daySkyTint, dayFactor);
-            Color sky = Color.Lerp(baseSky, duskDawnSkyTint, goldenHour * 0.8f);
+            Color sky = Color.Lerp(baseSky, goldenSky, goldenHour * 0.8f);
+
+            // 맑은 날 기준 안개. 새벽에만 밀도를 올려 아침 물안개를 깐다(황혼에는 올리지 않는다 -
+            // 밤새 식은 공기에서 생기는 현상이라 저녁에 같은 안개가 끼면 오히려 어색하다).
+            ClearFogColor = ResolveClearFogColor(sky, dayFactor, goldenHour, goldenLight);
+            ClearFogDensity = Mathf.Max(0f, clearFogDensity)
+                * Mathf.Lerp(1f, Mathf.Max(1f, dawnFogDensityMultiplier), isMorning ? goldenHour : 0f);
+
+            // 비 안개까지 반영한 "이번 프레임에 실제로 적용할" 값. 스카이박스 지평선 색과 RenderSettings가
+            // 같은 값을 써야 수평선에 이음매가 생기지 않으므로 여기서 한 번만 계산한다.
+            Color fogColor = ClearFogColor;
+            float fogDensity = ClearFogDensity;
+            if (weather != null && rainIntensity > 0f)
+            {
+                fogColor = Color.Lerp(fogColor, weather.rainFogColor, rainIntensity);
+                fogDensity = Mathf.Lerp(fogDensity, Mathf.Max(0f, weather.rainFogDensity), rainIntensity);
+            }
 
             if (skyboxInstance != null)
             {
@@ -237,10 +323,26 @@ namespace MakeGame.Systems
                     float exposure = Mathf.Lerp(nightSkyExposure, daySkyExposure, dayFactor);
                     skyboxInstance.SetFloat(ExposureId, exposure);
                 }
+
+                if (skyboxInstance.HasProperty(AtmosphereThicknessId))
+                {
+                    skyboxInstance.SetFloat(AtmosphereThicknessId,
+                        Mathf.Lerp(dayAtmosphereThickness, goldenAtmosphereThickness, goldenHour));
+                }
+
+                if (skyboxInstance.HasProperty(SunSizeId))
+                    skyboxInstance.SetFloat(SunSizeId, Mathf.Lerp(daySunSize, goldenSunSize, goldenHour));
+
+                // [B22 수평선] 스카이박스는 안개의 영향을 받지 않는다. 그래서 far clip(1000m)에서
+                // 바다 평면이 잘리면 그 바깥은 **생 스카이박스의 지평선 아래 색(_GroundColor, 기본 회갈색)**
+                // 이 그대로 드러나, 안개색으로 사라져가던 바다가 갑자기 회색 띠로 바뀌는 경계선이 생긴다.
+                // 지평선 아래 색을 지금 프레임의 안개색과 똑같이 맞추면 그 경계가 원리적으로 안 보인다.
+                if (skyboxInstance.HasProperty(GroundColorId))
+                    skyboxInstance.SetColor(GroundColorId, fogColor);
             }
 
             UpdateAmbientLight(dayFactor, goldenHour, rainMultiplier);
-            UpdateAtmosphericFog(sky, dayFactor);
+            UpdateAtmosphericFog(fogColor, fogDensity);
         }
 
         /// <summary>
@@ -265,6 +367,12 @@ namespace MakeGame.Systems
             Color ambient = Color.Lerp(nightAmbient, dayAmbient, dayFactor);
             ambient = Color.Lerp(ambient, duskDawnAmbient, goldenHour * 0.6f);
 
+            // [B22] 비가 오면 색까지 채도가 빠진 차가운 회색 쪽으로 민다. 예전에는 밝기만 곱해서
+            // "그냥 어두운 맑은 날"이었는데, 흐린 날의 실제 특징은 어둡다는 것보다 **색이 빠진다**는 것이다.
+            // 젖은 표면을 만들 셰이더가 없는 이 파이프라인에서 "비 오는 날처럼 보이게" 만드는 가장 싼 수단이다.
+            float rainBlend = Mathf.Clamp01(1f - rainMultiplier) * 1.6f;
+            ambient = Color.Lerp(ambient, rainAmbientTint, Mathf.Clamp01(rainBlend) * 0.5f);
+
             // 비가 오면 태양광과 같은 비율로 환경광도 함께 죽인다. 다만 환경광까지 rainDimFactor를
             // 그대로 곱하면 낮인데도 시야가 지나치게 어두워지므로 절반만 적용한다.
             float ambientRainMultiplier = Mathf.Lerp(1f, rainMultiplier, 0.5f);
@@ -277,26 +385,42 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 하늘색과 같은 색의 옅은 거리 안개를 깔아, 40000 크기의 단색 바다 평면이 수평선에서 하늘과
-        /// 자연스럽게 이어지게 한다(바다 표현 개선: 거리에 따른 수면 색 변화를 셰이더 없이 만드는 방법).
-        /// 비가 오는 동안은 WeatherSystem이 자기 안개(rainFogColor/rainFogDensity)를 쓰므로 손대지 않는다.
+        /// [B22] 맑은 날 기준 안개색을 만든다. 세 겹으로 쌓는다:
+        ///   (1) 하늘색을 낮일수록 하얗게 — 스카이박스는 천정보다 지평선이 항상 밝고 옅다.
+        ///   (2) 노을에는 태양색을 섞어 수평선 자체가 물들게 — 값싼 "노을 지는 바다".
+        ///   (3) 밤에는 달빛 파랑을 섞어 수평선이 새까만 벽이 되지 않게("달빛 푸른 어둠", 디렉터 지시).
         /// </summary>
-        private void UpdateAtmosphericFog(Color skyColor, float dayFactor)
+        private Color ResolveClearFogColor(Color skyColor, float dayFactor, float goldenHour, Color goldenLight)
+        {
+            Color fog = Color.Lerp(skyColor, Color.white, Mathf.Lerp(0.06f, 0.45f, dayFactor));
+            fog = Color.Lerp(fog, goldenLight, goldenHour * 0.45f);
+
+            // Color * float는 알파까지 곱하므로 채널을 직접 만든다.
+            var moonFog = new Color(nightColor.r * 0.42f, nightColor.g * 0.42f, nightColor.b * 0.42f, 1f);
+            fog = Color.Lerp(fog, moonFog, (1f - dayFactor) * 0.35f);
+
+            fog.a = 1f;
+            return fog;
+        }
+
+        /// <summary>
+        /// 하늘색과 같은 색의 거리 안개를 깔아, 40000 크기의 단색 바다 평면이 수평선에서 하늘과
+        /// 자연스럽게 이어지게 한다(셰이더 없이 원근감을 만드는 유일한 수단).
+        ///
+        /// [B22] 예전에는 비가 오는 동안 통째로 return해서 WeatherSystem이 따로 안개를 썼고, 그래서
+        /// 비가 시작/종료되는 프레임에 안개가 **툭** 바뀌었다(두 스크립트가 같은 전역 상태를 번갈아
+        /// 덮어쓰는, 이 프로젝트가 반복해서 사고를 낸 형태이기도 하다). 이제 안개를 쓰는 곳은 여기
+        /// 한 곳뿐이고, 비 안개는 WeatherSystem이 공개하는 값을 읽어 RainIntensity01로 보간한다.
+        /// </summary>
+        private void UpdateAtmosphericFog(Color fogColor, float fogDensity)
         {
             if (!enableAtmosphericFog)
                 return;
 
-            if (weather != null && weather.IsRaining)
-                return;
-
-            // 스카이박스는 천정보다 지평선이 항상 더 밝고 옅다. 하늘 색조를 그대로 안개색으로 쓰면
-            // 수평선 부근이 하늘보다 어두워져 오히려 검은 띠가 생기므로, 낮일수록 더 하얗게 섞는다.
-            Color fogColor = Color.Lerp(skyColor, Color.white, Mathf.Lerp(0.1f, 0.45f, dayFactor));
-
             RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.Exponential;
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
             RenderSettings.fogColor = fogColor;
-            RenderSettings.fogDensity = Mathf.Max(0f, clearFogDensity);
+            RenderSettings.fogDensity = fogDensity;
         }
     }
 }

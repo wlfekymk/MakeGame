@@ -109,7 +109,10 @@ namespace MakeGame.Systems
                 return;
             }
 
-            var workbench = target.GetComponent<BoatWorkbench>();
+            // GetComponentInParent를 쓴다(자기 자신도 포함하므로 기존 작업대는 동작이 100% 동일하다).
+            // 실체 뗏목(RaftStructure)은 본체에 BoatWorkbench를 달고 있지만, 승선 발판처럼 콜라이더를
+            // 가진 자식 파츠도 있어서 레이가 자식에 맞을 수 있다. 그때도 같은 작업대로 이어져야 한다.
+            var workbench = target.GetComponentInParent<BoatWorkbench>();
             if (workbench != null)
             {
                 workbench.TryBuild(inventory);

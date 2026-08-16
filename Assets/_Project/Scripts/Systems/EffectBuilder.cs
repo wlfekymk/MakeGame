@@ -342,6 +342,62 @@ namespace MakeGame.Systems
             colorOverLifetime.color = new ParticleSystem.MinMaxGradient(gradient);
         }
 
+        /// <summary>
+        /// [B22] 빗방울이 지면/수면에 부딪혀 퍼지는 물튀김(파문). WeatherSystem이 비가 오는 동안
+        /// 플레이어 발밑 지면 높이에 붙여 두고, 방출량을 강우 세기에 비례시켜 쓴다.
+        ///
+        /// 왜 이 이펙트가 필요한가: 기존 비는 카메라 위에서 떨어지는 빗줄기 하나뿐이라, 화면 앞에
+        /// 붙은 레이어처럼 보이고 **월드에 닿지 않았다**. 지면에 닿는 신호가 하나 생기면 같은
+        /// 빗줄기가 갑자기 "이 섬에 내리는 비"로 읽힌다 - 파티클 하나 추가로 얻는 것 치고 효과가 크다.
+        ///
+        /// 비용: 시스템 1개(섬 개수와 무관한 단일 인스턴스), maxParticles 60, 삼각형 120.
+        /// HorizontalBillboard라 입자가 지면에 납작하게 눕는다(View 정렬이면 공중에 뜬 점으로 보인다).
+        /// useUnscaledTime: 엔딩/사망으로 timeScale이 0이 되어도 얼어붙지 않게 한다(AGENT_BRIEF 4장).
+        /// </summary>
+        public static ParticleSystem CreateRainSplashes(Transform parent)
+        {
+            // pointUpward=false: 아래 shape을 Box로 덮어쓰고 방출 방향도 안 쓰므로 회전이 필요 없다.
+            ParticleSystem ps = CreateSystem("RainSplashes", parent, Vector3.zero, false);
+
+            var main = ps.main;
+            main.loop = true;
+            main.duration = 1f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(0.30f, 0.55f);
+            main.startSpeed = 0f;                       // 파문은 번지기만 하고 이동하지 않는다
+            main.gravityModifier = 0f;
+            main.startSize = new ParticleSystem.MinMaxCurve(0.10f, 0.22f);
+            // 알파는 아래 ApplyFadeOut의 시작 알파(0.5)가 단독으로 정하게 1로 둔다.
+            // colorOverLifetime은 startColor를 "곱하기" 때문에 양쪽에 0.45를 넣으면 0.2가 되어
+            // 화면에서 사실상 보이지 않는다(이 파일 ApplyFadeOut 주석의 함정과 같은 것).
+            main.startColor = new Color(0.78f, 0.86f, 0.95f, 1f);
+            main.maxParticles = 60;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.useUnscaledTime = true;
+
+            var emission = ps.emission;
+            emission.rateOverTime = 0f;                 // WeatherSystem이 강우 세기에 맞춰 채운다
+
+            // 플레이어 주변 12m만 덮는다. 더 넓히면 경사면에서 파문이 지면과 어긋나 떠 보인다
+            // (섬 경사가 반지름 50m에 높이 8m = 0.16이라, 6m 밖이면 최대 1m 어긋난다).
+            var shape = ps.shape;
+            shape.enabled = true;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(12f, 0.01f, 12f);
+
+            // 수명 동안 커지면서 흐려진다 = 물에 번지는 파문.
+            var sizeOverLifetime = ps.sizeOverLifetime;
+            sizeOverLifetime.enabled = true;
+            sizeOverLifetime.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.EaseInOut(0f, 0.35f, 1f, 1f));
+
+            ApplyFadeOut(ps, 0.5f);
+
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+                renderer.renderMode = ParticleSystemRenderMode.HorizontalBillboard;
+
+            return ps;
+        }
+
         /// <summary>수명이 다할수록 입자가 작아지게 한다(불꽃이 사그라들고, 튄 조각이 잦아드는 느낌).</summary>
         private static void ApplyShrinkOverLifetime(ParticleSystem ps)
         {
