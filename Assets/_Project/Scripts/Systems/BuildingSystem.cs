@@ -121,6 +121,22 @@ namespace MakeGame.Systems
         private const int MaxEnclosureCells = 64;
 
         /// <summary>
+        /// 계단을 올라가는 방향의 **반대쪽으로 물려 놓는 거리(m)**. 계단이 셀에 딱 맞게 놓이면
+        /// 꼭대기 단의 끝과 참(landing) 바닥의 앞모서리가 정확히 맞닿는데, 그러면 계단을 올라갈 수 없다.
+        ///
+        /// 왜 그런가(씬 실측 CharacterController: 반지름 0.5 / 높이 2.0 / stepOffset 0.3 / skinWidth 0.08):
+        /// · 참 바닥은 윗면이 base+2.5이고 두께 0.20이 아래로 가므로 **밑면이 base+2.30**이다.
+        /// · 그 밑면~윗면(2.30~2.50) 구간은 플레이어 기준 "타고 오를 수 없는 벽"이다 - 6번째 단
+        ///   (발밑 base+1.944)에서 보면 벽 꼭대기가 0.476m 위라 stepOffset 0.3을 넘는다.
+        /// · 그 벽에 몸통이 먼저 닿아서, 캡슐 중심이 셀 앞모서리에서 0.58m 앞까지밖에 못 간다.
+        ///   PhysX가 단을 오를 때 쓰는 "0.3 올리고 → 앞으로 → 내리기" 경로에서도 앞으로 갈 수 있는
+        ///   한계가 1.519m인데 7번째 단은 1.556m에서 시작한다. **0.037m가 모자라서 6단에서 막힌다.**
+        /// 계단을 0.25m 물려 놓으면 그 0.037m가 0.287m 여유로 바뀐다(약 7배). 물린 만큼 꼭대기와 참
+        /// 사이에 0.25m 틈이 생기지만 캡슐 지름이 1.0m라 빠지지 않고, 밑단이 뒷칸으로 0.25m 나온다.
+        /// </summary>
+        private const float StairFrontClearance = 0.25f;
+
+        /// <summary>
         /// 갑판 윗면으로 인정하는 로컬 y 오차(m). 뗏목의 콜라이더는 선체 전체를 덮는 상자 하나라
         /// (RaftStructure.ApplyHullCollider) 옆면도 같은 콜라이더에 맞는다 - 높이와 법선을 함께 본다.
         /// </summary>
@@ -182,6 +198,13 @@ namespace MakeGame.Systems
         private int targetLevel;
         private int targetAxis;
 
+        // 계단을 놓을 때 함께 깔아 주는 참(landing) 바닥. 계단만 놓고 끝내면 꼭대기에서 한 발 내딛는
+        // 순간 아래층으로 떨어진다 - "시스템이 스스로 못 쓰는 상태를 만들지 않는다"는 원칙에 걸린다.
+        private bool targetNeedsLanding;
+        private int targetLandingCellX;
+        private int targetLandingCellZ;
+        private Vector3 targetLandingPosition;
+
         private Camera cachedCamera;
         private PlayerInventory cachedInventory;
 
@@ -211,6 +234,7 @@ namespace MakeGame.Systems
         private readonly List<int> bfsCellZ = new List<int>();
         private readonly HashSet<long> bfsVisited = new HashSet<long>();
         private readonly List<BuildPieceCost> refundBuffer = new List<BuildPieceCost>();
+        private readonly List<BuildPieceCost> placementCostBuffer = new List<BuildPieceCost>();
         private readonly List<PlacedPiece> rebuildBuffer = new List<PlacedPiece>();
 
         private Dictionary<string, ItemData> itemByName;
@@ -233,6 +257,12 @@ namespace MakeGame.Systems
 
         /// <summary>지금 조준하고 있는 좌표 공간(UI가 "갑판 위"를 알려 줄 때 쓴다).</summary>
         public BuildSpace TargetSpace => targetSpace;
+
+        /// <summary>
+        /// 지금 계단을 놓으면 참(landing) 바닥이 함께 깔리고 그 재료까지 소모되는지.
+        /// UI가 "계단 + 참"이라고 미리 알려 주기 위한 값이다(재료가 조용히 더 나가면 안 된다).
+        /// </summary>
+        public bool TargetIncludesLanding => targetNeedsLanding && selectedType == BuildPieceType.Stair;
 
         /// <summary>
         /// 실제로 지을 수 있는 부품인지. **배치 26에서 계단이 해금됐다** - 이제 잠긴 부품은 없지만,
@@ -634,6 +664,7 @@ namespace MakeGame.Systems
         {
             hasTarget = false;
             targetValid = false;
+            targetNeedsLanding = false;
             blockReason = BuildBlockReason.NoTarget;
             targetSpace = BuildSpace.Ground;
 
@@ -667,11 +698,65 @@ namespace MakeGame.Systems
             }
 
             // 재료 검사는 자리 판정이 끝난 뒤에 한 번만 한다(자리가 없으면 재료를 셀 필요도 없다).
-            if (hasTarget && targetValid && !HasMaterialsFor(selectedType))
+            // 계단은 참 바닥을 함께 깔 수 있으므로 **두 부품의 재료를 합산해서** 본다 - 같은 재료
+            // (나뭇가지)를 둘 다 쓰기 때문에 각각 따로 검사하면 모자란데도 통과한다.
+            if (hasTarget && targetValid)
             {
-                targetValid = false;
-                blockReason = BuildBlockReason.NotEnoughMaterials;
+                BuildPlacementCost(placementCostBuffer);
+                if (!HasMaterialsForList(placementCostBuffer))
+                {
+                    targetValid = false;
+                    blockReason = BuildBlockReason.NotEnoughMaterials;
+                }
             }
+        }
+
+        /// <summary>이번 설치로 실제 소모될 재료를 모은다(선택 부품 + 필요하면 참 바닥). 할당 없음.</summary>
+        private void BuildPlacementCost(List<BuildPieceCost> buffer)
+        {
+            buffer.Clear();
+            AccumulateCost(buffer, BuildPieceCatalog.GetCost(selectedType));
+
+            if (selectedType == BuildPieceType.Stair && targetNeedsLanding)
+                AccumulateCost(buffer, BuildPieceCatalog.GetCost(BuildPieceType.Floor));
+        }
+
+        /// <summary>재료표 하나를 buffer에 더한다. 같은 이름은 개수를 합친다.</summary>
+        private static void AccumulateCost(List<BuildPieceCost> buffer, IReadOnlyList<BuildPieceCost> cost)
+        {
+            if (cost == null)
+                return;
+
+            for (int i = 0; i < cost.Count; i++)
+            {
+                BuildPieceCost entry = cost[i];
+                if (string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
+                    continue;
+
+                bool merged = false;
+                for (int k = 0; k < buffer.Count; k++)
+                {
+                    if (buffer[k].itemName != entry.itemName)
+                        continue;
+
+                    buffer[k] = new BuildPieceCost(entry.itemName, buffer[k].count + entry.count);
+                    merged = true;
+                    break;
+                }
+
+                if (!merged)
+                    buffer.Add(entry);
+            }
+        }
+
+        private bool HasMaterialsForList(List<BuildPieceCost> cost)
+        {
+            for (int i = 0; i < cost.Count; i++)
+            {
+                if (CountOwned(cost[i].itemName) < cost[i].count)
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>바닥 조각의 놓을 자리를 정한다(지면 스냅 · 옆으로 잇기 · 위로 쌓기 · 계단참).</summary>
@@ -886,10 +971,14 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 계단의 놓을 자리를 정한다. 계단은 **바닥 칸 하나를 통째로 차지**하고, 그 칸의 바닥 위에서
-        /// 시작해 바라보는 방향으로 2m 나아가며 한 층(2.5m) 올라간다. 위층 바닥은 없어도 된다.
+        /// 시작해 바라보는 방향으로 2m 나아가며 한 층(2.5m) 올라간다.
+        /// 위층 바닥(계단 칸의 천장)은 **없어야** 하고, 계단이 닿는 앞칸의 참(landing) 바닥은 없으면
+        /// 계단과 함께 깔아 준다(StairFrontClearance / TryPlace 주석 참고).
         /// </summary>
         private void ResolveStairTarget(BuildSpace space, Vector3 point)
         {
+            targetNeedsLanding = false;
+
             int cellX = CellIndexOf(point.x);
             int cellZ = CellIndexOf(point.z);
 
@@ -911,9 +1000,15 @@ namespace MakeGame.Systems
             targetYaw = yaw;
 
             // 계단의 로컬 원점은 밑단의 **앞** 모서리다(BuildPieceVisualBuilder.BuildStair: 로컬 z 0→2).
-            // 그래서 셀 중심에서 바라보는 방향의 반대쪽으로 반 칸 물러난 자리가 원점이다.
+            // 셀 중심에서 바라보는 방향의 반대쪽으로 반 칸 + 통행 여유(StairFrontClearance)만큼 물린다.
             targetPosition = new Vector3(CellCenterCoord(cellX), support.y, CellCenterCoord(cellZ))
-                - forward * (CellSize * 0.5f);
+                - forward * (CellSize * 0.5f + StairFrontClearance);
+
+            int landingLevel = support.level + 1;
+            GetStepCell(cellX, cellZ, yaw, out int landingX, out int landingZ);
+            targetLandingCellX = landingX;
+            targetLandingCellZ = landingZ;
+            targetLandingPosition = new Vector3(CellCenterCoord(landingX), support.y + LevelHeight, CellCenterCoord(landingZ));
 
             if (space == BuildSpace.Deck && !IsDeckCellInBounds(cellX, cellZ))
             {
@@ -927,23 +1022,62 @@ namespace MakeGame.Systems
                 return;
             }
 
-            // 계단이 뚫고 올라가야 할 위층 바닥이 이미 덮여 있으면 못 놓는다(반대 순서도 막는다).
-            if (HasFloorAt(space, cellX, cellZ, support.level + 1))
+            // 계단이 뚫고 올라가야 할 위층 바닥(= 계단 칸의 천장)이 이미 덮여 있으면 못 놓는다.
+            // 반대 방향(바닥 먼저)은 ResolveFloorTarget이 막는다 - 양방향 대칭이다.
+            if (HasFloorAt(space, cellX, cellZ, landingLevel))
             {
                 blockReason = BuildBlockReason.StairInTheWay;
                 return;
+            }
+
+            // 참이 없으면 계단과 함께 깔아 준다. 깔 수 없는 자리(갑판 밖 / 바다 위)면 계단 자체를 막는다 -
+            // 내려설 곳이 없는 계단은 "못 쓰는 상태"이고, 그것을 만들 수 있게 두지 않는다.
+            targetNeedsLanding = !HasFloorAt(space, landingX, landingZ, landingLevel);
+            if (targetNeedsLanding)
+            {
+                // 참이 **다른 계단의 통행 경로**를 덮으면 안 된다. 이 검사를 빼면 자동 배치가
+                // ResolveFloorTarget의 금지 규칙을 우회해서, 손으로는 못 놓는 자리에 바닥이 생긴다.
+                if (stairByKey.ContainsKey(PieceKey(space, landingX, landingZ, landingLevel - 1, NonWallAxis)))
+                {
+                    blockReason = BuildBlockReason.StairInTheWay;
+                    return;
+                }
+
+                if (!CanPlaceLandingFloor(space, landingX, landingZ, targetLandingPosition.y))
+                {
+                    blockReason = space == BuildSpace.Deck ? BuildBlockReason.OffDeck : BuildBlockReason.NotOnGround;
+                    return;
+                }
             }
 
             targetValid = true;
             blockReason = BuildBlockReason.None;
         }
 
+        /// <summary>참(landing) 바닥을 그 칸에 깔 수 있는지. 바닥 배치와 같은 기준을 쓴다.</summary>
+        private bool CanPlaceLandingFloor(BuildSpace space, int cellX, int cellZ, float topY)
+        {
+            if (space == BuildSpace.Deck)
+                return IsDeckCellInBounds(cellX, cellZ);
+
+            if (!TryGetCellGround(cellX, cellZ, topY, out float maxGround, out float _))
+                return false;
+
+            return maxGround <= topY + BuriedTolerance;
+        }
+
         /// <summary>계단이 올라가 닿는 칸(참을 까는 자리).</summary>
         private static void GetStairLandingCell(PlacedPiece stair, out int cellX, out int cellZ)
         {
-            int step = ((Mathf.RoundToInt(stair.yaw / 90f) % 4) + 4) % 4;
-            cellX = stair.cellX;
-            cellZ = stair.cellZ;
+            GetStepCell(stair.cellX, stair.cellZ, stair.yaw, out cellX, out cellZ);
+        }
+
+        /// <summary>셀 (x,z)에서 yaw 방향으로 한 칸 나아간 셀.</summary>
+        private static void GetStepCell(int x, int z, float yaw, out int cellX, out int cellZ)
+        {
+            int step = ((Mathf.RoundToInt(yaw / 90f) % 4) + 4) % 4;
+            cellX = x;
+            cellZ = z;
 
             switch (step)
             {
@@ -1307,6 +1441,10 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 계단은 참(landing) 바닥과 **한 묶음으로** 세운다. 둘 중 하나라도 실패하면 둘 다 되돌리고
+            // 재료는 한 톨도 건드리지 않는다.
+            bool needsLanding = selectedType == BuildPieceType.Stair && targetNeedsLanding;
+
             // **순서가 곧 안전장치다.** 실물을 먼저 만들고, 성공한 뒤에야 재료를 지운다.
             // (이 프로젝트에서 아이템이 증발한 사고가 네 번 있었고 전부 반대 순서였다.)
             GameObject go = BuildPieceVisualBuilder.CreateSolid(selectedType, parent);
@@ -1320,12 +1458,28 @@ namespace MakeGame.Systems
 
             ApplyPieceTransform(go.transform, targetSpace, targetPosition, targetYaw);
 
-            if (!ConsumeCost(selectedType))
+            GameObject landingGo = null;
+            if (needsLanding)
+            {
+                landingGo = BuildPieceVisualBuilder.CreateSolid(BuildPieceType.Floor, parent);
+                if (landingGo == null)
+                {
+                    DiscardNewPiece(go);
+                    Debug.LogWarning("[BuildingSystem] 계단 참(바닥) 실물 생성에 실패해 계단 설치를 취소했다. 재료는 소모하지 않았다.");
+                    AudioManager.Instance?.PlayActionFail();
+                    return;
+                }
+
+                ApplyPieceTransform(landingGo.transform, targetSpace, targetLandingPosition, 0f);
+            }
+
+            BuildPlacementCost(placementCostBuffer);
+            if (!ConsumeCostList(placementCostBuffer))
             {
                 // 여기까지 오면 안 된다(ResolveTarget에서 이미 걸렀다). 그래도 왔다면 방금 만든 실물을
                 // 되돌려서 "재료는 남고 조각도 없다"는 안전한 상태로 끝낸다.
-                go.SetActive(false);
-                Destroy(go);
+                DiscardNewPiece(go);
+                DiscardNewPiece(landingGo);
                 Debug.LogWarning("[BuildingSystem] 재료 소모에 실패해 방금 만든 조각을 되돌렸다.");
                 AudioManager.Instance?.PlayActionFail();
                 return;
@@ -1334,12 +1488,31 @@ namespace MakeGame.Systems
             RegisterPiece(selectedType, targetSpace, go, targetCellX, targetCellZ, targetLevel, targetAxis,
                 targetPosition, targetYaw);
 
+            if (landingGo != null)
+            {
+                RegisterPiece(BuildPieceType.Floor, targetSpace, landingGo, targetLandingCellX, targetLandingCellZ,
+                    targetLevel + 1, NonWallAxis, targetLandingPosition, 0f);
+            }
+
             // Physics.autoSyncTransforms는 꺼져 있다(AGENT_BRIEF 4장). 방금 만든 콜라이더에 다음
             // 프레임 레이캐스트가 맞으려면 여기서 물리 씬에 반영해야 한다.
             Physics.SyncTransforms();
 
             AudioManager.Instance?.PlayCraftSuccess();
             Changed?.Invoke();
+        }
+
+        /// <summary>
+        /// 아직 등록하지 않은 실물을 되돌린다. Destroy는 프레임 끝까지 지연되므로 먼저 꺼서 이번
+        /// 프레임의 레이캐스트/물리에서 즉시 빠지게 한다.
+        /// </summary>
+        private void DiscardNewPiece(GameObject go)
+        {
+            if (go == null)
+                return;
+
+            go.SetActive(false);
+            Destroy(go);
         }
 
         /// <summary>조각을 제 공간의 좌표에 놓는다. 갑판 조각은 로컬, 지면 조각은 월드다.</summary>
@@ -1355,9 +1528,8 @@ namespace MakeGame.Systems
         /// 재료를 실제로 소모한다. **전부 있는지 먼저 확인한 뒤에 지운다** - 중간에 모자라면 이미 지운
         /// 재료를 되돌릴 방법이 없다(Shelter.ConsumeMaterials와 같은 규칙).
         /// </summary>
-        private bool ConsumeCost(BuildPieceType type)
+        private bool ConsumeCostList(List<BuildPieceCost> cost)
         {
-            IReadOnlyList<BuildPieceCost> cost = BuildPieceCatalog.GetCost(type);
             if (cost == null || cost.Count == 0)
                 return true;
 
@@ -1367,10 +1539,7 @@ namespace MakeGame.Systems
 
             for (int i = 0; i < cost.Count; i++)
             {
-                BuildPieceCost entry = cost[i];
-                if (string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
-                    continue;
-                if (CountOwned(entry.itemName) < entry.count)
+                if (CountOwned(cost[i].itemName) < cost[i].count)
                     return false;
             }
 

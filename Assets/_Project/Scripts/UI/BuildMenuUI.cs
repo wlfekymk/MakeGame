@@ -94,6 +94,7 @@ namespace MakeGame.UI
         private BuildBlockReason shownReason = (BuildBlockReason)(-1);
         private bool shownCanPlace;
         private BuildSpace shownSpace = (BuildSpace)(-1);
+        private bool shownIncludesLanding;
 
         private bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
@@ -193,7 +194,8 @@ namespace MakeGame.UI
             // (매 프레임 문자열 조립 금지 - AGENT_BRIEF 2장).
             else if (shownReason != building.BlockReason
                 || shownCanPlace != building.CanPlaceNow
-                || shownSpace != building.TargetSpace)
+                || shownSpace != building.TargetSpace
+                || shownIncludesLanding != building.TargetIncludesLanding)
                 RefreshStatus();
         }
 
@@ -527,6 +529,15 @@ namespace MakeGame.UI
                 costBuilder.Append(entry.count);
             }
 
+            // 계단은 꼭대기에 딛고 설 참(바닥)을 함께 깔고 그 재료도 함께 나간다(BuildingSystem.TryPlace).
+            // 재료가 조용히 더 빠져나가는 일이 없도록 칸에 미리 적어 둔다.
+            if (type == BuildPieceType.Stair)
+            {
+                if (costBuilder.Length > 0)
+                    costBuilder.Append('\n');
+                costBuilder.Append("+ 참 바닥");
+            }
+
             return costBuilder.Length == 0 ? "재료 없음" : costBuilder.ToString();
         }
 
@@ -540,16 +551,22 @@ namespace MakeGame.UI
             shownReason = building.BlockReason;
             shownCanPlace = building.CanPlaceNow;
             shownSpace = building.TargetSpace;
+            shownIncludesLanding = building.TargetIncludesLanding;
 
             // 갑판 위를 겨누고 있으면 그렇다고 알려 준다 - 같은 부품이 뗏목에 붙는지 땅에 박히는지는
             // 화면만 봐서는 구별이 어렵고, 배가 떠난 뒤에야 알게 되면 늦다.
             string where = shownSpace == BuildSpace.Deck ? "갑판 · " : "";
 
+            // 계단은 참(바닥)이 함께 깔리고 그 재료도 함께 나간다. 조용히 더 나가면 안 되니 이름에 붙인다.
+            string what = BuildPieceCatalog.GetDisplayName(building.SelectedType);
+            if (shownIncludesLanding)
+                what += " + 참(바닥)";
+
             // 구분자는 프로젝트의 다른 창들이 이미 쓰는 "·"를 그대로 쓴다(내장 LegacyRuntime 폰트에
             // 없을 수 있는 글자를 새로 들이지 않는다).
             statusLabel.text = shownCanPlace
-                ? $"{where}{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · 설치 가능"
-                : $"{where}{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · {BuildingSystem.DescribeBlockReason(shownReason)}";
+                ? $"{where}{what} · 설치 가능"
+                : $"{where}{what} · {BuildingSystem.DescribeBlockReason(shownReason)}";
 
             statusLabel.color = shownCanPlace ? UIBuilder.MedicGreen : UIBuilder.DangerRed;
         }
