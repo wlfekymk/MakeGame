@@ -251,6 +251,34 @@ namespace MakeGame.Systems
             activeHazards.Remove(this);
         }
 
+        /// <summary>목록 재구축 경고를 (개체가 아니라) 목록 단위로 한 번만 남기기 위한 표시.</summary>
+        private static bool activeHazardsRebuiltWarned;
+
+        /// <summary>
+        /// activeHazards를 씬 실물에서 다시 만든다. 평상시에는 절대 불리지 않는다 - OnEnable/OnDisable이
+        /// 목록을 정확히 관리하기 때문이다. 도메인 리로드로 static 목록만 비워졌을 때의 복구 경로다.
+        /// Unity 6.5: FindObjectsByType은 **1인자 형태만** 쓴다(FindObjectsSortMode 오버로드는 CS0618).
+        /// SaveLoadController.RestoreHazardsAndCreatures와 같은 호출 형태다.
+        /// </summary>
+        private static void RebuildActiveHazards()
+        {
+            activeHazards.Clear();
+
+            HazardSource[] found = FindObjectsByType<HazardSource>(FindObjectsInactive.Exclude);
+            for (int i = 0; i < found.Length; i++)
+            {
+                if (found[i] != null)
+                    activeHazards.Add(found[i]);
+            }
+
+            if (!activeHazardsRebuiltWarned)
+            {
+                activeHazardsRebuiltWarned = true;
+                Debug.LogWarning("[HazardSource] 활성 위험 요소 목록(static)이 비어 있어 씬에서 다시 만들었다(" +
+                    activeHazards.Count + "개). Play 중 스크립트 재컴파일(도메인 리로드) 직후에만 일어난다.");
+            }
+        }
+
         private void Start()
         {
             if (hazardType != HazardType.Bear)
@@ -790,6 +818,83 @@ namespace MakeGame.Systems
         private float bearHoverOffset = CreatureVisualBuilder.BearGroundOffset; // 지면에서 루트 중심까지의 높이
         private float bearSeaLevel;
         private System.Random bearRng;        // 배회 지점 추첨용. UnityEngine.Random 금지(재현성 규칙)
+        private bool bearRngRebuiltWarned;    // 지연 재생성 경고를 개체당 딱 한 번만 남기기 위한 표시
+
+        // ─────────────────────────────────────────────────────────────────────────────
+        //  ★ bearAiReady == true 인데 bearRng == null 이던 매 프레임 NRE의 원인과 그 수정 ★
+        //
+        //  ── 코드로 증명되는 사실 ─────────────────────────────────────────────────────
+        //  · bearAiReady를 true로 만드는 곳은 InitBearAI의 **마지막 줄** 하나뿐이고, 바로 그 직전 줄이
+        //    BearRng.NextDouble()을 부른다(아래 InitBearAI 참고). 즉 그 대입이 실행된 순간에는
+        //    bearRng이 반드시 non-null이었다 - null이었다면 한 줄 앞에서 예외가 나 bearAiReady는
+        //    false로 남는다. 그리고 이 파일 어디에도 bearRng에 null을 넣는 코드가 없다(유일한 대입은
+        //    InitBearAI의 new System.Random 한 줄).
+        //  · HazardSource를 만드는 곳은 HazardSpawner.SpawnSingleHazard 한 곳뿐이고, 거기서
+        //    hazardType = Bear / isBearCub을 **Start보다 먼저** 세운다(HazardSpawner.cs:490-496).
+        //    새끼도 hazardType은 Bear라 Start의 조기 반환에 걸리지 않고 InitBearAI를 반드시 탄다.
+        //    씬(SampleScene.unity)에는 HazardSource가 단 하나도 직렬화돼 있지 않다.
+        //  → 따라서 "한 도메인 안에서" 이 상태에 도달하는 C# 경로는 존재하지 않는다.
+        //
+        //  ── 그래서 실제로 무엇이 일어났나 ────────────────────────────────────────────
+        //  **Play 중 스크립트 재컴파일(도메인 리로드)** 이다. 이 프로젝트의 표준 작업 절차가
+        //  "외부에서 .cs 수정 → Unity에서 Assets > Refresh"인데(CLAUDE.md:7,
+        //  MULTI_AGENT_GUIDE.md:103/107 - Play 중 Refresh를 걸지 말라는 경고가 이미 적혀 있다),
+        //  Play 중에 이걸 하면 Unity가 MonoBehaviour 상태를 백업/복원한다. 이때 살아남는 것은
+        //  **Unity가 직렬화할 수 있는 타입의 필드뿐**이다:
+        //    · bool bearAiReady → 살아남는다(true 그대로)
+        //    · float/Vector3/enum/Transform[]/CreatureMotion(bearHome · bearGroundY · bearSeaLevel ·
+        //      bearHoverOffset · bearState · breathParts · bearMotion …) → 전부 살아남는다
+        //    · **System.Random bearRng → Unity가 직렬화할 수 없다 → null로 되돌아온다**
+        //  이 클래스에서 Unity가 직렬화하지 못하는 인스턴스 필드는 bearRng **하나뿐**이라, 리로드
+        //  직후의 곰은 정확히 "bearAiReady = true, bearRng = null" 상태가 되고 다음 배회 추첨에서
+        //  매 프레임 NRE를 뱉는다(성체도 EnterBearState의 Idle/Wander에서 똑같이 터진다 -
+        //  새끼가 먼저 눈에 띈 것은 새끼가 배회/Idle에 훨씬 자주 들어가기 때문이다).
+        //
+        //  ── 원인 수정 ────────────────────────────────────────────────────────────────
+        //  "직렬화되는 플래그(bearAiReady)가 직렬화되지 않는 상태(bearRng)의 존재를 보증한다"는
+        //  구조 자체를 없앤다. bearRng을 **(islandIndex, spawnOrder)에서 언제든 다시 만들 수 있는
+        //  캐시**로 강등하고, 모든 추첨을 아래 BearRng 프로퍼티 하나로만 통과시킨다. 시드 식은
+        //  BearRngSeed 한 곳에만 적어 InitBearAI와 지연 생성이 절대 어긋날 수 없게 한다
+        //  (시드가 달라지면 배회 패턴 재현성이 깨진다).
+        // ─────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 배회 난수의 시드. InitBearAI와 지연 재생성이 **같은 식**을 쓰도록 한 곳에만 적는다.
+        /// 값 자체는 예전 그대로다(islandIndex * 7919 + spawnOrder * 104729 + 31).
+        /// </summary>
+        private int BearRngSeed
+        {
+            get { return islandIndex * 7919 + spawnOrder * 104729 + 31; }
+        }
+
+        /// <summary>
+        /// 배회 추첨용 난수. 어떤 이유로든 비어 있으면 **같은 시드로 그 자리에서** 다시 만든다.
+        /// UnityEngine.Random은 쓰지 않는다(재현성 규칙). 경고는 개체당 한 번만 남긴다 -
+        /// 매 프레임 찍으면 콘솔 도배가 예외에서 경고로 바뀔 뿐이다.
+        /// </summary>
+        private System.Random BearRng
+        {
+            get
+            {
+                if (bearRng == null)
+                {
+                    bearRng = new System.Random(BearRngSeed);
+
+                    if (!bearRngRebuiltWarned)
+                    {
+                        bearRngRebuiltWarned = true;
+                        Debug.LogWarning(
+                            "[HazardSource] 곰 배회 난수(bearRng)가 비어 있어 같은 시드로 다시 만들었다 " +
+                            "(island " + islandIndex + " / spawn " + spawnOrder +
+                            (isBearCub ? " / 새끼" : " / 성체") +
+                            "). Play 중 스크립트 재컴파일(도메인 리로드)로 System.Random이 복원되지 " +
+                            "않은 경우다 - 배회 패턴만 시드 처음으로 되감긴다.", this);
+                    }
+                }
+
+                return bearRng;
+            }
+        }
 
         // 플레이어는 씬에 하나뿐이라 곰마다 따로 찾을 이유가 없다. 파괴된 참조는 Unity의 null 비교로 걸러진다.
         private static SurvivalStats cachedPlayerStats;
@@ -813,7 +918,8 @@ namespace MakeGame.Systems
             bearState = BearState.Idle;
 
             // 개체마다 다른(그러나 재실행해도 같은) 배회 패턴. UnityEngine.Random을 쓰지 않는다.
-            bearRng = new System.Random(islandIndex * 7919 + spawnOrder * 104729 + 31);
+            // 시드 식은 BearRngSeed 한 곳에만 적는다 - 지연 재생성(BearRng)과 어긋나면 재현성이 깨진다.
+            bearRng = new System.Random(BearRngSeed);
 
             // 해수면. 못 찾으면 0(WorldMapManager.seaLevel 기본값 · PlayerController.waterLevel과 같은 값).
             WorldMapManager world = FindAnyObjectByType<WorldMapManager>();
@@ -847,7 +953,7 @@ namespace MakeGame.Systems
                 bearGroundY = bearHome.y - bearHoverOffset;
             }
 
-            bearStateTimer = 1.5f + (float)bearRng.NextDouble() * 3f;
+            bearStateTimer = 1.5f + (float)BearRng.NextDouble() * 3f;
             bearAiReady = true;
         }
 
@@ -1062,12 +1168,12 @@ namespace MakeGame.Systems
             {
                 case BearState.Idle:
                     // 다음 배회까지 2~6초 쉰다.
-                    bearStateTimer = 2f + (float)bearRng.NextDouble() * 4f;
+                    bearStateTimer = 2f + (float)BearRng.NextDouble() * 4f;
                     break;
 
                 case BearState.Wander:
                     // 한 번 정한 목표를 최대 14초까지만 쫓는다(도중에 막히면 Idle로 빠진다).
-                    bearStateTimer = 8f + (float)bearRng.NextDouble() * 6f;
+                    bearStateTimer = 8f + (float)BearRng.NextDouble() * 6f;
                     break;
 
                 case BearState.Alert:
@@ -1308,8 +1414,8 @@ namespace MakeGame.Systems
         {
             for (int i = 0; i < 6; i++)
             {
-                double angle = bearRng.NextDouble() * 6.2831853;
-                double radius = BearWanderRadius * (0.35 + 0.65 * bearRng.NextDouble());
+                double angle = BearRng.NextDouble() * 6.2831853;
+                double radius = BearWanderRadius * (0.35 + 0.65 * BearRng.NextDouble());
                 float x = bearHome.x + (float)(System.Math.Cos(angle) * radius);
                 float z = bearHome.z + (float)(System.Math.Sin(angle) * radius);
 
@@ -1499,7 +1605,7 @@ namespace MakeGame.Systems
         private void EnterBearCubState(BearState next)
         {
             if (!bearAiReady)
-                return;   // Start 전(세이브 복원 등) - bearRng이 아직 없다
+                return;   // Start 전(세이브 복원 등) - bearHome/접지 기준값이 아직 없다
 
             bearState = next;
             bearLostTimer = 0f;
@@ -1507,10 +1613,10 @@ namespace MakeGame.Systems
             switch (next)
             {
                 case BearState.Idle:
-                    bearStateTimer = 1.5f + (float)bearRng.NextDouble() * 3f;
+                    bearStateTimer = 1.5f + (float)BearRng.NextDouble() * 3f;
                     break;
                 case BearState.Wander:
-                    bearStateTimer = 6f + (float)bearRng.NextDouble() * 5f;
+                    bearStateTimer = 6f + (float)BearRng.NextDouble() * 5f;
                     break;
                 case BearState.Chase:
                     bearStateTimer = CubFleeHoldSeconds;
@@ -1523,7 +1629,14 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 반경 CubMotherAlertRadius 안의 **성체** 곰을 전부 추격 상태로 밀어 넣는다(어미가 새끼를 지킨다).
-        /// 목록은 OnEnable/OnDisable이 관리하는 static 목록이라 FindObjectsByType을 부르지 않는다.
+        /// 목록은 OnEnable/OnDisable이 관리하는 static 목록이라 평상시에는 FindObjectsByType을 부르지 않는다.
+        ///
+        /// [bearRng NRE와 같은 뿌리의 두 번째 구멍] activeHazards는 **static**이라 Play 중 재컴파일
+        /// (도메인 리로드)에서 통째로 비워지는데, 이미 활성인 오브젝트의 OnEnable은 다시 불리지 않는다.
+        /// 그러면 목록이 영원히 빈 채로 남아 "새끼를 건드리면 어미가 온다"는 이 기능이 예외 하나 없이
+        /// 조용히 죽는다(bearRng과 달리 크래시가 아니라 무반응이라 더 늦게 발견된다). 그래서 목록이
+        /// 건강한지 딱 하나로 확인한다 - **자기 자신이 목록에 들어 있는가**. 정상이라면 자기 OnEnable이
+        /// 넣어 뒀으므로 반드시 들어 있고, 없다면 목록을 믿을 수 없다는 뜻이라 그 자리에서 다시 만든다.
         /// </summary>
         private void AlarmNearbyAdults()
         {
@@ -1531,6 +1644,9 @@ namespace MakeGame.Systems
                 return;
 
             cubAlarmTimer = CubAlarmCooldownSeconds;
+
+            if (!activeHazards.Contains(this))
+                RebuildActiveHazards();
 
             Vector3 self = transform.position;
             float sqrRadius = CubMotherAlertRadius * CubMotherAlertRadius;
