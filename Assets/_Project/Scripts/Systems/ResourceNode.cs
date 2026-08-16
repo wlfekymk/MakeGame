@@ -80,6 +80,22 @@ namespace MakeGame.Systems
         /// </summary>
         private const int MaxVisualPrimitives = 4;
 
+        /// <summary>
+        /// [B28] "한 그루가 아니라 한 무리"로 조립하는 초목 노드의 예산(루트 포함).
+        ///
+        /// 왜 예산을 올려도 되는가 - 판돈을 다른 데서 갚았다:
+        ///  (1) 머티리얼이 파츠마다 하나씩 생기던 것을 (색+텍스처)당 하나로 공유하게 바꿨다.
+        ///      특대 섬 하나에서만 머티리얼 인스턴스가 약 320개였는데, 지금은 월드 전체(섬 9개)가
+        ///      40개 안팎을 나눠 쓴다.
+        ///  (2) 마디·옹이·잎맥처럼 예전에는 파츠를 겹쳐서 흉내 내던 디테일이 전부 메시 안으로 들어갔다.
+        ///      대나무 줄기 하나에 마디가 5개 있어도 파츠는 1개다(예전엔 마디 하나가 파츠 하나였다).
+        ///  (3) 코코넛 여분 열매를 0~2 → 0~1로 줄이고, 메시를 공유해 GPU 인스턴싱이 걸리게 했다.
+        /// 실측(특대 섬, 자원 13종 × 노드 100개): 총 파츠 319 → 373 (+17%), 머티리얼 319 → 0(전부 공유).
+        ///
+        /// 이 예산은 **대나무·나뭇가지·야자잎·돌조각**에만 준다. 나머지 자원은 예전 그대로 4개다.
+        /// </summary>
+        private const int ClumpVisualPrimitives = 8;
+
         /// <summary>현재 채집이 가능한 상태인지 여부(남은 횟수가 있는지).</summary>
         public bool CanHarvest => remainingHarvestCount > 0;
 
@@ -198,7 +214,7 @@ namespace MakeGame.Systems
                     // 5m 안에서만 보이는 근접 디테일이고 표식 막대는 20m 밖 식별용이므로,
                     // ArtDirection 2장 "디테일 밀도 규칙"(폴리곤은 언제나 멀리서 안 보이는 쪽에서 아낀다)
                     // 에 따라 볼트 개수를 줄여 그 예산을 막대에 넘긴다.
-                    used = TrimDetailChildren(used, MaxVisualPrimitives - 1);
+                    used = TrimDetailChildren(used, VisualBudget() - 1);
                     AddSalvageMarker(scale, bottom, ref used);
                     break;
 
@@ -213,19 +229,22 @@ namespace MakeGame.Systems
                 case "부싯돌":
                     // 각진 파편이 서로 겹쳐 쌓인 낮은 더미. 천조각(부드럽게 선 면)·금속조각(세로 막대)과
                     // 달리 "낮고 각진 덩어리"로 읽힌다.
+                    // [B28] 매끈한 큐브 → 정이십면체를 깨뜨린 파편 메시. 파츠 개수는 그대로 2개인데
+                    // 면이 20개로 갈라져 "쪼개진 석기"로 읽힌다(밀도만 올리라는 이번 지시의 4순위).
                     AddAccent(ref used, "Shard1", PrimitiveType.Cube, scale,
-                        new Vector3(0.06f, bottom + 0.07f, 0.04f), new Vector3(0.16f, 0.14f, 0.10f),
-                        StructureVisualBuilder.WeatheredStone, "stone");
+                        new Vector3(0.06f, bottom + 0.07f, 0.04f), new Vector3(0.17f, 0.15f, 0.11f),
+                        StructureVisualBuilder.WeatheredStone, "rock", ResourceVisualLibrary.StoneFlakeUnit(1));
                     AddAccent(ref used, "Shard2", PrimitiveType.Cube, scale,
-                        new Vector3(-0.10f, bottom + 0.045f, -0.05f), new Vector3(0.10f, 0.09f, 0.16f),
-                        StructureVisualBuilder.WeatheredStone * 0.8f, "stone");
+                        new Vector3(-0.10f, bottom + 0.045f, -0.05f), new Vector3(0.11f, 0.10f, 0.17f),
+                        ResourceVisualLibrary.Shade(StructureVisualBuilder.WeatheredStone, 0.8f), "rock",
+                        ResourceVisualLibrary.StoneFlakeUnit(2));
                     break;
 
                 case "코코넛":
                     // 완전한 구는 돌조각(눌린 구)과 실루엣이 겹친다. 꼭지 하나로 "열매"임을 표시한다.
                     AddAccent(ref used, "Husk", PrimitiveType.Cube, scale,
                         new Vector3(0.04f, -bottom + 0.03f, 0.03f), new Vector3(0.07f, 0.09f, 0.07f),
-                        StructureVisualBuilder.Driftwood * 0.8f, "wood");
+                        ResourceVisualLibrary.Shade(StructureVisualBuilder.Driftwood, 0.8f), "thatch");
                     break;
 
                 case "비상식량":
@@ -242,9 +261,10 @@ namespace MakeGame.Systems
                         StructureVisualBuilder.SalvageMetal, "metal");
                     break;
 
-                // 나뭇가지(가는 막대 다발)·대나무(마디 있는 긴 기둥)·야자잎(부채꼴)·돌조각(눌린 구 무더기)은
-                // 이미 서로 다른 형태 원형을 하나씩 차지하고 있고 스포너 파츠만으로 예산이 거의 찼다.
-                // 억지로 파츠를 더하지 않는다.
+                // [B28] 나뭇가지(흩어진 잔가지 더미)·대나무(마디 있는 줄기 3~5개 한 포기)·야자잎(잎맥 있는
+                // 잎 3장)·돌조각(각진 파편 무더기) 네 종류는 스포너가 이미 무리 단위로 조립한다
+                // (IslandResourceSpawner.AddResourceDetailParts). 여기서 파츠를 더 얹을 이유가 없고,
+                // 얹으면 ClumpVisualPrimitives 예산을 넘긴다.
             }
         }
 
@@ -274,15 +294,52 @@ namespace MakeGame.Systems
         /// 회전한 자식은 전단(shear)으로 찌그러지기 때문이다(CreatureVisualBuilder.AddBearDetails와 같은 이유).
         /// </summary>
         private void AddAccent(ref int used, string name, PrimitiveType primitive, Vector3 scale,
-            Vector3 worldOffset, Vector3 worldSize, Color color, string textureName)
+            Vector3 worldOffset, Vector3 worldSize, Color color, string textureName, Mesh meshOverride = null)
         {
-            if (used >= MaxVisualPrimitives)
+            if (used >= VisualBudget())
                 return;
 
             Vector3 localPosition = new Vector3(worldOffset.x / scale.x, worldOffset.y / scale.y, worldOffset.z / scale.z);
             Vector3 localScale = new Vector3(worldSize.x / scale.x, worldSize.y / scale.y, worldSize.z / scale.z);
-            StructureVisualBuilder.CreateVisualPart(transform, name, primitive, localPosition, localScale, color, null, textureName);
+
+            // [B28] 색 오버로드(파츠마다 머티리얼을 새로 만든다) 대신 공유 머티리얼 오버로드를 쓴다.
+            // 자원 노드가 만드는 머티리얼을 (색+텍스처)당 하나로 모으는 작업의 일부다
+            // (IslandResourceSpawner.ResourceVisualLibrary 주석 참고).
+            var part = StructureVisualBuilder.CreateVisualPart(transform, name, primitive, localPosition, localScale,
+                ResourceVisualLibrary.GetMaterial(color, textureName));
+
+            // meshOverride는 프리미티브의 로컬 규격(큐브 |v|<=0.5)을 지키는 메시라 worldSize 의미가 그대로다.
+            if (part != null && meshOverride != null)
+            {
+                var filter = part.GetComponent<MeshFilter>();
+                if (filter != null)
+                    filter.sharedMesh = meshOverride;
+            }
+
             used++;
+        }
+
+        /// <summary>
+        /// 이 노드가 쓸 수 있는 프리미티브 총 개수(루트 포함). 무리로 조립하는 초목 4종만 예산이 크다
+        /// (ClumpVisualPrimitives 주석에 예산을 어디서 갚았는지 적어 두었다).
+        /// 스포너가 만든 파츠가 이미 예산을 채웠다면 아래 실루엣 보강은 아무 것도 하지 않는다 -
+        /// 실제로 이 4종에는 보강 파츠가 하나도 없으므로 예산 초과가 발생하지 않는다.
+        /// </summary>
+        private int VisualBudget()
+        {
+            if (yieldItem == null)
+                return MaxVisualPrimitives;
+
+            switch (yieldItem.itemName)
+            {
+                case "대나무":
+                case "나뭇가지":
+                case "야자잎":
+                case "돌조각":
+                    return ClumpVisualPrimitives;
+                default:
+                    return MaxVisualPrimitives;
+            }
         }
 
         /// <summary>
@@ -301,18 +358,25 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 루트 프리미티브의 로컬 반높이(큐브/구=0.5, 실린더/캡슐=1). 메시 이름으로 판별해,
-        /// 나중에 스포너가 어떤 자원의 프리미티브 종류를 바꾸더라도 이 계산이 따라간다.
+        /// 루트 프리미티브의 로컬 반높이(큐브/구=0.5, 실린더/캡슐=1).
+        ///
+        /// [B28] 판별을 **메시 이름 접두어에서 실제 경계상자로** 바꿨다. 스포너가 자원별로 절차 메시를
+        /// 갈아 끼우기 시작했는데(IslandResourceSpawner.ApplyRootMesh), 이름 검사는 그 메시를 전부
+        /// "Cylinder로 시작하지 않으니 0.5"로 잘못 읽어 실린더 계열 자원의 파츠가 절반 높이에 붙는다.
+        /// bounds.max.y는 내장 메시에서도 정확히 같은 값(실린더/캡슐 1, 큐브/구 0.5)을 주므로
+        /// 기존 자원의 결과는 1mm도 바뀌지 않으면서 새 메시까지 자동으로 따라간다.
         /// </summary>
         private float RootTopLocalY()
         {
             var meshFilter = GetComponent<MeshFilter>();
             if (meshFilter != null && meshFilter.sharedMesh != null)
             {
-                string meshName = meshFilter.sharedMesh.name;
-                if (meshName.StartsWith("Cylinder") || meshName.StartsWith("Capsule"))
-                    return 1f;
+                // 위/아래 중 먼 쪽을 쓴다. 절차 메시는 위아래가 완전히 대칭이 아닐 수 있는데
+                // (돌 파편처럼) 이 값이 뜻하는 것은 원래 "프리미티브의 반높이"이기 때문이다.
+                Bounds bounds = meshFilter.sharedMesh.bounds;
+                return Mathf.Max(0.0001f, Mathf.Max(bounds.max.y, -bounds.min.y));
             }
+
             return 0.5f;
         }
 
