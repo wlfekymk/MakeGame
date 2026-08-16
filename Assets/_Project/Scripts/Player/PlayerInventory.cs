@@ -25,18 +25,25 @@ namespace MakeGame.Player
         /// 씬의 PlayerInventory에는 이 키가 없으므로(SampleScene.unity, startingItemPool/items만 직렬화됨)
         /// 현재는 이 값이 유일한 소스다.
         ///
-        /// 30칸으로 정한 근거 - 이 게임에서 실제로 모이는 양:
+        /// **100칸(사용자 요청).** 예전 값은 30이었고 근거는 아래 계산이었다:
         /// · 한 종류가 가장 많이 쌓이는 경우가 야자잎이다. 노끈 1개 = 야자잎 3개(Recipe_노끈)이고,
         ///   쉼터 3단계까지 + 경비행기까지 필요한 노끈이 14개 수준이라 야자잎 42개 = 3칸(20개 스택).
         /// · 엔딩 비축은 비상식량 12 · 생수 12 · 연료 3 · 금속조각 6 · 노끈 4 · 엔진부품 2 = 6칸.
         /// · 도구는 겹쳐지지 않아 1개당 1칸이다(칼·물통·라이터·손도끼·창·파이어스타터 = 6칸).
-        /// 즉 정상적인 진행에서 20칸 안팎이고, 30칸이면 엔딩 요건이 용량으로 막히는 일은 구조적으로
-        /// 생기지 않는다(소프트락 방지). 그러면서도 13종 자원을 전부 상한까지 쓸어 담는 플레이는
-        /// 넘치므로, 쉼터 저장궤(Shelter의 chestStock)가 해방구 역할을 하게 된다.
+        /// 즉 정상적인 진행은 20칸 안팎이라 30으로도 소프트락은 없었지만, 13종 자원을 상한까지 쓸어
+        /// 담는 플레이에서는 계속 넘쳤다. 100칸이면 그 플레이까지 한 번에 들고 다닐 수 있다.
+        ///
+        /// **용량을 올릴 때 같이 봐야 하는 곳**(칸 수에 비례해 커지는 것들):
+        /// · InventoryUI - 창 높이를 칸 수에 비례해 늘리던 방식이었다. 100칸이면 17줄 = 1200px이라
+        ///   화면 밖으로 나가서, 7줄만 보이고 나머지는 스크롤하는 가상화 격자로 바꿨다(VirtualSlotGrid).
+        /// · ChestUI의 소지품 쪽 격자 - 같은 가상화 격자를 쓰므로 SlotCapacity만 따라가면 된다.
+        /// · SurvivalHudUI의 "가방 24/30" 칩 - 80% 비율로 판정하므로 값에 무관하게 그대로 맞는다.
+        /// 비례하지 않는 것: 세이브(SaveData는 아이템 평면 목록이라 칸 수를 저장하지 않는다),
+        /// CanCarryToIsland(해류 제약이라 칸 수와 무관), BuildingSystem의 FreeSlots 검사(상대값).
         /// </summary>
-        public const int DefaultSlotCapacity = 30;
+        public const int DefaultSlotCapacity = 100;
 
-        [Tooltip("인벤토리 칸 수 상한. 0 이하이면 코드 기본값(DefaultSlotCapacity=30)을 쓴다.\n" +
+        [Tooltip("인벤토리 칸 수 상한. 0 이하이면 코드 기본값(DefaultSlotCapacity=100)을 쓴다.\n" +
             "한 칸에는 같은 종류를 ItemData.MaxStackSize개까지 겹쳐 담을 수 있고, 내구도가 있는 도구는" +
             " 1개당 1칸을 쓴다.")]
         public int slotCapacity = DefaultSlotCapacity;

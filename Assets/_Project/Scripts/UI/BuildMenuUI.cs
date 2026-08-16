@@ -38,9 +38,10 @@ namespace MakeGame.UI
             BuildPieceType.Window,
             BuildPieceType.Stair,
             BuildPieceType.Roof,
+            BuildPieceType.Chest,
         };
 
-        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5, 지붕 = 6).</summary>
+        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5, 지붕 = 6, 상자 = 7).</summary>
         private static readonly KeyCode[] SelectKeys =
         {
             KeyCode.Alpha1,
@@ -49,6 +50,7 @@ namespace MakeGame.UI
             KeyCode.Alpha4,
             KeyCode.Alpha5,
             KeyCode.Alpha6,
+            KeyCode.Alpha7,
         };
 
         // ── 치수 ────────────────────────────────────────────────────────────────
@@ -63,7 +65,7 @@ namespace MakeGame.UI
         /// 정적 초기화 순서(선언 순서)상 안전하다.
         /// </summary>
         private static readonly float WindowWidth =
-            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing + WindowPadding * 2f; // 6칸 = 596
+            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing + WindowPadding * 2f; // 7칸 = 692
         private const float WindowHeight = GridTop + SlotSize + 62f;                                 // 192
 
         // ── 색 (UIBuilder 표준 상수를 그대로 쓴다 - 새로 만들지 않는다) ─────────

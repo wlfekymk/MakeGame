@@ -23,7 +23,7 @@ namespace MakeGame.UI
     /// 아이콘/글자/내구도 막대/개수)라 전부 만들면 1200개가 넘는다. 등급을 올릴 때마다 그걸 새로
     /// 만들면 프레임이 그대로 튄다. 그래서 격자를 GridLayoutGroup으로 깔지 않고 **화면에 실제로
     /// 보이는 줄 + 여유 2줄만큼만 칸 뷰를 만들어 스크롤에 따라 재사용(가상화)** 한다
-    /// (<see cref="VirtualSlotPanel"/>). 만들어지는 칸 뷰는 상자 쪽 최대 48개로 고정이고,
+    /// (<see cref="VirtualSlotGrid"/>). 만들어지는 칸 뷰는 상자 쪽 최대 48개로 고정이고,
     /// 50 → 100 → 150 → 200 어느 등급으로 올라가도 **칸 뷰는 단 하나도 새로 만들지 않는다**
     /// (콘텐츠 높이만 바뀐다).
     ///
@@ -139,8 +139,8 @@ namespace MakeGame.UI
         private Text hintLabel;
         private ItemTooltipUI tooltip;
 
-        private VirtualSlotPanel chestPanel;
-        private VirtualSlotPanel playerPanel;
+        private VirtualSlotGrid chestPanel;
+        private VirtualSlotGrid playerPanel;
 
         private float refreshTimer;
         private float messageUntil = -1f;
@@ -155,7 +155,7 @@ namespace MakeGame.UI
         private readonly StringBuilder costBuilder = new StringBuilder(96);
 
         /// <summary>커서가 얹혀 있는 칸(툴팁·강조용). 어느 쪽 격자인지까지 함께 들고 있어야 한다.</summary>
-        private VirtualSlotPanel hoverPanel;
+        private VirtualSlotGrid hoverPanel;
         private int hoverIndex = -1;
 
         // 툴팁이 마지막으로 채워진 내용. 커서가 같은 칸에 머무는 동안 다시 만들지 않는다.
@@ -501,11 +501,8 @@ namespace MakeGame.UI
             chestCaption = CreateColumnCaption("ChestCaption", WindowPadding, "상자");
             playerCaption = CreateColumnCaption("PlayerCaption", WindowPadding + PanelWidth + PanelGap, "내 소지품");
 
-            chestPanel = new VirtualSlotPanel();
-            chestPanel.Build(this, windowRt, "ChestGrid", WindowPadding, -GridTop, PanelWidth, ViewportHeight);
-
-            playerPanel = new VirtualSlotPanel();
-            playerPanel.Build(this, windowRt, "PlayerGrid", WindowPadding + PanelWidth + PanelGap, -GridTop, PanelWidth, ViewportHeight);
+            chestPanel = BuildGrid("ChestGrid", WindowPadding);
+            playerPanel = BuildGrid("PlayerGrid", WindowPadding + PanelWidth + PanelGap);
 
             BuildUpgradeRow();
 
@@ -513,6 +510,52 @@ namespace MakeGame.UI
             hintLabel = CreateRow("Hint", HintTop, HintHeight, WindowWidth - WindowPadding * 2f, 11, DimGray);
 
             tooltip = ItemTooltipUI.GetOrCreate();
+        }
+
+        /// <summary>
+        /// 격자 한 쪽(상자 / 소지품)을 만든다. 두 격자는 규격이 완전히 같고 위치만 다르다.
+        /// 실제 스크롤·칸 뷰 재사용은 공용 <see cref="VirtualSlotGrid"/>가 담당한다(인벤토리 창과 같은 구현).
+        /// </summary>
+        private VirtualSlotGrid BuildGrid(string name, float x)
+        {
+            var grid = new VirtualSlotGrid();
+            grid.Build(windowRt, name, PanelWidth, ViewportHeight, Columns, SlotSize, SlotSpacing, durabilityBars: true);
+            grid.Root.anchoredPosition = new Vector2(x, -GridTop);
+
+            // 콜백은 격자마다 어느 쪽인지를 함께 넘긴다(같은 처리기가 방향만 바꿔 쓴다).
+            grid.onEnter = index => OnSlotEnter(grid, index);
+            grid.onExit = index => OnSlotExit(grid, index);
+            grid.onLeftClick = index => OnSlotActivated(grid, index, IsWholeStackModifierHeld());
+            grid.onRightClick = index => OnSlotActivated(grid, index, true);
+            grid.onStyle = cell => ApplyCellStyle(grid, cell);
+
+            // 스크롤로 칸이 커서 밑에서 미끄러져 나가면 hover 강조와 툴팁을 정리한다
+            // (uGUI는 이 경우 PointerExit를 발행하지 않는다).
+            grid.onRowsChanged = () =>
+            {
+                if (hoverPanel != grid)
+                    return;
+
+                hoverPanel = null;
+                hoverIndex = -1;
+                HideTooltip();
+            };
+
+            return grid;
+        }
+
+        /// <summary>
+        /// 칸 배경색(빈칸 / 채움 / hover). 이 창에는 선택 상태가 없다 - 클릭이 곧 이동이라 "고른 뒤
+        /// 다시 누르는" 단계가 없기 때문이다(인벤토리 창의 버리기와 다른 점).
+        /// </summary>
+        private void ApplyCellStyle(VirtualSlotGrid grid, VirtualSlotGrid.Cell cell)
+        {
+            bool hovered = hoverPanel == grid && hoverIndex == cell.index && cell.index >= 0;
+            Color target = hovered ? UIBuilder.SlotHoverColor
+                : (cell.data != null ? UIBuilder.SlotFilledColor : UIBuilder.SlotEmptyColor);
+
+            if (cell.visual.background.color != target)
+                cell.visual.background.color = target;
         }
 
         /// <summary>창 폭을 가득 채우는 한 줄짜리 글자를 만든다(머리글/메시지/안내줄 공통).</summary>
@@ -587,7 +630,7 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 상자 쪽 격자를 다시 그린다. 등급이 올라 칸 수가 바뀌어도 **칸 뷰를 새로 만들지 않고**
-        /// 콘텐츠 높이와 스크롤 범위만 바꾼다(VirtualSlotPanel.SetCapacity).
+        /// 콘텐츠 높이와 스크롤 범위만 바꾼다(VirtualSlotGrid.SetCapacity).
         /// </summary>
         private void RefreshChestSide()
         {
@@ -760,7 +803,7 @@ namespace MakeGame.UI
         /// **인벤토리와 상자 양쪽의 실제 이동은 전부 StorageChest가 한다** - UI는 개수만 정해 넘기고
         /// 결과(성공 여부 / 실제로 옮긴 개수)를 화면에 옮겨 적을 뿐이다.
         /// </summary>
-        private void OnSlotActivated(VirtualSlotPanel panel, int index, bool whole)
+        private void OnSlotActivated(VirtualSlotGrid panel, int index, bool whole)
         {
             if (chest == null)
                 return;
@@ -867,17 +910,17 @@ namespace MakeGame.UI
         // hover / 툴팁
         // ────────────────────────────────────────────────────────────────────────
 
-        private void OnSlotEnter(VirtualSlotPanel panel, int index)
+        private void OnSlotEnter(VirtualSlotGrid panel, int index)
         {
             hoverPanel = panel;
             hoverIndex = index;
 
-            chestPanel.RefreshColors();
-            playerPanel.RefreshColors();
+            chestPanel.RefreshStyles();
+            playerPanel.RefreshStyles();
             ShowTooltipFor(panel, index);
         }
 
-        private void OnSlotExit(VirtualSlotPanel panel, int index)
+        private void OnSlotExit(VirtualSlotGrid panel, int index)
         {
             if (hoverPanel != panel || hoverIndex != index)
                 return;
@@ -885,8 +928,8 @@ namespace MakeGame.UI
             hoverPanel = null;
             hoverIndex = -1;
 
-            chestPanel.RefreshColors();
-            playerPanel.RefreshColors();
+            chestPanel.RefreshStyles();
+            playerPanel.RefreshStyles();
             HideTooltip();
         }
 
@@ -897,7 +940,7 @@ namespace MakeGame.UI
                 ShowTooltipFor(hoverPanel, hoverIndex);
         }
 
-        private void ShowTooltipFor(VirtualSlotPanel panel, int index)
+        private void ShowTooltipFor(VirtualSlotGrid panel, int index)
         {
             if (tooltip == null)
                 return;
@@ -942,374 +985,5 @@ namespace MakeGame.UI
             return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
         }
 
-        // ────────────────────────────────────────────────────────────────────────
-        // 가상화 격자
-        // ────────────────────────────────────────────────────────────────────────
-
-        /// <summary>칸 뷰 하나와 "지금 이 뷰가 무엇을 보여주고 있는지" 캐시.</summary>
-        private class SlotBinding
-        {
-            public UIBuilder.SlotVisual visual;
-
-            public int dataIndex = -1;
-            public ItemData data;
-            public int count = -1;
-            public int remaining = int.MinValue;
-            public bool shown;
-        }
-
-        /// <summary>
-        /// **스크롤 + 칸 뷰 재사용(가상화) 격자.** 이 창이 200칸을 감당하는 방법이다.
-        ///
-        /// GridLayoutGroup으로 200칸을 깔면 칸 뷰 200개(자식까지 1200개가 넘는다)가 실제로 존재하게
-        /// 되고, 등급을 올릴 때마다 50개씩 새로 만들면서 프레임이 튄다. 여기서는 콘텐츠(전체 격자)의
-        /// **높이만** 칸 수에 맞춰 늘리고, 칸 뷰는 화면에 보이는 줄 + 여유 2줄만큼만 만들어 스크롤
-        /// 위치에 따라 다른 인덱스로 다시 묶는다(재사용). 그래서:
-        ///   · 만들어지는 칸 뷰 수 = 최대 (VisibleRows + SpareRows) × Columns = 48개로 고정.
-        ///   · 50 → 200칸으로 올라가도 새로 만들어지는 오브젝트가 **0개**다.
-        ///   · 스크롤은 위치 계산 + 내용 갱신뿐이라 오브젝트 생성/파괴가 전혀 없다.
-        ///
-        /// 배치는 GridLayoutGroup 없이 직접 한다 - 레이아웃 그룹은 자식 전부를 대상으로 재계산하므로
-        /// 가상화와 같이 쓰면 이득이 사라진다.
-        /// </summary>
-        private class VirtualSlotPanel
-        {
-            private ChestUI owner;
-
-            private RectTransform root;
-            private RectTransform viewport;
-            private RectTransform content;
-            private ScrollRect scroll;
-
-            private readonly List<SlotBinding> slots = new List<SlotBinding>();
-
-            /// <summary>소유자가 GetStacks(buffer)로 직접 채우는 표시용 목록(리스트를 새로 만들지 않는다).</summary>
-            private readonly List<InventoryStack> stacks = new List<InventoryStack>();
-
-            private int capacity;
-            private int firstRow = -1;
-            private float viewportHeight;
-
-            public List<InventoryStack> Buffer => stacks;
-
-            /// <summary>이 격자가 만들 수 있는 칸 뷰의 절대 상한(=화면에 보이는 줄 + 여유 줄).</summary>
-            private static int MaxPooledSlots => (VisibleRows + SpareRows) * Columns;
-
-            /// <summary>스크롤 영역 · 콘텐츠 · 칸 뷰 풀을 만든다.</summary>
-            public void Build(ChestUI ownerUI, Transform parent, string name, float x, float yTop, float width, float height)
-            {
-                owner = ownerUI;
-                viewportHeight = height;
-
-                var rootGo = new GameObject(name, typeof(RectTransform), typeof(ScrollRect));
-                rootGo.transform.SetParent(parent, false);
-                root = rootGo.GetComponent<RectTransform>();
-                root.anchorMin = new Vector2(0f, 1f);
-                root.anchorMax = new Vector2(0f, 1f);
-                root.pivot = new Vector2(0f, 1f);
-                root.sizeDelta = new Vector2(width, height);
-                root.anchoredPosition = new Vector2(x, yTop);
-
-                // 뷰포트: RectMask2D가 영역 밖으로 나간 칸을 잘라낸다(MinimapUI가 쓰는 것과 같은 방식).
-                // 아주 옅은 배경을 깔아 두는 이유는 두 가지다 - (1) 격자 영역의 경계가 눈에 보이고,
-                // (2) raycastTarget이 켜져 있어야 빈 자리에서 끌어 스크롤하는 조작이 먹는다.
-                viewport = UIBuilder.CreatePanel(root, "Viewport",
-                    anchorMin: Vector2.zero, anchorMax: Vector2.one,
-                    offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                    color: new Color(1f, 1f, 1f, 0.02f));
-                viewport.gameObject.AddComponent<RectMask2D>();
-
-                var contentGo = new GameObject("Content", typeof(RectTransform));
-                contentGo.transform.SetParent(viewport, false);
-                content = contentGo.GetComponent<RectTransform>();
-                content.anchorMin = new Vector2(0f, 1f);
-                content.anchorMax = new Vector2(1f, 1f);
-                content.pivot = new Vector2(0.5f, 1f);
-                content.anchoredPosition = Vector2.zero;
-                content.sizeDelta = new Vector2(0f, height);
-
-                scroll = rootGo.GetComponent<ScrollRect>();
-                scroll.viewport = viewport;
-                scroll.content = content;
-                scroll.horizontal = false;
-                scroll.vertical = true;
-                scroll.movementType = ScrollRect.MovementType.Clamped;
-                scroll.scrollSensitivity = RowStride; // 휠 한 칸 = 한 줄
-                scroll.onValueChanged.AddListener(OnScrolled);
-            }
-
-            private void OnScrolled(Vector2 _)
-            {
-                Rebind(false);
-            }
-
-            /// <summary>스크롤을 맨 위로 되돌린다(다른 상자를 열었을 때).</summary>
-            public void ResetScroll()
-            {
-                if (content == null)
-                    return;
-
-                content.anchoredPosition = new Vector2(content.anchoredPosition.x, 0f);
-                firstRow = -1;
-            }
-
-            /// <summary>
-            /// 칸 수를 바꾼다. **칸 뷰를 새로 만들지 않는다** - 콘텐츠 높이(=스크롤 가능 범위)만 바꾸고,
-            /// 아직 풀에 없는 만큼만(그것도 48개를 넘지 않게) 칸 뷰를 채운다. 그래서 특대(200칸)로
-            /// 올려도 이미 48개가 만들어져 있으면 생성 비용이 0이다.
-            /// </summary>
-            public void SetCapacity(int newCapacity)
-            {
-                newCapacity = Mathf.Max(0, newCapacity);
-
-                EnsurePool(Mathf.Min(MaxPooledSlots, newCapacity));
-
-                if (newCapacity == capacity)
-                    return;
-
-                capacity = newCapacity;
-
-                int rows = Mathf.Max(1, Mathf.CeilToInt(capacity / (float)Columns));
-                float contentHeight = Mathf.Max(viewportHeight, rows * SlotSize + (rows - 1) * SlotSpacing);
-                content.sizeDelta = new Vector2(0f, contentHeight);
-
-                // 칸이 줄어드는 경우(있을 수 없지만 방어) 스크롤이 빈 영역에 남지 않게 되돌린다.
-                float maxScroll = Mathf.Max(0f, contentHeight - viewportHeight);
-                if (content.anchoredPosition.y > maxScroll)
-                    content.anchoredPosition = new Vector2(content.anchoredPosition.x, maxScroll);
-
-                firstRow = -1; // 다음 Rebind가 반드시 전부 다시 묶게 한다
-            }
-
-            /// <summary>필요한 만큼만 칸 뷰를 만든다(한 번 만든 뷰는 파괴하지 않고 계속 재사용한다).</summary>
-            private void EnsurePool(int wanted)
-            {
-                while (slots.Count < wanted)
-                {
-                    int poolIndex = slots.Count;
-
-                    var binding = new SlotBinding();
-                    binding.visual = UIBuilder.CreateItemSlot(content, $"Slot{poolIndex}", withDurabilityBar: true);
-
-                    RectTransform rt = binding.visual.rect;
-                    rt.anchorMin = new Vector2(0f, 1f);
-                    rt.anchorMax = new Vector2(0f, 1f);
-                    rt.pivot = new Vector2(0f, 1f);
-                    rt.sizeDelta = new Vector2(SlotSize, SlotSize);
-
-                    // 콜백은 만들 때 한 번만 연결한다. 어떤 칸인지는 Rebind가 index에 다시 써 넣는다
-                    // (같은 뷰가 스크롤에 따라 다른 칸을 맡기 때문이다).
-                    var input = binding.visual.input;
-                    input.index = -1;
-                    input.onEnter = OnSlotEnter;
-                    input.onExit = OnSlotExit;
-                    input.onLeftClick = OnSlotLeftClick;
-                    input.onRightClick = OnSlotRightClick;
-
-                    binding.shown = true;
-                    slots.Add(binding);
-                }
-            }
-
-            private void OnSlotEnter(int dataIndex)
-            {
-                owner.OnSlotEnter(this, dataIndex);
-            }
-
-            private void OnSlotExit(int dataIndex)
-            {
-                owner.OnSlotExit(this, dataIndex);
-            }
-
-            private void OnSlotLeftClick(int dataIndex)
-            {
-                owner.OnSlotActivated(this, dataIndex, IsWholeStackModifierHeld());
-            }
-
-            private void OnSlotRightClick(int dataIndex)
-            {
-                owner.OnSlotActivated(this, dataIndex, true);
-            }
-
-            /// <summary>표시 목록에서 그 칸이 담고 있는 스택을 얻는다(빈 칸이면 null).</summary>
-            public InventoryStack GetStack(int dataIndex)
-            {
-                if (dataIndex < 0 || dataIndex >= stacks.Count)
-                    return null;
-
-                return stacks[dataIndex];
-            }
-
-            /// <summary>
-            /// 지금 스크롤 위치에 맞춰 칸 뷰를 데이터에 다시 묶는다. force가 아니면 스크롤이 한 줄도
-            /// 움직이지 않은 프레임에서는 아무 일도 하지 않는다(휠 한 번에 수십 번 불려도 안전하다).
-            /// </summary>
-            public void Rebind(bool force)
-            {
-                if (content == null || slots.Count == 0)
-                    return;
-
-                int totalRows = Mathf.Max(1, Mathf.CeilToInt(capacity / (float)Columns));
-                int poolRows = Mathf.Max(1, slots.Count / Columns);
-                int maxFirstRow = Mathf.Max(0, totalRows - poolRows);
-
-                int newFirstRow = Mathf.Clamp(Mathf.FloorToInt(content.anchoredPosition.y / RowStride), 0, maxFirstRow);
-                if (!force && newFirstRow == firstRow)
-                    return;
-
-                firstRow = newFirstRow;
-
-                for (int i = 0; i < slots.Count; i++)
-                {
-                    SlotBinding binding = slots[i];
-
-                    int row = firstRow + i / Columns;
-                    int column = i % Columns;
-                    int dataIndex = row * Columns + column;
-
-                    if (dataIndex >= capacity)
-                    {
-                        Hide(binding);
-                        continue;
-                    }
-
-                    if (!binding.shown)
-                    {
-                        binding.visual.go.SetActive(true);
-                        binding.shown = true;
-                    }
-
-                    binding.visual.rect.anchoredPosition = new Vector2(column * RowStride, -row * RowStride);
-                    binding.visual.input.index = dataIndex;
-
-                    Apply(binding, dataIndex);
-                }
-            }
-
-            /// <summary>hover 상태만 다시 칠한다(내용은 그대로라 문자열을 만들지 않는다).</summary>
-            public void RefreshColors()
-            {
-                for (int i = 0; i < slots.Count; i++)
-                {
-                    SlotBinding binding = slots[i];
-                    if (binding.shown)
-                        ApplyColor(binding);
-                }
-            }
-
-            private void Hide(SlotBinding binding)
-            {
-                if (!binding.shown)
-                    return;
-
-                binding.shown = false;
-                binding.dataIndex = -1;
-                binding.data = null;
-                binding.count = -1;
-                binding.remaining = int.MinValue;
-                binding.visual.input.index = -1;
-                binding.visual.go.SetActive(false);
-            }
-
-            /// <summary>칸 하나의 내용을 그린다. 지난번과 같은 칸·같은 내용이면 문자열을 다시 만들지 않는다.</summary>
-            private void Apply(SlotBinding binding, int dataIndex)
-            {
-                InventoryStack stack = dataIndex < stacks.Count ? stacks[dataIndex] : null;
-                ItemData data = stack != null ? stack.data : null;
-                int count = stack != null ? stack.count : 0;
-
-                // **대표 인스턴스가 없을 수 있다.** InventoryStack.RemainingUses는 대표가 null이면 0을
-                // 돌려주는데(InventoryItem.cs), 상자가 개수만 세어 보관하는 구현이라면 모든 칸이 그렇다.
-                // 그 0을 내구도로 믿으면 상자에 넣어둔 손도끼가 전부 "다 닳음(빨간 막대)"으로 보인다.
-                // 그래서 대표가 없을 때는 int.MinValue = "모름"으로 두고 막대 자체를 그리지 않는다.
-                int remaining = (stack != null && stack.representative != null) ? stack.RemainingUses : int.MinValue;
-
-                if (binding.dataIndex == dataIndex && binding.data == data && binding.count == count && binding.remaining == remaining)
-                {
-                    ApplyColor(binding);
-                    return;
-                }
-
-                binding.dataIndex = dataIndex;
-                binding.data = data;
-                binding.count = count;
-                binding.remaining = remaining;
-
-                UIBuilder.SlotVisual visual = binding.visual;
-
-                if (data == null)
-                {
-                    visual.icon.enabled = false;
-                    visual.icon.sprite = null;
-                    visual.categoryStrip.color = Color.clear;
-                    visual.letterLabel.gameObject.SetActive(false);
-                    visual.countLabel.gameObject.SetActive(false);
-                    if (visual.durabilityBarGo != null)
-                        visual.durabilityBarGo.SetActive(false);
-
-                    ApplyColor(binding);
-                    return;
-                }
-
-                visual.categoryStrip.color = UIBuilder.GetItemCategoryColor(data);
-
-                // 아이콘은 인벤토리 창과 **같은 경로**로 얻는다(ItemData.icon, 없으면 이름 첫 글자 폴백).
-                visual.icon.enabled = true;
-                if (data.icon != null)
-                {
-                    visual.icon.sprite = data.icon;
-                    visual.icon.color = Color.white;
-                    visual.letterLabel.gameObject.SetActive(false);
-                }
-                else
-                {
-                    visual.icon.sprite = null;
-                    visual.icon.color = UIBuilder.GetItemCategoryColor(data);
-                    visual.letterLabel.gameObject.SetActive(true);
-                    visual.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
-                }
-
-                // 개수 1은 찍지 않는다("x1"은 정보가 없고 아이콘만 가린다 - 격자 UI의 표준).
-                if (count > 1)
-                {
-                    visual.countLabel.gameObject.SetActive(true);
-                    visual.countLabel.text = count.ToString();
-                    visual.countLabel.color = count >= data.MaxStackSize ? SunstrokeGold : Color.white;
-                }
-                else
-                {
-                    visual.countLabel.gameObject.SetActive(false);
-                }
-
-                bool durableTool = !data.IsStackable && !data.IsUnlimited && data.maxUses > 1 && remaining != int.MinValue;
-                if (visual.durabilityBarGo != null)
-                {
-                    if (durableTool)
-                    {
-                        float ratio = Mathf.Clamp01((float)remaining / data.maxUses);
-                        visual.durabilityBarGo.SetActive(true);
-                        visual.durabilityFill.fillAmount = ratio;
-                        visual.durabilityFill.color = ratio <= 0.2f ? DangerRed : ratio <= 0.4f ? SunstrokeGold : MedicGreen;
-                    }
-                    else
-                    {
-                        visual.durabilityBarGo.SetActive(false);
-                    }
-                }
-
-                ApplyColor(binding);
-            }
-
-            /// <summary>칸 배경색(빈칸/채움/hover). 색이 실제로 달라질 때만 Image에 쓴다.</summary>
-            private void ApplyColor(SlotBinding binding)
-            {
-                bool hovered = owner.hoverPanel == this && owner.hoverIndex == binding.dataIndex && binding.dataIndex >= 0;
-                Color target = hovered ? UIBuilder.SlotHoverColor
-                    : (binding.data != null ? UIBuilder.SlotFilledColor : UIBuilder.SlotEmptyColor);
-
-                if (binding.visual.background.color != target)
-                    binding.visual.background.color = target;
-            }
-        }
     }
 }

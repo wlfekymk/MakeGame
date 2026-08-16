@@ -19,6 +19,11 @@ namespace MakeGame.UI
     ///
     /// 지금 구조:
     /// · 슬롯 = 스택 1개. SlotCapacity 만큼 **빈 칸까지 전부** 그린다(용량이 형태로 읽힌다).
+    /// · 용량이 30 → 100칸이 되면서 격자를 **스크롤 + 칸 뷰 재사용(가상화)** 으로 바꿨다
+    ///   (<see cref="VirtualSlotGrid"/> - 보관 상자 창과 같은 구현을 공유한다). 100칸을 한 화면에
+    ///   전부 그리면 17줄 = 창 높이 1200px이 넘어 1080 화면 밖으로 나가고, 칸 뷰 100개(자식까지
+    ///   600개가 넘는다)를 창을 열 때마다 레이아웃에 태우게 된다. 지금은 7줄(42칸)이 보이고
+    ///   나머지는 스크롤이며, 실제로 만들어지는 칸 뷰는 54개가 상한이다.
     /// · 슬롯 안 = 아이콘(꽉 차게) + 우하단 개수 + (도구면) 하단 내구도 막대 + 좌측 카테고리 색 띠.
     /// · 개수 1은 숫자를 찍지 않는다 - "x1"은 정보가 없고 아이콘만 가린다.
     /// · 제목 표시줄 드래그로 창 이동(UIDragHandle), 우상단 X로 닫기, 아이콘 hover로 툴팁(ItemTooltipUI).
@@ -63,8 +68,7 @@ namespace MakeGame.UI
         /// <summary>주울 수 없었다는 경고를 띄워두는 시간(초).</summary>
         private const float RejectWarningDuration = 3f;
 
-        // 격자 치수. 1920x1080 기준 폭 430 - 6열이면 한 화면에 30칸이 5줄로 들어가고, 창을 옮겨도
-        // 시야를 크게 가리지 않는다.
+        // 격자 치수. 1920x1080 기준 폭 430 - 6열이면 창을 옮겨도 시야를 크게 가리지 않는다.
         private const int Columns = 6;
         private const float SlotSize = 62f;
         private const float SlotSpacing = 6f;
@@ -76,11 +80,24 @@ namespace MakeGame.UI
         private const float FilterChipWidth = 180f;
         private const float DropButtonWidth = 100f;
 
+        /// <summary>
+        /// 한 화면에 보이는 줄 수. **창 높이는 이제 용량과 무관한 고정값**이고, 남는 칸은 스크롤로 본다.
+        /// 7줄 = 42칸이 한눈에 들어오고 창 높이는 618px이라 1080 화면에 여유 있게 들어간다
+        /// (용량에 비례해 늘리던 예전 방식은 100칸에서 1200px을 넘어 화면 밖으로 나간다).
+        /// </summary>
+        private const int VisibleRows = 7;
+
+        /// <summary>격자(뷰포트) 높이. 보이는 줄 수로만 정해진다.</summary>
+        private const float GridHeight = VisibleRows * SlotSize + (VisibleRows - 1) * SlotSpacing;
+
         /// <summary>격자 위쪽(제목 표시줄 + 용량/필터 줄)이 차지하는 높이.</summary>
         private const float GridTopOffset = TitleBarHeight + 6f + InfoRowHeight + 10f;
 
         /// <summary>격자 아래쪽(선택 줄 + 버리기 버튼 + 조작 안내)이 차지하는 높이.</summary>
         private const float GridBottomOffset = 10f + FooterButtonHeight + 6f + HintHeight + 12f;
+
+        /// <summary>창 전체 높이(76 + 470 + 72 = 618px 고정).</summary>
+        private const float WindowHeight = GridTopOffset + GridHeight + GridBottomOffset;
 
         // 색: ArtDirection.md 팔레트 안에서만 쓴다(새 색을 만들지 않는다).
         private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);        // #CCCCCC
@@ -111,28 +128,6 @@ namespace MakeGame.UI
 
         private float refreshTimer = 0f;
 
-        /// <summary>격자 칸 하나. 화면 오브젝트와 "지금 이 칸이 무엇을 보여주고 있는지" 캐시를 함께 들고 있다.</summary>
-        private class SlotView
-        {
-            public GameObject go;
-            public Image background;
-            public Outline selectionOutline; // 선택/확인대기 테두리(색으로 두 상태를 구분)
-            public Image categoryStrip;      // 왼쪽 세로 색 띠(무기 #CC3333 등)
-            public Image icon;
-            public Text letterLabel;         // 아이콘 스프라이트가 없을 때의 폴백(이름 첫 글자)
-            public Text countLabel;          // 우하단 개수. 1개면 표시하지 않는다.
-            public GameObject duraBarGo;     // 내구도 막대(도구 칸에서만)
-            public Image duraFill;
-            public InventorySlotView input;
-
-            // 이 칸이 지금 표시 중인 내용. 문자열을 다시 만들지 말지 판단하는 캐시이자,
-            // 클릭/툴팁이 "화면에서 고른 그것"을 정확히 가리키게 하는 근거다.
-            public ItemData data;
-            public InventoryItem representative;
-            public int count = -1;
-            public int remaining = int.MinValue;
-        }
-
         // 사용법 힌트에 쓰는 실제 키. 실제 키는 InteractionController가 정하고 씬에서 바뀔 수 있다.
         private KeyCode interactKey = KeyCode.E;
         private KeyCode cookKey = KeyCode.R;
@@ -143,7 +138,6 @@ namespace MakeGame.UI
         private GameObject panelRoot;
         private RectTransform windowRt;
         private UIDragHandle dragHandle;
-        private RectTransform gridContainer;
         private Text capacityLabel;
         private Text filterLabel;
         private Text selectionLabel;
@@ -152,13 +146,14 @@ namespace MakeGame.UI
         private Text dropButtonLabel;
         private ItemTooltipUI tooltip;
 
-        private readonly List<SlotView> slots = new List<SlotView>();
-        private int builtCapacity = -1;
+        /// <summary>
+        /// 스크롤 + 칸 뷰 재사용 격자. 표시 목록(필터/정렬을 거친 스택들)은 이 격자의 Buffer가 그대로
+        /// 들고 있으므로, 화면의 n번째 칸 = Buffer[n]이다(클릭·툴팁·선택이 전부 이 인덱스를 쓴다).
+        /// </summary>
+        private readonly VirtualSlotGrid grid = new VirtualSlotGrid();
 
         // 칸 뷰 버퍼. PlayerInventory.GetStacks(buffer)가 내부에서 Clear하고 다시 채운다.
         private readonly List<InventoryStack> stackBuffer = new List<InventoryStack>();
-        // 필터/정렬을 거친 표시용 목록(원본 순서를 망가뜨리지 않도록 따로 둔다).
-        private readonly List<InventoryStack> displayBuffer = new List<InventoryStack>();
 
         private int hoverIndex = -1;
         private int selectedIndex = -1;
@@ -301,6 +296,11 @@ namespace MakeGame.UI
         {
             currentFilterIndex = (currentFilterIndex + 1) % CategoryFilterNames.Length;
 
+            // 필터를 바꾸면 목록이 통째로 달라진다. 스크롤을 그대로 두면 "아무것도 없는 아래쪽"을
+            // 보고 있게 되므로(예: 재료 40칸에서 스크롤을 내린 채 '치료' 필터로 넘어가면 빈 화면),
+            // 맨 위로 되돌린다.
+            grid.ResetScroll();
+
             // 필터가 바뀌면 화면에서 사라질 수도 있는 대상을 선택한 채로 두지 않는다.
             ClearSelection();
             RefreshGrid();
@@ -367,27 +367,26 @@ namespace MakeGame.UI
                 addTopBorder: true);
 
             windowRt.pivot = new Vector2(0.5f, 1f);
-            windowRt.sizeDelta = new Vector2(windowWidth, 480f); // 실제 높이는 용량에 맞춰 ApplyCapacityLayout이 정한다
+            // 창 높이는 **용량과 무관한 고정값**이다. 예전에는 칸 수에 비례해 늘렸는데(30칸=5줄), 그
+            // 방식은 100칸에서 17줄 = 1200px이 넘어 화면 밖으로 나간다. 지금은 7줄만 보이고 나머지는
+            // 격자 안에서 스크롤한다.
+            windowRt.sizeDelta = new Vector2(windowWidth, WindowHeight);
             panelRoot = windowRt.gameObject;
 
             BuildTitleBar();
             BuildInfoRow(windowWidth);
 
-            var gridGo = new GameObject("SlotGrid", typeof(RectTransform), typeof(GridLayoutGroup));
-            gridGo.transform.SetParent(windowRt, false);
-            gridContainer = gridGo.GetComponent<RectTransform>();
-            gridContainer.anchorMin = new Vector2(0.5f, 1f);
-            gridContainer.anchorMax = new Vector2(0.5f, 1f);
-            gridContainer.pivot = new Vector2(0.5f, 1f);
-            gridContainer.anchoredPosition = new Vector2(0f, -GridTopOffset);
-            gridContainer.sizeDelta = new Vector2(Columns * SlotSize + (Columns - 1) * SlotSpacing, SlotSize);
-
-            var grid = gridGo.GetComponent<GridLayoutGroup>();
-            grid.cellSize = new Vector2(SlotSize, SlotSize);
-            grid.spacing = new Vector2(SlotSpacing, SlotSpacing);
-            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            grid.constraintCount = Columns;
-            grid.childAlignment = TextAnchor.UpperLeft;
+            // 격자: 스크롤 + 칸 뷰 재사용은 공용 VirtualSlotGrid가 담당한다(보관 상자 창과 같은 구현).
+            grid.Build(windowRt, "SlotGrid",
+                Columns * SlotSize + (Columns - 1) * SlotSpacing, GridHeight,
+                Columns, SlotSize, SlotSpacing, durabilityBars: true);
+            grid.Root.anchoredPosition = new Vector2(WindowPadding, -GridTopOffset);
+            grid.onEnter = OnSlotEnter;
+            grid.onExit = OnSlotExit;
+            grid.onLeftClick = OnSlotLeftClick;
+            grid.onRightClick = OnSlotRightClick;
+            grid.onStyle = ApplyCellStyle;
+            grid.onRowsChanged = OnGridScrolled;
 
             BuildFooter(windowWidth);
         }
@@ -502,126 +501,37 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 칸 수(SlotCapacity)에 맞춰 슬롯을 만들고 창 높이를 정한다. 용량은 사실상 고정값(30)이지만,
-        /// 씬 값이 바뀌거나 나중에 가방으로 늘어나도 UI가 따라오게 갱신 때마다 확인한다.
+        /// 스크롤로 보이는 줄이 갈리면 hover 강조와 툴팁을 정리한다. 커서는 그대로인데 칸이 미끄러져
+        /// 나갔으므로, 안 그러면 엉뚱한 칸이 밝게 남고 툴팁이 옛 물건을 계속 설명한다.
+        /// **선택은 건드리지 않는다** - 선택은 칸 위치가 아니라 물건(대표 인스턴스)에 걸려 있어서,
+        /// 화면 밖으로 스크롤해도 살아 있어야 버리기 버튼이 그대로 동작한다.
         /// </summary>
-        private void ApplyCapacityLayout(int capacity)
+        private void OnGridScrolled()
         {
-            if (capacity == builtCapacity)
-                return;
-
-            builtCapacity = capacity;
-
-            while (slots.Count < capacity)
-                slots.Add(CreateSlot(slots.Count));
-
-            for (int i = 0; i < slots.Count; i++)
-                slots[i].go.SetActive(i < capacity);
-
-            int rows = Mathf.Max(1, Mathf.CeilToInt(capacity / (float)Columns));
-            float gridHeight = rows * SlotSize + (rows - 1) * SlotSpacing;
-
-            gridContainer.sizeDelta = new Vector2(gridContainer.sizeDelta.x, gridHeight);
-            windowRt.sizeDelta = new Vector2(windowRt.sizeDelta.x, GridTopOffset + gridHeight + GridBottomOffset);
-
-            if (dragHandle != null)
-                dragHandle.ClampNow();
+            hoverIndex = -1;
+            HideTooltip();
         }
 
         /// <summary>
-        /// 칸 하나를 만든다. 구성(아래→위): 배경 → 카테고리 색 띠 → 아이콘 → 폴백 글자 → 내구도 막대 → 개수.
-        /// 개수와 내구도 막대는 둘 다 아래쪽이지만 y가 겹치지 않게 띄워 둔다(막대 3~7px, 개수 8px부터).
-        /// 실제로는 내구도 도구의 칸 개수가 항상 1이라 숫자가 아예 안 찍히지만, 나중에 스택되는 도구가
-        /// 생겨도 글자가 막대를 덮지 않도록 자리부터 갈라 둔다.
+        /// 칸 하나의 상태색과 선택 테두리를 칠한다(빈칸/채움/hover/선택/확인 대기).
+        /// 격자가 칸 내용을 새로 그린 뒤와 RefreshSlotStates에서 칸마다 불린다 - **칸의 내용을 그리는
+        /// 일은 공용 VirtualSlotGrid가 하고, 이 창에만 있는 상태(선택·버리기 확인 대기)만 여기서 얹는다.**
         /// </summary>
-        private SlotView CreateSlot(int index)
+        private void ApplyCellStyle(VirtualSlotGrid.Cell cell)
         {
-            var slot = new SlotView();
+            bool selected = cell.index >= 0 && cell.index == selectedIndex;
+            bool armed = selected && IsDropArmed();
 
-            var slotGo = new GameObject($"Slot{index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline), typeof(InventorySlotView));
-            slotGo.transform.SetParent(gridContainer, false);
-            slot.go = slotGo;
+            if (armed)
+                cell.visual.background.color = SlotArmedColor;
+            else if (cell.index >= 0 && cell.index == hoverIndex)
+                cell.visual.background.color = SlotHoverColor;
+            else
+                cell.visual.background.color = cell.data != null ? SlotFilledColor : SlotEmptyColor;
 
-            slot.background = slotGo.GetComponent<Image>();
-            slot.background.color = SlotEmptyColor;
-
-            // 선택 테두리: 스프라이트 9-slice 없이 테두리를 만들려면 Outline이 가장 싸다(사각 이미지의
-            // 복사본 4장을 바깥으로 밀어 그린다). useGraphicAlpha를 끄지 않으면 배경 알파 0.04가 곱해져
-            // 테두리가 사실상 보이지 않는다.
-            slot.selectionOutline = slotGo.GetComponent<Outline>();
-            slot.selectionOutline.effectColor = MedicGreen;
-            slot.selectionOutline.effectDistance = new Vector2(2f, 2f);
-            slot.selectionOutline.useGraphicAlpha = false;
-            slot.selectionOutline.enabled = false;
-
-            var stripGo = new GameObject("CategoryStrip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            stripGo.transform.SetParent(slotGo.transform, false);
-            var stripRt = stripGo.GetComponent<RectTransform>();
-            stripRt.anchorMin = new Vector2(0f, 0f);
-            stripRt.anchorMax = new Vector2(0f, 1f);
-            stripRt.pivot = new Vector2(0f, 0.5f);
-            stripRt.sizeDelta = new Vector2(3f, 0f);
-            stripRt.anchoredPosition = Vector2.zero;
-            slot.categoryStrip = stripGo.GetComponent<Image>();
-            slot.categoryStrip.raycastTarget = false;
-            slot.categoryStrip.color = Color.clear;
-
-            var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            iconGo.transform.SetParent(slotGo.transform, false);
-            var iconRt = iconGo.GetComponent<RectTransform>();
-            iconRt.anchorMin = Vector2.zero;
-            iconRt.anchorMax = Vector2.one;
-            iconRt.offsetMin = new Vector2(8f, 10f); // 아래쪽만 조금 더 띄운다(내구도 막대·개수 자리)
-            iconRt.offsetMax = new Vector2(-6f, -6f);
-            slot.icon = iconGo.GetComponent<Image>();
-            slot.icon.raycastTarget = false;
-            slot.icon.preserveAspect = true;
-            slot.icon.enabled = false;
-
-            slot.letterLabel = UIBuilder.CreateText(slotGo.transform, "Letter", "", 20, Color.white, TextAnchor.MiddleCenter);
-            slot.letterLabel.raycastTarget = false;
-            var letterRt = slot.letterLabel.rectTransform;
-            letterRt.anchorMin = Vector2.zero;
-            letterRt.anchorMax = Vector2.one;
-            letterRt.offsetMin = Vector2.zero;
-            letterRt.offsetMax = Vector2.zero;
-            slot.letterLabel.gameObject.SetActive(false);
-
-            // 내구도 막대: 칸 맨 아래 얇은 띠. "숫자 대신 막대"가 겹쳐지지 않는 물건이라는 신호다.
-            slot.duraFill = UIBuilder.CreateProgressBar(slotGo.transform, "Durability",
-                new Color(1f, 1f, 1f, 0.15f), Color.white);
-            var barRt = (RectTransform)slot.duraFill.transform.parent;
-            barRt.anchorMin = new Vector2(0f, 0f);
-            barRt.anchorMax = new Vector2(1f, 0f);
-            barRt.pivot = new Vector2(0.5f, 0f);
-            barRt.sizeDelta = new Vector2(-10f, 4f);
-            barRt.anchoredPosition = new Vector2(0f, 3f);
-            slot.duraBarGo = barRt.gameObject;
-            slot.duraBarGo.SetActive(false);
-
-            // 개수: 우하단. 밝은 아이콘 위에서도 읽히도록 그림자를 깐다(색을 하나 더 만들지 않는 방법).
-            slot.countLabel = UIBuilder.CreateText(slotGo.transform, "Count", "", 12, Color.white, TextAnchor.LowerRight);
-            slot.countLabel.raycastTarget = false;
-            slot.countLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var countRt = slot.countLabel.rectTransform;
-            countRt.anchorMin = new Vector2(1f, 0f);
-            countRt.anchorMax = new Vector2(1f, 0f);
-            countRt.pivot = new Vector2(1f, 0f);
-            countRt.sizeDelta = new Vector2(50f, 18f);
-            countRt.anchoredPosition = new Vector2(-5f, 8f);
-            var countShadow = slot.countLabel.gameObject.AddComponent<Shadow>();
-            countShadow.effectColor = new Color(0f, 0f, 0f, 0.9f);
-            countShadow.effectDistance = new Vector2(1f, -1f);
-            slot.countLabel.gameObject.SetActive(false);
-
-            slot.input = slotGo.GetComponent<InventorySlotView>();
-            slot.input.index = index;
-            slot.input.onEnter = OnSlotEnter;
-            slot.input.onExit = OnSlotExit;
-            slot.input.onLeftClick = OnSlotLeftClick;
-            slot.input.onRightClick = OnSlotRightClick;
-
-            return slot;
+            cell.visual.outline.enabled = selected;
+            if (selected)
+                cell.visual.outline.effectColor = armed ? DangerRed : MedicGreen;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -663,6 +573,10 @@ namespace MakeGame.UI
             if (dragHandle != null)
                 dragHandle.ClampNow();
 
+            // 다시 열 때는 항상 첫 줄부터 보여준다(닫기 전에 내려둔 스크롤이 남아 있으면,
+            // 그 사이 물건이 줄어든 경우 빈 칸만 있는 화면으로 열린다).
+            grid.ResetScroll();
+
             refreshTimer = RefreshInterval;
             RefreshGrid();
         }
@@ -690,10 +604,13 @@ namespace MakeGame.UI
         // 갱신
         // ────────────────────────────────────────────────────────────────────────
 
-        /// <summary>인벤토리를 **칸 단위**로 격자에 그린다. 갱신마다 오브젝트를 새로 만들지 않는다.</summary>
+        /// <summary>
+        /// 인벤토리를 **칸 단위**로 격자에 그린다. 갱신마다 오브젝트를 새로 만들지 않는다.
+        /// 100칸이어도 실제로 다시 묶이는 칸 뷰는 화면에 보이는 54개뿐이다(VirtualSlotGrid).
+        /// </summary>
         private void RefreshGrid()
         {
-            if (inventory == null || gridContainer == null)
+            if (inventory == null || grid.Root == null)
                 return;
 
             inventory.GetStacks(stackBuffer);
@@ -702,7 +619,10 @@ namespace MakeGame.UI
             bool filterActive = currentFilterIndex > 0;
             UIBuilder.ItemCategory activeCategory = filterActive ? (UIBuilder.ItemCategory)(currentFilterIndex - 1) : default;
 
-            displayBuffer.Clear();
+            // 표시 목록은 격자의 버퍼를 그대로 쓴다(리스트를 두 벌 들고 복사하지 않는다).
+            // 화면의 n번째 칸 = display[n] 이라는 관계는 예전과 완전히 같다.
+            List<InventoryStack> display = grid.Buffer;
+            display.Clear();
             for (int i = 0; i < stackBuffer.Count; i++)
             {
                 var stack = stackBuffer[i];
@@ -712,25 +632,15 @@ namespace MakeGame.UI
                 if (filterActive && GetCategory(stack.data) != activeCategory)
                     continue;
 
-                displayBuffer.Add(stack);
+                display.Add(stack);
             }
 
             // 카테고리별로 묶이도록 정렬하고, 같은 카테고리 안에서는 이름순으로 정렬해 찾기 쉽게 한다.
-            displayBuffer.Sort(StackOrder);
+            display.Sort(StackOrder);
 
-            ApplyCapacityLayout(inventory.SlotCapacity);
+            grid.SetCapacity(inventory.SlotCapacity);
             ResolveSelection();
-
-            int shown = Mathf.Min(displayBuffer.Count, slots.Count);
-            for (int i = 0; i < slots.Count; i++)
-            {
-                if (i < shown)
-                    ApplyStackToSlot(slots[i], displayBuffer[i]);
-                else
-                    ClearSlot(slots[i]);
-
-                ApplySlotState(slots[i], i);
-            }
+            grid.Rebind(true);
 
             UpdateCapacity();
             UpdateFilterLabel();
@@ -756,9 +666,9 @@ namespace MakeGame.UI
 
             if (selectedRepresentative != null)
             {
-                for (int i = 0; i < displayBuffer.Count && i < slots.Count; i++)
+                for (int i = 0; i < grid.Buffer.Count && i < grid.Capacity; i++)
                 {
-                    if (displayBuffer[i].representative == selectedRepresentative)
+                    if (grid.Buffer[i].representative == selectedRepresentative)
                     {
                         selectedIndex = i;
                         break;
@@ -770,12 +680,12 @@ namespace MakeGame.UI
             // 남아 있으면 선택을 유지한다 - 재료를 한 개씩 버릴 때마다 선택이 풀리면 쓸 수 없다.
             if (selectedIndex < 0 && selectedData != null)
             {
-                for (int i = 0; i < displayBuffer.Count && i < slots.Count; i++)
+                for (int i = 0; i < grid.Buffer.Count && i < grid.Capacity; i++)
                 {
-                    if (displayBuffer[i].data == selectedData)
+                    if (grid.Buffer[i].data == selectedData)
                     {
                         selectedIndex = i;
-                        selectedRepresentative = displayBuffer[i].representative;
+                        selectedRepresentative = grid.Buffer[i].representative;
                         break;
                     }
                 }
@@ -783,106 +693,6 @@ namespace MakeGame.UI
 
             if (selectedIndex < 0)
                 ClearSelection();
-        }
-
-        /// <summary>칸 하나의 내용을 그린다. 표시 대상이 지난번과 같으면 문자열을 다시 만들지 않는다.</summary>
-        private void ApplyStackToSlot(SlotView slot, InventoryStack stack)
-        {
-            var data = stack.data;
-            int count = stack.count;
-            int remaining = stack.RemainingUses;
-
-            slot.representative = stack.representative;
-
-            if (slot.data == data && slot.count == count && slot.remaining == remaining)
-                return;
-
-            slot.data = data;
-            slot.count = count;
-            slot.remaining = remaining;
-
-            slot.categoryStrip.color = UIBuilder.GetItemCategoryColor(data);
-
-            // 아이콘 31종이 전부 배선돼 있지만(ItemData.icon), 새 아이템이 아이콘 없이 추가될 수 있으므로
-            // 이름 첫 글자 폴백을 남겨둔다. 폴백일 때는 카테고리 색을 배경으로 깔아 최소한의 구분을 준다.
-            if (data.icon != null)
-            {
-                slot.icon.enabled = true;
-                slot.icon.sprite = data.icon;
-                slot.icon.color = Color.white;
-                slot.letterLabel.gameObject.SetActive(false);
-            }
-            else
-            {
-                slot.icon.enabled = true;
-                slot.icon.sprite = null;
-                slot.icon.color = UIBuilder.GetItemCategoryColor(data);
-                slot.letterLabel.gameObject.SetActive(true);
-                slot.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
-            }
-
-            // 개수: 1개면 찍지 않는다. "x1"은 정보가 0이면서 아이콘만 가린다(격자 UI의 표준).
-            if (count > 1)
-            {
-                slot.countLabel.gameObject.SetActive(true);
-                slot.countLabel.text = count.ToString();
-                slot.countLabel.color = count >= data.MaxStackSize ? SunstrokeGold : Color.white;
-            }
-            else
-            {
-                slot.countLabel.gameObject.SetActive(false);
-            }
-
-            // 내구도 막대: 겹쳐지지 않는 유한 내구도 도구(창 15·손도끼 20·라이터 5)에서만.
-            bool durableTool = !data.IsStackable && !data.IsUnlimited && data.maxUses > 1;
-            if (durableTool)
-            {
-                float ratio = Mathf.Clamp01((float)remaining / data.maxUses);
-                slot.duraBarGo.SetActive(true);
-                slot.duraFill.fillAmount = ratio;
-                slot.duraFill.color = ratio <= 0.2f ? DangerRed : ratio <= 0.4f ? SunstrokeGold : MedicGreen;
-            }
-            else
-            {
-                slot.duraBarGo.SetActive(false);
-            }
-        }
-
-        /// <summary>빈 칸으로 되돌린다. 빈 칸도 계속 그려야 남은 용량이 형태로 읽힌다.</summary>
-        private void ClearSlot(SlotView slot)
-        {
-            if (slot.data == null && slot.count == 0)
-                return;
-
-            slot.data = null;
-            slot.representative = null;
-            slot.count = 0;
-            slot.remaining = int.MinValue;
-
-            slot.icon.enabled = false;
-            slot.icon.sprite = null;
-            slot.categoryStrip.color = Color.clear;
-            slot.letterLabel.gameObject.SetActive(false);
-            slot.countLabel.gameObject.SetActive(false);
-            slot.duraBarGo.SetActive(false);
-        }
-
-        /// <summary>칸의 상태색(빈칸/채움/hover/선택/확인 대기)을 적용한다.</summary>
-        private void ApplySlotState(SlotView slot, int index)
-        {
-            bool selected = index == selectedIndex;
-            bool armed = selected && IsDropArmed();
-
-            if (armed)
-                slot.background.color = SlotArmedColor;
-            else if (index == hoverIndex)
-                slot.background.color = SlotHoverColor;
-            else
-                slot.background.color = slot.data != null ? SlotFilledColor : SlotEmptyColor;
-
-            slot.selectionOutline.enabled = selected;
-            if (selected)
-                slot.selectionOutline.effectColor = armed ? DangerRed : MedicGreen;
         }
 
         /// <summary>
@@ -927,7 +737,10 @@ namespace MakeGame.UI
             if (!armed && pendingUntil > 0f)
                 ClearPendingDrop();
 
-            SlotView selected = selectedIndex >= 0 && selectedIndex < slots.Count ? slots[selectedIndex] : null;
+            // 선택된 칸의 내용은 **표시 목록**에서 읽는다. 칸 뷰는 스크롤에 따라 재사용되므로
+            // "몇 번째 칸 뷰"가 아니라 "몇 번째 데이터"가 선택의 근거다(선택한 칸이 화면 밖으로
+            // 스크롤돼도 선택과 버리기 버튼이 그대로 살아 있어야 한다).
+            InventoryStack selected = grid.GetStack(selectedIndex);
             var data = selected != null ? selected.data : null;
             int count = selected != null ? selected.count : 0;
 
@@ -954,13 +767,13 @@ namespace MakeGame.UI
                 else if (armed)
                 {
                     selectionLabel.text = pendingWhole
-                        ? $"{data.itemName} {selected.count}개를 전부 버린다 - 한 번 더 누르면 되돌릴 수 없다"
+                        ? $"{data.itemName} {count}개를 전부 버린다 - 한 번 더 누르면 되돌릴 수 없다"
                         : $"{data.itemName}을(를) 버린다 - 한 번 더 누르면 되돌릴 수 없다";
                     selectionLabel.color = SunstrokeGold;
                 }
                 else
                 {
-                    selectionLabel.text = $"선택: {data.itemName}" + (selected.count > 1 ? $" x{selected.count}" : "");
+                    selectionLabel.text = $"선택: {data.itemName}" + (count > 1 ? $" x{count}" : "");
                     selectionLabel.color = NeutralGray;
                 }
             }
@@ -1008,7 +821,11 @@ namespace MakeGame.UI
                 return;
             }
 
-            hintLabel.text = $"제목 표시줄을 끌어 창 이동 · 클릭 선택 · 우클릭 버리기({dropWholeStackModifier}=한 칸 전부)";
+            // 칸이 한 화면을 넘으면(100칸 = 17줄) 스크롤이 있다는 사실을 적어 준다 - 스크롤 막대가
+            // 따로 없는 격자라 안내가 없으면 아래쪽 칸의 존재를 모른 채로 "가득 찼다"고 오해한다.
+            hintLabel.text = grid.IsScrollable
+                ? $"휠로 스크롤 · 클릭 선택 · 우클릭 버리기({dropWholeStackModifier}=한 칸 전부) · 제목 표시줄을 끌어 창 이동"
+                : $"제목 표시줄을 끌어 창 이동 · 클릭 선택 · 우클릭 버리기({dropWholeStackModifier}=한 칸 전부)";
             hintLabel.color = DimGray;
         }
 
@@ -1035,8 +852,8 @@ namespace MakeGame.UI
 
         private void OnSlotLeftClick(int index)
         {
-            var slot = index >= 0 && index < slots.Count ? slots[index] : null;
-            if (slot == null || slot.data == null)
+            InventoryStack stack = grid.GetStack(index);
+            if (stack == null || stack.data == null)
             {
                 ClearSelection();
             }
@@ -1049,8 +866,8 @@ namespace MakeGame.UI
             else
             {
                 selectedIndex = index;
-                selectedData = slot.data;
-                selectedRepresentative = slot.representative;
+                selectedData = stack.data;
+                selectedRepresentative = stack.representative;
                 ClearPendingDrop();
             }
 
@@ -1065,15 +882,15 @@ namespace MakeGame.UI
         /// </summary>
         private void OnSlotRightClick(int index)
         {
-            var slot = index >= 0 && index < slots.Count ? slots[index] : null;
-            if (slot == null || slot.data == null)
+            InventoryStack stack = grid.GetStack(index);
+            if (stack == null || stack.data == null)
                 return;
 
             if (selectedIndex != index)
             {
                 selectedIndex = index;
-                selectedData = slot.data;
-                selectedRepresentative = slot.representative;
+                selectedData = stack.data;
+                selectedRepresentative = stack.representative;
                 ClearPendingDrop();
                 RefreshSlotStates();
             }
@@ -1092,11 +909,11 @@ namespace MakeGame.UI
         /// </summary>
         private void RequestDrop()
         {
-            if (inventory == null || selectedIndex < 0 || selectedIndex >= slots.Count)
+            if (inventory == null || selectedIndex < 0)
                 return;
 
-            var slot = slots[selectedIndex];
-            var data = slot.data;
+            InventoryStack stack = grid.GetStack(selectedIndex);
+            var data = stack != null ? stack.data : null;
             if (data == null)
                 return;
 
@@ -1107,13 +924,13 @@ namespace MakeGame.UI
             {
                 bool armedForThis = IsDropArmed()
                     && pendingData == data
-                    && pendingRepresentative == slot.representative
+                    && pendingRepresentative == stack.representative
                     && pendingWhole == whole;
 
                 if (!armedForThis)
                 {
                     pendingData = data;
-                    pendingRepresentative = slot.representative;
+                    pendingRepresentative = stack.representative;
                     pendingWhole = whole;
                     pendingUntil = Time.unscaledTime + DropConfirmWindow;
                     RefreshSlotStates();
@@ -1123,7 +940,7 @@ namespace MakeGame.UI
             }
 
             ClearPendingDrop();
-            ExecuteDrop(slot, data, whole);
+            ExecuteDrop(stack, data, whole);
         }
 
         /// <summary>
@@ -1132,27 +949,27 @@ namespace MakeGame.UI
         ///   동일 종류 중 목록 끝의 것이 지워져, 화면에서 고른 것과 실제로 사라지는 것이 어긋난다.
         /// · 그 외(겹쳐지는 재료·음식·무제한 도구) → RemoveItems. 같은 칸 안의 개체는 서로 완전히 동일하다.
         /// </summary>
-        private void ExecuteDrop(SlotView slot, ItemData data, bool whole)
+        private void ExecuteDrop(InventoryStack stack, ItemData data, bool whole)
         {
             bool removed;
 
             if (!data.IsStackable)
             {
-                removed = slot.representative != null && inventory.RemoveItem(slot.representative);
+                removed = stack.representative != null && inventory.RemoveItem(stack.representative);
             }
             else if (!whole)
             {
                 // [B19 디렉터] 1개 버리기도 **대표 인스턴스**를 지운다. RemoveItems(data, 1)은 목록 끝을
                 // 지우므로, 같은 재료가 여러 칸(야자잎 20/20/2)일 때 20칸을 골라도 2칸이 줄어든다.
                 // 개체가 서로 동일해 최종 상태는 같지만, "고른 칸이 줄어드는" 것이 눈에 보이는 계약이다.
-                removed = slot.representative != null
-                    ? inventory.RemoveItem(slot.representative)
+                removed = stack.representative != null
+                    ? inventory.RemoveItem(stack.representative)
                     : inventory.RemoveItems(data, 1);
             }
             else
             {
                 // 한 칸 전부는 개수 단위가 맞다 - 어느 인스턴스가 지워지든 그 칸이 통째로 비워진다.
-                removed = inventory.RemoveItems(data, Mathf.Max(1, slot.count));
+                removed = inventory.RemoveItems(data, Mathf.Max(1, stack.count));
             }
 
             if (!removed)
@@ -1188,10 +1005,10 @@ namespace MakeGame.UI
             ClearPendingDrop();
         }
 
+        /// <summary>보이는 칸들의 상태색만 다시 칠한다(내용은 건드리지 않는다).</summary>
         private void RefreshSlotStates()
         {
-            for (int i = 0; i < slots.Count; i++)
-                ApplySlotState(slots[i], i);
+            grid.RefreshStyles();
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -1210,23 +1027,25 @@ namespace MakeGame.UI
             if (tooltip == null)
                 return;
 
-            var slot = index >= 0 && index < slots.Count ? slots[index] : null;
-            if (slot == null || slot.data == null)
+            InventoryStack stack = grid.GetStack(index);
+            if (stack == null || stack.data == null)
             {
                 HideTooltip();
                 return;
             }
 
+            int remaining = stack.RemainingUses;
+
             // 커서가 같은 칸에 머무는 동안(0.2초 폴링) 같은 내용을 다시 만들지 않는다. 위치 추적은
             // 툴팁 쪽 LateUpdate가 알아서 하므로 내용이 그대로면 아무것도 할 일이 없다.
-            if (slot.data == lastTooltipData && slot.count == lastTooltipCount && slot.remaining == lastTooltipRemaining)
+            if (stack.data == lastTooltipData && stack.count == lastTooltipCount && remaining == lastTooltipRemaining)
                 return;
 
-            lastTooltipData = slot.data;
-            lastTooltipCount = slot.count;
-            lastTooltipRemaining = slot.remaining;
+            lastTooltipData = stack.data;
+            lastTooltipCount = stack.count;
+            lastTooltipRemaining = remaining;
 
-            tooltip.Show(slot.data, slot.count, slot.remaining, GetUsageHint(slot.data), GetDropHint(slot.data));
+            tooltip.Show(stack.data, stack.count, remaining, GetUsageHint(stack.data), GetDropHint(stack.data));
         }
 
         /// <summary>툴팁을 숨기고 "마지막으로 보여준 내용" 캐시를 비운다(같은 칸에 다시 들어와도 다시 뜨게).</summary>

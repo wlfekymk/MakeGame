@@ -143,7 +143,7 @@ namespace MakeGame.Systems
         private const string BearModelResourcePath = "Models/bear_adult";
 
         private static GameObject bearModelPrefab;
-        private static bool bearModelProbed;
+        private static int bearModelProbeFrame = -1;
         private static Material bearModelMaterial;
 
         /// <summary>
@@ -154,9 +154,12 @@ namespace MakeGame.Systems
         {
             get
             {
-                if (!bearModelProbed)
+                // [B44] 실패를 영구히 확정하지 않는다. 생성자/필드 초기자처럼 Load가 금지된 시점에
+                // 불리면 Unity가 null을 돌려주는데, 그걸 "에셋 없음"으로 굳히면 이 세션 내내
+                // 절차 곰만 나온다. 성공할 때까지는 프레임당 한 번만 다시 살핀다.
+                if (bearModelPrefab == null && bearModelProbeFrame != Time.frameCount)
                 {
-                    bearModelProbed = true;
+                    bearModelProbeFrame = Time.frameCount;
                     bearModelPrefab = Resources.Load<GameObject>(BearModelResourcePath);
                 }
                 return bearModelPrefab;
@@ -181,16 +184,17 @@ namespace MakeGame.Systems
         private const string BearCubModelResourcePath = "Models/bear_cub";
 
         private static GameObject bearCubModelPrefab;
-        private static bool bearCubModelProbed;
+        private static int bearCubModelProbeFrame = -1;
 
         /// <summary>새끼 곰 모델 프리팹(없으면 null). 성체와 같은 이유로 Resources.Load는 한 번만 부른다.</summary>
         private static GameObject BearCubModelPrefab
         {
             get
             {
-                if (!bearCubModelProbed)
+                // [B44] 성체와 같은 이유로 실패를 굳히지 않는다(위 BearModelPrefab 주석 참고).
+                if (bearCubModelPrefab == null && bearCubModelProbeFrame != Time.frameCount)
                 {
-                    bearCubModelProbed = true;
+                    bearCubModelProbeFrame = Time.frameCount;
                     bearCubModelPrefab = Resources.Load<GameObject>(BearCubModelResourcePath);
                 }
                 return bearCubModelPrefab;

@@ -815,7 +815,12 @@ namespace MakeGame.Systems
         private float bearChargeTimer;
         private float bearGroundY;            // 마지막으로 성공한 지면 높이. 프로브 기준 높이로도 쓴다
         private bool bearGroundValid;
-        private float bearHoverOffset = CreatureVisualBuilder.BearGroundOffset; // 지면에서 루트 중심까지의 높이
+        // [B44] **필드 초기자에서 CreatureVisualBuilder를 부르면 안 된다.** 필드 초기자는
+        // MonoBehaviour 생성자에서 도는데, BearGroundOffset은 Resources.Load로 모델 유무를 살핀다.
+        // Unity는 생성자에서의 Load를 금지하고 UnityException을 찍은 뒤 null을 돌려주므로,
+        // 프로브가 실패로 확정되어 이 세션 내내 모델 곰이 안 나온다(실제로 Hazard_GiantCrab에서 발생).
+        // 실제 값은 InitBearAI가 접지 실측으로 채운다. 여기서는 상수만 둔다.
+        private float bearHoverOffset = 0.61f; // 지면에서 루트 중심까지의 높이(InitBearAI가 덮어쓴다)
         private float bearSeaLevel;
         private System.Random bearRng;        // 배회 지점 추첨용. UnityEngine.Random 금지(재현성 규칙)
         private bool bearRngRebuiltWarned;    // 지연 재생성 경고를 개체당 딱 한 번만 남기기 위한 표시
