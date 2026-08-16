@@ -59,6 +59,16 @@ namespace MakeGame.Systems
         private const float RoofBeamThickness = 0.18f; // 처마/마루 보의 굵기
         private const int RoofColliderSteps = 4;       // 경사면을 근사하는 계단형 콜라이더 수
 
+        // ── 보관 상자(배치 39) ───────────────────────────────────────────────────
+        // 로컬 원점 = **밑면 중심**(딛고 선 바닥의 윗면과 같은 평면)이고, 상자가 바라보는 쪽은 로컬 +Z다
+        // (계단이 +Z로 올라가는 것과 같은 방향 규약 - 회전 입력의 의미가 부품마다 뒤집히지 않게).
+        // 등급이 오르면 **같은 형상이 커지기만 한다.** 셀 한 변이 2m이므로 특대(가로 1.72)도 칸을 넘지 않고,
+        // 색을 등급별로 바꾸지 않는다 - 머티리얼은 프로세스 전체에서 3개뿐이라는 규칙을 깨지 않기 위해서다.
+        private static readonly float[] ChestWidths = { 1.00f, 1.24f, 1.48f, 1.72f };
+        private static readonly float[] ChestDepths = { 0.64f, 0.72f, 0.80f, 0.90f };
+        private static readonly float[] ChestHeights = { 0.60f, 0.70f, 0.80f, 0.92f };
+        private const float ChestLidHeight = 0.14f;
+
         /// <summary>지붕 몸통 메시. 프로세스 전체에서 **하나만** 만들어 모든 지붕이 공유한다.</summary>
         private static Mesh roofMesh;
 
@@ -88,6 +98,54 @@ namespace MakeGame.Systems
             BuildParts(type, root.transform, postMaterial, plankMaterial, lashingMaterial);
             AddColliders(type, root);
             return root;
+        }
+
+        /// <summary>
+        /// 등급이 있는 보관 상자의 실물을 만든다. tier는 0~3(소·중·대·특대)이며 범위를 벗어나면 잘린다.
+        /// CreateSolid(BuildPieceType.Chest, parent)는 이 함수의 tier 0과 완전히 같은 결과다.
+        /// </summary>
+        public static GameObject CreateChestSolid(Transform parent, int tier)
+        {
+            EnsureSolidMaterials();
+
+            GameObject root = CreateRoot($"BuildPiece_{BuildPieceType.Chest}", parent);
+            BuildChest(root.transform, postMaterial, plankMaterial, lashingMaterial, tier);
+            AddChestCollider(root, tier);
+            return root;
+        }
+
+        /// <summary>
+        /// 이미 서 있는 상자의 **겉모습과 콜라이더만** 새 등급으로 갈아 끼운다.
+        /// 루트 GameObject는 그대로 두는 것이 이 함수의 핵심이다 - 루트에는 StorageChest 컴포넌트가
+        /// 붙어 있고 UI가 그 인스턴스를 들고 있으므로, 업그레이드할 때마다 루트를 다시 만들면
+        /// 열려 있던 상자 UI의 참조가 그 자리에서 끊긴다(내용물도 함께 날아간다).
+        /// </summary>
+        public static void RebuildChest(GameObject root, int tier)
+        {
+            if (root == null)
+                return;
+
+            EnsureSolidMaterials();
+
+            // Destroy는 프레임 끝까지 지연된다. 먼저 꺼서 이번 프레임에 새로 만든 파츠와 겹쳐 보이지 않게 한다.
+            for (int i = root.transform.childCount - 1; i >= 0; i--)
+            {
+                GameObject child = root.transform.GetChild(i).gameObject;
+                child.SetActive(false);
+                UnityEngine.Object.Destroy(child);
+            }
+
+            var colliders = root.GetComponents<BoxCollider>();
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                // 콜라이더는 끌 수 없으면 즉시 물리에서 빠지지 않는다. Destroy가 프레임 끝에 반영되므로
+                // enabled=false로 이번 프레임부터 새 콜라이더와 이중으로 잡히지 않게 한다.
+                colliders[i].enabled = false;
+                UnityEngine.Object.Destroy(colliders[i]);
+            }
+
+            BuildChest(root.transform, postMaterial, plankMaterial, lashingMaterial, tier);
+            AddChestCollider(root, tier);
         }
 
         /// <summary>
@@ -243,6 +301,9 @@ namespace MakeGame.Systems
                 case BuildPieceType.Window: BuildWindow(root, post, plank, lashing); break;
                 case BuildPieceType.Stair: BuildStair(root, post, plank); break;
                 case BuildPieceType.Roof: BuildRoof(root, post, plank, lashing); break;
+                // 상자는 등급마다 크기가 다르다. 여기(고스트/기본 경로)는 항상 소형이다 - 새로 놓는
+                // 상자는 언제나 소형이고, 상위 등급은 CreateChestSolid/RebuildChest로만 만들어진다.
+                case BuildPieceType.Chest: BuildChest(root, post, plank, lashing, 0); break;
                 default: BuildFloor(root, post, plank, lashing); break;
             }
         }
@@ -417,6 +478,59 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// 보관 상자 7파츠: 몸통 + 뚜껑 + 좌우 모서리 기둥 2개 + 허리 결속 2줄 + 정면 걸쇠.
+        /// 밑면이 정확히 y=0이라 바닥 윗면에 딱 앉고, 걸쇠가 붙은 **로컬 +Z가 정면**이다.
+        /// 등급(0~3)은 가로·세로·높이만 키운다 - 파츠 구성과 색은 등급과 무관하게 같다.
+        /// </summary>
+        private static void BuildChest(Transform root, Material post, Material plank, Material lashing, int tier)
+        {
+            int t = BuildPieceCatalog.ClampChestTier(tier);
+            float width = ChestWidths[t];
+            float depth = ChestDepths[t];
+            float height = ChestHeights[t];
+
+            float bodyHeight = height - ChestLidHeight;
+            float halfWidth = width * 0.5f;
+            float halfDepth = depth * 0.5f;
+
+            Part(root, "Body", new Vector3(0f, bodyHeight * 0.5f, 0f),
+                new Vector3(width, bodyHeight, depth), plank);
+
+            // 뚜껑은 사방으로 3cm씩 내밀어 처마처럼 그림자 선을 만든다(형태로 읽히게).
+            Part(root, "Lid", new Vector3(0f, bodyHeight + ChestLidHeight * 0.5f, 0f),
+                new Vector3(width + 0.06f, ChestLidHeight, depth + 0.06f), post);
+
+            for (int s = -1; s <= 1; s += 2)
+            {
+                Part(root, s < 0 ? "Corner_L" : "Corner_R",
+                    new Vector3((halfWidth - 0.06f) * s, bodyHeight * 0.5f, 0f),
+                    new Vector3(0.12f, bodyHeight, depth + 0.02f), post);
+            }
+
+            // 몸통을 두르는 결속 두 줄. 몸통보다 1cm씩 크게 만들어 표면에 묻히지 않게 한다.
+            float[] bandY = { bodyHeight * 0.28f, bodyHeight * 0.74f };
+            for (int i = 0; i < bandY.Length; i++)
+            {
+                Part(root, $"Band_{i}", new Vector3(0f, bandY[i], 0f),
+                    new Vector3(width + 0.02f, 0.06f, depth + 0.02f), lashing);
+            }
+
+            Part(root, "Latch", new Vector3(0f, bodyHeight - 0.03f, halfDepth + 0.02f),
+                new Vector3(0.16f, 0.18f, 0.06f), lashing);
+        }
+
+        /// <summary>
+        /// 상자 콜라이더 하나. 통짜 상자라 구멍이 없고, 뚜껑이 내민 3cm는 콜라이더에 넣지 않는다
+        /// (몸통 폭으로만 막아야 옆 칸에 벽을 세울 때 미리보기가 걸리지 않는다).
+        /// </summary>
+        private static void AddChestCollider(GameObject root, int tier)
+        {
+            int t = BuildPieceCatalog.ClampChestTier(tier);
+            AddBox(root, new Vector3(0f, ChestHeights[t] * 0.5f, 0f),
+                new Vector3(ChestWidths[t], ChestHeights[t], ChestDepths[t]));
+        }
+
+        /// <summary>
         /// 지붕 몸통 메시를 한 번만 만들어 캐시한다. 형상은 밑면이 평평하고 윗면만 기운 육면체
         /// (쐐기)이며, 여섯 면이 전부 닫혀 있다. 감김은 WorldMeshBuilder가 기준 법선으로 맞춰 주므로
         /// 인덱스 표를 손으로 적지 않는다(이 프로젝트가 왼손 좌표계라 표를 옮기면 안쪽으로 컬링된다).
@@ -541,6 +655,10 @@ namespace MakeGame.Systems
                     }
                     break;
                 }
+
+                case BuildPieceType.Chest:
+                    AddChestCollider(root, 0);
+                    break;
             }
         }
 

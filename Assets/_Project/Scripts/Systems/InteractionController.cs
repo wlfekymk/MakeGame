@@ -49,7 +49,14 @@ namespace MakeGame.Systems
         private void Update()
         {
             if (Input.GetKeyDown(interactKey))
-                InteractWithTarget();
+            {
+                // [보관 상자] 창이 열려 있는 동안에는 이 키가 곧 '닫기'이고, 그 프레임의 월드 상호작용은
+                // 일어나지 않는다. 상자 창은 조준했을 때만 열리는 창이라 전용 토글 키를 따로 만들지
+                // 않았다(Tab/V/J/M/B/Esc가 이미 차 있다). CloseIfOpen은 **실제로 닫았을 때만** true를
+                // 돌려주므로 상자와 무관한 상황의 E를 삼키지 않는다.
+                if (!MakeGame.UI.ChestUI.CloseIfOpen())
+                    InteractWithTarget();
+            }
 
             if (Input.GetKeyDown(cookKey))
                 CookFirstRawFoodAtTarget();
@@ -68,6 +75,15 @@ namespace MakeGame.Systems
         {
             if (!TryGetLookTarget(out GameObject target))
                 return;
+
+            // 보관 상자: 조준하고 누르면 보관 창(ChestUI)이 열린다. 자식 파츠(뚜껑·손잡이 등)에 레이가
+            // 맞아도 같은 상자로 이어지도록 GetComponentInParent를 쓴다(BoatWorkbench와 같은 이유).
+            var storageChest = target.GetComponentInParent<StorageChest>();
+            if (storageChest != null)
+            {
+                MakeGame.UI.ChestUI.OpenFor(storageChest);
+                return;
+            }
 
             var resourceNode = target.GetComponent<ResourceNode>();
             if (resourceNode != null)
@@ -144,6 +160,12 @@ namespace MakeGame.Systems
                     shelter.TryBuildNext(inventory);
                 return;
             }
+
+            // [보관 상자 폴백] 상자 본체에 콜라이더가 없고 별도의 조준 판정(StorageChest.Focused)으로만
+            // 자기를 알리는 구성일 수 있다. **다른 상호작용이 전부 없었을 때만** 이 값을 본다 - 위쪽에
+            // 두면 조준 판정이 근접 판정으로 바뀌는 순간 채집/사냥이 조용히 상자 열기에 먹힌다.
+            if (StorageChest.Focused != null)
+                MakeGame.UI.ChestUI.OpenFor(StorageChest.Focused);
         }
 
         /// <summary>

@@ -170,6 +170,11 @@ namespace MakeGame.Systems
                 ? BuildingSystem.Instance.SerializeToJson()
                 : "";
 
+            // [배치 39] 보관 상자. 조각 JSON과 달리 등급·내용물까지 실어야 해서 별도 목록으로 나간다
+            // (SaveData.storageChests). BuildingSystem이 없으면 목록은 비어 있는 채로 저장된다.
+            if (BuildingSystem.Instance != null)
+                BuildingSystem.Instance.SerializeChests(data.storageChests);
+
             if (aircraftRepair != null)
             {
                 data.aircraftRepairComplete = aircraftRepair.isRepairComplete;
@@ -392,7 +397,14 @@ namespace MakeGame.Systems
             // 순서가 뒤집히면 새 지형을 만드는 도중의 레이캐스트에 방금 되살린 조각이 섞인다.
             // 조각은 저장된 절대 좌표로 되살아나므로 지형 재생성 자체에는 의존하지 않는다.
             if (BuildingSystem.Instance != null)
+            {
                 BuildingSystem.Instance.RestoreFromJson(data.buildStructureJson);
+
+                // [배치 39] 상자는 **조각 복원 뒤**여야 한다 - RestoreFromJson이 격자 표를 통째로 비우므로
+                // 순서가 뒤집히면 방금 세운 상자가 그대로 지워진다. 옛 세이브에는 이 목록이 없어 빈 채로
+                // 읽히고, 그때 RestoreChests는 아무것도 하지 않는다(경고도 나지 않는다).
+                BuildingSystem.Instance.RestoreChests(data.storageChests);
+            }
 
             if (aircraftRepair != null)
             {

@@ -22,6 +22,21 @@ namespace MakeGame.Systems
         /// **값 5는 맨 끝이다 - 새 부품은 반드시 이 아래에만 붙인다.**
         /// </summary>
         Roof = 5,
+
+        /// <summary>
+        /// [배치 39] 보관 상자. 셀 하나를 차지하고 **바닥(또는 갑판) 위에만** 놓이며, 로컬 원점이
+        /// 밑면이라 position.y가 곧 딛고 선 바닥의 윗면이다. 회전은 상자가 바라보는 방향이다.
+        ///
+        /// **구조물이 아니다.** 지붕이 roofByKey로 분리돼 바닥 조회에 섞이지 않는 것과 같은 이유로
+        /// 상자도 BuildingSystem의 chestByKey에만 들어가고, 딛는 면 조회(TryGetFloorTopY)와
+        /// 천장 조회(HasCeilingAt), 실내 판정에는 절대 들어가지 않는다 - 상자 위에 벽·지붕이 서면 안 된다.
+        ///
+        /// 등급(소·중·대·특대)은 이 열거형이 아니라 <see cref="MakeGame.Systems.StorageChest"/>의 Tier가
+        /// 들고 있다. 등급마다 값을 만들면 세이브에 박힌 정수가 등급 개수만큼 늘어나고, 업그레이드가
+        /// "부품 종류를 바꾸는 일"이 되어 격자 표를 다시 써야 한다.
+        /// **값 6은 맨 끝이다 - 새 부품은 반드시 이 아래에만 붙인다.**
+        /// </summary>
+        Chest = 6,
     }
 
     /// <summary>부품 하나를 짓는 데 필요한 재료 한 줄. itemName은 ItemData.itemName과 문자 그대로 대조된다.</summary>
@@ -105,7 +120,91 @@ namespace MakeGame.Systems
             new BuildPieceCost("노끈", 1),
         };
 
+        // ── 보관 상자 (배치 39) ──────────────────────────────────────────────────
+        // 지을 수 있는 것은 **소형뿐이다.** 중·대·특대는 이미 놓인 상자를 업그레이드해야만 도달한다
+        // (감독이 사용자와 확정). 그래서 GetCost(Chest)는 언제나 소형 설치비를 돌려주고, 승급비는
+        // 별도의 GetChestUpgradeCost로만 나간다 - 건축 메뉴가 상자 슬롯에 띄우는 값은 소형 설치비다.
+        //
+        // 난이도 감각(비교 기준): 벽 한 장 = 나뭇가지4+노끈1, 쉼터 Lv2 승급 = 나뭇가지6+야자잎4+노끈3+천조각2.
+        // · 소형(50칸)은 쉼터 Lv2와 비슷한 값이다. 인벤토리가 30칸이므로 첫 상자 하나로 숨통이 트여야 한다.
+        // · 승급마다 재료가 한 단계씩 상위 계열로 옮겨 간다(나뭇가지 → 대나무 → 금속조각). 금속조각은
+        //   경비행기 잔해에서만 나오는 희귀재라, 대형 이상은 확실히 중반 이후 목표가 된다.
+        private static readonly BuildPieceCost[] ChestCost =
+        {
+            new BuildPieceCost("나뭇가지", 8),
+            new BuildPieceCost("노끈", 3),
+            new BuildPieceCost("야자잎", 4),
+        };
+
+        private static readonly BuildPieceCost[] ChestUpgradeToMedium =
+        {
+            new BuildPieceCost("나뭇가지", 10),
+            new BuildPieceCost("대나무", 6),
+            new BuildPieceCost("노끈", 4),
+        };
+
+        private static readonly BuildPieceCost[] ChestUpgradeToLarge =
+        {
+            new BuildPieceCost("대나무", 12),
+            new BuildPieceCost("금속조각", 4),
+            new BuildPieceCost("노끈", 6),
+            new BuildPieceCost("천조각", 3),
+        };
+
+        private static readonly BuildPieceCost[] ChestUpgradeToHuge =
+        {
+            new BuildPieceCost("대나무", 16),
+            new BuildPieceCost("금속조각", 10),
+            new BuildPieceCost("노끈", 8),
+            new BuildPieceCost("천조각", 6),
+        };
+
         private static readonly BuildPieceCost[] EmptyCost = new BuildPieceCost[0];
+
+        /// <summary>보관 상자의 등급 수(0=소 1=중 2=대 3=특대).</summary>
+        public const int ChestTierCount = 4;
+
+        /// <summary>등급별 칸 수. 인덱스가 곧 Tier다.</summary>
+        private static readonly int[] ChestCapacities = { 50, 100, 150, 200 };
+
+        private static readonly string[] ChestTierNames = { "소형 상자", "중형 상자", "대형 상자", "특대 상자" };
+
+        /// <summary>등급을 0~3으로 자른다(세이브가 이상한 값을 들고 와도 표를 벗어나지 않게).</summary>
+        public static int ClampChestTier(int tier)
+        {
+            if (tier < 0)
+                return 0;
+            if (tier > ChestTierCount - 1)
+                return ChestTierCount - 1;
+            return tier;
+        }
+
+        /// <summary>등급별 보관 칸 수(50 / 100 / 150 / 200).</summary>
+        public static int GetChestCapacity(int tier)
+        {
+            return ChestCapacities[ClampChestTier(tier)];
+        }
+
+        /// <summary>등급별 한국어 이름("소형 상자" 등).</summary>
+        public static string GetChestTierDisplayName(int tier)
+        {
+            return ChestTierNames[ClampChestTier(tier)];
+        }
+
+        /// <summary>
+        /// tier에서 tier+1로 올리는 데 드는 재료. **최고 등급(3)이면 빈 목록**이다(null이 아니다).
+        /// 매 호출 같은 배열 인스턴스를 돌려주므로 UI가 폴링해도 할당이 없다.
+        /// </summary>
+        public static IReadOnlyList<BuildPieceCost> GetChestUpgradeCost(int tier)
+        {
+            switch (tier)
+            {
+                case 0: return ChestUpgradeToMedium;
+                case 1: return ChestUpgradeToLarge;
+                case 2: return ChestUpgradeToHuge;
+                default: return EmptyCost;
+            }
+        }
 
         /// <summary>메뉴/미리보기에 띄우는 한국어 이름.</summary>
         public static string GetDisplayName(BuildPieceType type)
@@ -118,6 +217,7 @@ namespace MakeGame.Systems
                 case BuildPieceType.Window: return "창문";
                 case BuildPieceType.Stair: return "계단";
                 case BuildPieceType.Roof: return "지붕";
+                case BuildPieceType.Chest: return "보관 상자";
                 default: return "건축 부품";
             }
         }
@@ -136,6 +236,8 @@ namespace MakeGame.Systems
                 case BuildPieceType.Window: return WindowCost;
                 case BuildPieceType.Stair: return StairCost;
                 case BuildPieceType.Roof: return RoofCost;
+                // 상자는 소형만 지을 수 있다. 상위 등급은 GetChestUpgradeCost로만 간다.
+                case BuildPieceType.Chest: return ChestCost;
                 default: return EmptyCost;
             }
         }
@@ -155,6 +257,7 @@ namespace MakeGame.Systems
                 case BuildPieceType.Window: return "대나무";
                 case BuildPieceType.Stair: return "나뭇가지";
                 case BuildPieceType.Roof: return "야자잎";
+                case BuildPieceType.Chest: return "노끈";
                 default: return null;
             }
         }

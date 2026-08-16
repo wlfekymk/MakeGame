@@ -158,6 +158,12 @@ namespace MakeGame.Systems
         private const float NoHitAimDistance = 4f;
 
         /// <summary>
+        /// 상자를 "조준 중"으로 인정하는 거리(m). InteractionController.interactionDistance와 같은 4m다 -
+        /// 이 값이 그쪽보다 길면 E가 닿지 않는 상자에 UI만 뜨고, 짧으면 그 반대가 된다.
+        /// </summary>
+        private const float ChestFocusDistance = 4f;
+
+        /// <summary>
         /// 뗏목 본체에 막혔다고 인정하려면 채택한 히트보다 이만큼(m)은 확실히 앞서야 한다.
         /// 갑판 윗면 콜라이더(DeckSurface)의 윗면과 선체 상자의 윗면은 **같은 평면**이라
         /// (RaftStructure: 둘 다 DeckSurfaceY) 갑판을 내려다보면 두 거리가 사실상 같게 나온다.
@@ -188,6 +194,16 @@ namespace MakeGame.Systems
             public int axis;       // 벽류 전용(0 = X축을 따라 뻗은 모서리, 1 = Z축)
             public Vector3 position;
             public float yaw;
+
+            /// <summary>
+            /// 보관 상자 전용. 내용물과 등급은 **실물이 아니라 이 기록이 들고 있다** - 갑판 재생성으로
+            /// 실물이 파괴돼도(RestoreDeckPiecesAfterRebuild) 새 실물에 같은 그릇을 다시 물려주면
+            /// 상자 안의 물건이 그대로 이어진다. 상자가 아닌 조각에서는 항상 null이다.
+            /// </summary>
+            public StorageChestState chestState;
+
+            /// <summary>보관 상자 전용. 지금 그 그릇을 물고 있는 컴포넌트(실물이 없으면 null).</summary>
+            public StorageChest chest;
         }
 
         private readonly List<PlacedPiece> pieces = new List<PlacedPiece>();
@@ -200,6 +216,15 @@ namespace MakeGame.Systems
         /// 딛고 설 바닥이 아니어서, 바닥 조회(TryGetFloorTopY)에 섞이면 지붕 위에 벽·계단이 서 버린다.
         /// </summary>
         private readonly Dictionary<long, PlacedPiece> roofByKey = new Dictionary<long, PlacedPiece>();
+
+        /// <summary>
+        /// [배치 39] 보관 상자. 지붕을 roofByKey로 뺀 것과 **완전히 같은 이유로** 딴 표에 둔다 -
+        /// 상자는 가구지 구조물이 아니어서, 바닥 조회(TryGetFloorTopY)나 천장 조회(HasCeilingAt)에
+        /// 섞이면 상자 위에 벽·창문·계단·지붕이 서고 실내 판정(IsInsideEnclosedStructure)까지 흔들린다.
+        /// 이 표는 **한 칸에 상자 하나**라는 규칙과 철거 순서 판정에만 쓴다.
+        /// 키는 바닥·계단과 같은 (공간, 셀, 층, NonWallAxis)이며, 층은 상자가 딛고 선 바닥의 층이다.
+        /// </summary>
+        private readonly Dictionary<long, PlacedPiece> chestByKey = new Dictionary<long, PlacedPiece>();
 
         /// <summary>레이가 맞은 콜라이더에서 조각 본체를 거슬러 찾기 위한 표(루트 Transform → 조각).</summary>
         private readonly Dictionary<Transform, PlacedPiece> pieceByRoot = new Dictionary<Transform, PlacedPiece>();
@@ -250,6 +275,9 @@ namespace MakeGame.Systems
         /// <summary>갑판이 아직 없을 때 복원된 갑판 조각을 잠시 담아 두는 대기열(뗏목이 생기면 세운다).</summary>
         private readonly List<BuildPieceSaveEntry> pendingDeckEntries = new List<BuildPieceSaveEntry>();
 
+        /// <summary>갑판이 아직 없을 때 복원된 갑판 위 상자의 대기열(조각 대기열과 같은 규칙).</summary>
+        private readonly List<ChestSaveEntry> pendingDeckChests = new List<ChestSaveEntry>();
+
         /// <summary>조각이 놓이거나 부서질 때마다 올라간다. 실내 판정 캐시를 통째로 버리는 기준이다.</summary>
         private int structureVersion;
 
@@ -264,6 +292,9 @@ namespace MakeGame.Systems
         private readonly HashSet<long> bfsVisited = new HashSet<long>();
         private readonly List<BuildPieceCost> refundBuffer = new List<BuildPieceCost>();
         private readonly List<BuildPieceCost> placementCostBuffer = new List<BuildPieceCost>();
+
+        /// <summary>상자 철거 반환액을 합산할 때만 쓰는 버퍼(매 프레임 도는 placementCostBuffer와 섞지 않는다).</summary>
+        private readonly List<BuildPieceCost> chestCostBuffer = new List<BuildPieceCost>();
 
         // ResolveWallTarget이 후보를 고르는 동안 쓰는 작업 필드. 호출이 중첩되지 않으므로 지역 변수를
         // 여러 개 ref로 넘기는 대신 여기 둔다(할당 0). '빈 자리'와 '이미 찬 자리'를 따로 들고 있다가
@@ -325,6 +356,7 @@ namespace MakeGame.Systems
                 case BuildPieceType.Window:
                 case BuildPieceType.Stair:
                 case BuildPieceType.Roof:
+                case BuildPieceType.Chest:
                     return true;
                 default:
                     return false;
@@ -426,14 +458,36 @@ namespace MakeGame.Systems
             var ghostGo = new GameObject("Ghost");
             ghostGo.transform.SetParent(transform, false);
             ghostRoot = ghostGo.transform;
+
+            // 상자의 등급이 오르면 실물 겉모습을 그 자리에서 새 등급으로 갈아 끼운다. 루트는 그대로
+            // 두므로(BuildPieceVisualBuilder.RebuildChest) UI가 들고 있는 StorageChest 참조는 살아 있다.
+            StorageChest.TierChanged += OnChestTierChanged;
         }
 
         private void OnDestroy()
         {
+            StorageChest.TierChanged -= OnChestTierChanged;
+            StorageChest.SetFocused(null);
+
             UnbindRaft();
 
             if (Instance == this)
                 Instance = null;
+        }
+
+        /// <summary>상자 등급이 바뀌었다. 그 상자의 실물만 새 등급 형상으로 다시 만든다.</summary>
+        private void OnChestTierChanged(StorageChest chest)
+        {
+            if (chest == null)
+                return;
+
+            PlacedPiece piece = FindPieceOf(chest.transform);
+            if (piece == null || piece.type != BuildPieceType.Chest || piece.go == null)
+                return;
+
+            BuildPieceVisualBuilder.RebuildChest(piece.go, chest.Tier);
+            Physics.SyncTransforms();
+            Changed?.Invoke();
         }
 
         private void Update()
@@ -441,6 +495,10 @@ namespace MakeGame.Systems
             // 뗏목은 건조 단계에 따라 생겼다 없어졌다 하므로 매 프레임 싸게(정적 프로퍼티 읽기 하나)
             // 확인한다. 갑판이 다시 만들어지면서 컨테이너가 통째로 날아갔을 수도 있어 null도 함께 본다.
             SyncRaftBinding();
+
+            // 조준 중인 상자는 **입력과 무관하게** 갱신한다. 상자 UI가 열려 있는 동안 게임이 멈춰도
+            // (timeScale 0) 방금 연 상자를 계속 가리키고 있어야 하고, 건축 모드가 아닐 때도 조준은 살아 있다.
+            UpdateChestFocus();
 
             // 엔딩/사망 화면은 Time.timeScale을 0으로 세운다(AGENT_BRIEF 4장). 그 동안에는 입력을
             // 아예 받지 않는다 - 죽은 화면 뒤에서 집이 지어지면 안 된다.
@@ -482,6 +540,34 @@ namespace MakeGame.Systems
         private void Rotate(int steps)
         {
             rotationSteps = ((rotationSteps + steps) % 4 + 4) % 4;
+        }
+
+        /// <summary>
+        /// 카메라 정면의 상자를 찾아 <see cref="StorageChest.Focused"/>를 갱신한다.
+        /// 거리와 판정은 <see cref="InteractionController.TryGetLookTarget"/>과 **같은 규칙**이다
+        /// (레이 하나, 상호작용 거리 4m, 가장 가까운 콜라이더 하나만). 그래야 "E가 닿는 것"과
+        /// "상자 UI가 여는 것"이 어긋나지 않는다. 상자 실물의 콜라이더는 루트에 붙어 있지만,
+        /// 나중에 파츠에 콜라이더가 생겨도 안전하도록 부모를 거슬러 찾는다.
+        /// </summary>
+        private void UpdateChestFocus()
+        {
+            Camera cam = GetCamera();
+            if (cam == null)
+            {
+                StorageChest.SetFocused(null);
+                return;
+            }
+
+            Transform camTransform = cam.transform;
+            var ray = new Ray(camTransform.position, camTransform.forward);
+
+            if (!Physics.Raycast(ray, out RaycastHit hit, ChestFocusDistance, ~0, QueryTriggerInteraction.Ignore))
+            {
+                StorageChest.SetFocused(null);
+                return;
+            }
+
+            StorageChest.SetFocused(hit.collider.GetComponentInParent<StorageChest>());
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -562,7 +648,7 @@ namespace MakeGame.Systems
             if (deckContainer.localRotation != Quaternion.identity)
                 deckContainer.localRotation = Quaternion.identity;
 
-            if (pendingDeckEntries.Count > 0)
+            if (pendingDeckEntries.Count > 0 || pendingDeckChests.Count > 0)
                 FlushPendingDeckEntries();
         }
 
@@ -614,7 +700,8 @@ namespace MakeGame.Systems
                     continue;
                 }
 
-                GameObject go = BuildPieceVisualBuilder.CreateSolid(piece.type, deckContainer);
+                int tier = piece.chestState != null ? piece.chestState.tier : 0;
+                GameObject go = CreatePieceObject(piece.type, deckContainer, tier);
                 if (go == null)
                 {
                     Debug.LogWarning("[BuildingSystem] 갑판 재생성 후 조각 실물을 다시 만들지 못했다.");
@@ -628,19 +715,28 @@ namespace MakeGame.Systems
                 piece.root = go.transform;
                 pieceByRoot[piece.root] = piece;
                 ApplyDeckLocalTransform(piece.root, piece.position, piece.yaw);
+
+                // 상자는 새 실물에 **같은 그릇**을 다시 물린다 - 내용물과 등급이 그대로 이어진다.
+                AttachChest(piece);
             }
 
             rebuildBuffer.Clear();
             Physics.SyncTransforms();
         }
 
-        /// <summary>대기 중이던 갑판 조각(갑판이 없을 때 불러온 세이브)을 실제로 세운다.</summary>
+        /// <summary>대기 중이던 갑판 조각·상자(갑판이 없을 때 불러온 세이브)를 실제로 세운다.</summary>
         private void FlushPendingDeckEntries()
         {
             for (int i = 0; i < pendingDeckEntries.Count; i++)
                 CreatePieceFromEntry(pendingDeckEntries[i]);
 
             pendingDeckEntries.Clear();
+
+            for (int i = 0; i < pendingDeckChests.Count; i++)
+                CreateChestFromEntry(pendingDeckChests[i]);
+
+            pendingDeckChests.Clear();
+
             Physics.SyncTransforms();
             Changed?.Invoke();
         }
@@ -750,6 +846,10 @@ namespace MakeGame.Systems
 
                 case BuildPieceType.Roof:
                     ResolveRoofTarget(space, point);
+                    break;
+
+                case BuildPieceType.Chest:
+                    ResolveChestTarget(space, point);
                     break;
 
                 default:
@@ -1285,6 +1385,61 @@ namespace MakeGame.Systems
             blockReason = BuildBlockReason.None;
         }
 
+        /// <summary>
+        /// 보관 상자의 놓을 자리를 정한다. 상자는 셀 하나를 차지하고 **딛고 선 바닥 위에** 앉는다
+        /// (로컬 원점이 밑면이라 position.y가 곧 그 바닥의 윗면이다).
+        ///
+        /// **지지 판정을 새로 만들지 않는다.** 계단이 쓰는 것과 **완전히 같은** 바닥 조회
+        /// (<see cref="FindSupportNear"/>) 하나뿐이다 - 갑판은 그 안에서 0층 바닥으로 취급되므로
+        /// 갑판 위에도 바닥 조각 없이 바로 놓인다. 지면(맨땅)에는 놓을 수 없다: 바닥을 깔고 그 위에 둔다.
+        ///
+        /// 상자는 지지 근거가 되지 않으므로 chestByKey에만 들어가고, 여기서도 다른 부품의 자리를
+        /// 빼앗지 않는다(HasCeilingAt을 건드리지 않는다 - 상자 위에 지붕이나 바닥을 얹는 것은 자유다).
+        /// </summary>
+        private void ResolveChestTarget(BuildSpace space, Vector3 point)
+        {
+            int cellX = CellIndexOf(point.x);
+            int cellZ = CellIndexOf(point.z);
+
+            SupportRef support = FindSupportNear(space, cellX, cellZ, point.y);
+            if (!support.valid)
+            {
+                blockReason = BuildBlockReason.NoSupportingFloor;
+                return;
+            }
+
+            hasTarget = true;
+            targetCellX = cellX;
+            targetCellZ = cellZ;
+            targetLevel = support.level;
+            targetAxis = NonWallAxis;
+            targetYaw = GetYawFor(BuildPieceType.Chest, NonWallAxis);
+            targetPosition = new Vector3(CellCenterCoord(cellX), support.y, CellCenterCoord(cellZ));
+
+            if (space == BuildSpace.Deck && !IsDeckCellInBounds(cellX, cellZ))
+            {
+                blockReason = BuildBlockReason.OffDeck;
+                return;
+            }
+
+            // 한 칸에 상자 하나.
+            if (chestByKey.ContainsKey(PieceKey(space, cellX, cellZ, support.level, NonWallAxis)))
+            {
+                blockReason = BuildBlockReason.Occupied;
+                return;
+            }
+
+            // 계단이 지나가는 칸은 통행로다 - 상자를 놓으면 계단을 오르내릴 수 없게 된다.
+            if (stairByKey.ContainsKey(PieceKey(space, cellX, cellZ, support.level, NonWallAxis)))
+            {
+                blockReason = BuildBlockReason.StairInTheWay;
+                return;
+            }
+
+            targetValid = true;
+            blockReason = BuildBlockReason.None;
+        }
+
         /// <summary>참(landing) 바닥을 그 칸에 깔 수 있는지. 바닥 배치와 같은 기준을 쓴다.</summary>
         private bool CanPlaceLandingFloor(BuildSpace space, int cellX, int cellZ, float topY)
         {
@@ -1327,7 +1482,8 @@ namespace MakeGame.Systems
         /// </summary>
         private float GetYawFor(BuildPieceType type, int axis)
         {
-            if (type == BuildPieceType.Floor || type == BuildPieceType.Stair || type == BuildPieceType.Roof)
+            if (type == BuildPieceType.Floor || type == BuildPieceType.Stair || type == BuildPieceType.Roof
+                || type == BuildPieceType.Chest)
                 return rotationSteps * 90f;
 
             float baseYaw = axis == 0 ? 0f : 90f;
@@ -1777,7 +1933,8 @@ namespace MakeGame.Systems
 
             // **순서가 곧 안전장치다.** 실물을 먼저 만들고, 성공한 뒤에야 재료를 지운다.
             // (이 프로젝트에서 아이템이 증발한 사고가 네 번 있었고 전부 반대 순서였다.)
-            GameObject go = BuildPieceVisualBuilder.CreateSolid(selectedType, parent);
+            // 새로 놓는 상자는 언제나 소형(등급 0)이다 - 상위 등급은 업그레이드로만 도달한다.
+            GameObject go = CreatePieceObject(selectedType, parent, 0);
             if (go == null)
             {
                 Debug.LogWarning($"[BuildingSystem] '{BuildPieceCatalog.GetDisplayName(selectedType)}' 실물 생성에 " +
@@ -1815,8 +1972,11 @@ namespace MakeGame.Systems
                 return;
             }
 
-            RegisterPiece(selectedType, targetSpace, go, targetCellX, targetCellZ, targetLevel, targetAxis,
-                targetPosition, targetYaw);
+            PlacedPiece placed = RegisterPiece(selectedType, targetSpace, go, targetCellX, targetCellZ, targetLevel,
+                targetAxis, targetPosition, targetYaw);
+
+            if (selectedType == BuildPieceType.Chest)
+                AttachChest(placed);
 
             if (landingGo != null)
             {
@@ -1920,6 +2080,15 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 내용물이 남은 상자는 부술 수 없다. 부수면서 안의 물건을 쏟아 주는 방법도 있지만, 인벤토리가
+            // 가득 차면 결국 어딘가에서 아이템이 사라진다 - "비워야 부술 수 있다"가 유일하게 잃지 않는 규칙이다.
+            if (piece.type == BuildPieceType.Chest && piece.chestState != null && piece.chestState.items.Count > 0)
+            {
+                Debug.LogWarning("[BuildingSystem] 상자에 물건이 남아 있어 부술 수 없다. 상자를 비워야 부술 수 있다.");
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
             if (piece.type == BuildPieceType.Floor && HasLoadAbove(piece))
             {
                 Debug.LogWarning("[BuildingSystem] 이 바닥 위에 얹힌 조각이 있어 부술 수 없다. 위쪽부터 철거하라.");
@@ -1945,7 +2114,7 @@ namespace MakeGame.Systems
                 return;
             }
 
-            if (!CollectRefund(piece.type, refundBuffer))
+            if (!CollectRefundForPiece(piece, refundBuffer))
             {
                 Debug.LogWarning("[BuildingSystem] 돌려줄 재료의 ItemData를 찾지 못해 철거를 취소했다" +
                     " (ItemDataRegistry 미배치 가능성).");
@@ -2013,6 +2182,11 @@ namespace MakeGame.Systems
             if (stairByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
                 return true;
 
+            // 이 바닥 위에 앉은 상자. 바닥을 먼저 부수면 상자가 허공에 뜬다 - 계단과 같은 원칙이다.
+            // (상자는 비우기 전에는 부술 수도 없으므로, 순서는 "비우기 → 상자 → 바닥"이 된다.)
+            if (chestByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
+                return true;
+
             // 이 바닥 위에 선 벽류. 단, 모서리를 함께 쓰는 옆 칸 바닥이 아직 있으면 그쪽이 받쳐 준다.
             for (int side = 0; side < 4; side++)
             {
@@ -2026,6 +2200,41 @@ namespace MakeGame.Systems
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 조각 하나를 부술 때 돌려줄 재료를 채운다. 보관 상자만 특별하다 - 지금까지 **부어 넣은 전부**
+        /// (소형 설치비 + 여기까지 올라온 승급비 전부)를 합산한 뒤 절반을 돌려준다. 그러지 않으면
+        /// 특대까지 올린 상자를 부술 때 승급에 쓴 금속조각이 통째로 증발한다.
+        /// </summary>
+        private bool CollectRefundForPiece(PlacedPiece piece, List<BuildPieceCost> buffer)
+        {
+            if (piece.type != BuildPieceType.Chest)
+                return CollectRefund(piece.type, buffer);
+
+            int tier = piece.chestState != null ? BuildPieceCatalog.ClampChestTier(piece.chestState.tier) : 0;
+
+            // 먼저 원가를 전부 합산한다(줄마다 절반을 먼저 내리면 홀수 줄에서 손해가 누적된다).
+            chestCostBuffer.Clear();
+            AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetCost(BuildPieceType.Chest));
+            for (int t = 0; t < tier; t++)
+                AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetChestUpgradeCost(t));
+
+            buffer.Clear();
+            for (int i = 0; i < chestCostBuffer.Count; i++)
+            {
+                BuildPieceCost entry = chestCostBuffer[i];
+                int back = entry.count / 2;
+                if (back <= 0)
+                    continue;
+
+                if (ResolveItem(entry.itemName) == null)
+                    return false;
+
+                buffer.Add(new BuildPieceCost(entry.itemName, back));
+            }
+
+            return true;
         }
 
         /// <summary>반환 재료 목록(원가의 절반, 내림)을 채운다. ItemData를 못 찾으면 false.</summary>
@@ -2172,7 +2381,11 @@ namespace MakeGame.Systems
         // 등록 / 해제
         // ────────────────────────────────────────────────────────────────────────
 
-        private void RegisterPiece(BuildPieceType type, BuildSpace space, GameObject go, int cellX, int cellZ,
+        /// <summary>
+        /// 조각 하나를 표에 올린다. **만들어진 기록을 돌려준다** - 보관 상자처럼 등록 직후에 부가 상태
+        /// (내용물 그릇)를 물려야 하는 부품이 있어서, 호출부가 그 기록을 손에 쥘 수 있어야 한다.
+        /// </summary>
+        private PlacedPiece RegisterPiece(BuildPieceType type, BuildSpace space, GameObject go, int cellX, int cellZ,
             int level, int axis, Vector3 position, float yaw)
         {
             var piece = new PlacedPiece
@@ -2206,12 +2419,48 @@ namespace MakeGame.Systems
                     roofByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
+                // 상자는 **딴 표**다. 바닥/천장 조회에 절대 들어가지 않는다(BuildPieceType.Chest 주석 참고).
+                case BuildPieceType.Chest:
+                    chestByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    break;
+
                 default:
                     wallByKey[PieceKey(space, cellX, cellZ, level, axis)] = piece;
                     break;
             }
 
             structureVersion++;
+            return piece;
+        }
+
+        /// <summary>
+        /// 상자 실물에 StorageChest 컴포넌트를 붙이고 내용물 그릇을 물려준다.
+        /// 그릇이 없으면 빈 그릇을 만든다 - **그릇은 조각 기록이 들고 있으므로**, 실물이 다시 만들어져도
+        /// 이 함수만 다시 부르면 내용물과 등급이 그대로 이어진다.
+        /// </summary>
+        private void AttachChest(PlacedPiece piece)
+        {
+            if (piece == null || piece.type != BuildPieceType.Chest || piece.go == null)
+                return;
+
+            if (piece.chestState == null)
+                piece.chestState = new StorageChestState();
+
+            StorageChest chest = piece.go.GetComponent<StorageChest>();
+            if (chest == null)
+                chest = piece.go.AddComponent<StorageChest>();
+
+            chest.Bind(piece.chestState);
+            piece.chest = chest;
+        }
+
+        /// <summary>부품 실물을 만든다. 상자만 등급에 따라 크기가 달라 별도 경로를 탄다.</summary>
+        private static GameObject CreatePieceObject(BuildPieceType type, Transform parent, int tier)
+        {
+            if (type == BuildPieceType.Chest)
+                return BuildPieceVisualBuilder.CreateChestSolid(parent, tier);
+
+            return BuildPieceVisualBuilder.CreateSolid(type, parent);
         }
 
         private void UnregisterPiece(PlacedPiece piece)
@@ -2235,6 +2484,10 @@ namespace MakeGame.Systems
 
                 case BuildPieceType.Roof:
                     roofByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    break;
+
+                case BuildPieceType.Chest:
+                    chestByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
                 default:
@@ -2263,7 +2516,10 @@ namespace MakeGame.Systems
             wallByKey.Clear();
             stairByKey.Clear();
             roofByKey.Clear();
+            chestByKey.Clear();
             pendingDeckEntries.Clear();
+            pendingDeckChests.Clear();
+            StorageChest.SetFocused(null);
             structureVersion++;
         }
 
@@ -2278,6 +2534,7 @@ namespace MakeGame.Systems
         /// </summary>
         public string SerializeToJson()
         {
+            // 상자만 있고 다른 조각이 하나도 없으면 ""가 나가는데, 그것이 맞다 - 상자는 별도 목록으로 저장된다.
             if (pieces.Count == 0 && pendingDeckEntries.Count == 0)
                 return "";
 
@@ -2285,6 +2542,12 @@ namespace MakeGame.Systems
             for (int i = 0; i < pieces.Count; i++)
             {
                 PlacedPiece piece = pieces[i];
+
+                // 보관 상자는 이 목록에 넣지 않는다. 등급과 내용물까지 실어야 해서 SaveData.storageChests
+                // 라는 별도 목록으로 나가며(SerializeChests), 양쪽에 다 쓰면 불러올 때 상자가 둘이 된다.
+                if (piece.type == BuildPieceType.Chest)
+                    continue;
+
                 data.pieces.Add(new BuildPieceSaveEntry
                 {
                     type = (int)piece.type,
@@ -2350,7 +2613,16 @@ namespace MakeGame.Systems
             if (entry == null)
                 return;
 
-            // 상한은 **열거형의 마지막 값**이다. 옛 세이브(0~4)는 그대로 통과하고, 새 지붕(5)만 더 읽힌다.
+            // 상한은 **지붕(5)** 이다. 옛 세이브(0~4)는 그대로 통과하고, 지붕만 더 읽힌다.
+            // 상자(6)는 이 목록에 저장되지 않으므로(SerializeToJson) 여기 들어오면 잘못 만들어진
+            // 세이브다 - 조용히 넘기지 않고 사유를 남긴다.
+            if (entry.type == (int)BuildPieceType.Chest)
+            {
+                Debug.LogWarning("[BuildingSystem] 건축 조각 목록에 보관 상자가 들어 있어 건너뛴다" +
+                    " (상자는 SaveData.storageChests로 복원된다).");
+                return;
+            }
+
             if (entry.type < (int)BuildPieceType.Floor || entry.type > (int)BuildPieceType.Roof)
             {
                 Debug.LogWarning($"[BuildingSystem] 알 수 없는 부품 종류 {entry.type} 를 건너뛴다.");
@@ -2394,10 +2666,230 @@ namespace MakeGame.Systems
             if (go == null)
                 return;
 
+
             var position = new Vector3(entry.posX, entry.posY, entry.posZ);
             ApplyPieceTransform(go.transform, space, position, entry.yaw);
 
             RegisterPiece(type, space, go, entry.cellX, entry.cellZ, entry.level, entry.axis, position, entry.yaw);
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
+        // 보관 상자 저장 / 복원 (SaveData.storageChests 한 칸에 배선한다)
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 놓여 있는 보관 상자 전부를 저장 항목으로 옮겨 담는다(buffer는 내부에서 Clear된다).
+        /// 상자는 건축 조각 JSON에 넣지 않는다 - 등급과 내용물까지 실어야 해서 별도 목록으로 나간다.
+        /// 갑판 위 상자의 좌표는 조각과 마찬가지로 **뗏목 로컬**이라 뗏목이 떠내려간 뒤에 불러와도 맞다.
+        /// </summary>
+        public void SerializeChests(List<ChestSaveEntry> buffer)
+        {
+            if (buffer == null)
+                return;
+
+            buffer.Clear();
+
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                PlacedPiece piece = pieces[i];
+                if (piece.type != BuildPieceType.Chest)
+                    continue;
+
+                var entry = new ChestSaveEntry
+                {
+                    space = (int)piece.space,
+                    cellX = piece.cellX,
+                    cellZ = piece.cellZ,
+                    level = piece.level,
+                    posX = piece.position.x,
+                    posY = piece.position.y,
+                    posZ = piece.position.z,
+                    yaw = piece.yaw,
+                    tier = piece.chestState != null ? BuildPieceCatalog.ClampChestTier(piece.chestState.tier) : 0,
+                };
+
+                if (piece.chestState != null)
+                    AppendChestItems(piece.chestState, entry.items);
+
+                buffer.Add(entry);
+            }
+
+            // 갑판이 없어 아직 세우지 못한 상자도 그대로 다시 저장한다(불러오기 두 번에 사라지면 안 된다).
+            for (int i = 0; i < pendingDeckChests.Count; i++)
+                buffer.Add(pendingDeckChests[i]);
+        }
+
+        /// <summary>
+        /// 상자의 평면 목록(1개 = 1항목)을 이름 + 개수 + 남은 사용 횟수로 접어 담는다.
+        /// **남은 사용 횟수가 다르면 접지 않는다** - 반쯤 닳은 손도끼와 새 손도끼를 한 줄로 합치면
+        /// 복원할 때 내구도가 한 값으로 뭉개진다(인벤토리 세이브가 같은 이유로 항목을 나눠 둔다).
+        /// </summary>
+        private static void AppendChestItems(StorageChestState state, List<ChestItemSaveEntry> target)
+        {
+            List<InventoryItem> items = state.items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                InventoryItem item = items[i];
+                if (item == null || item.data == null || string.IsNullOrEmpty(item.data.itemName))
+                    continue;
+
+                bool merged = false;
+                for (int k = 0; k < target.Count; k++)
+                {
+                    if (target[k].itemName != item.data.itemName || target[k].remainingUses != item.remainingUses)
+                        continue;
+
+                    target[k].count++;
+                    merged = true;
+                    break;
+                }
+
+                if (!merged)
+                {
+                    target.Add(new ChestItemSaveEntry
+                    {
+                        itemName = item.data.itemName,
+                        count = 1,
+                        remainingUses = item.remainingUses,
+                    });
+                }
+            }
+        }
+
+        /// <summary>
+        /// 저장된 보관 상자를 되살린다. 목록이 비어 있으면(= 상자 기능이 없던 옛 세이브) **아무것도 하지
+        /// 않는다** - 지금 지어 둔 상자를 지우지도 않는다. 건축 조각 복원(RestoreFromJson)이 ""를 만났을
+        /// 때와 완전히 같은 규칙이다.
+        ///
+        /// 반드시 RestoreFromJson **뒤에** 불러야 한다: 그쪽이 ClearAllPieces로 격자 표를 비우기 때문에,
+        /// 순서가 뒤집히면 방금 세운 상자가 그대로 지워진다.
+        /// </summary>
+        public void RestoreChests(List<ChestSaveEntry> entries)
+        {
+            if (entries == null || entries.Count == 0)
+                return;
+
+            // 건축 조각이 하나도 없는 세이브(buildStructureJson == "")는 RestoreFromJson이 일찍 돌아가
+            // 표를 비우지 않는다. 그 경우에도 상자가 겹쳐 서지 않도록 여기서 상자만 따로 걷어낸다.
+            RemoveAllChests();
+
+            SyncRaftBinding();
+
+            for (int i = 0; i < entries.Count; i++)
+                CreateChestFromEntry(entries[i]);
+
+            Physics.SyncTransforms();
+            Changed?.Invoke();
+        }
+
+        /// <summary>놓여 있는 상자를 전부 걷어낸다(복원 직전 정리 전용 - 내용물 검사를 하지 않는다).</summary>
+        private void RemoveAllChests()
+        {
+            for (int i = pieces.Count - 1; i >= 0; i--)
+            {
+                PlacedPiece piece = pieces[i];
+                if (piece.type != BuildPieceType.Chest)
+                    continue;
+
+                UnregisterPiece(piece);
+
+                if (piece.go != null)
+                {
+                    piece.go.SetActive(false);
+                    Destroy(piece.go);
+                }
+            }
+
+            pendingDeckChests.Clear();
+            StorageChest.SetFocused(null);
+        }
+
+        /// <summary>저장 항목 하나를 실제 상자로 세운다. 갑판이 아직 없으면 대기열에 넣는다.</summary>
+        private void CreateChestFromEntry(ChestSaveEntry entry)
+        {
+            if (entry == null)
+                return;
+
+            var space = entry.space == (int)BuildSpace.Deck ? BuildSpace.Deck : BuildSpace.Ground;
+
+            if (space == BuildSpace.Deck && !IsDeckReady)
+            {
+                pendingDeckChests.Add(entry);
+                return;
+            }
+
+            if (chestByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis)))
+            {
+                Debug.LogWarning("[BuildingSystem] 같은 자리에 상자가 둘 저장돼 있어 뒤엣것을 건너뛴다.");
+                return;
+            }
+
+            int tier = BuildPieceCatalog.ClampChestTier(entry.tier);
+            Transform parent = space == BuildSpace.Deck ? deckContainer : piecesRoot;
+            GameObject go = CreatePieceObject(BuildPieceType.Chest, parent, tier);
+            if (go == null)
+            {
+                Debug.LogWarning("[BuildingSystem] 상자 실물을 만들지 못해 복원을 건너뛴다.");
+                return;
+            }
+
+            var position = new Vector3(entry.posX, entry.posY, entry.posZ);
+            ApplyPieceTransform(go.transform, space, position, entry.yaw);
+
+            PlacedPiece piece = RegisterPiece(BuildPieceType.Chest, space, go, entry.cellX, entry.cellZ,
+                entry.level, NonWallAxis, position, entry.yaw);
+
+            piece.chestState = new StorageChestState { tier = tier };
+            AttachChest(piece);
+
+            FillChestFromEntry(piece, entry);
+        }
+
+        /// <summary>
+        /// 저장된 내용물을 상자에 채운다. **이름으로 ItemData를 찾지 못한 항목은 조용히 버리지 않는다** -
+        /// 몇 개를 못 살렸는지 이름과 함께 경고로 남긴다(ItemDataRegistry 등록 누락을 눈으로 잡기 위해서다).
+        /// 용량 검사는 하지 않는다: 상한을 넘긴 기록에서 넘치는 만큼을 버리면 플레이어의 물건이 사라진다.
+        /// </summary>
+        private void FillChestFromEntry(PlacedPiece piece, ChestSaveEntry entry)
+        {
+            if (piece.chest == null || entry.items == null)
+                return;
+
+            int lost = 0;
+            string lostNames = null;
+
+            for (int i = 0; i < entry.items.Count; i++)
+            {
+                ChestItemSaveEntry saved = entry.items[i];
+                if (saved == null || string.IsNullOrEmpty(saved.itemName))
+                    continue;
+
+                int count = saved.Count;
+                ItemData data = ResolveItem(saved.itemName);
+                if (data == null)
+                {
+                    lost += count;
+                    lostNames = lostNames == null ? saved.itemName : lostNames + ", " + saved.itemName;
+                    continue;
+                }
+
+                for (int k = 0; k < count; k++)
+                    piece.chest.AddItemIgnoringCapacity(data, saved.remainingUses);
+            }
+
+            piece.chest.NotifyChanged();
+
+            if (lost > 0)
+            {
+                Debug.LogWarning($"[BuildingSystem] 상자 복원 중 이름으로 ItemData를 찾지 못해 {lost}개를 " +
+                    $"되살리지 못했다(종류: {lostNames}). ItemDataRegistry 등록을 확인하라.");
+            }
+
+            if (piece.chest.UsedSlots > piece.chest.SlotCapacity)
+            {
+                Debug.LogWarning($"[BuildingSystem] 복원된 상자가 칸 상한을 넘었다" +
+                    $" ({piece.chest.UsedSlots}/{piece.chest.SlotCapacity}칸). 물건은 그대로 두고 새로 넣는 것만 막힌다.");
+            }
         }
 
         // ────────────────────────────────────────────────────────────────────────

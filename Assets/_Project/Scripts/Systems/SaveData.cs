@@ -103,6 +103,69 @@ namespace MakeGame.Systems
         [Tooltip("현재 잡혀서(isCaught) 재등장 대기 중인 사냥감/물고기의 (islandIndex, spawnOrder) 키 목록.\n" +
             "위험 요소와 동일하게 '잡힘' 여부만 기록하고 재등장까지 남은 시간은 저장하지 않는다.")]
         public List<SpawnKeySaveEntry> caughtCreatures = new List<SpawnKeySaveEntry>();
+
+        // ── 보관 상자 (배치 39) ────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다.** 기존 필드는 하나도 지우거나 이름을 바꾸지 않았다 - JsonUtility는
+        // JSON에 없는 필드를 손대지 않으므로, 이 필드가 없던 옛 세이브를 불러오면 초기화 구문
+        // (= new List<>())대로 빈 목록이 되어 경고 하나 없이 열린다(structures를 처음 넣을 때와 같은 관례).
+        //
+        // 상자는 건축 조각(buildStructureJson)이 아니라 여기에 담긴다. 조각 목록은 "격자 위 형상"만
+        // 다루는데 상자는 등급과 내용물을 함께 실어야 하고, 두 곳에 다 쓰면 불러올 때 상자가 둘이 된다.
+        // 격자 자리(공간/셀/층)와 회전은 그대로 저장하므로 조각과 같은 격자 위에 그대로 되살아난다.
+
+        [Header("보관 상자 (배치 39)")]
+        [Tooltip("설치된 보관 상자 각각의 격자 자리·회전·등급·내용물. 옛 세이브에는 이 필드가 없어" +
+            " 빈 목록으로 읽히며, 그 경우 BuildingSystem.RestoreChests는 아무것도 하지 않는다.")]
+        public List<ChestSaveEntry> storageChests = new List<ChestSaveEntry>();
+    }
+
+    /// <summary>
+    /// 보관 상자 하나의 저장 항목. 좌표는 그 상자가 속한 **공간의 로컬 값**이다
+    /// (Ground면 월드 좌표, Deck이면 뗏목 로컬 좌표 - 건축 조각의 BuildPieceSaveEntry와 같은 규약).
+    /// </summary>
+    [System.Serializable]
+    public class ChestSaveEntry
+    {
+        [Tooltip("BuildSpace (0=지면 / 1=뗏목 갑판)")]
+        public int space;
+
+        [Header("격자 자리")]
+        public int cellX;
+        public int cellZ;
+
+        [Tooltip("상자가 딛고 선 바닥의 층 번호")]
+        public int level;
+
+        [Header("좌표/회전")]
+        public float posX;
+        public float posY;
+        public float posZ;
+        public float yaw;
+
+        [Tooltip("등급(0=소형 50칸 / 1=중형 100 / 2=대형 150 / 3=특대 200). 범위를 벗어난 값은 복원 시 잘린다.")]
+        public int tier;
+
+        [Tooltip("상자에 든 아이템(이름 + 개수 + 남은 사용 횟수).")]
+        public List<ChestItemSaveEntry> items = new List<ChestItemSaveEntry>();
+    }
+
+    /// <summary>
+    /// 상자에 든 아이템 한 줄. InventorySaveEntry와 같은 규약이다 - ItemData는 직렬화할 수 없으므로
+    /// 이름으로 적어 두고 불러올 때 ItemDataRegistry로 되찾는다. 남은 사용 횟수가 다른 도구는
+    /// 한 줄로 접지 않으므로(BuildingSystem.AppendChestItems) 내구도가 뭉개지지 않는다.
+    /// </summary>
+    [System.Serializable]
+    public class ChestItemSaveEntry
+    {
+        public string itemName;
+
+        [Tooltip("이 줄이 나타내는 개수. 0 이하이면 1개로 해석한다(InventorySaveEntry와 같은 안전장치).")]
+        public int count = 1;
+
+        public int remainingUses;
+
+        /// <summary>실제 개수. 0 이하는 1로 해석한다.</summary>
+        public int Count => count > 0 ? count : 1;
     }
 
     /// <summary>스킬 하나의 저장 항목(종류, 레벨, 경험치).</summary>
