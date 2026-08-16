@@ -411,8 +411,22 @@ namespace MakeGame.Systems
                     scale = new Vector3(0.09f, 0.32f, 0.09f);
                     break;
                 case "대나무": // 한 포기의 중심 줄기. 마디는 **메시 안에** 있고(ApplyRootMesh), 곁줄기 2~4개와 잎다발은 AddResourceDetailParts
+                    // [B29 감독 보고 "대나무가 너무 짧음"] 1.05 → 2.10.
+                    // 실린더는 로컬 높이가 2(=-1~+1)이므로 **총 높이 = scale.y × 2**다. 2.10이면 4.2m이고,
+                    // 세로 지터(0.85~1.25)까지 합치면 3.57~5.25m - 눈높이 1.6m를 한참 올려다보게 된다
+                    // (예전은 1.79~2.63m로 사람 키 남짓이었다).
+                    // 가로 0.14 → 0.30은 두 가지를 동시에 노린다:
+                    //  (1) **콜라이더 = 채집 판정**이다. CreatePrimitive가 붙인 캡슐의 반지름은
+                    //      0.5 × scale.x이므로 지름이 0.14m → 0.30m가 된다. 눈에 보이는 포기 폭(곁줄기가
+                    //      중심에서 0.34m까지 퍼진다)에 비해 판정이 너무 가늘다는 지적을 여기서 갚는다.
+                    //      높이도 2.1 → 4.2m가 되어 올려다보는 각도에서도 줄기 어디를 조준하든 맞는다.
+                    //  (2) 보이는 줄기 굵기는 콜라이더와 **분리해서** 정한다 - BambooCulmUnit의 메시
+                    //      반지름을 0.34 → 0.22로 함께 줄였으므로 실제로 보이는 지름은 0.136m가 아니라
+                    //      0.132m다(예전 0.095m). 높이가 2배가 됐는데 굵기가 그대로면 국수 가락이 되고,
+                    //      정비례로 2배(0.19m)면 통나무가 된다. 세장비 22 → 32로 **더 늘씬해지되**
+                    //      절대 굵기는 1.4배로 함께 키운 값이다.
                     primitive = PrimitiveType.Cylinder;
-                    scale = new Vector3(0.14f, 1.05f, 0.14f);
+                    scale = new Vector3(0.30f, 2.10f, 0.30f);
                     break;
                 case "돌조각": // 각진 파편 무더기 (파편 형태는 ApplyRootMesh, 곁돌 2~3개는 AddResourceDetailParts)
                     primitive = PrimitiveType.Sphere;
@@ -573,12 +587,16 @@ namespace MakeGame.Systems
                     // 지금 마디는 파츠가 아니라 줄기 메시 자체의 굵기 변화다(마디 아래를 0.93으로 조이고
                     // 마디에서 1.22로 부풀린다). 파츠를 하나도 쓰지 않으므로 줄기당 3~5마디가 공짜다.
                     {
+                        // [B29] groundY는 **미터**이고 루트 피벗이 지면 위 parentScale.y(=반높이)에 있으므로,
+                        // 루트 스케일을 키워도 곁줄기 밑동은 자동으로 지면에 붙는다(계산을 다시 할 필요가 없다).
                         float groundY = -parentScale.y;
                         int culmCount = rng.NextInt(2, 5); // 루트 줄기 + 2~4 = 한 포기에 3~5줄기
                         for (int i = 0; i < culmCount; i++)
                         {
                             float around = rng.NextFloat(0f, 360f) * Mathf.Deg2Rad;
-                            float dist = rng.NextFloat(0.07f, 0.19f);
+                            // [B29] 0.07~0.19m → 0.12~0.34m. 줄기가 2배 길어졌는데 밑동 간격이 그대로면
+                            // 한 다발로 뭉쳐 굵은 기둥 하나처럼 보인다(기울기도 함께 2배로 키웠다).
+                            float dist = rng.NextFloat(0.12f, 0.34f);
                             Vector3 offset = new Vector3(Mathf.Cos(around) * dist, groundY, Mathf.Sin(around) * dist);
                             Material material = ResourceVisualLibrary.GetMaterial(
                                 ResourceVisualLibrary.Shade(color, CulmTints[i % CulmTints.Length]), textureName);
@@ -586,10 +604,13 @@ namespace MakeGame.Systems
                                 ResourceVisualLibrary.BambooCulmMeters(rng.NextInt(0, 5)), material, rng.NextFloat(0f, 360f));
                         }
 
-                        // 잎 다발: 실루엣 위쪽을 깨 주는 역할이라 1~2개면 충분하다(대나무 잎은 작고 성기다).
+                        // 잎 다발: 실루엣 위쪽을 깨 주는 역할이라 성기게 붙인다(대나무 잎은 작고 성기다).
                         // 살아 있는 잎이므로 팔레트의 Frond Green을 쓴다 - 줄기(Driftwood 계열)와 색이
                         // 갈라져야 "줄기 + 잎"으로 읽힌다. 새 색을 만들지 않는다.
-                        int sprigCount = rng.NextInt(1, 3);
+                        // [B29] 1~2 → 2~3. 4~5m 줄기 꼭대기에 잎다발이 하나뿐이면 위쪽이 텅 빈 장대가 된다.
+                        // 파츠 예산은 루트 1 + 곁줄기 2~4 + 잎 2~3 = 최대 8로 ClumpVisualPrimitives(8)와 정확히 같다.
+                        // 붙는 높이는 parentScale.y에 비례하는 식이라(아래) 루트가 커진 만큼 저절로 따라 올라간다.
+                        int sprigCount = rng.NextInt(2, 4);
                         Material leafMaterial = ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.FrondGreen, "frond");
                         for (int i = 0; i < sprigCount; i++)
                         {
@@ -981,10 +1002,17 @@ namespace MakeGame.Systems
 
         // ── 대나무 ─────────────────────────────────────────────────────────────
         /// <summary>
-        /// 노드 루트용 대나무 줄기(실린더 규격). 마디 3~5개 · 위로 갈수록 가늘어짐.
-        /// 반지름을 규격 상한(0.5)이 아니라 0.34에서 시작하는 이유: 루트 스케일(0.14)이 콜라이더
-        /// 크기이기도 해서 줄이면 채집 판정이 좁아진다. 콜라이더는 그대로 두고 **보이는 줄기만**
-        /// 지름 9.5cm로 가늘게 만든다(실제 대나무 굵기).
+        /// 노드 루트용 대나무 줄기(실린더 규격). 마디 5~7개 · 위로 갈수록 가늘어짐.
+        /// 반지름을 규격 상한(0.5)이 아니라 0.22에서 시작하는 이유: 루트 스케일(0.30)이 콜라이더
+        /// 크기이기도 해서 줄이면 채집 판정이 좁아진다. 콜라이더는 넓게 두고 **보이는 줄기만**
+        /// 지름 13.2cm로 가늘게 만든다(0.22 × 2 × 0.30m).
+        ///
+        /// [B29] 루트 높이가 2.1m → 4.2m가 되면서 함께 손본 값:
+        ///  · 반지름 0.34 → 0.22 (스케일이 0.14 → 0.30이므로 보이는 굵기는 9.5cm → 13.2cm로 **커진다**)
+        ///  · 마디 수 3~5 → 5~7. 그대로 두면 마디 간격이 0.42~0.70m → 0.84~1.40m로 벌어져 대나무가
+        ///    아니라 매듭 몇 개 있는 기둥이 된다. 5~7이면 0.60~0.84m로, 높이에 맞춰 간격도 함께 커지되
+        ///    "마디가 촘촘한 줄기"라는 실루엣은 유지된다.
+        ///  · uvTile 3 → 6. 텍스처 밀도(1.43타일/m)를 높이 2배에도 그대로 유지한다.
         /// </summary>
         public static Mesh BambooCulmUnit(int variant)
         {
@@ -994,15 +1022,20 @@ namespace MakeGame.Systems
             if (meshCache.TryGetValue(key, out cached) && cached != null)
                 return cached;
 
-            Mesh mesh = BuildSegmentedStem("Res_BambooCulmUnit" + v, 3 + v, -1f, 1f, 0.34f, 0.24f, 0f, 1.22f, StemSides, 3f);
+            Mesh mesh = BuildSegmentedStem("Res_BambooCulmUnit" + v, 5 + v, -1f, 1f, 0.22f, 0.155f, 0f, 1.22f, StemSides, 6f);
             meshCache[key] = mesh;
             return mesh;
         }
 
         /// <summary>
-        /// 곁줄기용 대나무(미터 규격, 밑동이 원점). 변주마다 높이 1.05~1.80m · 지름 4.2~6.2cm ·
-        /// 기울기 0~0.19m · 마디 3~5개가 다르게 조합돼 있어, 한 포기 안에서 줄기가 서로 다르게 읽힌다.
+        /// 곁줄기용 대나무(미터 규격, 밑동이 원점). 변주마다 높이 2.25~3.85m · 지름 6.4~9.6cm ·
+        /// 기울기 0.14~0.38m · 마디 5~9개가 다르게 조합돼 있어, 한 포기 안에서 줄기가 서로 다르게 읽힌다.
         /// 기울기를 메시에 구워 넣는 이유는 AddMeshPart 주석 참고(전단 방지).
+        ///
+        /// [B29] 높이 1.05~1.80m → 2.25~3.85m(×2.15). 루트 줄기(3.57~5.25m)와 합치면 한 포기 안의
+        /// 최대/최소 차이가 1.6m → 3.0m로 벌어져 "무리"로 읽힌다 - 변주 폭을 유지하라는 지시대로,
+        /// 비율(가장 큰 것 ÷ 가장 작은 것 = 1.71)은 예전 그대로 두고 전체를 밀어 올렸다.
+        /// 굵기 ×1.55 · 기울기 ×2 · 마디 수 ×1.8을 함께 올린 이유는 BambooCulmUnit 주석과 같다.
         /// </summary>
         public static Mesh BambooCulmMeters(int variant)
         {
@@ -1012,10 +1045,10 @@ namespace MakeGame.Systems
             if (meshCache.TryGetValue(key, out cached) && cached != null)
                 return cached;
 
-            float[] heights = { 1.45f, 1.05f, 1.80f, 1.25f, 1.62f };
-            float[] radii = { 0.026f, 0.021f, 0.031f, 0.023f, 0.028f };
-            float[] leans = { 0.10f, -0.16f, 0.07f, 0.19f, -0.11f };
-            int[] bands = { 4, 3, 5, 3, 4 };
+            float[] heights = { 3.10f, 2.25f, 3.85f, 2.70f, 3.50f };
+            float[] radii = { 0.040f, 0.032f, 0.048f, 0.035f, 0.043f };
+            float[] leans = { 0.20f, -0.32f, 0.14f, 0.38f, -0.22f };
+            int[] bands = { 7, 5, 9, 6, 8 };
 
             Mesh mesh = BuildSegmentedStem("Res_BambooCulmM" + v, bands[v], 0f, heights[v],
                 radii[v], radii[v] * 0.74f, leans[v], 1.22f, StemSides, heights[v] * 2f);
@@ -1091,7 +1124,10 @@ namespace MakeGame.Systems
         /// 잎깃은 두께가 없는 면이라 **양면**으로 넣는다 - 한 면만 넣으면 아래에서 볼 때 통째로 사라진다
         /// (IslandMeshGenerator.GetGrassBladeMesh가 같은 이유로 같은 방식을 쓴다).
         ///
-        /// 변주 0~2가 야자잎(길이 0.44~0.58m), 3~4가 대나무 잎다발(0.24~0.30m, 더 많이 처진다).
+        /// 변주 0~2가 야자잎(길이 0.44~0.58m), 3~4가 대나무 잎다발(0.48~0.60m, 더 많이 처진다).
+        /// [B29] 대나무 잎다발(3~4)만 0.24~0.30m → 0.48~0.60m로 키웠다. 줄기가 4~5m가 되면서 예전
+        /// 크기로는 꼭대기에서 점으로 보였다. **야자잎이 쓰는 0~2는 한 값도 건드리지 않았다**
+        /// (호출부: 야자잎 rng.NextInt(0,3) / 대나무 3 + i%2 - 두 범위가 겹치지 않는다).
         /// **주의:** 호출부가 이 메시를 스케일 1로 쓴다는 전제로 길이가 미터로 박혀 있다. 스케일을
         /// 따로 곱하지 마라 - 과거 "풀 메시를 바꿨는데 호출부 스케일이 그대로여서 거대한 판이 된" 사고와
         /// 같은 유형이 된다. 크기를 바꾸려면 이 표의 숫자를 바꿔라.
@@ -1104,10 +1140,10 @@ namespace MakeGame.Systems
             if (meshCache.TryGetValue(key, out cached) && cached != null)
                 return cached;
 
-            float[] lengths = { 0.50f, 0.58f, 0.44f, 0.30f, 0.24f };
-            float[] widths = { 0.16f, 0.19f, 0.14f, 0.11f, 0.09f };
-            float[] droops = { 0.07f, 0.09f, 0.06f, 0.14f, 0.12f };
-            int[] pairs = { 6, 7, 5, 5, 4 };
+            float[] lengths = { 0.50f, 0.58f, 0.44f, 0.60f, 0.48f };
+            float[] widths = { 0.16f, 0.19f, 0.14f, 0.21f, 0.17f };
+            float[] droops = { 0.07f, 0.09f, 0.06f, 0.26f, 0.22f };
+            int[] pairs = { 6, 7, 5, 6, 5 };
 
             float length = lengths[v];
             float halfWidth = widths[v] * 0.5f;

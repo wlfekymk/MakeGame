@@ -60,9 +60,12 @@ namespace MakeGame.Systems
             "0이면 예전처럼 한 프레임에 딱 켜지고 꺼진다.")]
         public float rainFadeSeconds = 5f;
 
-        [Tooltip("최대 세기일 때의 빗줄기 초당 방출 개수. 수명 1.5초라 동시 생존 입자는 이 값의 1.5배다" +
-            "(maxParticles 1500 이내로 유지할 것).")]
-        public float rainEmissionRate = 700f;
+        [Tooltip("최대 세기일 때의 빗줄기 초당 방출 개수.\n" +
+            "[B29] 충돌(collision)을 켜면서 700 → 460으로 내렸다. 빗방울은 에미터(머리 위 15m)에서" +
+            " 약 0.94초 만에 지면에 닿아 사라지므로(2t + 14.7t² = 15) 동시 생존은 약 430개이고," +
+            " 그만큼의 스윕 레이캐스트가 매 프레임 돈다. 700이면 650개가 되어 섬 9개가 깔린 씬에서" +
+            " 이득 없이 비싸다(maxParticles 900 이내로 유지할 것).")]
+        public float rainEmissionRate = 460f;
 
         [Tooltip("빗줄기가 비스듬히 내리게 만드는 수평 바람 속도(m/s, 월드 XZ). Stretched 빌보드가" +
             " 속도 방향으로 늘어나므로 이 값이 곧 빗줄기의 기울기가 된다.")]
@@ -70,6 +73,34 @@ namespace MakeGame.Systems
 
         [Tooltip("빗방울이 땅/수면에 부딪히는 물튀김 파티클을 켤지 여부.")]
         public bool enableRainSplashes = true;
+
+        // ── [B29] "비가 2층 바닥을 뚫고 실내에 내린다" 수정 ──────────────────────
+        // 감독 실기 보고. 원인은 단순하다 - 빗줄기는 플레이어 머리 위 15m에 떠 있는 Box 에미터에서
+        // 쏟아지는데 충돌 모듈이 없어서 무엇이든 그대로 통과했다. 두 층위로 고친다.
+        //  (a) 실내에서는 방출량·물튀김을 0으로 줄인다(주 수정). 플레이어가 지붕 아래에 있으면
+        //      "빗줄기가 지붕에 막혀 안 보인다"가 아니라 아예 만들지 않는 것이 가장 싸고 확실하다.
+        //  (b) 파티클 충돌을 켠다(보조). 밖에서 자기 집을 볼 때 지붕 위에 비가 부딪혀 멈춰야
+        //      건물이 비를 막고 있다는 것이 읽힌다.
+        // **광량·안개는 실내에서도 그대로 둔다.** 창밖은 여전히 흐린 것이 맞고, 광량/안개는
+        // DayNightCycle이 RainIntensity01을 읽어 몰고 있어서 여기서 손대면 그쪽과 싸운다.
+        [Header("실내 차단 (B29 — 연출만. 게임플레이 수치는 IsRaining 그대로다)")]
+        [Tooltip("실내(지붕 덮인 건축물 안)에서 빗줄기·물튀김을 끌지 여부. 끄면 예전처럼 관통한다.")]
+        public bool stopRainIndoors = true;
+
+        [Tooltip("쉼터(Shelter)의 홈 반경도 실내로 칠지 여부(Lv1 0m / Lv2 8m / Lv3 14m).\n" +
+            "이 반경은 형상이 아니라 **거리** 판정이라, 켜 두면 쉼터 바로 옆 '바깥'에서도 비가 멎는다." +
+            " 건축물 실내 판정(BuildingSystem)은 이 토글과 무관하게 항상 본다.")]
+        public bool shelterRadiusCountsAsIndoors = true;
+
+        [Tooltip("실내 여부를 다시 재는 주기(초, 실시간). 걷는 속도에서 이 정도면 충분해 매 프레임 부르지 않는다.")]
+        public float indoorCheckInterval = 0.25f;
+
+        [Tooltip("실내↔실외가 뒤집힐 때 빗줄기·물튀김이 0↔1로 오가는 데 걸리는 시간(초, 실시간).\n" +
+            "문턱에 서 있을 때 판정이 오가도 깜빡이지 않게 하는 것이 목적이다.")]
+        public float indoorFadeSeconds = 0.8f;
+
+        [Tooltip("빗줄기가 지붕·지형에 부딪혀 사라지게 할지 여부(파티클 collision 모듈).")]
+        public bool enableRainCollision = true;
 
         /// <summary>
         /// 현재 비가 오고 있는지 여부(단계 전환 즉시 뒤집히는 논리값).
@@ -149,6 +180,15 @@ namespace MakeGame.Systems
         // 물튀김 파티클을 놓을 지면 높이. 매 프레임 레이캐스트하면 낭비라 주기적으로만 갱신한다.
         private float splashGroundY;
         private float splashProbeTimer;
+
+        // [B29] 실내 차단 상태. shelteredFactor는 1=실외(비 그대로) / 0=실내(빗줄기·물튀김 정지)이며,
+        // RainIntensity01과 **곱해서만** 쓴다 - 광량/안개를 몰고 있는 RainIntensity01 자체는 건드리지 않는다.
+        private bool indoorNow;
+        private float indoorCheckTimer;
+        private float shelteredFactor = 1f;
+
+        /// <summary>[B29] 빗줄기가 부딪힐 레이어(Default=0만). 근거는 BuildRainParticles의 collision 주석.</summary>
+        private const int RainCollisionMask = 1 << 0;
 
         /// <summary>물튀김 지면 높이를 다시 재는 주기(초). 걸어다니는 속도에서 이 정도면 충분히 따라온다.</summary>
         private const float SplashProbeInterval = 0.3f;
@@ -260,7 +300,10 @@ namespace MakeGame.Systems
             // 굵은 빗줄기/가는 빗줄기가 섞여 보이게 해 단조로움을 줄인다.
             main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.09f);
             main.startColor = new Color(0.75f, 0.82f, 0.92f, 0.55f);
-            main.maxParticles = 1500;
+            // [B29] 1500 → 900. 충돌을 켜면 빗방울 하나하나가 매 프레임 스윕 검사를 받으므로 상한이
+            // 곧 최악의 경우 비용이다. 실제 동시 생존은 약 430개(rainEmissionRate 주석)라 900이면
+            // 방출량을 인스펙터에서 두 배로 올려도 잘리지 않는 여유가 있다.
+            main.maxParticles = 900;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             // [B22] Time.timeScale = 0이 되는 순간(엔딩/사망 화면)에 비가 얼어붙어 **공중에 멈춘
             // 빗줄기 벽**이 되는 것을 막는다. AGENT_BRIEF 4장의 "연출은 unscaled로"와 같은 취지다.
@@ -287,6 +330,40 @@ namespace MakeGame.Systems
             // same mode" 에러가 쏟아진다(실기에서 750개까지 확인했다). 낙하는 startSpeed와 중력이
             // 맡으므로 값 자체는 0이면 되지만, **2인자 생성자**를 써서 모드를 맞추는 게 핵심이다.
             velocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+
+            // [B29] (b) 빗줄기가 지붕/지형에 부딪혀 소멸한다. 실내 차단(a)이 주 수정이고 이쪽은
+            // **밖에서 건물을 볼 때** 지붕이 비를 받아내는 것을 보여 주는 보조 수정이다.
+            //
+            // quality = High인 이유: Medium/Low는 정적 콜라이더를 복셀 격자에 평면으로 캐시해 근사하는
+            // 방식이라 **얇은 판**에서 뚫림이 생긴다. 이 프로젝트의 지붕은 두께 0.2m급 건축 조각
+            // (BuildPieceVisualBuilder가 붙이는 BoxCollider) 하나뿐이고, 그것도 플레이어가 세우면
+            // 바로 그 프레임부터 유효해야 한다(복셀 캐시는 즉시 따라오지 않는다). High는 입자의
+            // 이전→현재 위치를 잇는 스윕 검사라 얇은 바닥도, 방금 지은 조각도 그대로 잡는다.
+            // 대신 비용이 붙으므로 방출량 상한을 460/900으로 내려 상쇄했다(위 주석).
+            //
+            // collidesWith = Default(레이어 0)만: 씬의 모든 오브젝트가 m_Layer 0이고, 코드에서 레이어를
+            // 바꾸는 곳은 WorldMapManager:300의 바다 평면("Water") 하나뿐이다(그 평면은 같은 함수에서
+            // 콜라이더를 아예 Destroy한다). ProjectSettings/TagManager.asset이 스테이징에 없어 커스텀
+            // 레이어 정의를 확인할 수 없으므로, "확신이 없으면 Default만"이라는 보수적 선택을 따랐다 -
+            // 이러면 트리거/바다에 부딪혀 빗줄기가 공중에 멈추는 사고가 원리적으로 불가능하다.
+            //
+            // enableDynamicColliders = false: 리지드바디가 달린(=움직이는) 콜라이더는 무시한다.
+            // 플레이어 CharacterController가 대표적인데, 카메라가 그 캡슐 안에 있어서 빗방울이
+            // 어깨 높이에서 사라지는 고리가 화면 가장자리에 생긴다. 지형·건축 조각·자원 노드는
+            // 전부 리지드바디가 없는 정적 콜라이더라 이 설정과 무관하게 그대로 막는다.
+            var collision = rainParticles.collision;
+            collision.enabled = enableRainCollision;
+            collision.type = ParticleSystemCollisionType.World;
+            collision.mode = ParticleSystemCollisionMode.Collision3D;
+            collision.quality = ParticleSystemCollisionQuality.High;
+            collision.collidesWith = RainCollisionMask;
+            collision.enableDynamicColliders = false;
+            collision.lifetimeLoss = 1f;   // 닿는 즉시 소멸(빗방울은 튀지 않는다)
+            collision.dampen = 1f;
+            collision.bounce = 0f;
+            collision.radiusScale = 1f;
+            collision.sendCollisionMessages = false; // 콜백을 받을 곳이 없다 - 켜면 값비싼 이벤트만 쌓인다
+            collision.colliderForce = 0f;            // 빗방울이 물리 오브젝트를 밀지 않는다
 
             var renderer = rainParticles.GetComponent<ParticleSystemRenderer>();
             if (renderer != null)
@@ -344,6 +421,8 @@ namespace MakeGame.Systems
                     RainIntensity01, target, Time.unscaledDeltaTime / rainFadeSeconds);
             }
 
+            RefreshFollowTarget();
+            UpdateShelterFactor();
             UpdateRainVisuals();
 
             if (IsRaining)
@@ -356,15 +435,11 @@ namespace MakeGame.Systems
         /// </summary>
         private void UpdateRainVisuals()
         {
-            // 페이드 아웃 중에도 남은 빗줄기가 플레이어를 따라와야 한다(예전에는 IsRaining이 꺼지는
-            // 순간 에미터가 그 자리에 멈춰, 걸어가면 등 뒤에 비 기둥이 서 있었다).
-            if (followTarget == null)
-            {
-                var cam = Camera.main;
-                followTarget = cam != null ? cam.transform : null;
-            }
+            // [B29] 실내 계수를 곱한 "실제로 보이는 세기". RainIntensity01 자체는 손대지 않으므로
+            // DayNightCycle이 읽는 광량/안개는 실내에서도 그대로다(창밖은 여전히 흐리다).
+            float visibleIntensity = RainIntensity01 * shelteredFactor;
 
-            if (RainIntensity01 <= 0f)
+            if (visibleIntensity <= 0f)
             {
                 if (rainParticles != null && rainParticles.isPlaying)
                     rainParticles.Stop();
@@ -384,12 +459,69 @@ namespace MakeGame.Systems
             if (rainParticles != null)
             {
                 var emission = rainParticles.emission;
-                emission.rateOverTime = Mathf.Max(0f, rainEmissionRate) * RainIntensity01;
+                emission.rateOverTime = Mathf.Max(0f, rainEmissionRate) * visibleIntensity;
                 if (!rainParticles.isPlaying)
                     rainParticles.Play();
             }
 
-            UpdateRainSplashes();
+            UpdateRainSplashes(visibleIntensity);
+        }
+
+        /// <summary>
+        /// [B22] 페이드 아웃 중에도 남은 빗줄기가 플레이어를 따라와야 한다(예전에는 IsRaining이 꺼지는
+        /// 순간 에미터가 그 자리에 멈춰, 걸어가면 등 뒤에 비 기둥이 서 있었다).
+        /// [B29] 실내 판정도 이 대상의 위치를 쓰므로 Update 맨 앞으로 끌어올렸다.
+        /// </summary>
+        private void RefreshFollowTarget()
+        {
+            if (followTarget != null)
+                return;
+
+            var cam = Camera.main;
+            followTarget = cam != null ? cam.transform : null;
+        }
+
+        /// <summary>
+        /// [B29] 플레이어가 지붕 아래(실내)에 있는지 보고 빗줄기·물튀김에 곱할 계수를 0↔1로 옮긴다.
+        ///
+        /// 판정 함수는 둘 다 **남의 파일 소유**라 여기서는 읽기만 한다.
+        ///  · BuildingSystem.IsInsideEnclosedStructure(Vector3) — 벽으로 둘러싸이고 **위층 바닥(=지붕)이
+        ///    덮인** 칸일 때만 true. 결과를 (공간·칸·층) 단위로 캐시하고 조각 버전이 바뀔 때만 버리므로
+        ///    매 프레임 불러도 싸지만, 굳이 그럴 이유가 없어 indoorCheckInterval(0.25초)마다만 부른다.
+        ///  · Shelter.IsInsideHome(Vector3) — 위 판정을 이미 OR로 품고 있고, 거기에 쉼터 홈 반경
+        ///    (Lv2 8m / Lv3 14m)을 더한다. 반경은 형상이 아니라 거리라서 토글로 분리해 뒀다.
+        ///
+        /// 계수는 unscaledDeltaTime으로 페이드한다(AGENT_BRIEF 4장: timeScale 0 구간이 있다).
+        /// 문턱에 서서 판정이 오갈 때 방출량이 한 프레임에 0↔최대로 튀지 않게 하는 것이 목적이다.
+        /// </summary>
+        private void UpdateShelterFactor()
+        {
+            float target = 1f;
+
+            if (stopRainIndoors)
+            {
+                indoorCheckTimer -= Time.unscaledDeltaTime;
+                if (indoorCheckTimer <= 0f && followTarget != null)
+                {
+                    indoorCheckTimer = Mathf.Max(0.05f, indoorCheckInterval);
+
+                    // 카메라(눈높이 = 발밑 +1.6m)를 그대로 쓴다. IsInsideEnclosedStructure는 발밑 바닥에서
+                    // -0.3m ~ LevelHeight(2.5m) 안쪽을 "그 바닥을 딛고 있다"로 보므로 1.6m는 안전하게 들어간다.
+                    Vector3 probe = followTarget.position;
+                    indoorNow = BuildingSystem.IsInsideEnclosedStructure(probe)
+                        || (shelterRadiusCountsAsIndoors && Shelter.IsInsideHome(probe));
+                }
+
+                target = indoorNow ? 0f : 1f;
+            }
+            else
+            {
+                indoorNow = false;
+            }
+
+            shelteredFactor = indoorFadeSeconds <= 0f
+                ? target
+                : Mathf.MoveTowards(shelteredFactor, target, Time.unscaledDeltaTime / indoorFadeSeconds);
         }
 
         /// <summary>
@@ -399,7 +531,7 @@ namespace MakeGame.Systems
         /// 이미 한 번 겪고 만들어진 API다). 지형을 못 찾으면 입력 위치를 그대로 돌려주므로,
         /// 그때는 바다 위로 보고 해수면(0)에 깐다.
         /// </summary>
-        private void UpdateRainSplashes()
+        private void UpdateRainSplashes(float visibleIntensity)
         {
             if (rainSplashes == null || followTarget == null)
                 return;
@@ -408,20 +540,51 @@ namespace MakeGame.Systems
             if (splashProbeTimer <= 0f)
             {
                 splashProbeTimer = SplashProbeInterval;
-
-                Vector3 probe = followTarget.position;
-                Vector3 snapped = TerrainSampler.SnapToGround(probe);
-                // SnapToGround는 지형을 못 찾으면 인자를 그대로 반환한다(y가 비트 단위로 같다).
-                splashGroundY = snapped.y < probe.y ? snapped.y : SeaLevelFallbackY;
+                splashGroundY = ProbeSplashSurfaceY(followTarget.position);
             }
 
             rainSplashes.transform.position = new Vector3(
                 followTarget.position.x, splashGroundY + 0.05f, followTarget.position.z);
 
             var splashEmission = rainSplashes.emission;
-            splashEmission.rateOverTime = SplashRateAtFullRain * RainIntensity01;
+            splashEmission.rateOverTime = SplashRateAtFullRain * visibleIntensity;
             if (!rainSplashes.isPlaying)
                 rainSplashes.Play();
+        }
+
+        /// <summary>
+        /// [B29] 물튀김을 깔 표면 높이. 기본은 예전과 같은 지형(SnapToGround)이고, 그 위에 **건축 조각**
+        /// 바닥이 있으면 그쪽을 쓴다.
+        ///
+        /// 필요한 이유: 지붕 없는 2층 데크에 서 있으면 SnapToGround가 데크를 못 보고(이름이 "Island_"가
+        /// 아니다) 파문을 발밑이 아니라 **한 층 아래 지형**에 깔았다. 실내는 위 shelteredFactor가 이미
+        /// 물튀김을 끄므로, 이 경로가 실제로 도는 것은 "지붕/데크 위에 서서 비를 맞는" 경우뿐이다.
+        /// 레이는 Default 레이어 + 이름이 "BuildPiece_"인 콜라이더만 채택한다 - 자원 노드/사냥감 위에
+        /// 파문이 얹히는 예전 함정(TerrainSampler 주석)을 되풀이하지 않기 위해서다.
+        /// </summary>
+        private float ProbeSplashSurfaceY(Vector3 probe)
+        {
+            Vector3 snapped = TerrainSampler.SnapToGround(probe);
+            // SnapToGround는 지형을 못 찾으면 인자를 그대로 반환한다(y가 비트 단위로 같다).
+            float surfaceY = snapped.y < probe.y ? snapped.y : SeaLevelFallbackY;
+
+            float rayTop = probe.y + 0.2f;
+            int hitCount = Physics.RaycastNonAlloc(
+                new Vector3(probe.x, rayTop, probe.z), Vector3.down, splashHitBuffer,
+                SplashProbeRayLength, RainCollisionMask, QueryTriggerInteraction.Ignore);
+
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider collider = splashHitBuffer[i].collider;
+                if (collider == null || !collider.gameObject.name.StartsWith(BuildPieceNamePrefix))
+                    continue;
+
+                float y = splashHitBuffer[i].point.y;
+                if (y > surfaceY && y <= rayTop)
+                    surfaceY = y;
+            }
+
+            return surfaceY;
         }
 
         /// <summary>지형을 못 찾았을 때 물튀김을 깔 높이(=해수면). WorldMapManager.seaLevel 기본값과 같다.</summary>
@@ -429,6 +592,15 @@ namespace MakeGame.Systems
 
         /// <summary>최대 강우일 때 물튀김 초당 방출 개수. 수명 0.45초라 동시 생존은 약 20개다.</summary>
         private const float SplashRateAtFullRain = 45f;
+
+        /// <summary>[B29] 물튀김 표면 탐색용 아래 방향 레이 길이(m). 눈높이 위 0.2m에서 쏴 발밑 1.4m까지 본다.</summary>
+        private const float SplashProbeRayLength = 3.2f;
+
+        /// <summary>[B29] 건축 조각 루트 이름 접두어(BuildPieceVisualBuilder:72 `BuildPiece_{type}`).</summary>
+        private const string BuildPieceNamePrefix = "BuildPiece_";
+
+        /// <summary>[B29] 물튀김 표면 탐색 레이 결과 버퍼(재사용 - 0.3초에 한 번 도는 경로라 4개면 넉넉하다).</summary>
+        private static readonly RaycastHit[] splashHitBuffer = new RaycastHit[8];
 
         /// <summary>
         /// [B9] 비가 오는 동안만 매 프레임 실행되는 게임플레이 효과. 위 필드 주석의 설계 근거대로
