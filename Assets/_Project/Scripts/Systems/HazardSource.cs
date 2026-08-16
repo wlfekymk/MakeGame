@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
 using MakeGame.Player;
@@ -46,6 +47,14 @@ namespace MakeGame.Systems
 
         [Tooltip("이 섬(또는 스폰 그룹) 안에서 몇 번째로 생성됐는지(생성 순번, 0부터).")]
         public int spawnOrder = -1;
+
+        // [B37] 새끼 곰 표시. hazardType은 그대로 Bear다 - 열거형에 값을 추가하면 씬 편집이 필요하고
+        // (hazardEntries가 씬에 int로 직렬화돼 있다) 새 엔트리는 spawnOrder를 밀어 기존 세이브를 깨뜨린다.
+        // 그래서 "같은 자리에 있던 곰 한 마리의 성격"으로만 갈라 두고, 스포너가 AddComponent 직후
+        // ConfigureForType보다 **먼저** 세운다. 필드 추가일 뿐이라 세이브(JsonUtility)에도 영향이 없다.
+        [Tooltip("이 곰이 새끼인지 여부(곰에만 의미가 있다). 새끼는 스스로 사냥하지 않고 도망치며," +
+            " 주변 성체 곰을 어미로 불러온다.")]
+        public bool isBearCub = false;
 
         // ─────────────────────────────────────────────────────────────────────────────
         //  [B35] 곰 추격 AI 튜닝 값. 곰(HazardType.Bear)에만 쓰이고 다른 위험 요소는 읽지도 않는다.
@@ -151,6 +160,20 @@ namespace MakeGame.Systems
             switch (hazardType)
             {
                 case HazardType.Bear:
+                    if (isBearCub)
+                    {
+                        // [B37] 새끼 곰: 위협 자체는 거의 없다. 진짜 위험은 이 녀석이 부르는 어미다.
+                        //  - 체력 14 = 성체 50의 28%. 무기 한두 방이면 쓰러지지만, 때리는 순간
+                        //    주변 30m 성체가 전부 달려온다(AlarmNearbyAdults) - 그게 진짜 대가다.
+                        //  - 접촉 피해 3 = 성체 10의 30%. 목록에서 가장 낮다(대왕 크랩 8 아래).
+                        //    출혈도 걸지 않는다(ApplyHazardEffect의 새끼 분기) - 새끼가 스치는 것으로
+                        //    성체와 같은 상태 이상이 걸리면 "훨씬 낮게"라는 설계가 무의미해진다.
+                        isCombatTarget = true;
+                        maxHealth = 14f;
+                        directDamage = 3f;
+                        break;
+                    }
+
                     // 곰: 살로 된 맹수 중에서는 맷집이 가장 세다(갑각을 두른 대왕 크랩만 이보다 단단하다).
                     isCombatTarget = true;
                     maxHealth = 50f;
@@ -202,6 +225,32 @@ namespace MakeGame.Systems
         /// 프레임 끝까지 지연되므로 한 프레임 뒤인 Start에서 잡아야 목록이 확정된다.
         /// 곰이 아니면 배열을 만들지 않으므로 다른 위험 요소에는 비용이 0이다.
         /// </summary>
+        // ═════════════════════════════════════════════════════════════════════════════
+        //  [B37] 활성 위험 요소 목록(새끼 곰 → 어미 호출용)
+        //
+        //  왜 static 목록인가: 새끼가 어미를 부를 때마다 FindObjectsByType을 부르면 섬마다 수십 개인
+        //  위험 요소 전체를 매번 훑는다. 대신 자기 자신을 OnEnable에 등록하고 OnDisable에서 뺀다
+        //  (OnDisable은 오브젝트가 파괴될 때도 불리므로 씬을 다시 열어도 죽은 참조가 남지 않는다).
+        //
+        //  ⚠️ 종류로 걸러서 등록하지 않는 이유: OnEnable은 AddComponent **그 순간** 실행되는데,
+        //  스포너는 그 다음 줄에서야 hazardType/isBearCub을 세운다. 즉 등록 시점에는 두 값이 아직
+        //  기본값이라 믿을 수 없다. 그래서 전부 등록하고 **쓰는 쪽에서** 걸러낸다(호출은 새끼가
+        //  플레이어를 감지하거나 맞은 순간뿐이고 쿨다운도 있어 비용이 문제 되지 않는다).
+        //  안전망으로 목록을 훑을 때 null 항목(씬 전환 중 파괴)도 함께 걷어낸다.
+        // ═════════════════════════════════════════════════════════════════════════════
+        private static readonly List<HazardSource> activeHazards = new List<HazardSource>();
+
+        private void OnEnable()
+        {
+            if (!activeHazards.Contains(this))
+                activeHazards.Add(this);
+        }
+
+        private void OnDisable()
+        {
+            activeHazards.Remove(this);
+        }
+
         private void Start()
         {
             if (hazardType != HazardType.Bear)
@@ -248,8 +297,11 @@ namespace MakeGame.Systems
             // 시각 파츠가 전부 만들어지고 예전 파츠 정리(Destroy)까지 끝난 뒤라야 자식 목록이 확정된다.
             // 위상 씨앗도 숨쉬기와 같은 결정적 식별자에서 뽑되, 두 연출이 한 박자로 겹쳐 보이지 않도록
             // 계수를 다르게 준다.
-            bearMotion = CreatureMotion.AttachBear(gameObject,
-                Mathf.Repeat(islandIndex * 2.07f + spawnOrder * 1.43f, 6.2831853f));
+            // [B37] 새끼는 같은 통짜 메시 경로를 쓰되 진폭만 몸 크기에 비례해 줄인 판으로 붙는다.
+            float motionPhase = Mathf.Repeat(islandIndex * 2.07f + spawnOrder * 1.43f, 6.2831853f);
+            bearMotion = isBearCub
+                ? CreatureMotion.AttachBearCub(gameObject, motionPhase)
+                : CreatureMotion.AttachBear(gameObject, motionPhase);
 
             if (bearMotion != null && isDefeated)
                 bearMotion.enabled = false;
@@ -276,8 +328,14 @@ namespace MakeGame.Systems
             //    숨쉬기(unscaledDeltaTime)와 달리 AI는 게임 시간에 묶여야 한다.
             //  · isDefeated (SetVisualActive(false) 구간) - 안 보이는 곰이 돌아다니면 안 된다.
             //  · 곰이 아닌 위험 요소 - bearAiReady가 곰에서만 true다.
+            //  [B37] 새끼는 같은 세 조건 아래에서 **자기 몫의 AI**로 갈라진다(성체 경로는 손대지 않는다).
             if (bearAiReady && !isDefeated && Time.timeScale > 0f)
-                UpdateBearAI(Time.deltaTime);
+            {
+                if (isBearCub)
+                    UpdateBearCubAI(Time.deltaTime);
+                else
+                    UpdateBearAI(Time.deltaTime);
+            }
 
             if (!isDefeated)
                 return;
@@ -360,6 +418,14 @@ namespace MakeGame.Systems
                     break;
 
                 case HazardType.Bear:
+                    // [B37] 새끼 곰만 출혈 없이 낮은 직접 피해만 준다(몸으로 밀치는 정도).
+                    if (isBearCub)
+                    {
+                        target.TakeDamage(directDamage, DamageCause.Predator);
+                        break;
+                    }
+                    goto case HazardType.Cannibal;
+
                 case HazardType.Cannibal:
                 case HazardType.GiantCrab:
                     // 곰/식인종/대왕 크랩: 직접 피해 + 출혈을 유발한다.
@@ -441,6 +507,14 @@ namespace MakeGame.Systems
             currentHealth = Mathf.Max(0f, currentHealth - bestWeaponItem.data.weaponDamage);
             AudioManager.Instance?.PlayHit(); // 공격 적중 효과음
 
+            // [B37] 새끼를 때리면 죽든 살든 **즉시** 어미가 온다. 쿨다운을 0으로 밀어 확실히 통과시킨다
+            // (플레이어가 접근만 해서 이미 한 번 불렀더라도, 때린 것은 별개의 사건이다).
+            if (isBearCub)
+            {
+                cubAlarmTimer = 0f;
+                AlarmNearbyAdults();
+            }
+
             // 내구도 소모: 무제한(IsUnlimited) 무기는 자동으로 소모되지 않는다. 사용 횟수가 다하면
             // UseItem이 인벤토리에서 자동으로 제거해 "무기가 파손되었다"를 자연스럽게 표현한다.
             inventory.UseItem(bestWeaponItem);
@@ -461,6 +535,11 @@ namespace MakeGame.Systems
 
                 if (skills != null)
                     skills.AddExperience(SkillType.Physical, defeatExperience);
+            }
+            else if (isBearCub)
+            {
+                // [B37] 맞고 살아남은 새끼는 포효가 아니라 **도망**으로 반응한다(포효/돌진/슬램 없음).
+                EnterBearCubState(BearState.Chase);
             }
             else if (bearMotion != null)
             {
@@ -595,6 +674,14 @@ namespace MakeGame.Systems
             ApplyHazardEffect(stats);
             contactCooldownTimer = contactDamageCooldown;
             AudioManager.Instance?.PlayDamage(); // 피해를 입었을 때 경고 효과음
+
+            // [B37] 새끼는 앞발을 내려치지 않는다(때리는 동작 자체가 없다 - 도망만 친다).
+            // 대신 이만큼 붙었다는 것은 어미를 부르고도 남을 거리라, 여기서도 한 번 부른다.
+            if (isBearCub)
+            {
+                AlarmNearbyAdults();
+                return;
+            }
 
             if (bearMotion != null)
                 bearMotion.PlaySlam(); // 앞발을 내려친다(이미 시퀀스 중이면 CreatureMotion이 무시한다)
@@ -753,7 +840,10 @@ namespace MakeGame.Systems
             {
                 // 지형을 못 찾았다(아직 생성 전이거나 재생성 중). 스포너가 쓴 규격값을 그대로 쓰고,
                 // 지면을 다시 찾기 전까지는 아래 UpdateBearAI가 y를 한 번도 건드리지 않는다.
-                bearHoverOffset = CreatureVisualBuilder.BearGroundOffset;
+                // [B37] 새끼는 피벗 높이가 다르다 - 성체 값을 쓰면 새끼가 지면에 반쯤 묻힌다.
+                bearHoverOffset = isBearCub
+                    ? CreatureVisualBuilder.BearCubGroundOffset
+                    : CreatureVisualBuilder.BearGroundOffset;
                 bearGroundY = bearHome.y - bearHoverOffset;
             }
 
@@ -1233,6 +1323,252 @@ namespace MakeGame.Systems
             }
 
             bearWanderTarget = bearHome;
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════════
+        //  [B37] 새끼 곰 AI - 배회 → (플레이어 접근) 도망 → 복귀 + 어미 호출
+        //
+        //  ── 성체와 무엇을 공유하고 무엇이 다른가 ──────────────────────────────────────
+        //  공유: 이동/접지/지형 프로브(DriveBear · TryPickBearStep · SampleGroundY · PickBearWanderTarget)와
+        //        상태 열거형. 즉 물가·절벽 회피, 센티넬 실패 판정, y축 요만 쓰는 회전 규칙이 전부 그대로다.
+        //  다름: 플레이어를 **쫓지 않는다**. 감지 시야각도 쓰지 않는다(새끼는 겁이 많아 사방을 다 본다).
+        //        포효/돌진/슬램을 한 번도 재생하지 않는다.
+        //
+        //  ── 상태를 새로 만들지 않았다 ────────────────────────────────────────────────
+        //  BearState.Chase를 새끼에서는 **"도망"**으로 읽는다(성체의 추격과 같은 "전속력으로 달리는"
+        //  상태라 타이머/전이 구조가 그대로 맞는다). 열거형에 값을 더하지 않았으므로 성체 상태 기계와
+        //  세이브/직렬화 어디에도 영향이 없다.
+        //
+        //  ── 핵심 재미 요소: 어미 각성 ────────────────────────────────────────────────
+        //  플레이어가 CubAlarmRadius 안에 들어오거나 새끼를 때리면, 반경 CubMotherAlertRadius 안의
+        //  성체 곰이 **시야각과 무관하게** 추격으로 넘어간다. 새 상태를 만들지 않고 성체 AI의 기존
+        //  진입점 EnterBearState(BearState.Chase)를 그대로 부른다 - 돌진 연출·타이머·리쉬 판정이
+        //  전부 원래 코드대로 돈다.
+        // ═════════════════════════════════════════════════════════════════════════════
+
+        /// <summary>플레이어가 이 거리(m) 안에 들어오면 새끼가 달아나기 시작한다.</summary>
+        private const float CubFleeRadius = 12f;
+
+        /// <summary>플레이어가 이 거리(m) 안에 들어오면 어미를 부른다(디렉터 지시 "10m 정도").</summary>
+        private const float CubAlarmRadius = 10f;
+
+        /// <summary>어미를 불러오는 반경(m). 이 안의 성체 곰은 시야각과 무관하게 즉시 달려온다.</summary>
+        private const float CubMotherAlertRadius = 30f;
+
+        /// <summary>도망 속도(m/s). 성체 추격(약 5.3)보다 느려 따라잡을 수는 있지만, 쫓는 동안 어미가 온다.</summary>
+        private const float CubFleeSpeed = 4.2f;
+
+        /// <summary>배회 속도 배율(성체 배회 속도 대비). 작고 가벼워 성체보다 총총거린다.</summary>
+        private const float CubWanderSpeedRatio = 1.25f;
+
+        /// <summary>도망 중 방향 전환 속도(도/초). 몸이 가벼워 성체 추격 회전(130)보다 빠르다.</summary>
+        private const float CubFleeTurnSpeed = 210f;
+
+        /// <summary>위협이 사라진 뒤에도 이만큼(초) 더 달린다. 한 발 벗어나자마자 멈추면 겁이 안 읽힌다.</summary>
+        private const float CubFleeHoldSeconds = 3.5f;
+
+        /// <summary>어미 호출 쿨다운(초). 플레이어가 옆에 서 있어도 매 프레임 목록을 훑지 않게 한다.</summary>
+        private const float CubAlarmCooldownSeconds = 4f;
+
+        /// <summary>도망 목표를 몇 미터 앞에 두는지. DriveBear는 지점을 향해 걷는 함수라 방향을 지점으로 바꾼다.</summary>
+        private const float CubFleeTargetDistance = 8f;
+
+        private float cubAlarmTimer;
+
+        /// <summary>
+        /// 새끼 한 마리의 한 프레임. Update가 timeScale/처치 여부를 이미 걸러 준 뒤에만 불린다.
+        /// </summary>
+        private void UpdateBearCubAI(float dt)
+        {
+            if (dt <= 0f)
+                return;
+
+            // 성체와 같은 이유의 프레임당 1회 물리 동기화(Physics.autoSyncTransforms가 false다).
+            if (bearPhysicsSyncFrame != Time.frameCount)
+            {
+                Physics.SyncTransforms();
+                bearPhysicsSyncFrame = Time.frameCount;
+            }
+
+            cubAlarmTimer = Mathf.Max(0f, cubAlarmTimer - dt);
+            bearStateTimer -= dt;
+
+            Transform player = ResolvePlayerTransform();
+            Vector3 self = transform.position;
+
+            float distance = float.MaxValue;
+            Vector3 awayDirection = BearForward();
+            if (player != null)
+            {
+                Vector3 flat = player.position - self;
+                flat.y = 0f;
+                distance = flat.magnitude;
+                if (distance > 0.0001f)
+                    awayDirection = -flat / distance;   // 플레이어 반대쪽
+            }
+
+            Vector3 fromHome = self - bearHome;
+            fromHome.y = 0f;
+            float homeDistance = fromHome.magnitude;
+
+            bool threatened = distance <= CubFleeRadius;
+
+            // 어미 호출. 시야각을 보지 않는다 - 새끼는 등 뒤로 다가와도 놀란다.
+            if (distance <= CubAlarmRadius)
+                AlarmNearbyAdults();
+
+            switch (bearState)
+            {
+                case BearState.Chase:   // 새끼에게 이 상태는 "도망"이다(위 주석 참고)
+                {
+                    if (threatened)
+                        bearStateTimer = CubFleeHoldSeconds;   // 쫓아오는 동안에는 계속 달린다
+
+                    // 너무 멀리 달아나면(리쉬 밖) 도망 방향을 집 쪽으로 반씩 섞는다. 그대로 두면
+                    // 플레이어가 계속 미는 것만으로 새끼가 섬 끝 물가에 처박혀 갇힌다.
+                    Vector3 fleeDirection = awayDirection;
+                    if (homeDistance > bearLeashRadius && homeDistance > 0.0001f)
+                    {
+                        Vector3 homeward = -fromHome / homeDistance;
+                        Vector3 blended = awayDirection + homeward;
+                        if (blended.sqrMagnitude > 0.0001f)
+                            fleeDirection = blended.normalized;
+                    }
+
+                    DriveBear(self + fleeDirection * CubFleeTargetDistance, CubFleeSpeed, CubFleeTurnSpeed, dt);
+
+                    if (!threatened && bearStateTimer <= 0f)
+                        EnterBearCubState(homeDistance > BearArriveDistance ? BearState.Return : BearState.Idle);
+                    break;
+                }
+
+                case BearState.Return:
+                    if (threatened)
+                    {
+                        EnterBearCubState(BearState.Chase);
+                        break;
+                    }
+
+                    DriveBear(bearHome, bearWanderSpeed * CubWanderSpeedRatio, bearWanderTurnSpeed, dt);
+                    if (homeDistance <= BearArriveDistance)
+                        EnterBearCubState(BearState.Idle);
+                    break;
+
+                case BearState.Wander:
+                {
+                    if (threatened)
+                    {
+                        EnterBearCubState(BearState.Chase);
+                        break;
+                    }
+
+                    Vector3 toTarget = bearWanderTarget - self;
+                    toTarget.y = 0f;
+                    bool arrived = toTarget.magnitude <= BearArriveDistance;
+                    bool moved = DriveBear(bearWanderTarget, bearWanderSpeed * CubWanderSpeedRatio, bearWanderTurnSpeed, dt);
+
+                    if (arrived || bearStateTimer <= 0f || !moved)
+                        EnterBearCubState(BearState.Idle);
+                    break;
+                }
+
+                default:
+                    // Idle. Alert/Attack에는 새끼가 절대 들어가지 않으므로 여기로 합류시킨다
+                    // (세이브 복원 등으로 이상한 상태가 남아도 다음 프레임에 배회로 되돌아온다).
+                    if (threatened)
+                    {
+                        EnterBearCubState(BearState.Chase);
+                        break;
+                    }
+
+                    DriveBear(self, 0f, bearWanderTurnSpeed, dt);
+                    if (bearStateTimer <= 0f)
+                    {
+                        PickBearWanderTarget();
+                        EnterBearCubState(BearState.Wander);
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 새끼의 상태 전환. 성체의 EnterBearState와 **일부러 분리했다** - 그쪽은 진입할 때마다
+        /// 포효/돌진/슬램을 재생하는데 새끼는 그 셋 중 어느 것도 하지 않기 때문이다.
+        /// 성체 코드는 이 메서드 때문에 한 줄도 바뀌지 않는다.
+        /// </summary>
+        private void EnterBearCubState(BearState next)
+        {
+            if (!bearAiReady)
+                return;   // Start 전(세이브 복원 등) - bearRng이 아직 없다
+
+            bearState = next;
+            bearLostTimer = 0f;
+
+            switch (next)
+            {
+                case BearState.Idle:
+                    bearStateTimer = 1.5f + (float)bearRng.NextDouble() * 3f;
+                    break;
+                case BearState.Wander:
+                    bearStateTimer = 6f + (float)bearRng.NextDouble() * 5f;
+                    break;
+                case BearState.Chase:
+                    bearStateTimer = CubFleeHoldSeconds;
+                    break;
+                default:
+                    bearStateTimer = 0f;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 반경 CubMotherAlertRadius 안의 **성체** 곰을 전부 추격 상태로 밀어 넣는다(어미가 새끼를 지킨다).
+        /// 목록은 OnEnable/OnDisable이 관리하는 static 목록이라 FindObjectsByType을 부르지 않는다.
+        /// </summary>
+        private void AlarmNearbyAdults()
+        {
+            if (cubAlarmTimer > 0f)
+                return;
+
+            cubAlarmTimer = CubAlarmCooldownSeconds;
+
+            Vector3 self = transform.position;
+            float sqrRadius = CubMotherAlertRadius * CubMotherAlertRadius;
+
+            for (int i = activeHazards.Count - 1; i >= 0; i--)
+            {
+                HazardSource other = activeHazards[i];
+                if (other == null)
+                {
+                    activeHazards.RemoveAt(i);   // 씬 전환 등으로 파괴된 항목 청소
+                    continue;
+                }
+
+                if (other == this || other.isBearCub || other.hazardType != HazardType.Bear)
+                    continue;
+                if (!other.IsActive || !other.bearAiReady)
+                    continue;
+
+                Vector3 delta = other.transform.position - self;
+                delta.y = 0f;
+                if (delta.sqrMagnitude > sqrRadius)
+                    continue;
+
+                other.WakeAsProtectiveMother();
+            }
+        }
+
+        /// <summary>
+        /// 새끼의 비명을 듣고 달려나가는 성체 쪽 처리. **성체 AI의 기존 진입점을 그대로 쓴다** -
+        /// 시야각/발견 반경 판정만 건너뛸 뿐, 그 뒤의 추격·이탈·리쉬·복귀는 전부 원래 코드가 돈다.
+        /// 이미 붙어 있는(경계/추격/공격) 곰은 건드리지 않는다 - 다시 부르면 돌진 연출이 되감긴다.
+        /// </summary>
+        private void WakeAsProtectiveMother()
+        {
+            if (bearState == BearState.Alert || bearState == BearState.Chase || bearState == BearState.Attack)
+                return;
+
+            EnterBearState(BearState.Chase);
         }
     }
 }

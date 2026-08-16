@@ -266,12 +266,56 @@ namespace MakeGame.Systems
                 Vector2 offset = GetScatterOffset(rng, entry.type, radius);
                 Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                 position = TerrainSampler.SnapToGround(position);
-                spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder));
+
+                // [B37] 이 곰이 성체냐 새끼냐. **rng를 한 번도 쓰지 않고** 이미 존재하는 값
+                // (islandIndex, spawnOrder)만 섞어 정한다 - 자세한 근거는 IsBearCubIndividual 주석.
+                // 보장 배치 구간(i < guaranteedEntries.Count)은 무조건 성체다: "중형 이상 섬에 곰이
+                // 반드시 한 마리"가 디렉터 요청이었고, 그 한 마리가 새끼가 되면 요청이 깨진다.
+                bool asCub = entry.type == HazardType.Bear
+                    && i >= guaranteedEntries.Count
+                    && IsBearCubIndividual(island.islandId, spawnOrder);
+
+                spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder, asCub));
                 spawnOrder++;
             }
 
             return spawned;
         }
+
+        /// <summary>
+        /// [B37] 이 (섬, 생성 순번) 자리의 곰이 **새끼**인지 결정한다.
+        ///
+        /// ★ 이 판정이 지켜야 하는 두 가지 불변식 ★
+        ///  (1) **rng 소비량 0.** System.Random을 단 한 번도 건드리지 않는다. 난수를 한 번이라도 더/덜
+        ///      쓰면 그 뒤의 모든 추첨(위치·지터·다음 섬)이 밀려 같은 worldSeed의 기존 월드가 통째로
+        ///      달라진다(B34 주석의 "결과만 덮어쓴다"와 같은 규칙).
+        ///  (2) **마릿수·spawnOrder 불변.** 개체를 추가로 낳지 않는다. 이미 그 자리에 있던 곰 한 마리의
+        ///      크기와 성격만 갈린다. SaveLoadController가 (islandIndex, spawnOrder)를 세이브 키로 쓰므로
+        ///      순번이 한 칸이라도 밀리면 기존 세이브의 "처치됨" 표시가 엉뚱한 개체에 붙는다.
+        /// 그래서 입력은 **이미 확정된 두 정수뿐**이고 출력은 순수 함수다. 같은 월드를 다시 열면 같은
+        /// 자리의 곰이 항상 같은 쪽으로 갈린다.
+        ///
+        /// 해시는 두 소수 곱 → xorshift-곱 마무리(FNV/Murmur 계열의 finalizer)다. islandId와 spawnOrder가
+        /// 둘 다 작은 정수라 단순 덧셈만으로는 상관이 남아서(섬 0의 0번과 섬 1의 -1번이 겹치는 식) 섞는다.
+        /// 임계값 400/1000 = **40%**가 새끼다(요구 구간 35~45%의 한가운데). 곰 엔트리 자체가 중형 이상
+        /// 섬에서만 나오고 그중 첫 한 마리는 보장 성체이므로, 실제 새끼 비율은 이보다 조금 낮게 나온다.
+        /// </summary>
+        private static bool IsBearCubIndividual(int islandIndex, int spawnOrder)
+        {
+            unchecked
+            {
+                uint h = (uint)(islandIndex * 73856093) ^ (uint)(spawnOrder * 19349663) ^ 0x9E3779B9u;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return h % 1000u < BearCubPermille;
+            }
+        }
+
+        /// <summary>[B37] 확률 배치된 곰 중 새끼가 되는 비율(천분율). 400 = 40%.</summary>
+        private const uint BearCubPermille = 400u;
 
         /// <summary>
         /// [B30] 위험 요소 하나를 놓을 섬 중심 기준 오프셋(미터)을 뽑는다.
@@ -404,9 +448,12 @@ namespace MakeGame.Systems
         /// 위험 요소 하나를 실제로 생성한다. 종류별로 형태/크기/색상/회전이 다른 프리미티브를 사용해
         /// 플레이어가 캡슐 하나로는 구분할 수 없던 곰/식인종/독사/전갈/벌떼/함정/상어를 한눈에 구별할 수 있게 한다.
         /// </summary>
-        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
+        /// <param name="asCub">[B37] 곰일 때만 의미가 있다. true면 이 개체는 새끼 곰으로 만들어진다
+        /// (몸집·히트박스·행동이 전부 갈린다). 다른 종류에서는 무시된다.</param>
+        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder, bool asCub = false)
         {
-            HazardVisualConfig config = GetVisualConfig(type);
+            asCub = asCub && type == HazardType.Bear;
+            HazardVisualConfig config = GetVisualConfig(type, asCub);
 
             GameObject go = GameObject.CreatePrimitive(config.primitiveType);
             go.transform.SetParent(parent);
@@ -422,7 +469,8 @@ namespace MakeGame.Systems
             go.transform.localScale = config.localScale * sizeJitter;
             go.transform.rotation = yawJitter * Quaternion.Euler(config.rotationEuler);
             go.transform.position = position + Vector3.up * config.groundOffset;
-            go.name = $"Hazard_{type}";
+            // [B37] 새끼는 이름으로도 구분된다(하이어라키에서 성체와 섞이면 디버깅이 불가능하다).
+            go.name = asCub ? "Hazard_BearCub" : $"Hazard_{type}";
 
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
@@ -433,7 +481,7 @@ namespace MakeGame.Systems
             // sizeJitter가 적용된 실제 스케일(go.transform.localScale)을 넘겨야 보정 계산이 실제 배치된
             // 크기와 맞아떨어진다(config.localScale은 jitter 이전 원본값이라 그대로 쓰면 이후 유지보수 시
             // 혼동의 여지가 있어 명시적으로 실제 값을 전달한다).
-            AddDetailParts(go, type, config, go.transform.localScale, rng);
+            AddDetailParts(go, type, config, go.transform.localScale, rng, asCub);
 
             var col = go.GetComponent<Collider>();
             if (col != null)
@@ -441,6 +489,8 @@ namespace MakeGame.Systems
 
             var hazard = go.AddComponent<HazardSource>();
             hazard.hazardType = type;
+            // [B37] ConfigureForType보다 **먼저** 세워야 한다 - 그 안에서 새끼용 체력/피해로 갈린다.
+            hazard.isBearCub = asCub;
             hazard.ConfigureForType(); // 종류(곰/식인종/벌떼 등)에 맞춰 전투 가능 여부와 체력을 설정한다.
             hazard.islandIndex = islandIndex;
             hazard.spawnOrder = spawnOrder;
@@ -452,7 +502,7 @@ namespace MakeGame.Systems
         /// 자식의 localScale은 부모의 비균일 localScale(config.localScale)로 나눠 보정해, 몸통이
         /// 눌리거나 늘어난 축(예: 상어의 길쭉한 몸통)에서도 눈이 타원으로 찌그러지지 않고 둥글게 보이게 한다.
         /// </summary>
-        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config, Vector3 appliedScale, System.Random rng)
+        private void AddDetailParts(GameObject go, HazardType type, HazardVisualConfig config, Vector3 appliedScale, System.Random rng, bool asCub = false)
         {
             Vector3 s = appliedScale;
             Color darkEye = new Color(0.05f, 0.05f, 0.05f);
@@ -545,7 +595,13 @@ namespace MakeGame.Systems
             // "역할 분담"이지 "한쪽이 비어 있어서"가 아니다.
             // → 새 디테일을 추가할 때는 반드시 양쪽 이름 목록을 모두 확인할 것. 같은 이름을 쓰면
             //   같은 자리에 파츠 두 개가 겹쳐 z-파이팅으로 지글거린다.
-            CreatureVisualBuilder.AddHazardDetailsIfMissing(go, type, s, config.color);
+            // [B37] 새끼 곰만 전용 빌더로 빠진다. 위 switch가 만든 임시 눈(EyeL/EyeR)은 그쪽이
+            // 모델 경로에서 지우고 폴백 경로에서는 성체와 똑같이 제자리로 옮긴다 - 어느 쪽이든
+            // 파츠를 새로 만들지 않으므로 이 메서드의 rng 소비량은 1도 변하지 않는다(정확히 0회).
+            if (asCub && type == HazardType.Bear)
+                CreatureVisualBuilder.AddBearCubDetails(go, s, config.color);
+            else
+                CreatureVisualBuilder.AddHazardDetailsIfMissing(go, type, s, config.color);
         }
 
         /// <summary>
@@ -591,8 +647,26 @@ namespace MakeGame.Systems
         /// 전갈=작고 납작한 어두운 주황 캡슐, 벌떼=작은 노란 구체, 함정=땅에 깔린 어두운 회갈색 원판,
         /// 대왕 크랩=넓고 낮은 적갈색 큐브(실제 형태는 절차 메시가 담당).
         /// </summary>
-        private HazardVisualConfig GetVisualConfig(HazardType type)
+        /// <param name="asCub">[B37] 곰일 때만 의미가 있다. true면 새끼 곰 규격을 돌려준다.</param>
+        private HazardVisualConfig GetVisualConfig(HazardType type, bool asCub = false)
         {
+            // [B37] 새끼 곰. 성체와 완전히 같은 구조(큐브 콜라이더 + 실물 모델)이고 규격만 새끼 것이다.
+            // 숫자를 여기 다시 적지 않고 CreatureVisualBuilder의 새끼 전용 상수를 **직접 참조**한다 -
+            // 두 값이 갈라지면 새끼가 조용히 늘어나거나 눌린다(성체와 같은 규칙).
+            //   localScale (0.45, 0.65, 1.73) = 모델 실측 0.452 × 0.644 × 1.734에 여유를 얹은 히트박스
+            //   groundOffset 0.325 = 높이의 절반 → 콜라이더 바닥 = 지면 = 모델의 발바닥(y = 0)
+            if (asCub && type == HazardType.Bear)
+            {
+                return new HazardVisualConfig
+                {
+                    primitiveType = PrimitiveType.Cube,
+                    localScale = CreatureVisualBuilder.BearCubBodyScale,
+                    rotationEuler = Vector3.zero,
+                    color = new Color(0.32f, 0.2f, 0.12f), // 성체와 같은 진한 갈색(같은 알베도를 공유한다)
+                    groundOffset = CreatureVisualBuilder.BearCubGroundOffset
+                };
+            }
+
             switch (type)
             {
                 case HazardType.Bear:

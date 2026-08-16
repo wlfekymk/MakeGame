@@ -169,6 +169,69 @@ namespace MakeGame.Systems
             get { return BearModelPrefab != null; }
         }
 
+        // ── [B37] 새끼 곰(bear_cub.obj) ─────────────────────────────────────────────────
+        // 성체와 **같은 UV 아틀라스**를 쓴다 → 머티리얼은 BearModelMaterial() 한 장을 그대로 재사용한다
+        // (MG~BearModel 캐시. 새 머티리얼을 만들면 이 세션의 곰 머티리얼이 두 장이 되어 SRP 배처가 갈린다).
+        // 좌표 계약도 성체와 동일하다: 미터 · +Y 위 · +Z 정면 · 발바닥 y = 0 · X/Z 중심 정렬.
+        // 실측 0.452 × 0.644 × 1.734 m / 6,999 삼각형.
+        //
+        // ⚠️ 아래 두 상수는 **새끼 전용**이다. 성체 규격(BearProcedural* / BearModel*)은 이번 배치에서
+        //    한 글자도 건드리지 않았다 - 두 규격이 섞이면 곰이 조용히 늘어나거나 눌린다(이 파일의 상습 사고).
+        /// <summary>새끼 곰 모델 에셋 경로(Resources 기준, 확장자 금지).</summary>
+        private const string BearCubModelResourcePath = "Models/bear_cub";
+
+        private static GameObject bearCubModelPrefab;
+        private static bool bearCubModelProbed;
+
+        /// <summary>새끼 곰 모델 프리팹(없으면 null). 성체와 같은 이유로 Resources.Load는 한 번만 부른다.</summary>
+        private static GameObject BearCubModelPrefab
+        {
+            get
+            {
+                if (!bearCubModelProbed)
+                {
+                    bearCubModelProbed = true;
+                    bearCubModelPrefab = Resources.Load<GameObject>(BearCubModelResourcePath);
+                }
+                return bearCubModelPrefab;
+            }
+        }
+
+        /// <summary>새끼 곰 모델이 프로젝트에 있는가. false면 아래 폴백(성체를 축소)이 돈다.</summary>
+        public static bool HasBearCubModel
+        {
+            get { return BearCubModelPrefab != null; }
+        }
+
+        /// <summary>새끼 곰 모델의 몸통 규격(m). 모델 실측(0.452 × 0.644 × 1.734)에 여유를 얹은 히트박스.</summary>
+        private static readonly Vector3 BearCubModelBodyScale = new Vector3(0.45f, 0.65f, 1.73f);
+
+        /// <summary>새끼 곰 모델의 피벗 높이(m) = 히트박스 높이의 절반 → 콜라이더 바닥 = 지면 = 발바닥.</summary>
+        private const float BearCubModelGroundOffset = 0.325f;
+
+        /// <summary>
+        /// 모델이 없을 때 성체를 그대로 **균등 축소**해 새끼로 쓰는 배율. 균등이어야 하는 이유:
+        /// 성체 빌더(AddBearDetails)는 파츠를 성체 규격(BearBodyScale)으로 나눠 미터 공간에 올리므로,
+        /// 루트만 균등 배율로 줄이면 비율이 그대로 유지된 채 크기만 줄어든다. 축마다 다른 배율을 주면
+        /// 그 순간 전단·왜곡이 생긴다. 0.58은 모델 실측 비율(높이 0.53 / 길이 0.68)의 중간값이다.
+        /// </summary>
+        private const float BearCubFallbackShrink = 0.58f;
+
+        /// <summary>
+        /// 새끼 곰 몸통 프리미티브(큐브)의 localScale(m). HazardSpawner가 이 값을 그대로 읽는다.
+        /// 모델이 있으면 모델 실측 히트박스, 없으면 성체 규격의 균등 축소본이다.
+        /// </summary>
+        public static Vector3 BearCubBodyScale
+        {
+            get { return HasBearCubModel ? BearCubModelBodyScale : BearBodyScale * BearCubFallbackShrink; }
+        }
+
+        /// <summary>새끼 곰 피벗을 지면에서 띄우는 높이(m). 큐브 높이의 절반 = 콜라이더 바닥이 지면.</summary>
+        public static float BearCubGroundOffset
+        {
+            get { return HasBearCubModel ? BearCubModelGroundOffset : BearGroundOffset * BearCubFallbackShrink; }
+        }
+
         /// <summary>
         /// [B33 텍스처 계약] 곰 겉털 결(grizzled, 무채색). Resources/Textures/bearfur.
         /// 아직 없으면 CreateColorMaterial이 조용히 단색으로 넘어간다(GetMaterial → Resources.Load null).
@@ -627,6 +690,100 @@ namespace MakeGame.Systems
             }
 
             // 스포너가 만들어 둔 임시 눈 구체는 모델에 눈이 이미 그려져 있어 필요 없다(머리 밖에 뜬다).
+            RemoveLegacyPart(body.transform, "EyeL");
+            RemoveLegacyPart(body.transform, "EyeR");
+            RemoveLegacyPart(body.transform, "EarL");
+            RemoveLegacyPart(body.transform, "EarR");
+            return true;
+        }
+
+        /// <summary>
+        /// [B37] 새끼 곰의 외형을 완성한다. HazardSpawner가 곰 엔트리 중 새끼로 판정된 개체에서만 부른다
+        /// (성체 경로 AddBearDetails는 이 메서드와 완전히 분리돼 있고 한 줄도 바뀌지 않았다).
+        ///
+        /// 두 경로뿐이다:
+        ///  1) bear_cub.obj가 있으면 그 모델 하나를 몸으로 붙인다(성체와 같은 방식 · 같은 머티리얼).
+        ///  2) 없으면 **성체 빌더를 그대로 부르고 루트만 균등 축소한다**. 성체 빌더가 모델 곰이든
+        ///     절차 곰이든 알아서 처리하므로, 새끼 때문에 성체 폴백이 갈라질 여지가 구조적으로 없다.
+        /// </summary>
+        public static void AddBearCubDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            if (body == null)
+                return;
+
+            if (BuildBearCubFromModel(body, appliedScale, bodyColor))
+                return;
+
+            // ── 폴백: 성체 한 마리를 그대로 축소해서 새끼로 쓴다 ──────────────────────────
+            // 루트 localScale은 스포너가 이미 BearCubBodyScale(= BearBodyScale × 0.58)로 넣어 뒀다.
+            // 성체 빌더는 파츠를 성체 규격으로 나눠 붙이므로, 루트가 균등하게 0.58배면 파츠도 통째로
+            // 0.58배가 되고 비율은 1도 변하지 않는다.
+            AddBearDetails(body, appliedScale, bodyColor);
+
+            // 성체 빌더 안의 SnapPivotForJitter는 **성체** 규격(BearGroundOffset)을 기준으로 피벗을
+            // 맞춘다. 스포너가 넣어 둔 시작 높이는 새끼 규격(= BearGroundOffset × shrink)이라 그 차이만큼
+            // 어긋난다. 어긋남은 지터와 무관한 상수 BearGroundOffset × (1 - shrink)이므로 여기서 되돌린다.
+            //   최종 피벗 = 지면 + BearGroundOffset × shrink × sizeJitter = 콜라이더 바닥 = 발바닥.
+            Vector3 position = body.transform.position;
+            position.y += BearGroundOffset * (1f - BearCubFallbackShrink);
+            body.transform.position = position;
+        }
+
+        /// <summary>
+        /// [B37] 실물 새끼 곰 모델(bear_cub.obj)을 몸으로 붙인다. 붙였으면 true.
+        /// 좌표/스케일 계약은 BuildBearFromModel과 **글자 그대로 같다** - 자식 localScale = 1/규격,
+        /// localRotation은 **반드시 identity**(비균등 부모 스케일 × 자식 회전 = 전단. 곰이 z축 0.39배로
+        /// 찌부러졌던 사고의 원인이 정확히 그것이다), localPosition.y = -groundOffset/규격.y.
+        /// 머티리얼은 성체와 같은 UV 아틀라스라 BearModelMaterial() 공유본을 그대로 물린다.
+        /// </summary>
+        private static bool BuildBearCubFromModel(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            GameObject prefab = BearCubModelPrefab;
+            if (prefab == null)
+                return false;
+
+            Vector3 nominal = BearCubModelBodyScale;
+            Material material = BearModelMaterial();   // ★ 새 머티리얼을 만들지 않는다(MG~BearModel 재사용)
+
+            // 루트(콜라이더 소유자)의 큐브를 지운다. 렌더러를 끄지 않고 메시를 비우는 이유는
+            // 성체와 같다 - SetVisualActive(true)가 재등장 때 렌더러를 전부 다시 켜기 때문이다.
+            ApplyBodyMesh(body, EmptyMesh());
+            ApplySharedMaterial(body, material);
+            SnapPivotForJitter(body, appliedScale, nominal, BearCubModelGroundOffset);
+
+            Transform existing = body.transform.Find(BearModelPartName);
+            GameObject model;
+            if (existing != null)
+            {
+                model = existing.gameObject;
+            }
+            else
+            {
+                model = Object.Instantiate(prefab);
+                model.name = BearModelPartName;
+                model.transform.SetParent(body.transform, false);
+            }
+
+            model.transform.localPosition = new Vector3(0f, -BearCubModelGroundOffset / nominal.y, 0f);
+            model.transform.localRotation = Quaternion.identity;   // ★ 전단 방지 - 절대 회전시키지 마라
+            model.transform.localScale = new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z);
+
+            var renderers = model.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null && material != null)
+                    renderers[i].sharedMaterial = material;
+            }
+
+            // 판정은 루트의 트리거 하나뿐이라는 규칙을 지킨다(임포터가 콜라이더를 딸려 보낼 수 있다).
+            var colliders = model.GetComponentsInChildren<Collider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i] != null)
+                    Object.Destroy(colliders[i]);
+            }
+
+            // 스포너가 만들어 둔 임시 눈/귀 구체는 모델에 이미 그려져 있어 필요 없다.
             RemoveLegacyPart(body.transform, "EyeL");
             RemoveLegacyPart(body.transform, "EyeR");
             RemoveLegacyPart(body.transform, "EarL");

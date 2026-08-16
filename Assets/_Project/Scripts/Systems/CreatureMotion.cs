@@ -263,6 +263,53 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// [B37] 새끼 곰 전용 진입점. 성체와 **같은 통짜 메시 경로**를 쓰되(파츠 이름 세 개를 똑같이
+        /// 넘긴다 - 모델 새끼에는 그 파츠가 없으므로 Bind가 solidBody로 전환하고, 폴백 새끼는 성체를
+        /// 축소한 것이라 파츠가 그대로 있어 예전 경로가 돈다), 진폭만 몸 크기에 비례해 줄인다.
+        ///
+        /// 규격(BearCubBodyScale)을 넘기는 것이 핵심이다. 이 값이 미터 → 루트 로컬 변환의 분모이고,
+        /// 새끼 몸의 자식은 1/BearCubBodyScale로 붙어 있으므로(모델 경로) 또는 성체 규격 × shrink로
+        /// 붙어 있으므로(폴백 경로) 두 경우 모두 이 분모 하나가 맞는다.
+        ///
+        /// 새끼는 포효/돌진/슬램을 **하지 않는다**(HazardSource가 아예 부르지 않는다). 그래서 시퀀스
+        /// 진폭(코루틴 안의 상수)은 손댈 이유가 없고, 여기서는 보행/정지 진폭만 조정한다.
+        /// </summary>
+        public static CreatureMotion AttachBearCub(GameObject body, float phaseSeed)
+        {
+            if (body == null)
+                return null;
+
+            CreatureMotion motion = body.GetComponent<CreatureMotion>();
+            if (motion == null)
+                motion = body.AddComponent<CreatureMotion>();
+
+            motion.Bind(CreatureVisualBuilder.BearCubBodyScale, phaseSeed,
+                laggingPartName: "Hump",
+                plantedPartName: "Claws",
+                legPartName: "Limbs");
+
+            // 몸 높이 비율(모델 실측 기준 0.65 / 1.22 ≈ 0.53). 진폭은 관절 여유에 비례하므로 몸이
+            // 절반이면 흔들림도 절반이어야 한다 - 성체 값을 그대로 쓰면 새끼가 통통 튀어 보인다.
+            float ratio = Mathf.Clamp(
+                CreatureVisualBuilder.BearCubBodyScale.y /
+                Mathf.Max(0.0001f, CreatureVisualBuilder.BearBodyScale.y), 0.2f, 1f);
+
+            motion.bounceMeters *= ratio;
+            motion.swayMeters *= ratio;
+            motion.idleSwayMeters *= ratio;
+            motion.idleBobMeters *= ratio;
+            motion.humpMaxSlackMeters *= ratio;
+
+            // 다리가 짧으면 같은 거리를 더 많은 걸음으로 간다 → 1m당 위상이 더 많이 돈다.
+            motion.strideRadiansPerMeter /= ratio;
+            // 가벼운 짐승이라 더 빨리 "제 보폭"에 닿고, 관성도 덜 남는다.
+            motion.fullGaitSpeed *= 0.75f;
+            motion.humpLagSeconds *= ratio;
+
+            return motion;
+        }
+
+        /// <summary>
         /// 3D로 들리는 곰 자신의 목소리/발소리용 AudioSource를 한 번만 만든다.
         /// AudioManager는 화면 전역 효과음(2D)만 다루고 위치가 없는 재생만 제공하므로, 위치가 중요한
         /// 짐승 소리는 이 오브젝트에 직접 붙인다. 볼륨은 AudioManager의 설정값을 그대로 따른다.
