@@ -64,6 +64,27 @@ namespace MakeGame.Systems
         private static readonly Vector3 BeeSwarmSpinAxis = new Vector3(0.15f, 1f, 0.08f);
         private const float BeeSwarmSpinDegreesPerSecond = 34f;
 
+        /// <summary>
+        /// [B33] 곰 전용 숨쉬기 연출. 리그·애니메이터·AI 상태기계가 없는 프로젝트에서 "살아 있다"를
+        /// 살 수 있는 유일하게 값싼 수단이라, 흉곽이 부풀었다 꺼지는 스케일 펄스만 넣는다.
+        ///  - **자식 파츠만** 늘였다 줄인다. 콜라이더(BoxCollider)는 루트에 붙어 있고 루트 스케일은
+        ///    한 번도 건드리지 않으므로 전투/접촉 판정이 1mm도 변하지 않는다.
+        ///  - **x와 z만** 곱한다. y를 건드리면 지면에 닿아 있던 발이 뜨거나 파묻힌다.
+        ///    곰의 발 메시는 애초에 루트(콜라이더가 있는 오브젝트)에 있어서 이 펄스의 영향을 받지 않는다.
+        ///  - **unscaledDeltaTime**을 쓴다. 엔딩/사망 화면은 Time.timeScale = 0을 걸므로 deltaTime을
+        ///    쓰면 그 화면에서 곰이 첫 프레임에 얼어붙는다(AGENT_BRIEF 4장의 실제 사고 사례).
+        ///  - 위상을 (islandIndex, spawnOrder)로 어긋내 같은 섬의 곰 여러 마리가 한 몸처럼 숨쉬지 않게 한다.
+        /// 진폭 1.6%는 가슴 반폭 0.386m 기준 약 6mm다 - 서 있는 짐승의 호흡으로 읽히되, 배 껍질을
+        /// 몸통에서 띄워 둔 여유(14mm) 안이라 어떤 위상에서도 껍질과 몸통이 파고들지 않는다.
+        /// </summary>
+        private const float BearBreathRadiansPerSecond = 1.4f; // 주기 약 4.5초 = 분당 13회
+        private const float BearBreathWidthAmplitude = 0.016f;
+        private const float BearBreathDepthAmplitude = 0.010f;
+
+        private Transform[] breathParts;
+        private Vector3[] breathBaseScales;
+        private float breathPhase;
+
         /// <summary>현재 이 위험 요소가 활성 상태(물리쳐지지 않음)인지 여부.</summary>
         public bool IsActive => !isDefeated;
 
@@ -122,6 +143,34 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// [B33] 곰의 숨쉬기 펄스가 곱해질 자식 파츠와 그 원본 스케일을 한 번만 캐시한다.
+        /// Start인 이유: 이 컴포넌트는 HazardSpawner.SpawnSingleHazard가 시각 파츠를 **다 만든 뒤**
+        /// AddComponent로 붙이지만, 그때 실행되는 것은 Awake다. 파츠 정리(RemoveLegacyPart)의 Destroy가
+        /// 프레임 끝까지 지연되므로 한 프레임 뒤인 Start에서 잡아야 목록이 확정된다.
+        /// 곰이 아니면 배열을 만들지 않으므로 다른 위험 요소에는 비용이 0이다.
+        /// </summary>
+        private void Start()
+        {
+            if (hazardType != HazardType.Bear)
+                return;
+
+            int count = transform.childCount;
+            if (count <= 0)
+                return;
+
+            breathParts = new Transform[count];
+            breathBaseScales = new Vector3[count];
+            for (int i = 0; i < count; i++)
+            {
+                breathParts[i] = transform.GetChild(i);
+                breathBaseScales[i] = breathParts[i].localScale;
+            }
+
+            // 개체마다 다른 위상. UnityEngine.Random을 쓰지 않는다(재현성 규칙 - AGENT_BRIEF 2장 6번).
+            breathPhase = Mathf.Repeat(islandIndex * 1.31f + spawnOrder * 0.77f, 6.2831853f);
+        }
+
+        /// <summary>
         /// 매 프레임 접촉 쿨다운과 물리친 뒤의 재등장 타이머를 진행시킨다.
         /// </summary>
         private void Update()
@@ -133,6 +182,10 @@ namespace MakeGame.Systems
             if (hazardType == HazardType.BeeSwarm && !isDefeated)
                 transform.Rotate(BeeSwarmSpinAxis, BeeSwarmSpinDegreesPerSecond * Time.unscaledDeltaTime, Space.Self);
 
+            // 곰이 살아 있는 동안에만 숨을 쉰다.
+            if (breathParts != null && !isDefeated)
+                UpdateBearBreathing();
+
             if (!isDefeated)
                 return;
 
@@ -143,6 +196,28 @@ namespace MakeGame.Systems
                 currentHealth = maxHealth;
                 respawnTimer = 0f;
                 SetVisualActive(true);
+            }
+        }
+
+        /// <summary>
+        /// [B33] 곰의 흉곽을 좌우/앞뒤로만 부풀렸다 꺼뜨린다. 루트(콜라이더)와 y축은 손대지 않는다.
+        /// 자식이 파괴된 경우(예전 방식 파츠 정리)를 대비해 매번 null을 확인한다.
+        /// </summary>
+        private void UpdateBearBreathing()
+        {
+            breathPhase += Time.unscaledDeltaTime * BearBreathRadiansPerSecond;
+            float pulse = Mathf.Sin(breathPhase);
+            float width = 1f + pulse * BearBreathWidthAmplitude;
+            float depth = 1f + pulse * BearBreathDepthAmplitude;
+
+            for (int i = 0; i < breathParts.Length; i++)
+            {
+                Transform part = breathParts[i];
+                if (part == null)
+                    continue;
+
+                Vector3 baseScale = breathBaseScales[i];
+                part.localScale = new Vector3(baseScale.x * width, baseScale.y, baseScale.z * depth);
             }
         }
 

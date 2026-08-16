@@ -42,7 +42,6 @@ namespace MakeGame.Systems
     {
         // ── 스포너가 쓰는 몸통 localScale (jitter 이전 원본값) ────────────────────────────
         // HazardSpawner.GetVisualConfig / CreatureSpawner.SpawnSingleCreature와 같은 값이어야 한다.
-        private static readonly Vector3 BearScale = new Vector3(0.9f, 1.1f, 0.9f);
         private static readonly Vector3 CannibalScale = new Vector3(0.55f, 0.9f, 0.55f);
         private static readonly Vector3 SnakeScale = new Vector3(0.18f, 0.6f, 0.18f);
         private static readonly Vector3 ScorpionScale = new Vector3(0.16f, 0.3f, 0.16f);
@@ -77,6 +76,35 @@ namespace MakeGame.Systems
 
         /// <summary>소형 크랩 피벗을 지면에서 띄우는 높이(m). 등딱지 아랫면과 발끝 사이가 6.2cm다.</summary>
         public const float CrabSmallGroundOffset = 0.062f;
+
+        // ── [B33] 곰이 쓰는 몸통 규격 ────────────────────────────────────────────────────
+        // 대왕 크랩과 같은 이유로 **public**이다 - HazardSpawner.GetVisualConfig가 숫자를 다시 적지 않고
+        // 이 상수를 직접 참조해야, 메시(미터)와 프리미티브 localScale이 갈라져 곰이 조용히 늘어나거나
+        // 눌리는 사고가 구조적으로 불가능해진다.
+        //
+        // ⚠️ 프리미티브가 **캡슐에서 큐브로 바뀌었다**(대왕 크랩과 같은 판단).
+        // 감독 스펙(다리만 1.1~1.3m)을 그대로 지키면 곰은 몸길이 2.52m · 어깨 혹 1.78m의 네 발 짐승이
+        // 된다. 세워 놓은 캡슐(지름 0.9 · 높이 2.2)은 그 몸의 앞뒤 2.5m 중 0.9m만 덮어서, 옆구리로
+        // 지나가면 판정이 아예 없고 머리·엉덩이는 판정 밖이었다. 큐브(BoxCollider)는 축이 메시와 같고
+        // (회전 0) 네 발 짐승의 넓고 긴 부피에 맞는다.
+        //   x 0.86 = 가슴 폭 0.77 + 여유 · y 1.80 = 혹 꼭대기 1.78 + 여유 · z 2.56 = 코끝~엉덩이 2.52 + 여유
+        //   groundOffset 0.90 = 높이의 절반 → 콜라이더 바닥이 정확히 지면이고, 메시의 발바닥 4개도
+        //   같은 높이(y = -0.90)에 닿도록 작성돼 있다.
+        // (털 다발·발톱·꼬리는 큐브 밖으로 조금 삐져나온다 - 대왕 크랩의 다리/집게와 같은 의도된 상태다.)
+        /// <summary>곰 몸통 프리미티브(큐브)의 localScale(m). HazardSpawner.GetVisualConfig와 같은 값이어야 한다.</summary>
+        public static readonly Vector3 BearBodyScale = new Vector3(0.86f, 1.80f, 2.56f);
+
+        /// <summary>곰 피벗을 지면에서 띄우는 높이(m). 큐브 높이(1.80)의 절반 = 콜라이더 바닥이 지면.</summary>
+        public const float BearGroundOffset = 0.90f;
+
+        /// <summary>
+        /// [B33 텍스처 계약] 곰 겉털 결(grizzled, 무채색). Resources/Textures/bearfur.
+        /// 아직 없으면 CreateColorMaterial이 조용히 단색으로 넘어간다(GetMaterial → Resources.Load null).
+        /// </summary>
+        private const string BearFurTexture = "bearfur";
+
+        /// <summary>[B33 텍스처 계약] 발바닥/마른 진흙(갈라진 가죽). Resources/Textures/bearpad.</summary>
+        private const string BearPadTexture = "bearpad";
 
         /// <summary>
         /// 이 클래스가 나눠 준 공유 머티리얼 목록. ApplySharedMaterial이 예전 머티리얼을 파괴할 때
@@ -358,39 +386,91 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 곰(HazardType.Bear).
+        /// 곰(HazardType.Bear). [B33] 감독이 직접 써 준 실측 스펙을 그대로 옮긴 판이다.
+        /// 아래 숫자는 전부 **실제 미터**이고, 지면을 0으로 잡은 높이다(피벗은 지면 위 0.90m).
         ///
-        /// [B29 - 감독이 이름을 콕 집은 항목] 예전에는 세워 놓은 캡슐 + 귀 구체 2개 + 주둥이 박스라
-        /// 옆에서 봐도 식인종과 같은 "서 있는 알약"이었다. 이제 몸통 메시 자체가 네 발로 선 곰이다.
-        /// 실루엣을 만드는 것은 네 가지이고 전부 메시 안에 있다:
-        ///   1. 어깨 혹 - 등줄기 반지름이 앞다리 위에서 0.29 → 0.37m로 부풀었다가 다시 줄어든다.
-        ///      등선 꼭대기 1.12m 대비 혹 꼭대기 1.24m. 곰과 다른 사족보행 동물을 가르는 결정적 신호다.
-        ///   2. 짧고 굵은 다리 - 배 아래 0.50m 공간에 지름 0.24m 다리가 들어간다(길이/굵기 = 2.1).
-        ///   3. 처진 머리 - 목이 어깨(0.83m)에서 머리(0.61m)로 내려간다. 곰은 머리를 어깨보다 낮게 든다.
-        ///   4. 주둥이 - 머리 앞으로 0.2m 뻗은 원뿔형 코. 끝에 어두운 코 파츠 하나만 얹는다.
-        /// 크기: 코끝~엉덩이 1.68m · 혹 높이 1.24m(길이/높이 1.35 = 실제 불곰 비율).
+        /// ── 치수(감독 스펙 → 실제 들어간 값) ────────────────────────────────────────────
+        ///   머리 길이 0.45~0.50 → **0.48**(뒤통수 z 0.80 ~ 코끝 z 1.28) · 얼굴 폭 0.35~0.40 → **0.38**
+        ///   주둥이 0.15~0.20 → **0.18**(두께 0.236 × 0.212 - 원뿔이 아니라 뭉툭한 기둥)
+        ///   눈 지름 0.03~0.04 → **0.035**(얼굴 폭의 9%) · 미간 0.15~0.20 → **0.169**(중심간 0.204)
+        ///   앞다리 1.1~1.2 → **1.18**, 둘레 0.60~0.70 → **0.68**(반지름 0.108)
+        ///   뒷다리 1.2~1.3 → **1.27**(굽은 경로), 허벅지 둘레 0.80~0.90 → **0.89**(반지름 0.142)
+        ///   앞발 폭 0.25~0.30 → **0.27**, 길이 0.35 → **0.35**, 발톱 5개 × 0.10~0.12 → **0.12**(밑동 지름 0.068)
+        ///   뒷발 길이 0.35~0.40 → **0.39**, 폭 0.20~0.25 → **0.23**, 발뒤꿈치 패드가 발등보다 3.7cm 높다
+        /// ── 실루엣 ──────────────────────────────────────────────────────────────────────
+        ///   어깨 혹 꼭대기 **1.78m = 실루엣 최고점**(등 한가운데 1.615 · 엉덩이 1.375 · 귀 끝 1.51).
+        ///   목 경계 없음: 목 단면 폭 0.414 vs 두개골 폭 0.380 - 거의 같은 굵기로 이어지고, 머리는
+        ///   목 능선보다 6.7cm 아래로 처진다. 귀는 지름 0.15m로 두개골 위 0.11m만 솟는다.
+        ///   코끝~엉덩이 **2.52m** · 다리 사이 배 밑 공간 0.83m(길이/높이 = 1.42).
         ///
-        /// 파츠: 몸통(1) + 눈 2(스포너가 만든 것을 옮겨 씀) + 코(1) = 4개. 예전 6개.
-        /// 판정 불변: 몸통 캡슐 콜라이더(지름 0.9m · 높이 2.2m 수직)는 그대로다. 시각이 콜라이더보다
-        /// 앞뒤로 길어지지만, 조준/접촉이 잡히는 곳은 몸통 한가운데(혹과 가슴)라 실사용에 지장이 없다.
+        /// ── 파츠 6개(예전 4개) - 부위별 색을 나누려면 렌더러가 나뉘어야 한다 ────────────────
+        ///   루트(다리 하단 + 발 + 발뒤꿈치 패드, 마른 진흙 회갈색 · bearpad) ← **콜라이더가 여기 있다**
+        ///   Coat     : 몸통 + 혹 + 머리 + 귀 + 꼬리 + 목/어깨 털 다발 (옅은 금갈색 grizzled · bearfur)
+        ///   Underside: 배 껍질 + 다리 상부 4 + 배 밑 털 다발 + 발톱 20 (거의 검정 · bearfur)
+        ///   Snout    : 주둥이 + 코 (젖은 짙은 색 · bearpad)
+        ///   EyeL/EyeR: 스포너가 만든 구체를 옮겨 씀(새로 만들지 않는다)
+        /// 메시는 종류당 1장 정적 캐시, 머티리얼은 (색+텍스처)당 1장 공유 캐시 → 개체가 몇 마리든
+        /// 신규 생성 0이다. 발이 지면에 닿는 것은 SnapPivotForJitter가 sizeJitter까지 보정한다.
+        ///
+        /// **루트에 발 메시를 둔 것은 의도된 것이다**: 숨쉬기 펄스(HazardSource)가 자식만 늘였다 줄이므로,
+        /// 콜라이더가 붙은 루트는 스케일이 절대 변하지 않아야 하고 발은 지면에 박혀 움직이면 안 된다.
         /// </summary>
         public static void AddBearDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            ApplyBodyMesh(body, CreatureMeshLibrary.BearBodyUnit());
-            ApplySharedMaterial(body, bodyColor, "bark");
-            SnapPivotForJitter(body, appliedScale, BearScale, 1.1f);
+            // 루트 = 다리 하단 + 발. 콜라이더가 붙은 오브젝트라 스케일이 절대 변하지 않는다.
+            ApplyBodyMesh(body, CreatureMeshLibrary.BearPawUnit());
+            ApplySharedMaterial(body, BearPawColor(bodyColor), BearPadTexture);
+            SnapPivotForJitter(body, appliedScale, BearBodyScale, BearGroundOffset);
 
-            Color muzzle = ResourceVisualLibrary.Shade(bodyColor, 0.55f);
-            // 눈 위치 검산(머리 단면은 z 0.755에서 가로 반경 0.1175m · 세로 반경 0.1335m의 타원):
-            // (0.088/0.1175)² + (0.0844/0.1335)² = 0.96 < 1 → 중심이 표면 바로 안쪽이고,
-            // 눈 반지름 0.045m가 더해져 확실히 밖으로 드러난다.
-            ReshapeSphere(body.transform, "EyeL", BearScale, new Vector3(0.088f, -0.415f, 0.755f), 0.09f, EyeBlack, "noise");
-            ReshapeSphere(body.transform, "EyeR", BearScale, new Vector3(-0.088f, -0.415f, 0.755f), 0.09f, EyeBlack, "noise");
-            ReshapeSphere(body.transform, "Snout", BearScale, new Vector3(0f, -0.525f, 0.875f), 0.13f, muzzle, "noise");
+            MeterSpacePart(body.transform, "Coat", BearBodyScale, CreatureMeshLibrary.BearCoatMeters(),
+                BearCoatColor(bodyColor), BearFurTexture);
+            MeterSpacePart(body.transform, "Underside", BearBodyScale, CreatureMeshLibrary.BearUndersideMeters(),
+                BearUndersideColor(bodyColor), BearFurTexture);
+            MeterSpacePart(body.transform, "Snout", BearBodyScale, CreatureMeshLibrary.BearMuzzleMeters(),
+                BearMuzzleColor(bodyColor), BearPadTexture);
+
+            // 눈 위치 검산(z 1.02의 두개골 단면 = 가로 반경 0.169m · 세로 반경 0.145m 타원):
+            // 이상 타원 **표면에서 법선 방향으로 5mm 안쪽**에 눈 중심을 둔다. 표면에 정확히 얹으면
+            // 안 되는 이유는 두개골이 매끈한 타원이 아니라 12각 다면체이기 때문이다 - 면 한가운데는
+            // 이상 표면보다 5.8mm 내려앉아 있어서, 표면에 얹은 눈은 그 지점에서 노출이 23mm/35mm가
+            // 되어 머리에서 떨어져 보인다(B33 1차 판 "눈이 허공에 떠 있다"의 잔여 원인).
+            // 5mm 묻으면 정점에서 노출 12.5mm, 면 한가운데서도 눈이 표면을 확실히 파고든 상태다.
+            // 미간은 0.169m로 여전히 스펙(0.15~0.20) 안이고, 거대한 두상(폭 0.38)에 눈은 0.035뿐이다.
+            ReshapeSphere(body.transform, "EyeL", BearBodyScale, new Vector3(0.1022f, 0.4179f, 1.02f), 0.035f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", BearBodyScale, new Vector3(-0.1022f, 0.4179f, 1.02f), 0.035f, EyeBlack, "noise");
 
             // 예전 방식의 귀 파츠는 메시에 들어갔다. 남아 있으면 머리 위에 혹 두 개로 겹치므로 지운다.
             RemoveLegacyPart(body.transform, "EarL");
             RemoveLegacyPart(body.transform, "EarR");
+        }
+
+        /// <summary>
+        /// [B33] 등·어깨의 grizzled 색. 스펙 "옅은 금갈색~회백색(햇빛에 바랜 느낌)".
+        /// 씬/config가 정한 bodyColor에서 파생시키므로 디렉터가 색을 바꾸면 네 부위가 함께 따라간다.
+        /// 무채색 겉털 텍스처(bearfur)가 이 색 위에 곱해져 털끝의 밝은 결이 생긴다 - 텍스처가 아직
+        /// 없으면 그냥 밝은 금갈색 등판이 된다(그것만으로도 등/배 대비는 성립한다).
+        /// </summary>
+        private static Color BearCoatColor(Color bodyColor)
+        {
+            return Color.Lerp(ResourceVisualLibrary.Shade(bodyColor, 1.25f), new Color(0.62f, 0.58f, 0.52f), 0.28f);
+        }
+
+        /// <summary>[B33] 배 밑·다리 안쪽·발톱. 스펙 "거의 검은색" - 무게감을 아래로 깐다.</summary>
+        private static Color BearUndersideColor(Color bodyColor)
+        {
+            return ResourceVisualLibrary.Shade(bodyColor, 0.28f);
+        }
+
+        /// <summary>[B33] 다리 하단·발바닥. 스펙 "진흙이 마른 회갈색" - 채도를 빼고 밝기를 올린다.</summary>
+        private static Color BearPawColor(Color bodyColor)
+        {
+            return Color.Lerp(ResourceVisualLibrary.Shade(bodyColor, 0.6f), new Color(0.46f, 0.42f, 0.36f), 0.55f);
+        }
+
+        /// <summary>[B33] 입 주변. 스펙 "촉촉하게 젖은 짙은 색" - 등판보다 4배 어둡다.</summary>
+        private static Color BearMuzzleColor(Color bodyColor)
+        {
+            return ResourceVisualLibrary.Shade(bodyColor, 0.34f);
         }
 
         /// <summary>
@@ -662,79 +742,574 @@ namespace MakeGame.Systems
             return mesh;
         }
 
-        // ── 곰 ────────────────────────────────────────────────────────────────────────
+        // ── 곰 [B33 - 감독 실측 스펙판] ────────────────────────────────────────────────
+        // 좌표는 전부 **미터**이고 y는 피벗 기준이다(피벗은 지면 위 0.90m → **지면 = -0.90**).
+        // +z가 앞(머리 방향) · +y가 위 · 몸통에 회전이 없어서(rotationEuler 0) 뜻이 그대로다.
+        // 마지막에 BearBodyScale(0.86 × 1.80 × 2.56)로 나눠 큐브 프리미티브 로컬 규격으로 옮긴다.
+        //
+        // 등줄기 표(지면 기준 높이 / 반지름 / 등선 = 높이 + 반지름):
+        //   엉덩이 z -1.24  1.13 / 0.245 / 1.375      허리 z -0.50  1.21 / 0.385 / 1.595
+        //   배     z -0.12  1.22 / 0.395 / 1.615      가슴 z  0.34  1.25 / 0.420 / 1.670
+        //   목     z  0.78  1.24 / 0.225 / 1.465
+        // 여기에 **어깨 혹**이 따로 얹힌다: z 0.24에서 높이 1.49 · 반지름 0.290 → 꼭대기 **1.78m**.
+        // 실루엣은 혹 1.78 → 등 1.615 → 엉덩이 1.375로 앞이 높고 뒤로 흘러내린다(불곰 옆모습).
+        //
+        // 메시가 네 장으로 나뉜 이유는 오직 **부위별 색**이다(URP Lit은 정점 색을 읽지 않는다).
+        // 형태를 나눈 것이 아니라 같은 한 마리를 재질 경계로 자른 것이고, 네 장 모두 정적 캐시라
+        // 개체가 몇 마리든 메시는 4장뿐이다.
+        //
+        // ★★ [B33 사고 - 반드시 읽어라] 이 파일에는 좌표 공간이 **두 개** 있고, 이름이 그 구분이다.
+        //   `...Unit()`   = **루트 오브젝트**가 ApplyBodyMesh로 쓰는 메시. 루트의 localScale이 곧
+        //                   NominalScale이므로, 미터로 작성한 뒤 **마지막에 NominalScale로 나눈다**.
+        //   `...Meters()` = **MeterSpacePart 자식**이 쓰는 메시. 그 자식의 localScale이 이미
+        //                   1/NominalScale이라 미터가 그대로 월드 미터가 된다 →
+        //                   **절대로 나누면 안 된다.**(SharkDorsalMeters/SpearShaftMeters 등이 선례다)
+        // B33 첫 판에서 곰의 Coat/Underside/Snout(자식)을 Unit 규칙으로 한 번 더 나눠서, 몸이
+        // x×1.16 · y×0.56 · z×0.39로 찌그러졌다. 그 결과 씬에서 (a) 눈이 쪼그라든 머리 앞 허공에 뜨고
+        // (b) 다리 상부(자식)와 다리 하부(루트)가 어긋나 사방으로 벌어지고 (c) 발톱이 z로 0.39배
+        // 눌려 굵은 갈고리가 아니라 철사 낙서로 보였다. **세 증상의 원인은 이 한 줄이었다.**
+        // → 곰의 네 메시 중 규격으로 나누는 것은 BearPawUnit **하나뿐**이다.
+
+        /// <summary>곰 몸통 단면의 좌우 눌림. 가슴 폭 = 0.420 × 2 × 0.92 = 0.773m.</summary>
+        private const float BearTorsoFlatten = 0.92f;
+
+        /// <summary>어깨 혹 단면의 좌우 눌림. 혹 폭 = 0.290 × 2 × 0.86 = 0.499m.</summary>
+        private const float BearHumpFlatten = 0.86f;
+
+        /// <summary>지면의 y(피벗 기준, m). 발바닥 4개와 발톱 끝이 전부 이 값을 기준으로 잡혀 있다.</summary>
+        private const float BearGround = -CreatureVisualBuilder.BearGroundOffset;
+
         /// <summary>
-        /// 네 발로 선 곰(캡슐 규격, localScale 0.9 × 1.1 × 0.9 · 피벗은 지면 위 1.1m).
-        /// 미터 좌표의 y는 피벗 기준이므로 **지면 = -1.1**이다. +z가 앞(머리 방향).
-        /// 등줄기 표(지면 기준 높이 / 반지름): 엉덩이 0.80/0.30 → 등 0.83/0.29 → **혹 0.87/0.37** →
-        /// 가슴 0.83/0.30 → 목 0.73/0.21 → 머리 0.61/0.155 → 코 0.575/0.075.
-        /// 혹 꼭대기 1.24m · 등선 1.12m · 머리 꼭대기 0.77m → 옆에서 보면 어깨가 가장 높고 머리가 처진다.
+        /// 6각 단면 관의 바닥 "면" 깊이 배수(cos 30°). 6각은 270°에 정점이 없어 바닥이 칼날이 아니라
+        /// 평평한 면이라 발바닥에 알맞다 - 그 면의 높이가 중심에서 정확히 이 배수만큼 아래다.
+        /// (8각·12각은 270°에 정점이 생겨 바닥이 능선이 된다. 발이 지면에 **정확히** 닿아야 하므로
+        ///  이 배수를 눈으로 짐작하지 말고 반드시 BearSoleCenterY로 계산할 것.)
         /// </summary>
-        public static Mesh BearBodyUnit()
+        private const float BearHexSoleDrop = 0.8660254f;
+
+        /// <summary>배 껍질(어두운 아랫면)을 몸통 표면에서 밖으로 띄우는 두께(m). z-파이팅 방지.</summary>
+        private const float BearBellyShellOffset = 0.014f;
+
+        // 등줄기 제어점(z 오름차순). y는 피벗 기준이라 지면 기준 높이 = y + 0.90 이다.
+        private static readonly float[] BearSpineZ = { -1.24f, -1.05f, -0.84f, -0.50f, -0.12f, 0.20f, 0.34f, 0.58f, 0.78f };
+        private static readonly float[] BearSpineY = { 0.230f, 0.270f, 0.310f, 0.310f, 0.320f, 0.340f, 0.350f, 0.350f, 0.340f };
+        private static readonly float[] BearSpineR = { 0.245f, 0.320f, 0.375f, 0.385f, 0.395f, 0.415f, 0.420f, 0.360f, 0.225f };
+
+        // 어깨 혹(z 오름차순). 아랫면은 몸통 안에 완전히 파묻히고 윗면만 등선 위로 12cm 솟는다.
+        private static readonly float[] BearHumpZ = { -0.30f, -0.14f, 0.06f, 0.24f, 0.38f, 0.52f, 0.66f };
+        private static readonly float[] BearHumpY = { 0.470f, 0.500f, 0.550f, 0.590f, 0.590f, 0.560f, 0.500f };
+        private static readonly float[] BearHumpR = { 0.075f, 0.150f, 0.235f, 0.290f, 0.285f, 0.215f, 0.130f };
+
+        // 두개골(z 오름차순). 단면을 위아래로 0.86배 눌러 **넓적한** 머리로 만든다.
+        // 폭 0.380m(= 0.190 × 2) · 높이 0.327m · 뒤통수 z 0.80 ~ 코끝 z 1.28 = 머리 길이 0.48m.
+        private static readonly Vector3[] BearSkull =
+        {
+            new Vector3(0f, 0.345f, 0.70f),
+            new Vector3(0f, 0.335f, 0.84f),
+            new Vector3(0f, 0.320f, 0.96f),
+            new Vector3(0f, 0.300f, 1.06f),
+            new Vector3(0f, 0.290f, 1.12f),
+        };
+        private static readonly float[] BearSkullR = { 0.160f, 0.190f, 0.186f, 0.158f, 0.126f };
+
+        /// <summary>등줄기 표를 z에서 선형 보간해 읽는다(다리 부착점·배 껍질·털 다발의 뿌리 계산용).</summary>
+        private static void SampleBearSpine(float z, out float y, out float radius)
+        {
+            SampleProfile(BearSpineZ, BearSpineY, BearSpineR, z, out y, out radius);
+        }
+
+        /// <summary>어깨 혹 표를 z에서 선형 보간해 읽는다(등 위 털 다발의 뿌리 계산용).</summary>
+        private static void SampleBearHump(float z, out float y, out float radius)
+        {
+            SampleProfile(BearHumpZ, BearHumpY, BearHumpR, z, out y, out radius);
+        }
+
+        /// <summary>z 오름차순 제어 표를 선형 보간한다. 범위 밖은 양 끝 값으로 고정한다.</summary>
+        private static void SampleProfile(float[] zs, float[] ys, float[] rs, float z, out float y, out float radius)
+        {
+            int last = zs.Length - 1;
+            if (z <= zs[0])
+            {
+                y = ys[0];
+                radius = rs[0];
+                return;
+            }
+
+            for (int i = 0; i < last; i++)
+            {
+                if (z <= zs[i + 1])
+                {
+                    float t = Mathf.InverseLerp(zs[i], zs[i + 1], z);
+                    y = Mathf.Lerp(ys[i], ys[i + 1], t);
+                    radius = Mathf.Lerp(rs[i], rs[i + 1], t);
+                    return;
+                }
+            }
+
+            y = ys[last];
+            radius = rs[last];
+        }
+
+        /// <summary>
+        /// 발바닥이 지면에 **정확히** 닿는 6각 관의 중심 높이. 관의 바닥 면은 중심에서
+        /// radius × flattenY × cos30° 만큼 아래에 생기므로, 그만큼 지면 위로 띄우면 오차가 0이 된다.
+        /// </summary>
+        private static float BearSoleCenterY(float radius, float flattenY)
+        {
+            return BearGround + radius * flattenY * BearHexSoleDrop;
+        }
+
+        /// <summary>
+        /// 곰 겉가죽(등·어깨·머리). 몸통 + 어깨 혹 + 두개골 + 귀 2 + 꼬리 + **목/어깨 털 다발**.
+        /// 스펙의 "목의 경계가 거의 없이"를 굵기로 답한다: 목 단면 폭 0.414m vs 두개골 폭 0.380m라
+        /// 거의 같은 굵기로 이어지고, 머리 꼭대기(1.398m)가 목 능선(1.465m)보다 6.7cm 낮게 처진다.
+        /// </summary>
+        public static Mesh BearCoatMeters()
         {
             Mesh cached;
-            if (TryGetCached("bear", out cached))
+            if (TryGetCached("bearCoat", out cached))
                 return cached;
 
             var builder = new Builder();
 
-            Vector3[] spine =
-            {
-                new Vector3(0f, -0.340f, -0.560f),
-                new Vector3(0f, -0.300f, -0.400f),
-                new Vector3(0f, -0.270f, -0.100f),
-                new Vector3(0f, -0.230f,  0.160f),
-                new Vector3(0f, -0.270f,  0.340f),
-                new Vector3(0f, -0.370f,  0.480f),
-                new Vector3(0f, -0.450f,  0.600f),
-                new Vector3(0f, -0.490f,  0.720f),
-                new Vector3(0f, -0.525f,  0.850f),
-            };
-            float[] spineRadii = { 0.19f, 0.30f, 0.29f, 0.37f, 0.30f, 0.21f, 0.19f, 0.155f, 0.075f };
-            builder.AddTube(spine, spineRadii, 8, true, true, 2f, new Vector3(0.88f, 1f, 1f));
+            var spine = new Vector3[BearSpineZ.Length];
+            for (int i = 0; i < spine.Length; i++)
+                spine[i] = new Vector3(0f, BearSpineY[i], BearSpineZ[i]);
+            builder.AddTube(spine, BearSpineR, 12, true, true, 3f, new Vector3(BearTorsoFlatten, 1f, 1f));
 
-            // 다리 4개. 아래 끝 링이 정확히 지면(-1.1)에 닿는 발바닥이 되도록 y를 맞췄다.
-            AddBearLeg(builder, 0.185f, 0.24f);
-            AddBearLeg(builder, -0.185f, 0.24f);
-            AddBearLeg(builder, 0.195f, -0.34f);
-            AddBearLeg(builder, -0.195f, -0.34f);
+            var hump = new Vector3[BearHumpZ.Length];
+            for (int i = 0; i < hump.Length; i++)
+                hump[i] = new Vector3(0f, BearHumpY[i], BearHumpZ[i]);
+            builder.AddTube(hump, BearHumpR, 8, true, true, 2f, new Vector3(BearHumpFlatten, 1f, 1f));
 
-            // 귀: 머리 위(등선 -0.26)보다 4cm 솟는다.
-            AddBearEar(builder, 0.115f);
-            AddBearEar(builder, -0.115f);
+            builder.AddTube(BearSkull, BearSkullR, 12, true, true, 2f, new Vector3(1f, 0.86f, 1f));
 
-            builder.ScaleVertices(new Vector3(1f / 0.9f, 1f / 1.1f, 1f / 0.9f));
-            return Store("bear", builder.Finish("Cre_BearBody"));
+            AddBearEar(builder, 1f);
+            AddBearEar(builder, -1f);
+
+            // 꼬리: 곰 꼬리는 아주 짧다. 있는지 없는지 정도로만 보이면 된다.
+            builder.AddTube(
+                new[] { new Vector3(0f, 0.300f, -1.20f), new Vector3(0f, 0.230f, -1.30f) },
+                new[] { 0.055f, 0.026f }, 5, true, true, 1f, Vector3.one);
+
+            // 털 실루엣(목·어깨). 난수는 결정적 System.Random이라 어떤 실행에서도 같은 모양이다.
+            var random = new System.Random(8317);
+            AddBearNeckRuff(builder, random);
+            AddBearHumpRidge(builder, random);
+
+            return Store("bearCoat", builder.Finish("Cre_BearCoat"));
         }
 
-        /// <summary>곰 다리 하나(기둥 + 앞뒤로 뻗은 발). 발바닥이 지면(y = -1.1)에 정확히 닿는다.</summary>
-        private static void AddBearLeg(Builder builder, float x, float z)
+        /// <summary>
+        /// 곰 아랫면(배 밑 · 다리 안쪽 · 발톱). 스펙의 "거의 검은색" 구역을 통째로 담는다.
+        /// 배 껍질은 몸통 표면에서 1.4cm 밖으로 띄운 반쪽 껍데기라 z-파이팅이 없고, 그 가장자리는
+        /// 배 밑 털 다발이 덮어 이음매가 보이지 않는다.
+        /// 발톱 20개(앞 5 × 2 = 길이 0.12m · 뒤 5 × 2 = 0.07m)도 여기 있다 - 회갈색 발바닥 위에서
+        /// 거의 검은 갈고리가 대비로 튀어 보이게 하려고 일부러 아랫면 쪽 재질에 붙였다.
+        /// </summary>
+        public static Mesh BearUndersideMeters()
         {
-            Vector3[] leg =
-            {
-                new Vector3(x, -0.360f, z),
-                new Vector3(x, -0.700f, z + 0.005f),
-                new Vector3(x, -1.020f, z + 0.010f),
-            };
-            builder.AddTube(leg, new[] { 0.125f, 0.115f, 0.100f }, 6, true, true, 1f, Vector3.one);
+            Mesh cached;
+            if (TryGetCached("bearUnder", out cached))
+                return cached;
 
-            Vector3[] paw =
-            {
-                new Vector3(x, -1.025f, z - 0.080f),
-                new Vector3(x, -1.025f, z + 0.080f),
-            };
-            builder.AddTube(paw, new[] { 0.075f, 0.070f }, 6, true, true, 1f, Vector3.one);
+            var builder = new Builder();
+
+            AddBearBellyShell(builder);
+
+            AddBearForeLegUpper(builder, 1f);
+            AddBearForeLegUpper(builder, -1f);
+            AddBearHindLegUpper(builder, 1f);
+            AddBearHindLegUpper(builder, -1f);
+
+            AddBearClaws(builder, 1f, true);
+            AddBearClaws(builder, -1f, true);
+            AddBearClaws(builder, 1f, false);
+            AddBearClaws(builder, -1f, false);
+
+            AddBearBellyFringe(builder, new System.Random(4903));
+
+            return Store("bearUnder", builder.Finish("Cre_BearUnderside"));
         }
 
-        /// <summary>곰 귀 하나(작은 원뿔).</summary>
-        private static void AddBearEar(Builder builder, float x)
+        /// <summary>
+        /// 곰 다리 하단과 발(마른 진흙 회갈색). **루트 오브젝트가 이 메시를 쓴다** - 콜라이더가 붙은
+        /// 오브젝트라 숨쉬기 펄스에서 스케일이 변하지 않고, 그래서 지면에 박힌 발이 절대 흔들리지 않는다.
+        /// 앞발: 폭 0.27 × 길이 0.35 · 뒷발: 폭 0.23 × 길이 0.39 + 발등보다 4.4cm 높은 발뒤꿈치 패드.
+        /// 네 발 모두 바닥 면이 지면(y = -0.90)에 오차 0으로 닿는다(BearSoleCenterY).
+        /// 이 부위는 짧고 빳빳한 털이라 **외곽선이 매끈하다** - 털 다발을 일부러 하나도 붙이지 않았다.
+        /// </summary>
+        public static Mesh BearPawUnit()
         {
-            Vector3[] ear =
+            Mesh cached;
+            if (TryGetCached("bearPaw", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            AddBearForeLegLower(builder, 1f);
+            AddBearForeLegLower(builder, -1f);
+            AddBearHindLegLower(builder, 1f);
+            AddBearHindLegLower(builder, -1f);
+
+            AddBearFrontPaw(builder, 1f);
+            AddBearFrontPaw(builder, -1f);
+            AddBearHindPaw(builder, 1f);
+            AddBearHindPaw(builder, -1f);
+
+            // 루트 전용이라 **여기서만** 규격으로 나눈다(아래 두 공간 주석 참고).
+            Vector3 nominal = CreatureVisualBuilder.BearBodyScale;
+            builder.ScaleVertices(new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z));
+            return Store("bearPaw", builder.Finish("Cre_BearPaw"));
+        }
+
+        /// <summary>
+        /// 곰 주둥이(젖은 짙은 색). 두개골 앞 끝(z 1.12)에서 코끝(z 1.28)까지 **0.18m** 뻗는다.
+        /// 원뿔이 아니라 폭 0.236 × 높이 0.212의 뭉툭한 기둥이고, 끝 면이 지름 0.172m의 코가 된다.
+        /// 여기도 짧은 털 구역이라 외곽선이 매끈하다(털 다발 없음).
+        /// </summary>
+        public static Mesh BearMuzzleMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("bearMuzzle", out cached))
+                return cached;
+
+            var builder = new Builder();
+            builder.AddTube(new[]
             {
-                new Vector3(x, -0.330f, 0.585f),
-                new Vector3(x * 1.09f, -0.210f, 0.575f),
-            };
-            builder.AddTube(ear, new[] { 0.055f, 0.030f }, 5, true, true, 1f, Vector3.one);
+                new Vector3(0f, 0.296f, 1.04f),
+                new Vector3(0f, 0.284f, 1.14f),
+                new Vector3(0f, 0.274f, 1.23f),
+                new Vector3(0f, 0.268f, 1.28f),
+            }, new[] { 0.118f, 0.108f, 0.100f, 0.086f }, 8, true, true, 1f, new Vector3(1f, 0.90f, 1f));
+
+            return Store("bearMuzzle", builder.Finish("Cre_BearMuzzle"));
+        }
+
+        /// <summary>
+        /// 곰 귀 하나. 스펙 "둥글고 작게 튀어나와 둥근 두개골 라인을 살짝 깬다".
+        /// 지름 0.152m(머리 길이의 32%)뿐이고 두개골 꼭대기(1.396m) 위로 0.112m만 솟는다.
+        /// 원뿔이 아니라 가운데가 부푼 3링 덩어리라 옆에서 봐도 둥글다.
+        /// </summary>
+        private static void AddBearEar(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.128f, 0.428f, 0.822f),
+                new Vector3(side * 0.150f, 0.508f, 0.815f),
+                new Vector3(side * 0.162f, 0.560f, 0.808f),
+            }, new[] { 0.068f, 0.076f, 0.048f }, 6, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>
+        /// 앞다리 상부(어깨 관절 ~ 무릎 아래). 어깨 관절은 몸통 안(y 0.430 = 지면 위 1.33m)에서 시작해
+        /// 발목(지면 위 0.155m)까지 **1.18m**다(스펙 1.1~1.2). 중간 둘레 2π × 0.108 = **0.68m**(스펙 0.60~0.70).
+        ///
+        /// [B33 감독 지적 - "다리가 몸통에서 떨어져 있다"] 시작 링을 y 0.380/r 0.130에서 y 0.430/r 0.095로
+        /// 옮겼다. 예전 값은 이상 타원 기준으로는 1mm 차이로 몸통 안이었지만, 몸통은 매끈한 타원이 아니라
+        /// **12각 다면체**라 면 한가운데가 13mm 더 내려앉는다 → 관의 시작 뚜껑(원판)이 어깨 밖으로 삐져나와
+        /// 다리가 몸에서 떨어진 것처럼 보였다. 지금은 다면체 표면 기준으로도 22mm 안쪽에 묻힌다.
+        /// 다리는 지면 위 1.13m 부근에서 옆구리를 뚫고 나오기 시작한다 - 그 지점이 곧 어깨 근육의 경계다.
+        /// </summary>
+        private static void AddBearForeLegUpper(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.250f,  0.430f, 0.362f),
+                new Vector3(side * 0.250f,  0.120f, 0.352f),
+                new Vector3(side * 0.250f, -0.120f, 0.345f),
+                new Vector3(side * 0.250f, -0.300f, 0.340f),
+            }, new[] { 0.095f, 0.118f, 0.110f, 0.107f }, 8, true, true, 2f, Vector3.one);
+        }
+
+        /// <summary>앞다리 하부. 상부와 6cm 겹쳐(y -0.300 ↔ -0.240) 색만 갈리고 틈은 생기지 않는다.</summary>
+        private static void AddBearForeLegLower(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.250f, -0.240f, 0.342f),
+                new Vector3(side * 0.250f, -0.500f, 0.336f),
+                new Vector3(side * 0.250f, -0.690f, 0.332f),
+                new Vector3(side * 0.250f, -0.745f, 0.330f),
+            }, new[] { 0.109f, 0.105f, 0.100f, 0.096f }, 8, true, true, 2f, Vector3.one);
+        }
+
+        /// <summary>
+        /// 뒷다리 상부(골반 ~ 정강이). 골반(y 0.400 = 지면 위 1.30m)에서 발목(0.13m)까지
+        /// **굽은 경로 1.27m**로 앞다리(1.18m)보다 길다(스펙 1.2~1.3).
+        /// 허벅지 최대 둘레 2π × 0.142 = **0.89m**(스펙 0.80~0.90)이고, 그 지점에서 옆구리 밖으로
+        /// 7.5cm 부풀어 나와 근육 덩어리로 보인다. 위 두 링(0.062/0.095)은 반대로 엉덩이 단면 안에
+        /// 완전히 묻히도록 좁혀 둔 것이다(0.062는 12각 다면체 표면 기준으로 계산했다) -
+        /// 시작 뚜껑이 밖으로 나오면 허벅지가 잘린 원판으로 보인다.
+        /// 무릎이 앞으로(z -0.68), 뒤꿈치가 뒤로(z -0.90) 꺾이는 것이 곰의 뒷다리 실루엣이다.
+        /// </summary>
+        private static void AddBearHindLegUpper(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.245f,  0.400f, -0.855f),
+                new Vector3(side * 0.245f,  0.310f, -0.840f),
+                new Vector3(side * 0.245f,  0.150f, -0.745f),
+                new Vector3(side * 0.245f, -0.040f, -0.680f),
+                new Vector3(side * 0.245f, -0.240f, -0.790f),
+            }, new[] { 0.062f, 0.095f, 0.142f, 0.122f, 0.108f }, 8, true, true, 2f, Vector3.one);
+        }
+
+        /// <summary>뒷다리 하부(정강이 ~ 뒤꿈치). 상부와 6cm 겹친다.</summary>
+        private static void AddBearHindLegLower(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.245f, -0.180f, -0.755f),
+                new Vector3(side * 0.245f, -0.440f, -0.900f),
+                new Vector3(side * 0.245f, -0.700f, -0.875f),
+                new Vector3(side * 0.245f, -0.770f, -0.900f),
+            }, new[] { 0.111f, 0.098f, 0.092f, 0.088f }, 8, true, true, 2f, Vector3.one);
+        }
+
+        /// <summary>
+        /// 앞발 하나. 발바닥 폭 **0.27m** · 발 길이 **0.35m**(z 0.235~0.585, 발톱 제외) · 높이 0.138m.
+        /// 발목(z 0.330)이 발의 뒤쪽 27% 지점에 오도록 앞으로 길게 뻗는다(척행성 = 사람처럼 바닥 전체가 닿는다).
+        /// </summary>
+        private static void AddBearFrontPaw(Builder builder, float side)
+        {
+            const float radius = 0.084f;
+            const float flattenY = 0.95f;
+            float y = BearSoleCenterY(radius, flattenY);
+
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.250f, y, 0.235f),
+                new Vector3(side * 0.250f, y, 0.410f),
+                new Vector3(side * 0.250f, y, 0.585f),
+            }, new[] { radius, radius, radius }, 6, true, true, 1f, new Vector3(1.61f, flattenY, 1f));
+        }
+
+        /// <summary>
+        /// 뒷발 하나. 발바닥 길이 **0.39m**(z -1.00~-0.61) · 폭 **0.23m**.
+        /// 뒤쪽에 발뒤꿈치 패드를 따로 얹어 발등(0.145m)보다 4.4cm 높게 부풀린다 - 스펙의
+        /// "발뒤꿈치 패드를 두툼하게 강조"이자, 옆에서 봤을 때 사람 발자국과 형태가 닮는 이유다.
+        /// </summary>
+        private static void AddBearHindPaw(Builder builder, float side)
+        {
+            const float radius = 0.088f;
+            const float flattenY = 0.95f;
+            float y = BearSoleCenterY(radius, flattenY);
+
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.245f, y, -1.000f),
+                new Vector3(side * 0.245f, y, -0.800f),
+                new Vector3(side * 0.245f, y, -0.610f),
+            }, new[] { radius, radius, radius }, 6, true, true, 1f, new Vector3(1.307f, flattenY, 1f));
+
+            const float heelRadius = 0.115f;
+            const float heelFlattenY = 0.95f;
+            float heelY = BearSoleCenterY(heelRadius, heelFlattenY);
+
+            builder.AddTube(new[]
+            {
+                new Vector3(side * 0.245f, heelY, -1.000f),
+                new Vector3(side * 0.245f, heelY, -0.900f),
+            }, new[] { heelRadius, heelRadius }, 6, true, true, 1f, new Vector3(1.05f, heelFlattenY, 1f));
+        }
+
+        /// <summary>발톱이 발바닥 폭 안에서 벌어지는 좌우 오프셋 배수(발 반폭 기준, 5개).</summary>
+        private static readonly float[] BearClawSpread = { -1f, -0.5f, 0f, 0.5f, 1f };
+
+        /// <summary>
+        /// 발 하나의 발톱 5개. 앞발은 길이 **0.12m**(스펙 0.10~0.12), 뒷발은 0.07m로 짧다.
+        ///
+        /// [B33 감독 지적 - "굵은 갈고리가 아니라 가느다란 지그재그 선"] 1차 원인은 좌표 공간 사고라
+        /// 발톱이 앞뒤로 0.39배 눌려 있던 것이고(위 ★★ 주석), 그것과 별개로 형태도 보강했다:
+        ///   · 밑동 지름 0.060 → **0.068m**(발바닥 두께 0.138m의 절반). 스펙 "단검"의 최소선(2~3cm)의 두 배가
+        ///     넘는다. 끝은 0으로 수렴시키지 않고 0.006m를 남겨(지름 1.2cm) 끝이 사라져 선으로 보이는 것을 막는다.
+        ///   · 단면 4각 → **6각**. 4각은 보는 각도에 따라 두께 0의 판으로 접혀 보인다.
+        ///   · 끝 벌어짐 1.14 → **1.35배**. 밑동은 0.049m 간격이라 서로 붙어 두툼한 한 덩어리로 시작하고,
+        ///     끝에서 0.066m로 벌어져 갈고리 다섯 개가 명확히 갈라진다(가장 바깥 끝 x 0.132 < 발 반폭 0.135).
+        /// 끝이 지면 위 1.6cm까지 아래로 말리고, 뿌리는 발 안에 2cm 이상 묻혀 이음매가 보이지 않는다.
+        /// </summary>
+        private static void AddBearClaws(Builder builder, float side, bool front)
+        {
+            float centerX = front ? side * 0.250f : side * 0.245f;
+            float spread = front ? 0.098f : 0.082f;
+
+            for (int i = 0; i < BearClawSpread.Length; i++)
+            {
+                float offset = BearClawSpread[i] * spread;
+                float baseX = centerX + offset;
+                float midX = centerX + offset * 1.18f;
+                float tipX = centerX + offset * 1.35f;
+
+                if (front)
+                {
+                    builder.AddTube(new[]
+                    {
+                        new Vector3(baseX, -0.828f, 0.570f),
+                        new Vector3(midX,  -0.842f, 0.632f),
+                        new Vector3(tipX,  -0.884f, 0.676f),
+                    }, new[] { 0.034f, 0.022f, 0.006f }, 6, true, true, 1f, Vector3.one);
+                }
+                else
+                {
+                    builder.AddTube(new[]
+                    {
+                        new Vector3(baseX, -0.832f, -0.616f),
+                        new Vector3(midX,  -0.843f, -0.583f),
+                        new Vector3(tipX,  -0.870f, -0.556f),
+                    }, new[] { 0.027f, 0.018f, 0.005f }, 6, true, true, 1f, Vector3.one);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 배 밑 껍질(거의 검은 아랫면). 몸통 단면의 198°~342° 구간을 1.4cm 밖으로 밀어낸 반쪽 껍데기다.
+        /// 몸통 튜브를 통째로 어둡게 칠하면 등의 grizzled와 배의 검정을 나눌 수 없고, 튜브를 두 개로
+        /// 쪼개면 이음매가 벌어진다 - 껍데기를 덧대는 쪽이 둘 다 피한다.
+        /// </summary>
+        private static void AddBearBellyShell(Builder builder)
+        {
+            const int slices = 12;
+            const int arc = 7;
+            var grid = new Vector3[slices, arc];
+
+            for (int i = 0; i < slices; i++)
+            {
+                float z = Mathf.Lerp(-1.02f, 0.60f, (float)i / (slices - 1));
+                float y, radius;
+                SampleBearSpine(z, out y, out radius);
+
+                for (int j = 0; j < arc; j++)
+                {
+                    float angle = Mathf.Deg2Rad * Mathf.Lerp(198f, 342f, (float)j / (arc - 1));
+                    grid[i, j] = new Vector3(
+                        Mathf.Cos(angle) * (radius * BearTorsoFlatten + BearBellyShellOffset),
+                        y + Mathf.Sin(angle) * (radius + BearBellyShellOffset),
+                        z);
+                }
+            }
+
+            for (int i = 0; i + 1 < slices; i++)
+            {
+                for (int j = 0; j + 1 < arc; j++)
+                    builder.AddQuad(grid[i, j], grid[i, j + 1], grid[i + 1, j + 1], grid[i + 1, j], Vector3.down, false);
+            }
+        }
+
+        /// <summary>
+        /// [B33 털 실루엣] 털 다발 하나. 쉐이딩 털(fur shell/SSS)이 없는 프로젝트에서 "털이 길다"를
+        /// 표현할 수 있는 유일한 수단은 **외곽선을 삐죽삐죽하게 만드는 것**이다(직전 배치에서 덤불
+        /// 잎끝을 윤곽선 밖으로 빼낸 기법과 같다).
+        /// 뿌리를 표면 안쪽 2.5cm에 묻고, 몸통 진행축(±z)으로 넓은 납작한 조각을 바깥으로 세운다.
+        /// 두께 축이 outward × z 라 옆에서는 넓은 면이, 앞에서는 삐져나온 끝이 보인다 - 어느 각도에서도
+        /// 외곽선이 깨진다. 끝을 droop만큼 아래로 늘어뜨려 무게가 있는 긴 털로 읽히게 한다.
+        /// </summary>
+        private static void AddBearFurTuft(Builder builder, Vector3 root, Vector3 outward, float length,
+            float halfWidth, float droop)
+        {
+            Vector3 along = Vector3.forward;
+            Vector3 tip = root + outward * length + new Vector3(0f, -droop, 0f);
+            Vector3 back = root - along * halfWidth - outward * 0.025f;
+            Vector3 front = root + along * halfWidth - outward * 0.025f;
+
+            Vector3 thickness = Vector3.Cross(outward, along);
+            if (thickness.sqrMagnitude < 0.000001f)
+                thickness = Vector3.up;
+
+            builder.AddBlade(new[] { back, tip, front }, thickness, 0.016f);
+        }
+
+        /// <summary>
+        /// 목·어깨의 긴 털 18다발. 몸통 표면의 -32°~62°(옆면과 목 아래) 구간에 불규칙하게 박는다.
+        /// **길이를 앞(목)으로 갈수록 길게** 준다(어깨 0.10m → 목 0.20m, 개체별 ±20% 흔들림).
+        /// 이유는 두 가지다: (1) 실제로 곰의 갈기는 목이 가장 길다. (2) 길이를 일정하게 주면 몸통이
+        /// 가장 굵은 가슴(반폭 0.386)에서 털 끝이 x 0.59까지 나가 곰의 겉폭이 1.19m가 된다 -
+        /// 콜라이더(0.86)와 너무 멀어져 "털에 파묻혔는데 판정이 없다"가 된다. 지금은 겉폭 약 0.97m다.
+        /// </summary>
+        private static void AddBearNeckRuff(Builder builder, System.Random random)
+        {
+            for (int i = 0; i < 18; i++)
+            {
+                float z = Mathf.Lerp(0.04f, 0.80f, (float)random.NextDouble());
+                float side = random.NextDouble() < 0.5 ? -1f : 1f;
+                float angle = Mathf.Deg2Rad * Mathf.Lerp(-32f, 62f, (float)random.NextDouble());
+
+                float y, radius;
+                SampleBearSpine(z, out y, out radius);
+
+                float cos = Mathf.Cos(angle);
+                float sin = Mathf.Sin(angle);
+                Vector3 root = new Vector3(side * cos * radius * BearTorsoFlatten, y + sin * radius, z);
+                Vector3 outward = new Vector3(side * cos / BearTorsoFlatten, sin, 0f).normalized;
+
+                float length = Mathf.Lerp(0.10f, 0.20f, Mathf.InverseLerp(0.04f, 0.80f, z))
+                    * (0.8f + 0.4f * (float)random.NextDouble());
+
+                AddBearFurTuft(builder, root, outward, length,
+                    0.030f + 0.035f * (float)random.NextDouble(),
+                    0.02f + 0.06f * (float)random.NextDouble());
+            }
+        }
+
+        /// <summary>
+        /// 어깨 혹 능선의 짧은 털 8다발(길이 0.05~0.12m). 혹 꼭대기(1.78m)의 매끈한 곡선을 깨서
+        /// 역광에서 "근육 덩어리"가 실루엣으로 읽히게 한다. 털 끝까지 세면 최고점이 1.85m다
+        /// (큐브 콜라이더 윗면 1.80m보다 5cm 높다 - 털은 판정 밖이라는 뜻이고 의도된 것이다).
+        /// </summary>
+        private static void AddBearHumpRidge(Builder builder, System.Random random)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                float z = Mathf.Lerp(-0.22f, 0.58f, (float)random.NextDouble());
+                float angle = Mathf.Deg2Rad * Mathf.Lerp(52f, 128f, (float)random.NextDouble());
+
+                float y, radius;
+                SampleBearHump(z, out y, out radius);
+
+                float cos = Mathf.Cos(angle);
+                float sin = Mathf.Sin(angle);
+                Vector3 root = new Vector3(cos * radius * BearHumpFlatten, y + sin * radius, z);
+                Vector3 outward = new Vector3(cos / BearHumpFlatten, sin, 0f).normalized;
+
+                AddBearFurTuft(builder, root, outward,
+                    0.05f + 0.07f * (float)random.NextDouble(),
+                    0.030f + 0.030f * (float)random.NextDouble(),
+                    0.01f + 0.03f * (float)random.NextDouble());
+            }
+        }
+
+        /// <summary>
+        /// 배 밑으로 늘어진 긴 털 15다발(가장 긴 것 0.22m). 배 껍질과 같은 표면에서 자라므로
+        /// 껍질의 열린 가장자리를 함께 가린다. 가장 긴 다발도 끝이 지면 위 0.50m라 땅에 닿지 않는다.
+        /// 목 갈기와 같은 이유로, **아래(270°)를 향한 다발만 길게** 주고 옆구리 쪽(202°/338°)은 짧게
+        /// 줄인다 - 옆구리에서 길게 주면 겉폭만 넓어지고 정작 옆모습 외곽선은 그대로다.
+        /// </summary>
+        private static void AddBearBellyFringe(Builder builder, System.Random random)
+        {
+            for (int i = 0; i < 15; i++)
+            {
+                float z = Mathf.Lerp(-0.96f, 0.56f, (float)random.NextDouble());
+                float angle = Mathf.Deg2Rad * Mathf.Lerp(202f, 338f, (float)random.NextDouble());
+
+                float y, radius;
+                SampleBearSpine(z, out y, out radius);
+
+                float cos = Mathf.Cos(angle);
+                float sin = Mathf.Sin(angle);
+                Vector3 root = new Vector3(
+                    cos * (radius * BearTorsoFlatten + BearBellyShellOffset),
+                    y + sin * (radius + BearBellyShellOffset),
+                    z);
+                Vector3 outward = new Vector3(cos / BearTorsoFlatten, sin, 0f).normalized;
+
+                // -sin(angle) = "얼마나 아래를 향하는가"(옆구리 0.37 → 배 한가운데 1.0).
+                float downward = 0.35f + 0.65f * -sin;
+
+                AddBearFurTuft(builder, root, outward,
+                    (0.09f + 0.13f * (float)random.NextDouble()) * downward,
+                    0.032f + 0.038f * (float)random.NextDouble(),
+                    0.03f + 0.07f * (float)random.NextDouble());
+            }
         }
 
         // ── 식인종 ────────────────────────────────────────────────────────────────────

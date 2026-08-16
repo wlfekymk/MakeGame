@@ -424,7 +424,10 @@ namespace MakeGame.Systems
             {
                 case HazardType.Bear:
                 case HazardType.Cannibal:
-                    // 몸통 캡슐 위쪽(머리 부근)에 작은 눈 두 개를 붙인다.
+                    // 몸통 위쪽(머리 부근)에 작은 눈 두 개를 붙인다.
+                    // [B33] 곰은 아래 CreatureVisualBuilder.AddBearDetails가 이 두 파츠를 찾아 미터 단위로
+                    // 다시 배치하고 크기도 지름 0.035m(beady eyes)로 다시 잡는다 - 여기 값은 곰에 한해
+                    // 임시 자리이고, 파츠를 새로 만들지 않기 위해 존재한다. 식인종만 이 값을 그대로 쓴다.
                     AddCompensatedSphere(go, new Vector3(0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeL");
                     AddCompensatedSphere(go, new Vector3(-0.18f, 0.75f, 0.35f), 0.09f, s, darkEye, "EyeR");
                     break;
@@ -543,7 +546,8 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 위험 요소 종류별로 구분 가능한 형태/크기/색상을 반환한다.
-        /// 곰=크고 진한 갈색 캡슐, 식인종=사람 크기의 적갈색 캡슐, 독사=길고 납작한 초록 캡슐(눕혀서 배치),
+        /// 곰=크고 진한 갈색 큐브(B33 - 네 발 짐승이라 박스 판정), 식인종=사람 크기의 적갈색 캡슐,
+        /// 독사=길고 납작한 초록 캡슐(눕혀서 배치),
         /// 전갈=작고 납작한 어두운 주황 캡슐, 벌떼=작은 노란 구체, 함정=땅에 깔린 어두운 회갈색 원판,
         /// 대왕 크랩=넓고 낮은 적갈색 큐브(실제 형태는 절차 메시가 담당).
         /// </summary>
@@ -552,13 +556,26 @@ namespace MakeGame.Systems
             switch (type)
             {
                 case HazardType.Bear:
+                    // [B33] 감독 실측 스펙(다리만 1.1~1.3m)을 적용해 곰이 코끝~엉덩이 2.52m ·
+                    // 어깨 혹 1.78m가 됐다. 몸통 프리미티브는 대왕 크랩과 같은 이유로 **큐브**다:
+                    //  - 판정 - 세워 놓은 캡슐(지름 0.9 · 높이 2.2)은 앞뒤 2.5m 몸 중 0.9m만 덮어서
+                    //    옆구리로 지나가면 판정이 없고 머리·엉덩이가 판정 밖이었다. BoxCollider는
+                    //    회전이 0이라 메시와 축이 정확히 같고 네 발 짐승의 부피에 맞는다.
+                    //  - 형태 - 보이는 몸은 CreatureVisualBuilder.AddBearDetails가 절차 메시 4장으로
+                    //    갈아 끼우므로 큐브의 원래 모양은 화면에 남지 않는다. 콜라이더만 남는다.
+                    // 크기/접지 높이는 숫자를 여기 다시 적지 않고 CreatureVisualBuilder의 상수를
+                    // **직접 참조**한다(대왕 크랩과 같은 방식). 메시를 미터로 작성한 뒤 이 localScale로
+                    // 나누기 때문에 두 값이 갈라지면 곰이 조용히 늘어나거나 눌린다.
+                    // groundOffset 0.90 = 큐브 높이(1.80)의 절반 → 콜라이더 바닥이 정확히 지면이고,
+                    // 메시의 발바닥 4개도 같은 높이(y = -0.90)에 닿도록 작성돼 있다.
+                    // (털 다발·발톱·꼬리는 큐브 밖으로 조금 삐져나온다 - 크랩의 다리/집게와 같다.)
                     return new HazardVisualConfig
                     {
-                        primitiveType = PrimitiveType.Capsule,
-                        localScale = new Vector3(0.9f, 1.1f, 0.9f),
+                        primitiveType = PrimitiveType.Cube,
+                        localScale = CreatureVisualBuilder.BearBodyScale,
                         rotationEuler = Vector3.zero,
-                        color = new Color(0.32f, 0.2f, 0.12f), // 진한 갈색
-                        groundOffset = 1.1f
+                        color = new Color(0.32f, 0.2f, 0.12f), // 진한 갈색(부위별 4색이 전부 이 색에서 파생된다)
+                        groundOffset = CreatureVisualBuilder.BearGroundOffset
                     };
 
                 case HazardType.Cannibal:
