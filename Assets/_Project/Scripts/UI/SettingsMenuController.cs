@@ -224,6 +224,7 @@ namespace MakeGame.UI
             var inventoryUI = FindAnyObjectByType<InventoryUI>();
             var craftingUI = FindAnyObjectByType<CraftingUI>();
             var minimapUI = FindAnyObjectByType<MinimapUI>();
+            var questUI = FindAnyObjectByType<QuestUI>();   // [B24] 퀘스트 창 신설
             var playerController = FindAnyObjectByType<PlayerController>();
             var saveLoad = FindAnyObjectByType<SaveLoadController>();
 
@@ -235,6 +236,7 @@ namespace MakeGame.UI
             KeyCode filter = inventoryUI != null ? inventoryUI.cycleFilterKey : KeyCode.F;
             KeyCode craft = craftingUI != null ? craftingUI.toggleKey : KeyCode.V;
             KeyCode map = minimapUI != null ? minimapUI.toggleKey : KeyCode.M;
+            KeyCode quest = questUI != null ? questUI.toggleKey : KeyCode.J;
             KeyCode dive = playerController != null ? playerController.diveKey : KeyCode.LeftControl;
 
             controlsBuilder.Clear();
@@ -244,7 +246,10 @@ namespace MakeGame.UI
                 .Append(cook.ToString()).Append("] 조리    [").Append(place.ToString()).Append("] 설치\n");
             controlsBuilder.Append('[').Append(inventory.ToString()).Append("] 인벤토리 (열린 상태에서 [")
                 .Append(filter.ToString()).Append("] 분류 전환)\n");
-            controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 섬 목록 / 이동\n");
+            controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 세계 지도 / 이동\n");
+            // [B24] 퀘스트 창. 지도 설명도 함께 고쳤다 - 배치 21에서 섬 목록 패널이 세계 지도로 흡수돼
+            // "섬 목록 / 이동"은 더 이상 존재하지 않는 창을 가리키고 있었다.
+            controlsBuilder.Append('[').Append(quest.ToString()).Append("] 퀘스트 (할 일)\n");
             // 수영은 지상 조작과 키가 겹쳐(Space) 따로 묶어주지 않으면 오해를 산다.
             controlsBuilder.Append("수영 중 — Space 떠오르기 · [").Append(dive.ToString()).Append("] 잠수\n");
 

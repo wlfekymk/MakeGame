@@ -679,7 +679,9 @@ namespace MakeGame.UI
             // [B19 디렉터] 좌상단은 **생존 HUD가 이미 쓰고 있다**(SurvivalHudUI 패널이 (20,-20)에서
             // 296px 높이로 내려온다). 실기에서 인벤토리가 그 위에 정확히 겹쳐 둘 다 읽기 어려웠다.
             // HUD 아래로 내리고 살짝 오른쪽으로 민다. 사용자가 드래그로 옮기면 그 위치가 이긴다.
-            const float hudBottomMargin = 316f;   // HUD 패널 높이 296 + 여백 20
+            // [B24] 316 → 284. HUD에서 배/경비행기 두 줄을 퀘스트 창으로 옮기면서 패널 높이가
+            // 296 → 264로 줄었다. 값을 안 고치면 겹치지는 않지만 여백만 52px 벌어진다.
+            const float hudBottomMargin = 284f;   // HUD 패널 높이 264 + 여백 20
             return new Vector2(-halfCanvasWidth + 24f + windowRt.rect.width * 0.5f,
                 halfCanvasHeight - hudBottomMargin);
         }

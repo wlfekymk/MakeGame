@@ -10,6 +10,33 @@ namespace MakeGame.UI
     /// </summary>
     public static class UIBuilder
     {
+        // ────────────────────────────────────────────────────────────────────────
+        // 창(윈도) 표준 팔레트. InventoryUI(B19)가 확립한 격자 창 표준의 색을 여기 한 곳에
+        // 모아 두고, 창을 만드는 모든 화면이 같은 값을 참조한다. 창마다 색을 다시 적으면
+        // 한쪽만 고쳐졌을 때 "인벤토리는 안 비치는데 제작 창은 비친다" 같은 어긋남이 생긴다.
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 창 배경색. 알파 0.93은 **뒤의 HUD 글자가 비쳐 읽히지 않게** 하기 위한 값이다
+        /// (ArtDirection 4.3의 0.75는 짧게 뜨는 알림/확인 패널 기준이고, 정보 밀도가 높은
+        /// 창에는 부족하다 - 실기에서 격자 사이로 HUD 막대가 그대로 읽혔다).
+        /// </summary>
+        public static readonly Color WindowBackgroundColor = new Color(0.04f, 0.05f, 0.06f, 0.93f);
+
+        /// <summary>제목 표시줄 배경(창 배경 위에 아주 옅게 얹는 띠).</summary>
+        public static readonly Color WindowTitleBarColor = new Color(1f, 1f, 1f, 0.07f);
+
+        // 격자 칸 배경 3단계. 색상이 아니라 **밝기**로만 구분해 색맹 대응과 야간 가독성을 함께 지킨다.
+        public static readonly Color SlotEmptyColor = new Color(1f, 1f, 1f, 0.04f);
+        public static readonly Color SlotFilledColor = new Color(1f, 1f, 1f, 0.09f);
+        public static readonly Color SlotHoverColor = new Color(1f, 1f, 1f, 0.2f);
+
+        /// <summary>Danger Red #CC3333 (ArtDirection.md 1.3).</summary>
+        public static readonly Color DangerRed = new Color(0.8f, 0.2f, 0.2f, 1f);
+
+        /// <summary>Medic Green #4FA87A (ArtDirection.md 1.1 - UI/아이콘 전용).</summary>
+        public static readonly Color MedicGreen = new Color(0.31f, 0.659f, 0.478f, 1f);
+
         /// <summary>
         /// 화면 전체를 덮는 Screen Space Overlay 캔버스를 새로 생성한다.
         /// 씬에 EventSystem이 없으면(버튼 클릭 등 UI 입력 처리에 필요) 함께 생성한다.
@@ -421,6 +448,244 @@ namespace MakeGame.UI
             slider.value = value;
 
             return slider;
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
+        // 창(윈도) 표준 부품
+        //
+        // InventoryUI(B19)가 세운 "창 UI 표준"을 다른 창(제작·퀘스트 등)이 **코드를 복사하지 않고**
+        // 그대로 쓰도록 공용 팩토리로 뽑아낸 것이다. 표준의 다섯 요소 중 네 개가 여기 있다:
+        //   1) 알파 0.93 어두운 패널        → CreateWindow
+        //   2) 제목 표시줄 + 빨간 X 닫기    → CreateTitleBar / CreateCloseButton
+        //   3) 마우스로 창 이동             → AttachDragHandle (UIDragHandle)
+        //   4) 아이콘 + 우하단 개수 격자 칸 → CreateItemSlot (InventorySlotView)
+        // 나머지 하나(hover 툴팁)는 ItemTooltipUI가 이미 창과 무관한 단일 인스턴스라 그대로 쓰면 된다.
+        //
+        // 기존 호출부에 영향이 없도록 **추가만** 했다. 기존 시그니처는 하나도 건드리지 않았다.
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 표준 창 패널을 만든다. 화면 한쪽에 못 박지 않고 **한 점 앵커 + 고정 크기**로 만들기 때문에
+        /// 드래그가 anchoredPosition 하나만 움직이면 되고, UIDragHandle의 클램프 계산도 그 전제를 쓴다
+        /// (pivot (0.5, 1) = position.y가 창의 위쪽 모서리).
+        /// </summary>
+        public static RectTransform CreateWindow(Transform parent, string name, float width, float height)
+        {
+            var rt = CreatePanel(parent, name,
+                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: WindowBackgroundColor,
+                addTopBorder: true);
+
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.sizeDelta = new Vector2(width, height);
+            return rt;
+        }
+
+        /// <summary>
+        /// 창 위쪽에 제목 표시줄을 붙이고 그 RectTransform을 돌려준다. 제목 글자는 raycastTarget을
+        /// 꺼서 드래그 입력을 가로채지 않게 한다(입력은 표시줄 자체가 받는다). 오른쪽 40px은
+        /// 닫기(X) 버튼 자리로 비워 둔다.
+        /// </summary>
+        public static RectTransform CreateTitleBar(RectTransform window, string title, float height)
+        {
+            var bar = CreatePanel(window, "TitleBar",
+                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
+                offsetMin: new Vector2(0f, -height), offsetMax: Vector2.zero,
+                color: WindowTitleBarColor);
+
+            var text = CreateText(bar, "Title", title, 20, Color.white, TextAnchor.MiddleLeft);
+            text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+
+            var textRt = text.rectTransform;
+            textRt.anchorMin = Vector2.zero;
+            textRt.anchorMax = Vector2.one;
+            textRt.offsetMin = new Vector2(12f, 0f);
+            textRt.offsetMax = new Vector2(-40f, 0f);
+
+            return bar;
+        }
+
+        /// <summary>
+        /// 제목 표시줄 우상단에 빨간 X 닫기 버튼을 붙인다. 마우스만으로 창을 닫는 유일한 확실한
+        /// 수단이라 모든 창에서 같은 자리·같은 색이어야 한다. Danger Red는 "되돌릴 수 없는 행동"이
+        /// 아니라 창 닫기라는 관습적 의미로 쓴다.
+        /// </summary>
+        public static Button CreateCloseButton(RectTransform titleBar, UnityEngine.Events.UnityAction onClick)
+        {
+            var close = CreateButton(titleBar, "Close", "X", onClick);
+
+            var rt = close.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(1f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(1f, 1f);
+            rt.sizeDelta = new Vector2(30f, 24f);
+            rt.anchoredPosition = new Vector2(-5f, -5f);
+
+            var image = close.GetComponent<Image>();
+            if (image != null)
+            {
+                Color closeColor = DangerRed;
+                closeColor.a = 0.75f;
+                image.color = closeColor;
+            }
+
+            return close;
+        }
+
+        /// <summary>
+        /// 제목 표시줄을 드래그 손잡이로 만든다. 창 전체를 잡게 하지 않는 이유: 격자 칸을 클릭·우클릭
+        /// 하는 조작과 드래그가 같은 영역에서 겹치면, 조작하려다 창이 딸려 움직인다.
+        /// </summary>
+        public static UIDragHandle AttachDragHandle(RectTransform titleBar, RectTransform window, RectTransform canvasRect, float handleHeight)
+        {
+            var handle = titleBar.gameObject.AddComponent<UIDragHandle>();
+            handle.target = window;
+            handle.bounds = canvasRect;
+            handle.handleHeight = handleHeight;
+            return handle;
+        }
+
+        /// <summary>
+        /// 격자 칸 하나가 들고 있는 화면 부품 묶음. 소유자(InventoryUI/CraftingUI 등)는 여기 담긴
+        /// 참조만 갱신하면 되고, 칸을 그리는 계층 구조 자체는 다시 만들지 않는다.
+        /// </summary>
+        public class SlotVisual
+        {
+            public GameObject go;
+            public RectTransform rect;
+            public Image background;
+            public Outline outline;          // 선택 테두리(꺼둔 상태로 시작)
+            public Image categoryStrip;      // 왼쪽 세로 색 띠
+            public Image icon;
+            public Text letterLabel;         // 아이콘 스프라이트가 없을 때의 폴백(이름 첫 글자)
+            public Text countLabel;          // 우하단 개수
+            public GameObject durabilityBarGo;
+            public Image durabilityFill;
+            public InventorySlotView input;  // 들어옴/나감/좌클릭/우클릭 어댑터
+        }
+
+        /// <summary>
+        /// 표준 격자 칸을 만든다. 구성(아래→위): 배경 → 카테고리 색 띠 → 아이콘 → 폴백 글자 →
+        /// (선택) 내구도 막대 → 개수. 개수와 내구도 막대는 둘 다 칸 아래쪽이지만 y가 겹치지 않게
+        /// 띄워 둔다(막대 3~7px, 개수 8px부터).
+        ///
+        /// 크기는 부모 GridLayoutGroup의 cellSize가 정한다(여기서 sizeDelta를 만지지 않는다).
+        /// withDurabilityBar는 도구 내구도를 보여줄 격자에서만 true로 준다 - 제작 창처럼 내구도가
+        /// 의미 없는 격자에서 막대를 만들어 두면 꺼져 있어도 오브젝트만 늘어난다.
+        /// </summary>
+        public static SlotVisual CreateItemSlot(Transform parent, string name, bool withDurabilityBar = false)
+        {
+            var slot = new SlotVisual();
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline), typeof(InventorySlotView));
+            go.transform.SetParent(parent, false);
+            slot.go = go;
+            slot.rect = go.GetComponent<RectTransform>();
+
+            slot.background = go.GetComponent<Image>();
+            slot.background.color = SlotEmptyColor;
+
+            // 스프라이트 9-slice 없이 테두리를 만들려면 Outline이 가장 싸다(사각 이미지 복사본 4장을
+            // 바깥으로 민다). useGraphicAlpha를 끄지 않으면 배경 알파 0.04가 곱해져 사실상 안 보인다.
+            slot.outline = go.GetComponent<Outline>();
+            slot.outline.effectColor = MedicGreen;
+            slot.outline.effectDistance = new Vector2(2f, 2f);
+            slot.outline.useGraphicAlpha = false;
+            slot.outline.enabled = false;
+
+            var stripGo = new GameObject("CategoryStrip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            stripGo.transform.SetParent(go.transform, false);
+            var stripRt = stripGo.GetComponent<RectTransform>();
+            stripRt.anchorMin = new Vector2(0f, 0f);
+            stripRt.anchorMax = new Vector2(0f, 1f);
+            stripRt.pivot = new Vector2(0f, 0.5f);
+            stripRt.sizeDelta = new Vector2(3f, 0f);
+            stripRt.anchoredPosition = Vector2.zero;
+            slot.categoryStrip = stripGo.GetComponent<Image>();
+            slot.categoryStrip.raycastTarget = false;
+            slot.categoryStrip.color = Color.clear;
+
+            var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            iconGo.transform.SetParent(go.transform, false);
+            var iconRt = iconGo.GetComponent<RectTransform>();
+            iconRt.anchorMin = Vector2.zero;
+            iconRt.anchorMax = Vector2.one;
+            iconRt.offsetMin = new Vector2(8f, 10f); // 왼쪽은 색 띠, 아래쪽은 막대·개수 자리
+            iconRt.offsetMax = new Vector2(-6f, -6f);
+            slot.icon = iconGo.GetComponent<Image>();
+            slot.icon.raycastTarget = false;
+            slot.icon.preserveAspect = true;
+            slot.icon.enabled = false;
+
+            slot.letterLabel = CreateText(go.transform, "Letter", "", 20, Color.white, TextAnchor.MiddleCenter);
+            slot.letterLabel.raycastTarget = false;
+            var letterRt = slot.letterLabel.rectTransform;
+            letterRt.anchorMin = Vector2.zero;
+            letterRt.anchorMax = Vector2.one;
+            letterRt.offsetMin = Vector2.zero;
+            letterRt.offsetMax = Vector2.zero;
+            slot.letterLabel.gameObject.SetActive(false);
+
+            if (withDurabilityBar)
+            {
+                slot.durabilityFill = CreateProgressBar(go.transform, "Durability",
+                    new Color(1f, 1f, 1f, 0.15f), Color.white);
+                var barRt = (RectTransform)slot.durabilityFill.transform.parent;
+                barRt.anchorMin = new Vector2(0f, 0f);
+                barRt.anchorMax = new Vector2(1f, 0f);
+                barRt.pivot = new Vector2(0.5f, 0f);
+                barRt.sizeDelta = new Vector2(-10f, 4f);
+                barRt.anchoredPosition = new Vector2(0f, 3f);
+                slot.durabilityBarGo = barRt.gameObject;
+                slot.durabilityBarGo.SetActive(false);
+            }
+
+            // 개수: 우하단. 밝은 아이콘 위에서도 읽히도록 그림자를 깐다(색을 하나 더 만들지 않는 방법).
+            slot.countLabel = CreateText(go.transform, "Count", "", 12, Color.white, TextAnchor.LowerRight);
+            slot.countLabel.raycastTarget = false;
+            slot.countLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var countRt = slot.countLabel.rectTransform;
+            countRt.anchorMin = new Vector2(1f, 0f);
+            countRt.anchorMax = new Vector2(1f, 0f);
+            countRt.pivot = new Vector2(1f, 0f);
+            countRt.sizeDelta = new Vector2(50f, 18f);
+            countRt.anchoredPosition = new Vector2(-5f, 8f);
+            var countShadow = slot.countLabel.gameObject.AddComponent<Shadow>();
+            countShadow.effectColor = new Color(0f, 0f, 0f, 0.9f);
+            countShadow.effectDistance = new Vector2(1f, -1f);
+            slot.countLabel.gameObject.SetActive(false);
+
+            slot.input = go.GetComponent<InventorySlotView>();
+
+            return slot;
+        }
+
+        /// <summary>
+        /// 고정 열 수 격자 컨테이너를 만든다. 창 위쪽에서 topOffset 만큼 내려온 자리에 붙고,
+        /// 높이는 ResizeGrid가 실제 칸 수에 맞춰 정한다.
+        /// </summary>
+        public static RectTransform CreateSlotGrid(RectTransform window, string name, int columns, float slotSize, float spacing, float topOffset)
+        {
+            var gridGo = new GameObject(name, typeof(RectTransform), typeof(GridLayoutGroup));
+            gridGo.transform.SetParent(window, false);
+
+            var rt = gridGo.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 1f);
+            rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.anchoredPosition = new Vector2(0f, -topOffset);
+            rt.sizeDelta = new Vector2(columns * slotSize + (columns - 1) * spacing, slotSize);
+
+            var grid = gridGo.GetComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(slotSize, slotSize);
+            grid.spacing = new Vector2(spacing, spacing);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = columns;
+            grid.childAlignment = TextAnchor.UpperLeft;
+
+            return rt;
         }
     }
 }

@@ -184,11 +184,97 @@ namespace MakeGame.UI
                 AddLine(dropLine, 11, DimGray);
 
             EndLines();
+            Present();
+        }
 
+        /// <summary>
+        /// 제작법 하나를 설명하는 툴팁을 띄운다. Show(아이템)와 **같은 패널·같은 줄 풀·같은 위치
+        /// 추적**을 쓰고, 다른 것은 어떤 줄을 채우느냐뿐이다(제작 창을 위해 툴팁을 따로 만들지 않는다).
+        ///
+        /// 재료 줄 형식은 "이름 보유/필요"로, 프로젝트의 다른 표시(제작 재료 칩, 탈출 목표 줄)와 같다.
+        /// 부족한 재료는 Danger Red로 칠하고 **부족한 개수까지 적는다** - "2/4"만으로는 어느 쪽이
+        /// 보유고 어느 쪽이 필요인지 읽는 사람마다 갈리기 때문이다.
+        ///
+        /// 보유 수량은 inventory에서 직접 읽는다. 호출부가 미리 계산해 넘기면 "제작 창이 계산한 값"과
+        /// "CraftingSystem.CanCraft가 보는 값"이 갈릴 수 있고, 그러면 툴팁은 충분하다는데 버튼이
+        /// 안 눌리는 상태가 만들어진다.
+        /// </summary>
+        public void ShowRecipe(CraftingRecipe recipe, MakeGame.Player.PlayerInventory inventory, int skillLevel, string actionLine)
+        {
+            if (recipe == null)
+            {
+                Hide();
+                return;
+            }
+
+            BeginLines();
+
+            var result = recipe.resultItem;
+
+            // 1) 제작법 이름 - 결과물 카테고리 색으로 칠해 격자에서 본 색 띠와 같은 정보를 반복해 준다.
+            string headline = !string.IsNullOrEmpty(recipe.recipeName)
+                ? recipe.recipeName
+                : (result != null ? result.itemName : "이름 없는 제작법");
+            AddLine(headline, 16, result != null ? UIBuilder.GetItemCategoryColor(result) : NeutralGray);
+
+            // 2) 결과물 분류 + 한 번에 몇 개가 나오는지(1개면 적지 않는다 - 정보가 없다).
+            if (result != null)
+            {
+                string categoryLine = InventoryUI.GetCategoryDisplayName(UIBuilder.GetItemCategory(result));
+                if (recipe.resultQuantity > 1)
+                    categoryLine += $" · 한 번에 {recipe.resultQuantity}개";
+                AddLine(categoryLine, 11, DimGray);
+            }
+
+            if (!string.IsNullOrEmpty(recipe.description))
+                AddLine(recipe.description, 12, NeutralGray);
+
+            AddLine("필요 재료", 11, DimGray);
+
+            bool anyMaterial = false;
+            var materials = recipe.requiredMaterials;
+            for (int i = 0; materials != null && i < materials.Count; i++)
+            {
+                var requirement = materials[i];
+                if (requirement == null || requirement.item == null)
+                    continue;
+
+                anyMaterial = true;
+                int have = inventory != null ? inventory.GetItemCount(requirement.item) : 0;
+
+                if (have >= requirement.quantity)
+                {
+                    AddLine($"{requirement.item.itemName} {have}/{requirement.quantity}", 12, MedicGreen);
+                }
+                else
+                {
+                    AddLine($"{requirement.item.itemName} {have}/{requirement.quantity} ({requirement.quantity - have}개 부족)", 12, DangerRed);
+                }
+            }
+
+            if (!anyMaterial)
+                AddLine("재료가 필요 없다", 12, MedicGreen);
+
+            // 스킬 부족은 재료와 성격이 다른 잠금이라(모아도 안 풀린다) 재료 아래에 따로 적는다.
+            if (recipe.requiredSkillLevel > skillLevel)
+                AddLine($"제작 기술 Lv{recipe.requiredSkillLevel} 필요 (지금 Lv{skillLevel})", 12, SunstrokeGold);
+
+            if (!string.IsNullOrEmpty(actionLine))
+                AddLine(actionLine, 11, DimGray);
+
+            EndLines();
+            Present();
+        }
+
+        /// <summary>
+        /// 줄을 다 채운 뒤 공통으로 하는 일: 켜고, 이번 프레임의 실제 크기를 확정시키고, 커서 위치에
+        /// 맞춘다. 위치를 잡으려면 크기가 먼저 확정돼야 해서 레이아웃을 즉시 다시 만든다.
+        /// </summary>
+        private void Present()
+        {
             panelRt.gameObject.SetActive(true);
             visible = true;
 
-            // 위치를 잡으려면 이번 프레임의 실제 크기가 필요하다. 레이아웃을 즉시 확정시킨다.
             LayoutRebuilder.ForceRebuildLayoutImmediate(panelRt);
             FollowCursor();
         }

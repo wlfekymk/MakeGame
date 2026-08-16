@@ -10,8 +10,12 @@ namespace MakeGame.UI
     /// <summary>
     /// 정식 UGUI 기반 생존 HUD. DebugHud(OnGUI로 숫자를 텍스트로 나열하던 "임시" 화면)를 대체하는
     /// 플레이어용 화면으로, 체력/허기/갈증/일사병/산소를 색상 막대 바로, 중독/출혈/골절 상태 이상을
-    /// 활성화됐을 때만 나타나는 아이콘으로, 경과 일수와 배/경비행기 진행도를 짧은 텍스트로 보여준다.
+    /// 활성화됐을 때만 나타나는 아이콘으로, 경과 일수와 **현재 할 일 한 줄**을 보여준다.
     /// 화면 좌상단에 항상 표시되며, 씬에 미리 배치할 필요 없이 스스로 생성된다.
+    ///
+    /// [배치 24] 상시 노출되던 배/경비행기 진행도 두 줄은 여기서 빠졌다. 그 정보는 퀘스트 창(J)의
+    /// "항해" 묶음으로 옮겨졌다(UI/QuestUI.cs · Systems/QuestSystem.cs). HUD에 남는 목표 관련
+    /// 정보는 "지금 할 일" 한 줄뿐이고, 줄 끝의 [J]가 나머지 전부가 있는 곳을 가리킨다.
     /// 버그 관련: DontDestroyOnLoad 싱글턴(CombatFeedbackUI 방식)이 아니라 DayNightCycle과 동일한
     /// RuntimeInitializeLoadType.SubsystemRegistration + SceneManager.sceneLoaded 패턴을 쓴다.
     /// 이 HUD가 참조하는 SurvivalStats 등은 Player 오브젝트에 있는데, 사망 후 재시작(SceneManager.LoadScene)
@@ -44,8 +48,6 @@ namespace MakeGame.UI
 
         private Text dayLabel;
         private Text objectiveLabel;
-        private Text boatLabel;
-        private Text aircraftLabel;
 
         // 목표 1줄(Design_Progression.md 3장 5단계 체인)에 쓰는 상태.
         // 원칙: 이 UI는 "무엇이 목표인지"를 판정하지 않는다. 외부(systems)가 SetObjective로 넣어준
@@ -94,17 +96,10 @@ namespace MakeGame.UI
         private static readonly Color CapacityFullColor = new Color(0.8f, 0.2f, 0.2f, 1f); // Danger Red #CC3333
 
         // 성능 개선(#7): Update()가 매 프레임 값 변화와 무관하게 $"..." 문자열 보간으로 .text를 다시 만들면
-        // 불필요한 GC 할당이 누적된다. 화면에 실제로 표시되는 값(정수 일수/단계/퍼센트, 불리언 플래그)을
-        // 캐시해두고, 그 표시용 값이 실제로 바뀐 프레임에만 문자열을 새로 만들어 대입한다.
-        // day/boat 단계/aircraft 퍼센트는 정수라 float 오차 없이 "==" 비교가 안전하다. 다만 최초 1회는
-        // 반드시 갱신돼야 하므로 각 값이 절대 나올 수 없는 범위(-1 등)를 "아직 표시한 적 없음" 센티널로 둔다.
+        // 불필요한 GC 할당이 누적된다. 화면에 실제로 표시되는 값(정수 일수)을 캐시해두고, 그 표시용 값이
+        // 실제로 바뀐 프레임에만 문자열을 새로 만들어 대입한다. 정수라 float 오차 없이 "==" 비교가 안전하다.
+        // 다만 최초 1회는 반드시 갱신돼야 하므로 절대 나올 수 없는 값(-1)을 "아직 표시한 적 없음" 센티널로 둔다.
         private int lastDisplayedDay = -1;
-        private int lastDisplayedBoatStage = -1;
-        private bool lastDisplayedBoatHasBlueprint;
-        private bool boatLabelDisplayed = false;
-        private int lastDisplayedAircraftPercent = -1;
-        private bool lastDisplayedAircraftComplete;
-        private bool aircraftLabelDisplayed = false;
 
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 SurvivalHudUI를 생성한다.
@@ -194,10 +189,10 @@ namespace MakeGame.UI
             var panel = UIBuilder.CreatePanel(
                 canvas.transform, "SurvivalHudPanel",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
-                // 높이 -272 → -296: 아래 목표 1줄 라벨(18) + 레이아웃 간격(6)만큼 패널을 늘렸다.
-                // 새 패널을 만들지 않고 기존 HUD 패널 안에 한 줄만 추가하라는 지시(Design_Progression.md
-                // 3장 단계 1 (b) "새 패널을 만들지 않는다")를 그대로 따른 결과다.
-                offsetMin: new Vector2(20f, -296f), offsetMax: new Vector2(300f, -20f),
+                // 높이 -296 → -264 [배치 24]. 배/경비행기 진행도 두 줄(각 18 + 간격 6 = 48)을 퀘스트
+                // 창으로 빼고, 대신 목표 1줄 라벨을 18 → 34로 늘렸다(줄 끝에 [J] 힌트가 붙어 두 줄로
+                // 접힐 수 있는데, 예전 높이 18로는 접힌 둘째 줄이 아래 막대를 덮었다). 순증감 -48 + 16 = -32.
+                offsetMin: new Vector2(20f, -264f), offsetMax: new Vector2(300f, -20f),
                 color: new Color(0f, 0f, 0f, 0.55f),
                 addTopBorder: true);
 
@@ -216,8 +211,11 @@ namespace MakeGame.UI
             // 색은 새로 만들지 않는다(ArtDirection.md 1장 원칙). 이미 코드에서 "주목시키는 안내 문구"에
             // 쓰고 있는 값(MinimapUI.statusLabel과 동일한 옅은 금색)을 그대로 재사용해, 회색 보조 진행도
             // 문구(배/경비행기)와는 구분되고 흰색 본문보다는 눈에 먼저 들어오게 한다.
-            objectiveLabel = UIBuilder.CreateText(panel, "ObjectiveLabel", "", 12, new Color(1f, 0.9f, 0.4f, 1f), TextAnchor.MiddleLeft);
-            objectiveLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
+            objectiveLabel = UIBuilder.CreateText(panel, "ObjectiveLabel", "", 12, new Color(1f, 0.9f, 0.4f, 1f), TextAnchor.UpperLeft);
+            // [배치 24] 18 → 34. 문구 끝에 [J] 힌트가 붙어 좁은 HUD 폭(280 - 좌우 여백 24 = 256)에서
+            // 두 줄로 접히는 경우가 생긴다. Wrap을 유지한 채 두 줄분(12pt × 2 + 여유)을 미리 잡아둬야
+            // 접힌 둘째 줄이 아래 체력 막대 위로 넘쳐 겹치지 않는다.
+            objectiveLabel.gameObject.AddComponent<LayoutElement>().minHeight = 34f;
 
             // 개선(ArtDirection.md 1.3/1.1): "위급/전투" 의미의 빨강이 #CC4040/#D93333/#CC1A1A/#FF2626로
             // 흩어져 있던 것 중, 체력 평상시 색을 Danger Red #CC3333로 통일한다. WarningColor(펄스
@@ -268,13 +266,9 @@ namespace MakeGame.UI
             chipLayout.preferredWidth = 170f;
             inventoryChip.gameObject.SetActive(false);
 
-            // 개선(B4-14, ArtDirection.md 4.3): 폰트 4단계(20/15~16/11~12/16) 밖이었던 13pt를
-            // Body 단계(11~12)로 스냅했다(보조 진행도 문구라 본문 취급이 맞다).
-            boatLabel = UIBuilder.CreateText(panel, "BoatLabel", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
-            boatLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
-
-            aircraftLabel = UIBuilder.CreateText(panel, "AircraftLabel", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.MiddleLeft);
-            aircraftLabel.gameObject.AddComponent<LayoutElement>().minHeight = 18f;
+            // [배치 24] 여기 있던 배/경비행기 진행도 두 줄(BoatLabel / AircraftLabel)은 제거했다.
+            // 두 줄 다 "상시 노출할 만큼 급한 정보가 아니면서 HUD 높이의 16%를 먹고" 있었고,
+            // 지금은 퀘스트 창(J)의 "항해" 묶음이 같은 값을 단계별 재료 진행도까지 붙여서 보여준다.
         }
 
         /// <summary>
@@ -433,38 +427,9 @@ namespace MakeGame.UI
                 brokenBoneIcon.SetActive(survivalStats.hasBrokenBone);
             }
 
-            if (boatConstruction != null)
-            {
-                int boatStage = boatConstruction.currentStage;
-                bool hasBlueprint = boatConstruction.hasCurrentStageBlueprint;
-                // 단계 숫자 또는 도면 보유 여부(문구에 "(도면 필요)"가 붙는지) 둘 중 하나라도 바뀌었을 때만
-                // 갱신한다. 두 값 다 정수/불리언이라 프레임마다 흔들리는 float 오차 걱정 없이 "==" 비교로 충분하다.
-                if (!boatLabelDisplayed || boatStage != lastDisplayedBoatStage || hasBlueprint != lastDisplayedBoatHasBlueprint)
-                {
-                    boatLabel.text = $"배: {boatStage}/{BoatConstructionSystem.TotalStages}단계"
-                        + (hasBlueprint ? "" : " (도면 필요)");
-                    lastDisplayedBoatStage = boatStage;
-                    lastDisplayedBoatHasBlueprint = hasBlueprint;
-                    boatLabelDisplayed = true;
-                }
-            }
-
-            if (aircraftRepair != null)
-            {
-                // 화면에는 F0(반올림된 정수 %)로 표시되므로, 원본 float가 미세하게 흔들려도 반올림 결과가
-                // 같으면 화면상 결과는 동일하다. 그래서 float를 직접 비교하지 않고, 표시에 쓰는 것과 동일한
-                // 반올림 정수값으로 변환한 뒤 비교한다 - 이러면 "보이지 않는 변화"로 인한 불필요한 갱신도 막는다.
-                int aircraftPercent = Mathf.RoundToInt(aircraftRepair.GetOverallProgress() * 100f);
-                bool isComplete = aircraftRepair.isRepairComplete;
-                if (!aircraftLabelDisplayed || aircraftPercent != lastDisplayedAircraftPercent || isComplete != lastDisplayedAircraftComplete)
-                {
-                    aircraftLabel.text = $"경비행기: {aircraftPercent}%"
-                        + (isComplete ? " (완료)" : "");
-                    lastDisplayedAircraftPercent = aircraftPercent;
-                    lastDisplayedAircraftComplete = isComplete;
-                    aircraftLabelDisplayed = true;
-                }
-            }
+            // [배치 24] 배/경비행기 진행도 갱신 블록은 제거됐다(라벨 자체가 퀘스트 창으로 옮겨졌다).
+            // boatConstruction / aircraftRepair 참조는 그대로 남긴다 - 목표 1줄 판정(ProgressionTracker
+            // 폴백)이 여전히 두 시스템을 읽는다.
 
             UpdateInventoryCapacityChip();
             UpdateObjectiveFallback();
@@ -544,6 +509,15 @@ namespace MakeGame.UI
         /// </summary>
         private string ResolveFallbackObjective()
         {
+            // [배치 24] 이제 "할 일" 판정의 정식 소유자는 QuestSystem이다(Systems/QuestSystem.cs).
+            // 퀘스트 창(J)에 뜨는 목록 중 아직 완료되지 않은 첫 항목이 곧 HUD 한 줄이므로, 창과 HUD가
+            // 서로 다른 말을 하는 상황이 구조적으로 생기지 않는다.
+            // QuestSystem도 런타임 생성이라 실행 순서가 보장되지 않는다 → 아직 없으면 기존
+            // ProgressionTracker 판정으로 떨어진다(첫 프레임 한두 번뿐이고, 문구 규격은 같다).
+            var quests = MakeGame.Systems.QuestSystem.Instance;
+            if (quests != null && !string.IsNullOrEmpty(quests.CurrentObjective))
+                return quests.CurrentObjective;
+
             // [B6 디렉터] 이 메서드는 원래 판정 API가 없던 동안 쓰는 임시 폴백이었다. 이제
             // ProgressionTracker(systems-engineer-B, WorldMapManager.cs)가 들어왔으므로 그쪽으로 위임한다.
             //
@@ -561,14 +535,30 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 목표 문구가 실제로 바뀐 경우에만 .text에 대입한다(#7과 동일한 GC 절약 패턴).
+        /// [배치 24] 문구 끝에 퀘스트 창 단축키 힌트를 붙인다. 나머지 할 일이 전부 그 창에 있다는 것을
+        /// 알려주는 유일한 경로이므로, 목표가 비어 있을 때(주입으로 일부러 지운 경우)는 붙이지 않는다 -
+        /// 아무 문구도 없는 자리에 키 힌트만 떠 있으면 무엇에 대한 키인지 알 수 없다.
+        /// 비교는 힌트를 붙이기 **전의** 원본으로 한다(힌트는 키가 고정이라 항상 같은 꼬리표다).
         /// </summary>
         private void ApplyObjectiveText(string objective)
         {
             if (objectiveLabel == null || objective == lastDisplayedObjective)
                 return;
 
-            objectiveLabel.text = objective;
             lastDisplayedObjective = objective;
+            objectiveLabel.text = string.IsNullOrEmpty(objective)
+                ? ""
+                : $"{objective}  [{ResolveQuestWindowKey()}]";
+        }
+
+        /// <summary>
+        /// 퀘스트 창 단축키를 실제 소유자에게서 읽는다. 키를 여기 박아두면 QuestUI 쪽에서 바뀌었을 때
+        /// HUD 힌트만 조용히 거짓말을 하게 된다(MinimapUI가 Esc 키를 SettingsMenuController에서
+        /// 읽어오는 것과 같은 이유). 아직 QuestUI가 만들어지기 전이면 코드 기본값 J를 쓴다.
+        /// </summary>
+        private static KeyCode ResolveQuestWindowKey()
+        {
+            return QuestUI.Instance != null ? QuestUI.Instance.toggleKey : KeyCode.J;
         }
     }
 }
