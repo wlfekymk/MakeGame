@@ -26,8 +26,7 @@ namespace MakeGame.UI
         public static BuildMenuUI Instance { get; private set; }
 
         /// <summary>
-        /// 핫바에 늘어놓을 부품 순서. 계단은 이번 배치에서 잠겨 있지만 **자리는 보여 준다** -
-        /// "곧 생긴다"를 알리는 쪽이, 나중에 칸이 하나 늘어나 배치가 통째로 밀리는 것보다 낫다.
+        /// 핫바에 늘어놓을 부품 순서. **배치 26에서 계단이 해금됐다** - 다섯 칸 전부 실제로 지을 수 있다.
         /// </summary>
         private static readonly BuildPieceType[] SlotTypes =
         {
@@ -38,13 +37,14 @@ namespace MakeGame.UI
             BuildPieceType.Stair,
         };
 
-        /// <summary>숫자키 선택. SlotTypes와 같은 순서이고, 잠긴 계단(5)은 일부러 넣지 않는다.</summary>
+        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5).</summary>
         private static readonly KeyCode[] SelectKeys =
         {
             KeyCode.Alpha1,
             KeyCode.Alpha2,
             KeyCode.Alpha3,
             KeyCode.Alpha4,
+            KeyCode.Alpha5,
         };
 
         // ── 치수 ────────────────────────────────────────────────────────────────
@@ -90,9 +90,10 @@ namespace MakeGame.UI
         private UIDragHandle dragHandle;
         private Text statusLabel;
 
-        private BuildPieceType shownSelected = BuildPieceType.Stair; // 첫 갱신을 강제하기 위한 초기값
+        private BuildPieceType shownSelected = (BuildPieceType)(-1); // 첫 갱신을 강제하기 위한 초기값
         private BuildBlockReason shownReason = (BuildBlockReason)(-1);
         private bool shownCanPlace;
+        private BuildSpace shownSpace = (BuildSpace)(-1);
 
         private bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
@@ -179,7 +180,9 @@ namespace MakeGame.UI
 
             // 사유는 enum 비교로만 확인하고, 실제로 바뀐 순간에만 문자열을 만든다
             // (매 프레임 문자열 조립 금지 - AGENT_BRIEF 2장).
-            else if (shownReason != building.BlockReason || shownCanPlace != building.CanPlaceNow)
+            else if (shownReason != building.BlockReason
+                || shownCanPlace != building.CanPlaceNow
+                || shownSpace != building.TargetSpace)
                 RefreshStatus();
         }
 
@@ -427,7 +430,7 @@ namespace MakeGame.UI
             KeyCode rotate = BuildingSystem.Instance != null ? BuildingSystem.Instance.rotateKey : KeyCode.Q;
 
             var hint = UIBuilder.CreateText(windowRt, "Hint",
-                $"[좌클릭] 설치 · [우클릭] 철거(재료 절반 반환) · [휠/{rotate}] 90도 회전 · [1~4] 부품 · [{exitKey}] 나가기",
+                $"[좌클릭] 설치 · [우클릭] 철거(재료 절반 반환) · [휠/{rotate}] 90도 회전 · [1~5] 부품 · [{exitKey}] 나가기",
                 11, HintGray, TextAnchor.MiddleCenter);
             hint.raycastTarget = false;
             hint.horizontalOverflow = HorizontalWrapMode.Overflow;
@@ -525,12 +528,17 @@ namespace MakeGame.UI
 
             shownReason = building.BlockReason;
             shownCanPlace = building.CanPlaceNow;
+            shownSpace = building.TargetSpace;
+
+            // 갑판 위를 겨누고 있으면 그렇다고 알려 준다 - 같은 부품이 뗏목에 붙는지 땅에 박히는지는
+            // 화면만 봐서는 구별이 어렵고, 배가 떠난 뒤에야 알게 되면 늦다.
+            string where = shownSpace == BuildSpace.Deck ? "갑판 · " : "";
 
             // 구분자는 프로젝트의 다른 창들이 이미 쓰는 "·"를 그대로 쓴다(내장 LegacyRuntime 폰트에
             // 없을 수 있는 글자를 새로 들이지 않는다).
             statusLabel.text = shownCanPlace
-                ? $"{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · 설치 가능"
-                : $"{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · {BuildingSystem.DescribeBlockReason(shownReason)}";
+                ? $"{where}{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · 설치 가능"
+                : $"{where}{BuildPieceCatalog.GetDisplayName(building.SelectedType)} · {BuildingSystem.DescribeBlockReason(shownReason)}";
 
             statusLabel.color = shownCanPlace ? UIBuilder.MedicGreen : UIBuilder.DangerRed;
         }

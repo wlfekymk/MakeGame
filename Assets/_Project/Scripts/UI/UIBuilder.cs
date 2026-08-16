@@ -371,9 +371,19 @@ namespace MakeGame.UI
             go.transform.SetParent(parent, false);
 
             Color baseColor = new Color(0.25f, 0.55f, 0.3f, 1f);
-            go.GetComponent<Image>().color = baseColor;
+            var background = go.GetComponent<Image>();
+            background.color = baseColor;
 
             var button = go.GetComponent<Button>();
+
+            // [B27] **targetGraphic을 명시하지 않으면 ColorBlock이 통째로 죽는다.**
+            // Selectable.targetGraphic을 채워 주는 Reset()은 에디터에서 인스펙터로 컴포넌트를 붙일 때만
+            // 호출된다. 이 프로젝트의 UI는 100% 런타임 생성이라 지금까지 모든 버튼의 targetGraphic이
+            // null이었고, 그래서 아래에서 정성껏 맞춰 둔 disabledColor(알파 40%)도, 마우스 오버 시
+            // 밝아지는 highlighted도 **화면에 단 한 번도 나타난 적이 없다.**
+            // (ui-engineer가 타이틀 화면 작업 중 발견했다. UIBuilder.cs:368의 주석은 4배치 동안 거짓말을
+            //  하고 있었다 - 이 프로젝트 사고 유형 그대로다.)
+            button.targetGraphic = background;
             if (onClick != null)
                 button.onClick.AddListener(onClick);
 

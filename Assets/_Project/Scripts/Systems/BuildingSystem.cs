@@ -9,22 +9,39 @@ namespace MakeGame.Systems
     /// <summary>
     /// 조각을 지금 놓을 수 없는 이유. 매 프레임 문자열을 만들지 않기 위해 열거형으로 들고 있다가,
     /// UI가 화면에 띄울 때만 DescribeBlockReason으로 미리 만들어 둔 상수 문자열로 바꾼다.
+    /// **정수값은 바꾸지 마라** - UI가 이 값으로만 갱신 여부를 판단한다.
     /// </summary>
     public enum BuildBlockReason
     {
         None = 0,
-        /// <summary>레이가 지형에도 조각에도 닿지 않았다(허공/너무 멀다).</summary>
+        /// <summary>레이가 지형에도 조각에도 갑판에도 닿지 않았다(허공/너무 멀다).</summary>
         NoTarget = 1,
         /// <summary>그 칸/모서리에 이미 조각이 있다.</summary>
         Occupied = 2,
-        /// <summary>벽·문·창문을 받쳐 줄 바닥 조각이 없다.</summary>
+        /// <summary>벽·문·창문·계단을 받쳐 줄 바닥이 없다.</summary>
         NoSupportingFloor = 3,
-        /// <summary>지형이 조각을 뚫고 올라오거나(파묻힘) 너무 크게 떠 있다.</summary>
+        /// <summary>지형이 조각을 뚫고 올라오거나 너무 가파르다.</summary>
         GroundTooUneven = 4,
-        /// <summary>땅이 아니다(바다 위 등). 이번 배치는 땅 위에만 짓는다.</summary>
+        /// <summary>땅이 아니다(바다 위 등). 지면 건축은 땅 위에만 한다.</summary>
         NotOnGround = 5,
         /// <summary>재료가 모자란다.</summary>
         NotEnoughMaterials = 6,
+        /// <summary>뗏목 갑판 밖이다(배치 26 - 갑판 위 건축).</summary>
+        OffDeck = 7,
+        /// <summary>계단이 지나가는 자리라 바닥을 덮을 수 없다.</summary>
+        StairInTheWay = 8,
+    }
+
+    /// <summary>
+    /// 건축물이 서 있는 좌표 공간. **정수값이 세이브에 그대로 들어간다 - 바꾸지 마라.**
+    /// 옛 세이브에는 이 필드가 없어 0(Ground)으로 읽히는데, 그게 정확히 옛 동작이다.
+    /// </summary>
+    public enum BuildSpace
+    {
+        /// <summary>지면. 격자 원점 = 월드 (0,0,0)이고 조각의 좌표는 곧 월드 좌표다.</summary>
+        Ground = 0,
+        /// <summary>뗏목 갑판. 격자 원점 = 갑판 윗면 중심이고 좌표는 전부 뗏목 로컬이다.</summary>
+        Deck = 1,
     }
 
     /// <summary>
@@ -35,13 +52,17 @@ namespace MakeGame.Systems
     /// 소스이고, 이 파일은 "어디에 놓을 수 있는가 / 놓아도 되는가 / 무엇을 돌려주는가"만 판단한다.
     ///
     /// 격자 규약(고정):
-    /// · 원점은 월드 (0,0,0), 셀 한 변 <see cref="BuildPieceCatalog.CellSize"/>(2m), 한 층
-    ///   <see cref="BuildPieceCatalog.LevelHeight"/>(2.5m).
-    /// · 셀 (cx,cz)는 월드 X [cx*2, cx*2+2), Z [cz*2, cz*2+2) 구간이고 중심은 ((cx+0.5)*2, (cz+0.5)*2).
+    /// · 셀 한 변 <see cref="BuildPieceCatalog.CellSize"/>(2m), 한 층 <see cref="BuildPieceCatalog.LevelHeight"/>(2.5m).
+    /// · 셀 (cx,cz)는 그 공간 좌표계의 X [cx*2, cx*2+2), Z [cz*2, cz*2+2) 구간이고 중심은 ((cx+0.5)*2, (cz+0.5)*2).
     /// · 바닥은 셀 중심에 놓이며 **로컬 원점이 윗면**이라 position.y가 곧 사람이 딛는 높이다.
     /// · 벽/문/창문은 셀 모서리에 놓인다. 모서리는 (ex, ez, axis)로 canonical하게 표기한다 -
-    ///   axis 0 = z가 일정한(= X축을 따라 뻗은) 모서리, axis 1 = x가 일정한 모서리. 이렇게 하면
-    ///   맞닿은 두 셀이 같은 모서리를 서로 다른 키로 잡는 일이 없다(같은 자리에 벽이 두 장 겹치는 사고).
+    ///   axis 0 = z가 일정한(= X축을 따라 뻗은) 모서리, axis 1 = x가 일정한 모서리.
+    /// · 계단은 셀 하나를 통째로 차지하고, **로컬 원점이 밑단의 앞 모서리**다(로컬 +Z로 2m 나아가며
+    ///   2.5m 올라간다). 그래서 위치 = 셀 중심에서 바라보는 방향의 반대쪽 모서리 중점이다.
+    ///
+    /// 좌표 공간이 둘이다(배치 26): 지면(<see cref="BuildSpace.Ground"/>)과 뗏목 갑판
+    /// (<see cref="BuildSpace.Deck"/>). 갑판 위 조각은 **뗏목 로컬 좌표**로 계산·저장하고 갑판 밑
+    /// 전용 컨테이너에 매달아서, 뗏목이 움직여도 집이 통째로 따라간다.
     ///
     /// 씬에 인스턴스가 없다(씬 파일을 편집할 수 없다). DayNightCycle·QuestUI와 같은
     /// RuntimeInitializeOnLoadMethod + sceneLoaded 패턴으로 씬 로드마다 스스로 생성되므로
@@ -99,6 +120,12 @@ namespace MakeGame.Systems
         /// <summary>실내 판정 탐색 상한(칸). 이보다 넓은 영역은 "방"이 아니라 야외 데크로 본다.</summary>
         private const int MaxEnclosureCells = 64;
 
+        /// <summary>
+        /// 갑판 윗면으로 인정하는 로컬 y 오차(m). 뗏목의 콜라이더는 선체 전체를 덮는 상자 하나라
+        /// (RaftStructure.ApplyHullCollider) 옆면도 같은 콜라이더에 맞는다 - 높이와 법선을 함께 본다.
+        /// </summary>
+        private const float DeckSurfaceTolerance = 0.5f;
+
         // ────────────────────────────────────────────────────────────────────────
         // 상태
         // ────────────────────────────────────────────────────────────────────────
@@ -109,15 +136,16 @@ namespace MakeGame.Systems
         /// <summary>모드/선택/조각 수가 바뀌었을 때 발행된다. UI가 매 프레임 다시 그리지 않게 하는 통로다.</summary>
         public event System.Action Changed;
 
-        /// <summary>놓여 있는 조각 하나의 등록 정보.</summary>
+        /// <summary>놓여 있는 조각 하나의 등록 정보. position/yaw는 **그 조각이 속한 공간의 로컬 값**이다.</summary>
         private class PlacedPiece
         {
             public BuildPieceType type;
+            public BuildSpace space;
             public GameObject go;
             public Transform root;
-            public int cellX;      // 바닥: 셀 좌표 · 벽류: 모서리 좌표
+            public int cellX;      // 바닥/계단: 셀 좌표 · 벽류: 모서리 좌표
             public int cellZ;
-            public int level;      // 양자화된 층 번호(= Round(y / LevelHeight))
+            public int level;      // 양자화된 층 번호(= LevelOf(position.y))
             public int axis;       // 벽류 전용(0 = X축을 따라 뻗은 모서리, 1 = Z축)
             public Vector3 position;
             public float yaw;
@@ -126,6 +154,7 @@ namespace MakeGame.Systems
         private readonly List<PlacedPiece> pieces = new List<PlacedPiece>();
         private readonly Dictionary<long, PlacedPiece> floorByKey = new Dictionary<long, PlacedPiece>();
         private readonly Dictionary<long, PlacedPiece> wallByKey = new Dictionary<long, PlacedPiece>();
+        private readonly Dictionary<long, PlacedPiece> stairByKey = new Dictionary<long, PlacedPiece>();
 
         /// <summary>레이가 맞은 콜라이더에서 조각 본체를 거슬러 찾기 위한 표(루트 Transform → 조각).</summary>
         private readonly Dictionary<Transform, PlacedPiece> pieceByRoot = new Dictionary<Transform, PlacedPiece>();
@@ -141,10 +170,11 @@ namespace MakeGame.Systems
         private BuildPieceType selectedType = BuildPieceType.Floor;
         private int rotationSteps;
 
-        // 이번 프레임의 조준 결과.
+        // 이번 프레임의 조준 결과(위치/회전은 targetSpace의 로컬 값이다).
         private bool hasTarget;
         private bool targetValid;
         private BuildBlockReason blockReason = BuildBlockReason.NoTarget;
+        private BuildSpace targetSpace = BuildSpace.Ground;
         private Vector3 targetPosition;
         private float targetYaw;
         private int targetCellX;
@@ -154,6 +184,19 @@ namespace MakeGame.Systems
 
         private Camera cachedCamera;
         private PlayerInventory cachedInventory;
+
+        // ── 뗏목 갑판 결속 ──────────────────────────────────────────────────────
+        private RaftStructure boundRaft;
+        private Transform boundDeckRoot;
+
+        /// <summary>
+        /// 갑판 위 조각을 모아 두는 전용 컨테이너. DeckRoot 밑에 있고 로컬 원점이 **갑판 윗면 중심**이라,
+        /// 이 컨테이너의 로컬 좌표가 곧 Deck 공간 좌표다(별도 변환식이 필요 없다).
+        /// </summary>
+        private Transform deckContainer;
+
+        /// <summary>갑판이 아직 없을 때 복원된 갑판 조각을 잠시 담아 두는 대기열(뗏목이 생기면 세운다).</summary>
+        private readonly List<BuildPieceSaveEntry> pendingDeckEntries = new List<BuildPieceSaveEntry>();
 
         /// <summary>조각이 놓이거나 부서질 때마다 올라간다. 실내 판정 캐시를 통째로 버리는 기준이다.</summary>
         private int structureVersion;
@@ -168,8 +211,15 @@ namespace MakeGame.Systems
         private readonly List<int> bfsCellZ = new List<int>();
         private readonly HashSet<long> bfsVisited = new HashSet<long>();
         private readonly List<BuildPieceCost> refundBuffer = new List<BuildPieceCost>();
+        private readonly List<PlacedPiece> rebuildBuffer = new List<PlacedPiece>();
 
         private Dictionary<string, ItemData> itemByName;
+
+        /// <summary>
+        /// 바닥/계단 키에 쓰는 axis 자리값. 벽류(0/1)와 섞이지 않게 별도 딕셔너리를 쓰므로 값 자체는
+        /// 의미가 없지만, 세 종류가 같은 함수로 키를 만들게 0으로 고정해 둔다.
+        /// </summary>
+        private const int NonWallAxis = 0;
 
         // ────────────────────────────────────────────────────────────────────────
         // 공개 조회 (UI 전용 - 상태를 바꾸지 않는다)
@@ -181,10 +231,26 @@ namespace MakeGame.Systems
         public bool CanPlaceNow => hasTarget && targetValid;
         public int PieceCount => pieces.Count;
 
-        /// <summary>이번 배치에서 실제로 지을 수 있는 부품인지(계단은 다음 배치라 잠겨 있다).</summary>
+        /// <summary>지금 조준하고 있는 좌표 공간(UI가 "갑판 위"를 알려 줄 때 쓴다).</summary>
+        public BuildSpace TargetSpace => targetSpace;
+
+        /// <summary>
+        /// 실제로 지을 수 있는 부품인지. **배치 26에서 계단이 해금됐다** - 이제 잠긴 부품은 없지만,
+        /// 앞으로 부품이 추가될 때 다시 쓸 수 있게 판정 자리를 남겨 둔다(UI가 이 값만 본다).
+        /// </summary>
         public static bool IsTypeUnlocked(BuildPieceType type)
         {
-            return type != BuildPieceType.Stair;
+            switch (type)
+            {
+                case BuildPieceType.Floor:
+                case BuildPieceType.Wall:
+                case BuildPieceType.Doorway:
+                case BuildPieceType.Window:
+                case BuildPieceType.Stair:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         /// <summary>플레이어 인벤토리(없으면 null). 매 호출 씬 전체를 훑지 않도록 캐시한다.</summary>
@@ -247,6 +313,8 @@ namespace MakeGame.Systems
                 case BuildBlockReason.GroundTooUneven: return "지면이 고르지 않다";
                 case BuildBlockReason.NotOnGround: return "땅 위가 아니다";
                 case BuildBlockReason.NotEnoughMaterials: return "재료가 모자란다";
+                case BuildBlockReason.OffDeck: return "갑판 밖이다";
+                case BuildBlockReason.StairInTheWay: return "계단이 지나가는 자리다";
                 default: return "놓을 자리를 찾는 중";
             }
         }
@@ -283,12 +351,18 @@ namespace MakeGame.Systems
 
         private void OnDestroy()
         {
+            UnbindRaft();
+
             if (Instance == this)
                 Instance = null;
         }
 
         private void Update()
         {
+            // 뗏목은 건조 단계에 따라 생겼다 없어졌다 하므로 매 프레임 싸게(정적 프로퍼티 읽기 하나)
+            // 확인한다. 갑판이 다시 만들어지면서 컨테이너가 통째로 날아갔을 수도 있어 null도 함께 본다.
+            SyncRaftBinding();
+
             // 엔딩/사망 화면은 Time.timeScale을 0으로 세운다(AGENT_BRIEF 4장). 그 동안에는 입력을
             // 아예 받지 않는다 - 죽은 화면 뒤에서 집이 지어지면 안 된다.
             if (Time.timeScale <= 0f)
@@ -352,7 +426,7 @@ namespace MakeGame.Systems
             Changed?.Invoke();
         }
 
-        /// <summary>부품을 고른다. 잠긴 부품(계단)은 무시한다.</summary>
+        /// <summary>부품을 고른다. 잠긴 부품은 무시한다(현재 잠긴 부품은 없다).</summary>
         public void SelectType(BuildPieceType type)
         {
             if (!IsTypeUnlocked(type) || selectedType == type)
@@ -364,6 +438,195 @@ namespace MakeGame.Systems
         }
 
         // ────────────────────────────────────────────────────────────────────────
+        // 뗏목 갑판 결속
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// RaftStructure.Active를 따라가며 갑판 컨테이너를 유지한다.
+        /// 뗏목이 바뀌었거나(다른 인스턴스) 컨테이너가 파괴됐으면 다시 만들고 갑판 조각을 되세운다.
+        /// </summary>
+        private void SyncRaftBinding()
+        {
+            RaftStructure active = RaftStructure.Active;
+
+            if (active != boundRaft)
+            {
+                UnbindRaft();
+                boundRaft = active;
+                if (boundRaft != null)
+                    boundRaft.DeckRebuilt += OnDeckRebuilt;
+            }
+
+            if (boundRaft == null || !boundRaft.HasDeck)
+                return;
+
+            Transform deckRoot = boundRaft.DeckRoot;
+            if (deckRoot == null)
+                return;
+
+            // 컨테이너가 없거나(첫 결속) 갑판 재생성에 휩쓸려 파괴됐으면 다시 만든다.
+            if (deckContainer == null || boundDeckRoot != deckRoot)
+            {
+                var go = new GameObject("BuildDeckPieces");
+                deckContainer = go.transform;
+                deckContainer.SetParent(deckRoot, false);
+                boundDeckRoot = deckRoot;
+                RestoreDeckPiecesAfterRebuild();
+            }
+
+            // 갑판 높이는 건조 단계마다 달라질 수 있다. 컨테이너만 옮기면 그 밑의 집이 통째로 따라간다.
+            Vector3 local = deckContainer.localPosition;
+            float topY = boundRaft.DeckTopLocalY;
+            if (!Mathf.Approximately(local.y, topY) || local.x != 0f || local.z != 0f)
+                deckContainer.localPosition = new Vector3(0f, topY, 0f);
+
+            if (deckContainer.localRotation != Quaternion.identity)
+                deckContainer.localRotation = Quaternion.identity;
+
+            if (pendingDeckEntries.Count > 0)
+                FlushPendingDeckEntries();
+        }
+
+        private void UnbindRaft()
+        {
+            if (boundRaft != null)
+                boundRaft.DeckRebuilt -= OnDeckRebuilt;
+
+            boundRaft = null;
+            boundDeckRoot = null;
+        }
+
+        /// <summary>
+        /// 갑판 메시가 다시 만들어졌다. 컨테이너가 살아남았으면 아무것도 할 필요가 없고, 갑판 재생성이
+        /// 컨테이너까지 지워 버렸으면(부모 오브젝트를 통째로 Destroy하는 구현) 조각 실물이 함께 사라진다.
+        /// 그 경우를 대비해 **기록만 보고 다시 세운다** - 조각의 좌표는 전부 갑판 로컬이라 그대로 복원된다.
+        /// </summary>
+        private void OnDeckRebuilt()
+        {
+            // 이 프레임에는 아직 새 갑판 Transform이 잡히지 않았을 수 있다. 실제 재건은 SyncRaftBinding이
+            // 다음 호출에서 컨테이너 유무를 보고 처리한다(여기서는 표식만 지운다).
+            if (deckContainer == null)
+                boundDeckRoot = null;
+        }
+
+        /// <summary>
+        /// 갑판 조각의 실물이 사라졌으면 기록을 보고 다시 만든다. 살아 있으면 새 컨테이너로 옮기기만 한다.
+        /// </summary>
+        private void RestoreDeckPiecesAfterRebuild()
+        {
+            rebuildBuffer.Clear();
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                if (pieces[i].space == BuildSpace.Deck)
+                    rebuildBuffer.Add(pieces[i]);
+            }
+
+            if (rebuildBuffer.Count == 0)
+                return;
+
+            for (int i = 0; i < rebuildBuffer.Count; i++)
+            {
+                PlacedPiece piece = rebuildBuffer[i];
+
+                if (piece.go != null)
+                {
+                    piece.go.transform.SetParent(deckContainer, false);
+                    ApplyDeckLocalTransform(piece.go.transform, piece.position, piece.yaw);
+                    continue;
+                }
+
+                GameObject go = BuildPieceVisualBuilder.CreateSolid(piece.type, deckContainer);
+                if (go == null)
+                {
+                    Debug.LogWarning("[BuildingSystem] 갑판 재생성 후 조각 실물을 다시 만들지 못했다.");
+                    continue;
+                }
+
+                if (!ReferenceEquals(piece.root, null))
+                    pieceByRoot.Remove(piece.root);
+
+                piece.go = go;
+                piece.root = go.transform;
+                pieceByRoot[piece.root] = piece;
+                ApplyDeckLocalTransform(piece.root, piece.position, piece.yaw);
+            }
+
+            rebuildBuffer.Clear();
+            Physics.SyncTransforms();
+        }
+
+        /// <summary>대기 중이던 갑판 조각(갑판이 없을 때 불러온 세이브)을 실제로 세운다.</summary>
+        private void FlushPendingDeckEntries()
+        {
+            for (int i = 0; i < pendingDeckEntries.Count; i++)
+                CreatePieceFromEntry(pendingDeckEntries[i]);
+
+            pendingDeckEntries.Clear();
+            Physics.SyncTransforms();
+            Changed?.Invoke();
+        }
+
+        private static void ApplyDeckLocalTransform(Transform t, Vector3 localPosition, float yaw)
+        {
+            t.localPosition = localPosition;
+            t.localRotation = Quaternion.Euler(0f, yaw, 0f);
+        }
+
+        /// <summary>갑판에 조각을 놓을 수 있는 상태인가(뗏목이 있고, 갑판 단계이고, 컨테이너가 살아 있다).</summary>
+        private bool IsDeckReady => deckContainer != null && boundRaft != null && boundRaft.HasDeck;
+
+        /// <summary>그 셀이 갑판 안에 **온전히** 들어가는지. 한 귀퉁이라도 밖이면 못 짓는다.</summary>
+        private bool IsDeckCellInBounds(int cellX, int cellZ)
+        {
+            if (boundRaft == null || !boundRaft.HasDeck)
+                return false;
+
+            Vector2 size = boundRaft.DeckLocalSize;
+            float halfX = size.x * 0.5f;
+            float halfZ = size.y * 0.5f;
+
+            const float epsilon = 0.01f; // 부동소수 오차로 딱 맞는 칸이 탈락하지 않게
+            float minX = cellX * CellSize;
+            float minZ = cellZ * CellSize;
+
+            return minX >= -halfX - epsilon
+                && minX + CellSize <= halfX + epsilon
+                && minZ >= -halfZ - epsilon
+                && minZ + CellSize <= halfZ + epsilon;
+        }
+
+        // ── 공간 ↔ 월드 변환 ────────────────────────────────────────────────────
+
+        private Vector3 SpaceToWorld(BuildSpace space, Vector3 local)
+        {
+            if (space == BuildSpace.Ground || deckContainer == null)
+                return local;
+            return deckContainer.TransformPoint(local);
+        }
+
+        private Vector3 WorldToSpace(BuildSpace space, Vector3 world)
+        {
+            if (space == BuildSpace.Ground || deckContainer == null)
+                return world;
+            return deckContainer.InverseTransformPoint(world);
+        }
+
+        private Vector3 WorldToSpaceDirection(BuildSpace space, Vector3 worldDirection)
+        {
+            if (space == BuildSpace.Ground || deckContainer == null)
+                return worldDirection;
+            return deckContainer.InverseTransformDirection(worldDirection);
+        }
+
+        private Quaternion SpaceToWorldRotation(BuildSpace space, float yaw)
+        {
+            Quaternion local = Quaternion.Euler(0f, yaw, 0f);
+            if (space == BuildSpace.Ground || deckContainer == null)
+                return local;
+            return deckContainer.rotation * local;
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
         // 조준 / 스냅
         // ────────────────────────────────────────────────────────────────────────
 
@@ -372,6 +635,7 @@ namespace MakeGame.Systems
             hasTarget = false;
             targetValid = false;
             blockReason = BuildBlockReason.NoTarget;
+            targetSpace = BuildSpace.Ground;
 
             Camera cam = GetCamera();
             if (cam == null)
@@ -380,10 +644,27 @@ namespace MakeGame.Systems
             Transform camTransform = cam.transform;
             Ray ray = new Ray(camTransform.position, camTransform.forward);
 
-            if (selectedType == BuildPieceType.Floor)
-                ResolveFloorTarget(ray);
-            else
-                ResolveWallTarget(ray);
+            if (!CastBuildRay(ray, out RaycastHit hit, out PlacedPiece piece, out BuildSpace space, out bool deckSurface))
+                return;
+
+            targetSpace = space;
+            Vector3 point = WorldToSpace(space, hit.point);
+            Vector3 normal = WorldToSpaceDirection(space, hit.normal);
+
+            switch (selectedType)
+            {
+                case BuildPieceType.Floor:
+                    ResolveFloorTarget(space, piece, deckSurface, point, normal);
+                    break;
+
+                case BuildPieceType.Stair:
+                    ResolveStairTarget(space, point);
+                    break;
+
+                default:
+                    ResolveWallTarget(space, point);
+                    break;
+            }
 
             // 재료 검사는 자리 판정이 끝난 뒤에 한 번만 한다(자리가 없으면 재료를 셀 필요도 없다).
             if (hasTarget && targetValid && !HasMaterialsFor(selectedType))
@@ -393,22 +674,19 @@ namespace MakeGame.Systems
             }
         }
 
-        /// <summary>바닥 조각의 놓을 자리를 정한다(지면 스냅 · 옆으로 잇기 · 위로 쌓기).</summary>
-        private void ResolveFloorTarget(Ray ray)
+        /// <summary>바닥 조각의 놓을 자리를 정한다(지면 스냅 · 옆으로 잇기 · 위로 쌓기 · 계단참).</summary>
+        private void ResolveFloorTarget(BuildSpace space, PlacedPiece piece, bool deckSurface, Vector3 point, Vector3 normal)
         {
-            if (!CastBuildRay(ray, out RaycastHit hit, out PlacedPiece piece))
-                return;
-
             int cellX;
             int cellZ;
             float topY;
-            bool placingOnGround;
+            bool placingOnGround = false;
 
-            if (piece != null && piece.type == BuildPieceType.Floor && hit.normal.y > 0.5f)
+            if (piece != null && piece.type == BuildPieceType.Floor && normal.y > 0.5f)
             {
                 // 이미 있는 바닥의 윗면을 보고 있다. 안쪽이면 위층, 가장자리면 옆 칸.
-                float dx = hit.point.x - CellCenterCoord(piece.cellX);
-                float dz = hit.point.z - CellCenterCoord(piece.cellZ);
+                float dx = point.x - CellCenterCoord(piece.cellX);
+                float dz = point.z - CellCenterCoord(piece.cellZ);
                 cellX = piece.cellX;
                 cellZ = piece.cellZ;
 
@@ -425,24 +703,35 @@ namespace MakeGame.Systems
                 {
                     topY = piece.position.y + LevelHeight; // 위로 한 층 쌓는다
                 }
-
-                placingOnGround = false;
+            }
+            else if (piece != null && piece.type == BuildPieceType.Stair)
+            {
+                // 계단을 조준하면 **계단이 올라가 닿는 칸**에 참(landing)을 깐다. 계단을 먼저 놓고
+                // 그 위에 바닥을 까는 순서가 자연스러워야 한다는 감독 지시를 이 규칙 하나로 만족시킨다.
+                GetStairLandingCell(piece, out cellX, out cellZ);
+                topY = piece.position.y + LevelHeight;
+            }
+            else if (deckSurface)
+            {
+                // 갑판 자체가 0층 바닥이다. 갑판을 조준하면 그 위층(2층 바닥 = 지붕)을 놓는다.
+                cellX = CellIndexOf(point.x);
+                cellZ = CellIndexOf(point.z);
+                topY = LevelHeight;
             }
             else
             {
-                cellX = CellIndexOf(hit.point.x);
-                cellZ = CellIndexOf(hit.point.z);
+                cellX = CellIndexOf(point.x);
+                cellZ = CellIndexOf(point.z);
 
                 // 옆 칸에 이미 바닥이 있으면 그 높이에 맞춘다 - 지면이 울퉁불퉁해도 데크가 평평해진다.
-                PlacedPiece neighbor = FindNeighborFloorNear(cellX, cellZ, hit.point.y);
-                if (neighbor != null)
+                SupportRef neighbor = FindNeighborFloorNear(space, cellX, cellZ, point.y);
+                if (neighbor.valid)
                 {
-                    topY = neighbor.position.y;
-                    placingOnGround = false;
+                    topY = neighbor.y;
                 }
-                else if (piece == null)
+                else if (piece == null && space == BuildSpace.Ground)
                 {
-                    topY = hit.point.y;               // 지형에 직접 놓는다
+                    topY = point.y;               // 지형에 직접 놓는다
                     placingOnGround = true;
                 }
                 else
@@ -453,66 +742,85 @@ namespace MakeGame.Systems
                 }
             }
 
-            // 지형 검사는 자리를 확정하기 **전에** 한다. 지면에 처음 놓는 바닥은 네 모서리 중 가장 높은
-            // 지면에 윗면을 맞춰야 어느 구석도 땅에 처박히지 않는다(그래서 topY가 여기서 바뀔 수 있다).
-            bool groundFound = TryGetCellGround(cellX, cellZ, topY, out float maxGround, out float minGround);
+            bool groundFound = false;
+            float maxGround = 0f;
+            float minGround = 0f;
+
+            if (space == BuildSpace.Ground)
+            {
+                // 지형 검사는 자리를 확정하기 **전에** 한다. 지면에 처음 놓는 바닥은 네 모서리 중 가장 높은
+                // 지면에 윗면을 맞춰야 어느 구석도 땅에 처박히지 않는다(그래서 topY가 여기서 바뀔 수 있다).
+                groundFound = TryGetCellGround(cellX, cellZ, topY, out maxGround, out minGround);
+                if (groundFound && placingOnGround)
+                    topY = maxGround + GroundClearance;
+            }
 
             hasTarget = true;
             targetCellX = cellX;
             targetCellZ = cellZ;
-            targetAxis = 0;
-            targetYaw = GetYawFor(BuildPieceType.Floor, 0);
+            targetAxis = NonWallAxis;
+            targetLevel = LevelOf(topY);
+            targetYaw = GetYawFor(BuildPieceType.Floor, NonWallAxis);
+            targetPosition = new Vector3(CellCenterCoord(cellX), topY, CellCenterCoord(cellZ));
 
-            if (!groundFound)
+            if (space == BuildSpace.Deck)
             {
-                // 이번 배치는 땅 위에만 짓는다(감독 결정). 이 검사가 없으면 바닥을 한 칸씩 이어 붙여
-                // 바다 위로 다리를 놓을 수 있다 - 뗏목 갑판 위 건축은 다음 배치다.
-                targetLevel = LevelOf(topY);
-                targetPosition = new Vector3(CellCenterCoord(cellX), topY, CellCenterCoord(cellZ));
+                if (!IsDeckCellInBounds(cellX, cellZ))
+                {
+                    blockReason = BuildBlockReason.OffDeck;
+                    return;
+                }
+            }
+            else if (!groundFound)
+            {
+                // 지면 건축은 땅 위에만 한다. 이 검사가 없으면 바닥을 한 칸씩 이어 붙여 바다 위로
+                // 다리를 놓을 수 있다(바다 위에 짓고 싶으면 뗏목 갑판을 쓴다).
                 blockReason = BuildBlockReason.NotOnGround;
                 return;
             }
 
-            if (placingOnGround)
-                topY = maxGround + GroundClearance;
-
-            targetLevel = LevelOf(topY);
-            targetPosition = new Vector3(CellCenterCoord(cellX), topY, CellCenterCoord(cellZ));
-
-            if (floorByKey.ContainsKey(PieceKey(cellX, cellZ, targetLevel, 0)))
+            if (HasFloorAt(space, cellX, cellZ, targetLevel))
             {
                 blockReason = BuildBlockReason.Occupied;
                 return;
             }
 
-            if (placingOnGround && maxGround - minGround > GroundFlatnessTolerance)
+            // 계단이 이 칸을 통과해 올라오고 있으면 그 위를 덮을 수 없다(머리가 천장에 박힌다).
+            if (stairByKey.ContainsKey(PieceKey(space, cellX, cellZ, targetLevel - 1, NonWallAxis)))
             {
-                blockReason = BuildBlockReason.GroundTooUneven;
+                blockReason = BuildBlockReason.StairInTheWay;
                 return;
             }
 
-            if (!placingOnGround && maxGround > topY + BuriedTolerance)
+            if (space == BuildSpace.Ground)
             {
-                blockReason = BuildBlockReason.GroundTooUneven;
-                return;
+                if (placingOnGround && maxGround - minGround > GroundFlatnessTolerance)
+                {
+                    blockReason = BuildBlockReason.GroundTooUneven;
+                    return;
+                }
+
+                if (!placingOnGround && maxGround > topY + BuriedTolerance)
+                {
+                    blockReason = BuildBlockReason.GroundTooUneven;
+                    return;
+                }
             }
 
             targetValid = true;
             blockReason = BuildBlockReason.None;
         }
 
-        /// <summary>벽/문/창문의 놓을 자리를 정한다. **바닥 조각의 네 모서리에만 붙는다.**</summary>
-        private void ResolveWallTarget(Ray ray)
+        /// <summary>벽/문/창문의 놓을 자리를 정한다. **바닥(갑판 포함)의 네 모서리에만 붙는다.**</summary>
+        private void ResolveWallTarget(BuildSpace space, Vector3 point)
         {
-            if (!CastBuildRay(ray, out RaycastHit hit, out PlacedPiece _))
-                return;
-
-            Vector3 point = hit.point;
             int centerX = CellIndexOf(point.x);
             int centerZ = CellIndexOf(point.z);
 
-            PlacedPiece bestFloor = null;
+            bool found = false;
             float bestSqr = float.MaxValue;
+            int bestLevel = 0;
+            float bestY = 0f;
             int bestEdgeX = 0;
             int bestEdgeZ = 0;
             int bestAxis = 0;
@@ -526,14 +834,14 @@ namespace MakeGame.Systems
                 {
                     int cx = centerX + ox;
                     int cz = centerZ + oz;
-                    PlacedPiece floor = FindFloorNear(cx, cz, point.y);
-                    if (floor == null)
+                    SupportRef support = FindSupportNear(space, cx, cz, point.y);
+                    if (!support.valid)
                         continue;
 
                     for (int side = 0; side < 4; side++)
                     {
                         GetEdgeOfCell(cx, cz, side, out int ex, out int ez, out int axis);
-                        Vector3 mid = EdgeMidpoint(ex, ez, axis, floor.position.y);
+                        Vector3 mid = EdgeMidpoint(ex, ez, axis, support.y);
 
                         // 벽 높이의 절반쯤을 기준으로 재야 "벽 위쪽을 겨눴을 때"도 그 모서리가 이긴다.
                         mid.y += LevelHeight * 0.5f;
@@ -542,15 +850,17 @@ namespace MakeGame.Systems
                             continue;
 
                         bestSqr = sqr;
-                        bestFloor = floor;
+                        bestLevel = support.level;
+                        bestY = support.y;
                         bestEdgeX = ex;
                         bestEdgeZ = ez;
                         bestAxis = axis;
+                        found = true;
                     }
                 }
             }
 
-            if (bestFloor == null)
+            if (!found)
             {
                 blockReason = BuildBlockReason.NoSupportingFloor;
                 return;
@@ -559,12 +869,12 @@ namespace MakeGame.Systems
             hasTarget = true;
             targetCellX = bestEdgeX;
             targetCellZ = bestEdgeZ;
-            targetLevel = bestFloor.level;
+            targetLevel = bestLevel;
             targetAxis = bestAxis;
-            targetPosition = EdgeMidpoint(bestEdgeX, bestEdgeZ, bestAxis, bestFloor.position.y);
+            targetPosition = EdgeMidpoint(bestEdgeX, bestEdgeZ, bestAxis, bestY);
             targetYaw = GetYawFor(selectedType, bestAxis);
 
-            if (wallByKey.ContainsKey(PieceKey(bestEdgeX, bestEdgeZ, bestFloor.level, bestAxis)))
+            if (wallByKey.ContainsKey(PieceKey(space, bestEdgeX, bestEdgeZ, bestLevel, bestAxis)))
             {
                 blockReason = BuildBlockReason.Occupied;
                 return;
@@ -575,12 +885,83 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// 계단의 놓을 자리를 정한다. 계단은 **바닥 칸 하나를 통째로 차지**하고, 그 칸의 바닥 위에서
+        /// 시작해 바라보는 방향으로 2m 나아가며 한 층(2.5m) 올라간다. 위층 바닥은 없어도 된다.
+        /// </summary>
+        private void ResolveStairTarget(BuildSpace space, Vector3 point)
+        {
+            int cellX = CellIndexOf(point.x);
+            int cellZ = CellIndexOf(point.z);
+
+            SupportRef support = FindSupportNear(space, cellX, cellZ, point.y);
+            if (!support.valid)
+            {
+                blockReason = BuildBlockReason.NoSupportingFloor;
+                return;
+            }
+
+            float yaw = GetYawFor(BuildPieceType.Stair, NonWallAxis);
+            Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+
+            hasTarget = true;
+            targetCellX = cellX;
+            targetCellZ = cellZ;
+            targetLevel = support.level;
+            targetAxis = NonWallAxis;
+            targetYaw = yaw;
+
+            // 계단의 로컬 원점은 밑단의 **앞** 모서리다(BuildPieceVisualBuilder.BuildStair: 로컬 z 0→2).
+            // 그래서 셀 중심에서 바라보는 방향의 반대쪽으로 반 칸 물러난 자리가 원점이다.
+            targetPosition = new Vector3(CellCenterCoord(cellX), support.y, CellCenterCoord(cellZ))
+                - forward * (CellSize * 0.5f);
+
+            if (space == BuildSpace.Deck && !IsDeckCellInBounds(cellX, cellZ))
+            {
+                blockReason = BuildBlockReason.OffDeck;
+                return;
+            }
+
+            if (stairByKey.ContainsKey(PieceKey(space, cellX, cellZ, support.level, NonWallAxis)))
+            {
+                blockReason = BuildBlockReason.Occupied;
+                return;
+            }
+
+            // 계단이 뚫고 올라가야 할 위층 바닥이 이미 덮여 있으면 못 놓는다(반대 순서도 막는다).
+            if (HasFloorAt(space, cellX, cellZ, support.level + 1))
+            {
+                blockReason = BuildBlockReason.StairInTheWay;
+                return;
+            }
+
+            targetValid = true;
+            blockReason = BuildBlockReason.None;
+        }
+
+        /// <summary>계단이 올라가 닿는 칸(참을 까는 자리).</summary>
+        private static void GetStairLandingCell(PlacedPiece stair, out int cellX, out int cellZ)
+        {
+            int step = ((Mathf.RoundToInt(stair.yaw / 90f) % 4) + 4) % 4;
+            cellX = stair.cellX;
+            cellZ = stair.cellZ;
+
+            switch (step)
+            {
+                case 0: cellZ += 1; break;   // 로컬 +Z
+                case 1: cellX += 1; break;   // 로컬 +X
+                case 2: cellZ -= 1; break;
+                default: cellX -= 1; break;
+            }
+        }
+
+        /// <summary>
         /// 부품의 최종 y 회전. 벽류는 모서리 방향이 회전을 결정하므로(그래야 모서리에 정확히 맞는다)
-        /// 회전 입력은 앞뒤 뒤집기(180도)로만 쓴다. 바닥은 정사각형이라 90도 회전이 겉모습 문제다.
+        /// 회전 입력은 앞뒤 뒤집기(180도)로만 쓴다. 바닥은 정사각형이라 90도 회전이 겉모습 문제이고,
+        /// **계단은 회전이 곧 올라가는 방향**이라 네 방향이 전부 의미가 다르다.
         /// </summary>
         private float GetYawFor(BuildPieceType type, int axis)
         {
-            if (type == BuildPieceType.Floor)
+            if (type == BuildPieceType.Floor || type == BuildPieceType.Stair)
                 return rotationSteps * 90f;
 
             float baseYaw = axis == 0 ? 0f : 90f;
@@ -588,14 +969,17 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 지형/조각만 걸러서 가장 가까운 히트를 돌려준다. 초목·자원 노드·사냥감·플레이어는 통과시킨다
-        /// (TerrainSampler가 "Island_" 접두사만 지형으로 인정하는 것과 같은 이유 - 콜라이더가 붙은
-        /// 장식물에 조준이 걸리면 배치 높이가 통째로 틀어진다).
+        /// 지형/조각/갑판만 걸러서 가장 가까운 히트를 돌려준다. 초목·자원 노드·사냥감·플레이어는
+        /// 통과시킨다(TerrainSampler가 "Island_" 접두사만 지형으로 인정하는 것과 같은 이유 -
+        /// 콜라이더가 붙은 장식물에 조준이 걸리면 배치 높이가 통째로 틀어진다).
         /// </summary>
-        private bool CastBuildRay(Ray ray, out RaycastHit bestHit, out PlacedPiece bestPiece)
+        private bool CastBuildRay(Ray ray, out RaycastHit bestHit, out PlacedPiece bestPiece,
+            out BuildSpace space, out bool deckSurface)
         {
             bestHit = default;
             bestPiece = null;
+            space = BuildSpace.Ground;
+            deckSurface = false;
 
             int count = Physics.RaycastNonAlloc(ray, rayBuffer, buildDistance);
             bool found = false;
@@ -609,11 +993,18 @@ namespace MakeGame.Systems
                     continue;
 
                 PlacedPiece piece = FindPieceOf(collider.transform);
-                bool isTerrain = piece == null
-                    && collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal);
+                bool onDeck = false;
 
-                if (piece == null && !isTerrain)
-                    continue;
+                if (piece == null)
+                {
+                    bool isTerrain = collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal);
+                    if (!isTerrain)
+                    {
+                        if (!IsDeckCollider(collider.transform))
+                            continue;
+                        onDeck = true;
+                    }
+                }
 
                 if (hit.distance >= bestDistance)
                     continue;
@@ -621,10 +1012,38 @@ namespace MakeGame.Systems
                 bestDistance = hit.distance;
                 bestHit = hit;
                 bestPiece = piece;
+                space = piece != null ? piece.space : (onDeck ? BuildSpace.Deck : BuildSpace.Ground);
+                deckSurface = onDeck;
                 found = true;
             }
 
+            if (found && deckSurface)
+            {
+                // 갑판 윗면인지 선체 옆구리인지 가른다. 뗏목의 콜라이더는 선체 전체를 덮는 상자 하나라
+                // (RaftStructure.ApplyHullCollider) 옆면도 같은 콜라이더에 맞는다. 높이와 법선을 둘 다
+                // 봐야 "물에 잠긴 옆구리에 집이 붙는" 일이 없다.
+                Vector3 localPoint = WorldToSpace(BuildSpace.Deck, bestHit.point);
+                Vector3 localNormal = WorldToSpaceDirection(BuildSpace.Deck, bestHit.normal);
+                if (Mathf.Abs(localPoint.y) > DeckSurfaceTolerance || localNormal.y < 0.5f)
+                    return false;
+            }
+
             return found;
+        }
+
+        /// <summary>이 콜라이더가 뗏목 갑판(또는 그 부속)인지. 부모를 거슬러 DeckRoot에 닿으면 참이다.</summary>
+        private bool IsDeckCollider(Transform t)
+        {
+            if (!IsDeckReady || boundDeckRoot == null)
+                return false;
+
+            while (t != null)
+            {
+                if (t == boundDeckRoot)
+                    return true;
+                t = t.parent;
+            }
+            return false;
         }
 
         /// <summary>콜라이더가 붙은 자식에서 조각 본체까지 부모를 거슬러 올라간다(할당 없음).</summary>
@@ -639,59 +1058,101 @@ namespace MakeGame.Systems
             return null;
         }
 
+        // ── 바닥 조회 (갑판 = 0층 가상 바닥) ────────────────────────────────────
+
+        /// <summary>딛고 설 수 있는 바닥 하나를 가리키는 값. 갑판처럼 실물 조각이 없는 바닥도 표현한다.</summary>
+        private struct SupportRef
+        {
+            public bool valid;
+            public int level;
+            public float y;
+        }
+
         /// <summary>
-        /// 이 셀에서 y에 가장 가까운 바닥을 찾는다. 지면에 놓인 바닥은 y가 정수배가 아니므로
+        /// 그 칸 그 층에 딛고 설 바닥이 있는지. **갑판은 0층에 실물 없는 바닥이 깔려 있는 것으로 친다** -
+        /// 그래야 갑판 위에 바닥 조각을 먼저 깔지 않고도 벽을 세울 수 있다(갑판이 이미 바닥이다).
+        /// </summary>
+        private bool TryGetFloorTopY(BuildSpace space, int cellX, int cellZ, int level, out float y)
+        {
+            if (floorByKey.TryGetValue(PieceKey(space, cellX, cellZ, level, NonWallAxis), out PlacedPiece floor))
+            {
+                y = floor.position.y;
+                return true;
+            }
+
+            if (space == BuildSpace.Deck && level == 0 && IsDeckCellInBounds(cellX, cellZ))
+            {
+                y = 0f; // Deck 공간의 원점이 곧 갑판 윗면이다
+                return true;
+            }
+
+            y = 0f;
+            return false;
+        }
+
+        private bool HasFloorAt(BuildSpace space, int cellX, int cellZ, int level)
+        {
+            return TryGetFloorTopY(space, cellX, cellZ, level, out float _);
+        }
+
+        /// <summary>
+        /// 이 칸에서 y에 가장 가까운 바닥을 찾는다. 지면에 놓인 바닥은 y가 정수배가 아니므로
         /// 양자화 층 번호가 한 칸 어긋날 수 있어 L-1 · L · L+1 세 층을 본다.
         /// </summary>
-        private PlacedPiece FindFloorNear(int cellX, int cellZ, float y)
+        private SupportRef FindSupportNear(BuildSpace space, int cellX, int cellZ, float y)
         {
-            int level = LevelOf(y);
-            PlacedPiece best = null;
+            SupportRef best = default;
             float bestDelta = float.MaxValue;
+            int level = LevelOf(y);
 
             for (int d = -1; d <= 1; d++)
             {
-                if (!floorByKey.TryGetValue(PieceKey(cellX, cellZ, level + d, 0), out PlacedPiece floor))
+                int candidate = level + d;
+                if (!TryGetFloorTopY(space, cellX, cellZ, candidate, out float floorY))
                     continue;
 
-                // 조준점보다 조금이라도 위에 있는 바닥은 "딛고 선 바닥"이 아니다(위층 바닥에 벽을
-                // 붙이려면 그 위층을 조준해야 한다).
-                if (floor.position.y > y + 0.6f)
+                // 조준점보다 위에 있는 바닥은 "딛고 선 바닥"이 아니다(위층에 붙이려면 위층을 조준한다).
+                if (floorY > y + 0.6f)
                     continue;
 
-                float delta = Mathf.Abs(floor.position.y - y);
+                float delta = Mathf.Abs(floorY - y);
                 if (delta >= bestDelta)
                     continue;
 
                 bestDelta = delta;
-                best = floor;
+                best.valid = true;
+                best.level = candidate;
+                best.y = floorY;
             }
 
             return best;
         }
 
         /// <summary>맞닿은 네 칸 중 이 높이에 가장 가까운 바닥(데크 평탄화용).</summary>
-        private PlacedPiece FindNeighborFloorNear(int cellX, int cellZ, float y)
+        private SupportRef FindNeighborFloorNear(BuildSpace space, int cellX, int cellZ, float y)
         {
-            PlacedPiece best = null;
+            SupportRef best = default;
             float bestDelta = float.MaxValue;
+            int level = LevelOf(y);
 
             for (int side = 0; side < 4; side++)
             {
                 GetNeighborCell(cellX, cellZ, side, out int nx, out int nz);
 
-                int level = LevelOf(y);
                 for (int d = -1; d <= 1; d++)
                 {
-                    if (!floorByKey.TryGetValue(PieceKey(nx, nz, level + d, 0), out PlacedPiece floor))
+                    int candidate = level + d;
+                    if (!TryGetFloorTopY(space, nx, nz, candidate, out float floorY))
                         continue;
 
-                    float delta = Mathf.Abs(floor.position.y - y);
+                    float delta = Mathf.Abs(floorY - y);
                     if (delta > LevelHeight * 0.8f || delta >= bestDelta)
                         continue;
 
                     bestDelta = delta;
-                    best = floor;
+                    best.valid = true;
+                    best.level = candidate;
+                    best.y = floorY;
                 }
             }
 
@@ -700,7 +1161,7 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 한 칸의 네 모서리 지면 높이를 재서 가장 높은 곳과 낮은 곳을 돌려준다(레이 4번).
-        /// 네 모서리 중 하나도 지형에 닿지 않으면 false - 그 칸 밑에는 섬이 없다는 뜻이다.
+        /// **네 모서리가 전부** 지형에 닿아야 한다 - 하나라도 비면 그 칸은 물가 밖으로 절반쯤 걸쳐 있다.
         /// </summary>
         private static bool TryGetCellGround(int cellX, int cellZ, float aroundY, out float maxGround, out float minGround)
         {
@@ -724,8 +1185,6 @@ namespace MakeGame.Systems
                 if (groundY < minGround) minGround = groundY;
             }
 
-            // **네 모서리가 전부** 지형에 닿아야 한다. 하나라도 비면 그 칸은 물가 밖으로 절반쯤
-            // 걸쳐 있다는 뜻이고, 그대로 놓으면 바다 위로 튀어나온 데크가 된다.
             if (found == 4)
                 return true;
 
@@ -773,6 +1232,9 @@ namespace MakeGame.Systems
         /// <summary>
         /// 고스트는 **타입이 바뀔 때만** 다시 만든다. 위치/회전은 옮기기만 하고, 유효/무효는
         /// SetGhostValid로 색만 바꾼다(매 프레임 오브젝트를 만들면 GC와 SRP 배처가 함께 죽는다).
+        /// 갑판 위 조준일 때는 갑판 로컬 좌표를 월드로 바꿔서 놓는다 - 고스트를 뗏목에 매달지 않는
+        /// 이유는 매 프레임 위치를 새로 계산하므로 부모를 바꿀 필요가 없고, 타입이 그대로인데
+        /// 부모만 바뀌어 고스트를 다시 만드는 일도 없어야 하기 때문이다.
         /// </summary>
         private void UpdateGhost()
         {
@@ -790,7 +1252,9 @@ namespace MakeGame.Systems
             if (!ghost.activeSelf)
                 ghost.SetActive(true);
 
-            ghost.transform.SetPositionAndRotation(targetPosition, Quaternion.Euler(0f, targetYaw, 0f));
+            ghost.transform.SetPositionAndRotation(
+                SpaceToWorld(targetSpace, targetPosition),
+                SpaceToWorldRotation(targetSpace, targetYaw));
 
             if (ghostValid != targetValid)
             {
@@ -836,9 +1300,16 @@ namespace MakeGame.Systems
                 return;
             }
 
+            Transform parent = targetSpace == BuildSpace.Deck ? deckContainer : piecesRoot;
+            if (parent == null)
+            {
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
             // **순서가 곧 안전장치다.** 실물을 먼저 만들고, 성공한 뒤에야 재료를 지운다.
             // (이 프로젝트에서 아이템이 증발한 사고가 네 번 있었고 전부 반대 순서였다.)
-            GameObject go = BuildPieceVisualBuilder.CreateSolid(selectedType, piecesRoot);
+            GameObject go = BuildPieceVisualBuilder.CreateSolid(selectedType, parent);
             if (go == null)
             {
                 Debug.LogWarning($"[BuildingSystem] '{BuildPieceCatalog.GetDisplayName(selectedType)}' 실물 생성에 " +
@@ -847,7 +1318,7 @@ namespace MakeGame.Systems
                 return;
             }
 
-            go.transform.SetPositionAndRotation(targetPosition, Quaternion.Euler(0f, targetYaw, 0f));
+            ApplyPieceTransform(go.transform, targetSpace, targetPosition, targetYaw);
 
             if (!ConsumeCost(selectedType))
             {
@@ -860,7 +1331,8 @@ namespace MakeGame.Systems
                 return;
             }
 
-            RegisterPiece(selectedType, go, targetCellX, targetCellZ, targetLevel, targetAxis, targetPosition, targetYaw);
+            RegisterPiece(selectedType, targetSpace, go, targetCellX, targetCellZ, targetLevel, targetAxis,
+                targetPosition, targetYaw);
 
             // Physics.autoSyncTransforms는 꺼져 있다(AGENT_BRIEF 4장). 방금 만든 콜라이더에 다음
             // 프레임 레이캐스트가 맞으려면 여기서 물리 씬에 반영해야 한다.
@@ -868,6 +1340,15 @@ namespace MakeGame.Systems
 
             AudioManager.Instance?.PlayCraftSuccess();
             Changed?.Invoke();
+        }
+
+        /// <summary>조각을 제 공간의 좌표에 놓는다. 갑판 조각은 로컬, 지면 조각은 월드다.</summary>
+        private void ApplyPieceTransform(Transform t, BuildSpace space, Vector3 position, float yaw)
+        {
+            if (space == BuildSpace.Deck)
+                ApplyDeckLocalTransform(t, position, yaw);
+            else
+                t.SetPositionAndRotation(position, Quaternion.Euler(0f, yaw, 0f));
         }
 
         /// <summary>
@@ -922,7 +1403,7 @@ namespace MakeGame.Systems
         /// <summary>
         /// 조준한 조각을 부수고 재료의 **절반(내림)** 을 돌려준다.
         /// · 인벤토리가 가득 차 돌려줄 수 없으면 철거 자체를 취소한다(아이템 증발 금지).
-        /// · 위에 다른 조각이 얹혀 있는 바닥은 부술 수 없다(공중에 뜬 벽이 생긴다).
+        /// · 위에 다른 조각이 얹혀 있는 바닥은 부술 수 없다(공중에 뜬 벽·계단이 생긴다).
         /// </summary>
         public void TryDemolish()
         {
@@ -932,7 +1413,7 @@ namespace MakeGame.Systems
 
             Transform camTransform = cam.transform;
             Ray ray = new Ray(camTransform.position, camTransform.forward);
-            if (!CastBuildRay(ray, out RaycastHit _, out PlacedPiece piece) || piece == null)
+            if (!CastBuildRay(ray, out RaycastHit _, out PlacedPiece piece, out BuildSpace _, out bool _) || piece == null)
             {
                 AudioManager.Instance?.PlayActionFail();
                 return;
@@ -981,18 +1462,22 @@ namespace MakeGame.Systems
         private bool HasLoadAbove(PlacedPiece floor)
         {
             // 바로 위층 바닥.
-            if (floorByKey.ContainsKey(PieceKey(floor.cellX, floor.cellZ, floor.level + 1, 0)))
+            if (floorByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level + 1, NonWallAxis)))
+                return true;
+
+            // 이 바닥을 딛고 선 계단.
+            if (stairByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
                 return true;
 
             // 이 바닥 위에 선 벽류. 단, 모서리를 함께 쓰는 옆 칸 바닥이 아직 있으면 그쪽이 받쳐 준다.
             for (int side = 0; side < 4; side++)
             {
                 GetEdgeOfCell(floor.cellX, floor.cellZ, side, out int ex, out int ez, out int axis);
-                if (!wallByKey.ContainsKey(PieceKey(ex, ez, floor.level, axis)))
+                if (!wallByKey.ContainsKey(PieceKey(floor.space, ex, ez, floor.level, axis)))
                     continue;
 
                 GetNeighborCell(floor.cellX, floor.cellZ, side, out int nx, out int nz);
-                if (!floorByKey.ContainsKey(PieceKey(nx, nz, floor.level, 0)))
+                if (!HasFloorAt(floor.space, nx, nz, floor.level))
                     return true;
             }
 
@@ -1143,12 +1628,13 @@ namespace MakeGame.Systems
         // 등록 / 해제
         // ────────────────────────────────────────────────────────────────────────
 
-        private void RegisterPiece(BuildPieceType type, GameObject go, int cellX, int cellZ, int level, int axis,
-            Vector3 position, float yaw)
+        private void RegisterPiece(BuildPieceType type, BuildSpace space, GameObject go, int cellX, int cellZ,
+            int level, int axis, Vector3 position, float yaw)
         {
             var piece = new PlacedPiece
             {
                 type = type,
+                space = space,
                 go = go,
                 root = go.transform,
                 cellX = cellX,
@@ -1162,11 +1648,20 @@ namespace MakeGame.Systems
             pieces.Add(piece);
             pieceByRoot[piece.root] = piece;
 
-            long key = PieceKey(cellX, cellZ, level, axis);
-            if (type == BuildPieceType.Floor)
-                floorByKey[PieceKey(cellX, cellZ, level, 0)] = piece;
-            else if (type != BuildPieceType.Stair)
-                wallByKey[key] = piece;
+            switch (type)
+            {
+                case BuildPieceType.Floor:
+                    floorByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    break;
+
+                case BuildPieceType.Stair:
+                    stairByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    break;
+
+                default:
+                    wallByKey[PieceKey(space, cellX, cellZ, level, axis)] = piece;
+                    break;
+            }
 
             structureVersion++;
         }
@@ -1180,10 +1675,20 @@ namespace MakeGame.Systems
             if (!ReferenceEquals(piece.root, null))
                 pieceByRoot.Remove(piece.root);
 
-            if (piece.type == BuildPieceType.Floor)
-                floorByKey.Remove(PieceKey(piece.cellX, piece.cellZ, piece.level, 0));
-            else if (piece.type != BuildPieceType.Stair)
-                wallByKey.Remove(PieceKey(piece.cellX, piece.cellZ, piece.level, piece.axis));
+            switch (piece.type)
+            {
+                case BuildPieceType.Floor:
+                    floorByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    break;
+
+                case BuildPieceType.Stair:
+                    stairByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    break;
+
+                default:
+                    wallByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, piece.axis));
+                    break;
+            }
 
             structureVersion++;
         }
@@ -1204,20 +1709,23 @@ namespace MakeGame.Systems
             pieceByRoot.Clear();
             floorByKey.Clear();
             wallByKey.Clear();
+            stairByKey.Clear();
+            pendingDeckEntries.Clear();
             structureVersion++;
         }
 
         // ────────────────────────────────────────────────────────────────────────
-        // 저장 / 복원 (SaveLoadController가 배선한다)
+        // 저장 / 복원 (SaveLoadController가 buildStructureJson 한 칸에 배선했다)
         // ────────────────────────────────────────────────────────────────────────
 
         /// <summary>
         /// 놓여 있는 조각 전부를 JSON으로 만든다. **빈 상태면 ""를 돌려준다** - 세이브 파일에
         /// 의미 없는 빈 객체가 들어가지 않게 하고, 호출부가 "건축 기록 없음"을 문자열 하나로 판정한다.
+        /// 갑판 위 조각은 좌표가 전부 **뗏목 로컬**이라 뗏목이 어디로 떠내려간 뒤에 불러와도 어긋나지 않는다.
         /// </summary>
         public string SerializeToJson()
         {
-            if (pieces.Count == 0)
+            if (pieces.Count == 0 && pendingDeckEntries.Count == 0)
                 return "";
 
             var data = new BuildStructureSaveData();
@@ -1227,6 +1735,7 @@ namespace MakeGame.Systems
                 data.pieces.Add(new BuildPieceSaveEntry
                 {
                     type = (int)piece.type,
+                    space = (int)piece.space,
                     cellX = piece.cellX,
                     cellZ = piece.cellZ,
                     level = piece.level,
@@ -1238,12 +1747,17 @@ namespace MakeGame.Systems
                 });
             }
 
+            // 아직 갑판이 없어 세우지 못한 조각도 그대로 다시 저장한다(불러오기 두 번에 사라지면 안 된다).
+            for (int i = 0; i < pendingDeckEntries.Count; i++)
+                data.pieces.Add(pendingDeckEntries[i]);
+
             return JsonUtility.ToJson(data);
         }
 
         /// <summary>
         /// 저장된 조각을 그대로 되살린다. json이 ""/null이면 **아무것도 하지 않는다**(건축 기능이
         /// 없던 시절의 옛 세이브 호환 - 지금 지어 둔 것을 지우지도 않는다).
+        /// 옛 세이브에는 space 필드가 없어 0(Ground)으로 읽히는데, 그게 정확히 옛 동작이다.
         /// </summary>
         public void RestoreFromJson(string json)
         {
@@ -1266,43 +1780,67 @@ namespace MakeGame.Systems
 
             ClearAllPieces();
 
+            // 뗏목이 이미 서 있으면 이 자리에서 갑판 조각까지 세운다. 아직이면(불러오기 순서상 뗏목이
+            // 나중에 만들어지는 경우) 대기열에 넣고 SyncRaftBinding이 갑판을 잡는 순간 세운다.
+            SyncRaftBinding();
+
             for (int i = 0; i < data.pieces.Count; i++)
-            {
-                BuildPieceSaveEntry entry = data.pieces[i];
-                if (entry == null)
-                    continue;
+                CreatePieceFromEntry(data.pieces[i]);
 
-                if (entry.type < (int)BuildPieceType.Floor || entry.type > (int)BuildPieceType.Stair)
-                {
-                    Debug.LogWarning($"[BuildingSystem] 알 수 없는 부품 종류 {entry.type} 를 건너뛴다.");
-                    continue;
-                }
-
-                var type = (BuildPieceType)entry.type;
-                long key = PieceKey(entry.cellX, entry.cellZ, entry.level, entry.axis);
-                bool occupied = type == BuildPieceType.Floor
-                    ? floorByKey.ContainsKey(PieceKey(entry.cellX, entry.cellZ, entry.level, 0))
-                    : wallByKey.ContainsKey(key);
-
-                if (occupied)
-                {
-                    Debug.LogWarning("[BuildingSystem] 같은 자리에 조각이 둘 저장돼 있어 뒤엣것을 건너뛴다.");
-                    continue;
-                }
-
-                GameObject go = BuildPieceVisualBuilder.CreateSolid(type, piecesRoot);
-                if (go == null)
-                    continue;
-
-                var position = new Vector3(entry.posX, entry.posY, entry.posZ);
-                go.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, entry.yaw, 0f));
-
-                RegisterPiece(type, go, entry.cellX, entry.cellZ, entry.level, entry.axis, position, entry.yaw);
-            }
-
-            // 방금 만든 콜라이더가 곧바로 레이캐스트에 잡히게 한다(autoSyncTransforms가 꺼져 있다).
             Physics.SyncTransforms();
             Changed?.Invoke();
+        }
+
+        /// <summary>저장 항목 하나를 실제 조각으로 세운다. 갑판이 아직 없으면 대기열에 넣는다.</summary>
+        private void CreatePieceFromEntry(BuildPieceSaveEntry entry)
+        {
+            if (entry == null)
+                return;
+
+            if (entry.type < (int)BuildPieceType.Floor || entry.type > (int)BuildPieceType.Stair)
+            {
+                Debug.LogWarning($"[BuildingSystem] 알 수 없는 부품 종류 {entry.type} 를 건너뛴다.");
+                return;
+            }
+
+            var type = (BuildPieceType)entry.type;
+            var space = entry.space == (int)BuildSpace.Deck ? BuildSpace.Deck : BuildSpace.Ground;
+
+            if (space == BuildSpace.Deck && !IsDeckReady)
+            {
+                pendingDeckEntries.Add(entry);
+                return;
+            }
+
+            bool occupied;
+            switch (type)
+            {
+                case BuildPieceType.Floor:
+                    occupied = floorByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    break;
+                case BuildPieceType.Stair:
+                    occupied = stairByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    break;
+                default:
+                    occupied = wallByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, entry.axis));
+                    break;
+            }
+
+            if (occupied)
+            {
+                Debug.LogWarning("[BuildingSystem] 같은 자리에 조각이 둘 저장돼 있어 뒤엣것을 건너뛴다.");
+                return;
+            }
+
+            Transform parent = space == BuildSpace.Deck ? deckContainer : piecesRoot;
+            GameObject go = BuildPieceVisualBuilder.CreateSolid(type, parent);
+            if (go == null)
+                return;
+
+            var position = new Vector3(entry.posX, entry.posY, entry.posZ);
+            ApplyPieceTransform(go.transform, space, position, entry.yaw);
+
+            RegisterPiece(type, space, go, entry.cellX, entry.cellZ, entry.level, entry.axis, position, entry.yaw);
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -1310,18 +1848,19 @@ namespace MakeGame.Systems
         // ────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 이 좌표가 "지붕 대신 벽으로 둘러싸인 실내"인지 판정한다. Shelter 등 다른 시스템이 매 프레임
-        /// 여러 번 부를 수 있어, 결과를 (칸, 층) 단위로 캐시하고 조각이 바뀔 때만 통째로 버린다.
+        /// 이 좌표가 "벽으로 둘러싸이고 머리 위가 덮인 실내"인지 판정한다. Shelter 등 다른 시스템이
+        /// 매 프레임 여러 번 부를 수 있어, 결과를 (공간, 칸, 층) 단위로 캐시하고 조각이 바뀔 때만 버린다.
         ///
         /// 판정: 발밑 바닥 칸에서 시작해 **같은 층의 바닥을 따라 퍼져 나가며**, 벽류가 없는 모서리를
         /// 넘어갔을 때 바닥도 없으면 "바깥으로 샌다"로 보고 실외 판정한다. 벽으로 다 막힌 방이면
-        /// 탐색이 방 안에서 끝난다. 이렇게 하면 1x1 오두막부터 여러 칸짜리 방까지 같은 규칙으로 잡히고,
+        /// 탐색이 방 안에서 끝난다. 1x1 오두막부터 여러 칸짜리 방까지 같은 규칙으로 잡히고,
         /// 벽 없는 데크는 첫 걸음에 새므로 즉시 실외가 된다(문·창문은 벽류로 쳐서 막힌 것으로 본다).
         ///
-        /// **지붕도 요구한다**: 방을 이루는 모든 칸의 바로 위층에 바닥이 있어야 한다. 이 배치에는
-        /// 지붕 전용 부품이 없고 위층 바닥이 곧 지붕이다(위로 계속 쌓는 구조의 자연스러운 귀결이다).
-        /// 이 조건이 없으면 벽 네 장만 세운 우리가 그늘 취급을 받는다 - Shelter.IsInsideHome이 이 값을
-        /// 일사병 그늘 판정에 쓰기 때문에, 머리 위가 뚫려 있으면 실내가 아니어야 한다.
+        /// **지붕도 요구한다**: 방을 이루는 모든 칸의 바로 위층에 바닥이 있어야 한다(지붕 전용 부품이
+        /// 없고 위층 바닥이 곧 지붕이다). 계단이 선 칸만 예외로 둔다 - 계단은 위층으로 뚫려 있는 것이
+        /// 정상이고, 그 구멍 때문에 2층 집 전체가 실외가 되면 안 된다.
+        ///
+        /// **지면과 뗏목 갑판 양쪽에서 동작한다.** 지면에서 실패하면 좌표를 갑판 로컬로 바꿔 한 번 더 본다.
         /// </summary>
         public static bool IsInsideEnclosedStructure(Vector3 worldPos)
         {
@@ -1329,19 +1868,25 @@ namespace MakeGame.Systems
             if (system == null)
                 return false;
 
-            return system.IsInsideInternal(worldPos);
-        }
+            if (system.IsInsideInternal(BuildSpace.Ground, worldPos))
+                return true;
 
-        private bool IsInsideInternal(Vector3 worldPos)
-        {
-            if (floorByKey.Count == 0)
+            if (!system.IsDeckReady)
                 return false;
 
-            int cellX = CellIndexOf(worldPos.x);
-            int cellZ = CellIndexOf(worldPos.z);
+            return system.IsInsideInternal(BuildSpace.Deck, worldPos);
+        }
 
-            PlacedPiece floor = FindFloorUnder(cellX, cellZ, worldPos.y);
-            if (floor == null)
+        private bool IsInsideInternal(BuildSpace space, Vector3 worldPos)
+        {
+            if (floorByKey.Count == 0 && space == BuildSpace.Ground)
+                return false;
+
+            Vector3 point = WorldToSpace(space, worldPos);
+            int cellX = CellIndexOf(point.x);
+            int cellZ = CellIndexOf(point.z);
+
+            if (!TryGetFloorUnder(space, cellX, cellZ, point.y, out int level))
                 return false;
 
             if (enclosureCacheVersion != structureVersion)
@@ -1350,38 +1895,45 @@ namespace MakeGame.Systems
                 enclosureCacheVersion = structureVersion;
             }
 
-            long key = PieceKey(cellX, cellZ, floor.level, 0);
+            long key = PieceKey(space, cellX, cellZ, level, NonWallAxis);
             if (enclosureCache.TryGetValue(key, out bool cachedResult))
                 return cachedResult;
 
-            bool result = ComputeEnclosed(cellX, cellZ, floor.level);
+            bool result = ComputeEnclosed(space, cellX, cellZ, level);
             enclosureCache[key] = result;
             return result;
         }
 
-        /// <summary>이 좌표가 딛고 서 있는 바닥(한 층 안쪽에 있는 것 중 가장 높은 것).</summary>
-        private PlacedPiece FindFloorUnder(int cellX, int cellZ, float y)
+        /// <summary>이 좌표가 딛고 서 있는 바닥의 층(한 층 안쪽에 있는 것 중 가장 높은 것).</summary>
+        private bool TryGetFloorUnder(BuildSpace space, int cellX, int cellZ, float y, out int level)
         {
-            int level = LevelOf(y);
-            PlacedPiece best = null;
+            int start = LevelOf(y);
+            bool found = false;
+            float bestY = float.MinValue;
+            level = 0;
 
             for (int d = -1; d <= 1; d++)
             {
-                if (!floorByKey.TryGetValue(PieceKey(cellX, cellZ, level + d, 0), out PlacedPiece floor))
+                int candidate = start + d;
+                if (!TryGetFloorTopY(space, cellX, cellZ, candidate, out float floorY))
                     continue;
 
-                float delta = y - floor.position.y;
+                float delta = y - floorY;
                 if (delta < -0.3f || delta > LevelHeight)
                     continue;
 
-                if (best == null || floor.position.y > best.position.y)
-                    best = floor;
+                if (found && floorY <= bestY)
+                    continue;
+
+                found = true;
+                bestY = floorY;
+                level = candidate;
             }
 
-            return best;
+            return found;
         }
 
-        private bool ComputeEnclosed(int cellX, int cellZ, int level)
+        private bool ComputeEnclosed(BuildSpace space, int cellX, int cellZ, int level)
         {
             bfsCellX.Clear();
             bfsCellZ.Clear();
@@ -1389,7 +1941,7 @@ namespace MakeGame.Systems
 
             bfsCellX.Add(cellX);
             bfsCellZ.Add(cellZ);
-            bfsVisited.Add(PieceKey(cellX, cellZ, level, 0));
+            bfsVisited.Add(PieceKey(space, cellX, cellZ, level, NonWallAxis));
 
             for (int head = 0; head < bfsCellX.Count; head++)
             {
@@ -1399,21 +1951,22 @@ namespace MakeGame.Systems
                 int x = bfsCellX[head];
                 int z = bfsCellZ[head];
 
-                // 머리 위(바로 위층 바닥 = 지붕)가 없으면 실내가 아니다.
-                if (!floorByKey.ContainsKey(PieceKey(x, z, level + 1, 0)))
+                // 머리 위(바로 위층 바닥 = 지붕)가 없으면 실내가 아니다. 계단이 선 칸은 예외다.
+                if (!HasFloorAt(space, x, z, level + 1)
+                    && !stairByKey.ContainsKey(PieceKey(space, x, z, level, NonWallAxis)))
                     return false;
 
                 for (int side = 0; side < 4; side++)
                 {
                     GetEdgeOfCell(x, z, side, out int ex, out int ez, out int axis);
-                    if (wallByKey.ContainsKey(PieceKey(ex, ez, level, axis)))
+                    if (wallByKey.ContainsKey(PieceKey(space, ex, ez, level, axis)))
                         continue; // 벽·문·창문이 막고 있다
 
                     GetNeighborCell(x, z, side, out int nx, out int nz);
-                    long neighborKey = PieceKey(nx, nz, level, 0);
-                    if (!floorByKey.ContainsKey(neighborKey))
+                    if (!HasFloorAt(space, nx, nz, level))
                         return false; // 벽도 바닥도 없다 → 바깥으로 샌다
 
+                    long neighborKey = PieceKey(space, nx, nz, level, NonWallAxis);
                     if (bfsVisited.Add(neighborKey))
                     {
                         bfsCellX.Add(nx);
@@ -1429,9 +1982,9 @@ namespace MakeGame.Systems
         // 격자 계산
         // ────────────────────────────────────────────────────────────────────────
 
-        private static int CellIndexOf(float world)
+        private static int CellIndexOf(float coordinate)
         {
-            return Mathf.FloorToInt(world / CellSize);
+            return Mathf.FloorToInt(coordinate / CellSize);
         }
 
         private static float CellCenterCoord(int index)
@@ -1487,16 +2040,18 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// (x, z, level, axis)를 long 하나로 접는다. x/z 각 21비트(±1,048,575 - 월드 반경 20,000m를
-        /// 셀 크기 2로 나눠도 10,000이라 넉넉하다), level 12비트, axis 2비트로 총 56비트다.
+        /// (space, x, z, level, axis)를 long 하나로 접는다. x/z 각 21비트(±1,048,575 - 월드 반경
+        /// 20,000m를 셀 크기 2로 나눠도 10,000이라 넉넉하다), level 12비트, axis 2비트, 공간 1비트로
+        /// 총 57비트다. 공간 비트가 있어서 지면 (0,0,0)칸과 갑판 (0,0,0)칸이 절대 섞이지 않는다.
         /// </summary>
-        private static long PieceKey(int x, int z, int level, int axis)
+        private static long PieceKey(BuildSpace space, int x, int z, int level, int axis)
         {
             long kx = (long)(x + 1048576) & 0x1FFFFF;
             long kz = (long)(z + 1048576) & 0x1FFFFF;
             long kl = (long)(level + 512) & 0xFFF;
             long ka = axis & 0x3;
-            return (kx << 35) | (kz << 14) | (kl << 2) | ka;
+            long ks = (long)space & 0x1;
+            return (ks << 56) | (kx << 35) | (kz << 14) | (kl << 2) | ka;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -1520,8 +2075,7 @@ namespace MakeGame.Systems
     /// <summary>
     /// 조각 하나의 저장 항목. **필드 제거·개명은 세이브를 깬다 - 추가만 하라**(AGENT_BRIEF 3장).
     /// 좌표를 격자 키와 실제 위치 양쪽으로 저장하는 이유: 격자 키는 점유 판정과 실내 판정에 필요하고,
-    /// 실제 위치는 지형 높이에 맞춰 놓은 1층 바닥의 y를 원래대로 되살리는 데 필요하다(지형이 같은
-    /// 시드로 다시 생성되더라도 다시 레이를 쏴서 재계산하면 미세하게 달라질 수 있다).
+    /// 실제 위치는 지형 높이에 맞춰 놓은 1층 바닥의 y를 원래대로 되살리는 데 필요하다.
     /// </summary>
     [System.Serializable]
     public class BuildPieceSaveEntry
@@ -1535,6 +2089,12 @@ namespace MakeGame.Systems
         public float posY;
         public float posZ;
         public float yaw;
+
+        /// <summary>
+        /// [배치 26 추가] 0 = 지면(좌표가 곧 월드) · 1 = 뗏목 갑판(좌표가 갑판 로컬).
+        /// 이 필드가 없는 옛 세이브는 JsonUtility가 0으로 채우고, 그게 정확히 옛 동작이다.
+        /// </summary>
+        public int space;
     }
 
     /// <summary>

@@ -32,8 +32,12 @@ namespace MakeGame.Systems
         /// <summary>좌현~우현 폭(로컬 X).</summary>
         public const float DeckWidth = 5.2f;
 
-        /// <summary>완성 갑판 윗면 높이(해수면 기준). 플레이어가 서는 면이다.</summary>
-        public const float DeckSurfaceY = 0.72f;
+        /// <summary>
+        /// 완성 갑판 윗면 높이(해수면 기준). 플레이어가 서는 면이자 건축 시스템이 집을 올리는 면이다.
+        /// **널판 상수에서 유도한다** - 널 높이/두께를 바꿨는데 이 값이 옛날 그대로면 갑판 위 건축물이
+        /// 허공에 뜨거나 바닥에 박힌다. 값 자체는 종전과 같은 0.72다.
+        /// </summary>
+        public const float DeckSurfaceY = DeckPlankY + DeckPlankThickness * 0.5f;
 
         /// <summary>선체 통나무 지름과 중심 높이. 지름 0.8 / 중심 0.1 이면 윗면이 정확히 0.5다.</summary>
         private const float LogDiameter = 0.8f;
@@ -45,6 +49,15 @@ namespace MakeGame.Systems
         /// <summary>갑판 널 중심 높이/두께. 0.67 ± 0.05 → 윗면이 DeckSurfaceY(0.72)와 일치한다.</summary>
         private const float DeckPlankY = 0.67f;
         private const float DeckPlankThickness = 0.10f;
+
+        /// <summary>
+        /// 갑판 널 개수. 갑판 치수의 **단일 출처**다 - BuildDeck(실제 널 배치)과 DeckLocalSize/HasDeck
+        /// (건축 시스템에 알려 주는 값)이 둘 다 여기서 나온다. 한쪽만 고치는 사고를 막는다.
+        /// </summary>
+        private const int DeckPlankCount = 10;
+
+        /// <summary>건축 전용 컨테이너 이름. 갑판 재생성이 절대로 지우지 않는 유일한 자식이다.</summary>
+        public const string PlacedStructuresName = "PlacedStructures";
 
         /// <summary>승선 발판이 고물에서 해변 쪽으로 뻗는 수평 거리.</summary>
         private const float RampRun = 2.2f;
@@ -74,6 +87,86 @@ namespace MakeGame.Systems
         private Transform visualRoot;
         private BoxCollider hullCollider;
 
+        // ── 건축 시스템 계약 ────────────────────────────────────────────────────────
+        private static RaftStructure activeInstance;
+
+        /// <summary>갑판 좌표계의 뿌리. 건조 단계가 바뀌어도 **절대 파괴되지 않는다**.</summary>
+        private Transform deckRoot;
+
+        /// <summary>건축 시스템이 소유하는 컨테이너. 여기 있는 것은 갑판 재생성에서 살아남는다.</summary>
+        private Transform placedStructures;
+
+        /// <summary>
+        /// 씬에 살아 있는 뗏목. 없으면 null이다.
+        /// 인스턴스 확보는 BoatConstructionSystem.EnsureRaftStructure가 담당하므로(중복 방지 포함)
+        /// 여기서는 "먼저 깨어난 쪽이 이긴다"만 지킨다 - 늦게 깨어난 중복은 스스로 비활성화한다.
+        /// </summary>
+        public static RaftStructure Active => activeInstance != null ? activeInstance : null;
+
+        /// <summary>
+        /// 갑판 위에 물건을 붙일 부모. 이 밑에 두면 뗏목 좌표계를 따라간다(뗏목이 옮겨져도 같이 간다).
+        /// 로컬 원점/회전은 뗏목 본체와 동일하므로, 갑판 윗면은 로컬 y = DeckTopLocalY다.
+        /// </summary>
+        public Transform DeckRoot
+        {
+            get
+            {
+                EnsureDeckRoot();
+                return deckRoot;
+            }
+        }
+
+        /// <summary>
+        /// 갑판 위 건축물 전용 컨테이너(DeckRoot의 자식). 뗏목은 이걸 만들어 주기만 하고 절대 비우지 않는다.
+        /// 내용물의 수명은 건축 시스템이 관리한다.
+        /// </summary>
+        public Transform PlacedStructures
+        {
+            get
+            {
+                EnsureDeckRoot();
+                return placedStructures;
+            }
+        }
+
+        /// <summary>
+        /// 지금 건조 단계에 **온전한 갑판이 깔려 있는가**. 통나무/골조만 있는 단계는 false다.
+        /// 널이 절반만 깔린 단계(고물 쪽 절반)도 false다 - 중심 대칭으로 쓸 수 있는 면적이 0이라
+        /// 조각을 놓으면 뱃머리 쪽 허공에 뜬다. 판정 자체는 DeckLocalSize에서 유도한다.
+        /// </summary>
+        public bool HasDeck
+        {
+            get
+            {
+                Vector2 size = DeckLocalSize;
+                return size.x > 0.01f && size.y > 0.01f;
+            }
+        }
+
+        /// <summary>갑판 윗면의 로컬 y. 널판 상수에서 유도한 값이다.</summary>
+        public float DeckTopLocalY => DeckSurfaceY;
+
+        /// <summary>
+        /// 실제로 널이 깔린 갑판의 가로(x) x 세로(z), 로컬 미터. 갑판이 없으면 (0,0).
+        /// 세로는 **원점 대칭으로 쓸 수 있는 길이**다(건축 시스템이 갑판 중심을 원점으로 보고 셀을 깐다).
+        /// </summary>
+        public Vector2 DeckLocalSize
+        {
+            get
+            {
+                GetDeckedSpan(builtLevel, out float minZ, out float maxZ);
+                float usable = 2f * Mathf.Min(-minZ, maxZ);
+                return usable > 0.01f ? new Vector2(DeckWidth, usable) : Vector2.zero;
+            }
+        }
+
+        /// <summary>
+        /// 건조 단계가 바뀌어 갑판(뗏목 파츠)이 다시 만들어졌을 때 발생한다.
+        /// DeckRoot와 그 밑의 건축 컨테이너는 재생성 대상이 아니므로, 구독자는 보통 아무것도 할 게 없다.
+        /// 갑판 높이/크기가 바뀌었을 수 있다는 신호로 쓴다.
+        /// </summary>
+        public event System.Action DeckRebuilt;
+
         /// <summary>승선 발판이 닿는 해변 높이(로컬 y). 지형 최대 높이가 씬 값으로 바뀌어도 따라가도록 실측한다.</summary>
         private float rampFootLocalY;
 
@@ -93,6 +186,20 @@ namespace MakeGame.Systems
         /// </summary>
         private void Awake()
         {
+            // 중복 방지: 정상 경로(BoatConstructionSystem.EnsureRaftStructure)는 이미 하나만 만든다.
+            // 여기 걸린다면 씬에 손으로 놓은 것 + 런타임 생성이 겹친 경우다. 먼저 깨어난 쪽이 이미
+            // 해안을 잡고 파츠를 지었을 수 있으므로, 나중 것을 파괴하지 않고 조용히 재운다
+            // (파괴하면 씬 직렬화 값이 사라진다 - AGENT_BRIEF 2장 2번).
+            if (activeInstance != null && activeInstance != this)
+            {
+                Debug.LogWarning($"[RaftStructure] 뗏목이 이미 있다. 중복 인스턴스 '{name}'을 비활성화한다.");
+                enabled = false;
+                return;
+            }
+
+            activeInstance = this;
+
+            EnsureDeckRoot();
             EnsureMaterials();
 
             var workbench = GetComponent<BoatWorkbench>();
@@ -109,7 +216,26 @@ namespace MakeGame.Systems
 
         private void OnEnable()
         {
+            if (activeInstance == null)
+                activeInstance = this;
+
             TrySubscribe();
+        }
+
+        private void OnDestroy()
+        {
+            if (activeInstance == this)
+                activeInstance = null;
+        }
+
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서는 static이 이전 실행의 값을 그대로 들고 있다.
+        /// 파괴된 뗏목을 가리킨 채로 남으면 Active가 "있는데 죽은" 객체를 돌려준다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            activeInstance = null;
         }
 
         private void OnDisable()
@@ -331,6 +457,61 @@ namespace MakeGame.Systems
         }
 
         // ─────────────────────────────────────────────────────────────────────────
+        //  갑판 계약 (건축 시스템이 쓰는 부분)
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 갑판 뿌리와 건축 컨테이너를 확보한다. 둘 다 뗏목 파츠(visualRoot)와 **형제**라서
+        /// RebuildVisual이 파츠를 통째로 지워도 살아남는다 - 갑판 위에 지은 집이 단계 상승에서
+        /// 사라지지 않는 이유가 이 부모 관계 하나다.
+        /// </summary>
+        private void EnsureDeckRoot()
+        {
+            if (deckRoot == null)
+            {
+                var rootObject = new GameObject("DeckRoot");
+                rootObject.transform.SetParent(transform, false);
+                deckRoot = rootObject.transform;
+            }
+
+            if (placedStructures == null)
+            {
+                var container = new GameObject(PlacedStructuresName);
+                container.transform.SetParent(deckRoot, false);
+                placedStructures = container.transform;
+            }
+        }
+
+        /// <summary>
+        /// 그 단계에서 실제로 깔리는 갑판 널 개수. BuildDeck과 DeckLocalSize가 공유하는 유일한 규칙이다.
+        /// </summary>
+        private static int GetBuiltPlankCount(int level)
+        {
+            if (level < 2)
+                return 0;
+
+            return level >= 3 ? DeckPlankCount : DeckPlankCount / 2;
+        }
+
+        /// <summary>
+        /// 널이 실제로 덮은 로컬 z 구간. 널은 고물(-Z)부터 채워지므로 절반 단계에서는 앞쪽이 비어 있다.
+        /// 널이 하나도 없으면 빈 구간(0,0)을 준다.
+        /// </summary>
+        private static void GetDeckedSpan(int level, out float minZ, out float maxZ)
+        {
+            int planks = GetBuiltPlankCount(level);
+            if (planks <= 0)
+            {
+                minZ = 0f;
+                maxZ = 0f;
+                return;
+            }
+
+            minZ = -DeckLength * 0.5f;
+            maxZ = minZ + (DeckLength / DeckPlankCount) * planks;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
         //  외형 조립
         // ─────────────────────────────────────────────────────────────────────────
 
@@ -360,6 +541,10 @@ namespace MakeGame.Systems
         private void RebuildVisual(int level)
         {
             EnsureMaterials();
+
+            // 갑판 뿌리/건축 컨테이너는 여기서 절대 건드리지 않는다. 아래에서 지우는 것은
+            // visualRoot(뗏목 자신의 파츠)뿐이고, DeckRoot는 그 형제라 재생성의 영향을 받지 않는다.
+            EnsureDeckRoot();
 
             if (visualRoot != null)
             {
@@ -396,6 +581,12 @@ namespace MakeGame.Systems
                 BuildCargo(level);
 
             ApplyHullCollider(level);
+
+            // 갑판 콜라이더가 방금 바뀌었다. 구독자가 이 프레임에 레이캐스트를 쏠 수 있으므로
+            // 물리 씬을 먼저 맞춘다(Physics.autoSyncTransforms = false - AGENT_BRIEF 4장).
+            Physics.SyncTransforms();
+
+            DeckRebuilt?.Invoke();
         }
 
         /// <summary>
@@ -452,12 +643,12 @@ namespace MakeGame.Systems
         /// <summary>
         /// 갑판 널. 2단계에서는 고물 쪽 절반만 깔리고, 3단계에서 전면이 채워진다.
         /// 널 하나가 폭 전체를 가로지르므로(가로 널) 이음매가 진행 방향으로 줄지어 보인다.
+        /// 개수/간격은 GetBuiltPlankCount가 단일 출처다 - DeckLocalSize도 같은 함수를 본다.
         /// </summary>
         private void BuildDeck(int level)
         {
-            const int PlankCount = 10;
-            float pitch = DeckLength / PlankCount;
-            int builtPlanks = level >= 3 ? PlankCount : PlankCount / 2;
+            float pitch = DeckLength / DeckPlankCount;
+            int builtPlanks = GetBuiltPlankCount(level);
 
             for (int i = 0; i < builtPlanks; i++)
             {
