@@ -97,6 +97,17 @@ namespace MakeGame.UI
 
         private bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
+        /// <summary>
+        /// 이 창의 드래그 손잡이(읽기 전용). MakeGame.Systems.CursorLockController가 "열린 창" 목록에서
+        /// 이 핫바만 골라내기 위해 참조한다 - 이 창은 플레이어가 여는 창이 아니라 건축 모드 동안 계속
+        /// 떠 있는 핫바이고, 조준은 커서가 아니라 카메라 정면 레이(BuildingSystem.ResolveTarget)이므로
+        /// 이 창 때문에 커서를 풀면 건축 모드 내내 시야가 얼어붙는다. 읽기 전용이라 창 조립에는 영향이 없다.
+        /// </summary>
+        public UIDragHandle WindowDragHandle => dragHandle;
+
+        /// <summary>지금 건축 핫바가 떠 있는지(읽기 전용). 내부 IsOpen을 그대로 노출만 한다.</summary>
+        public bool IsWindowOpen => IsOpen;
+
         /// <summary>씬이 로드될 때마다 새 BuildMenuUI를 만든다(QuestUI와 같은 패턴).</summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Bootstrap()

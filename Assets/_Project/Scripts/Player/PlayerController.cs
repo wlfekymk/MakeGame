@@ -44,6 +44,12 @@ namespace MakeGame.Player
         [Tooltip("시점 카메라 (상하 회전은 이 카메라에만 적용한다)")]
         public Transform cameraTransform;
 
+        [Header("커서 잠금")]
+        [Tooltip("커서 잠금 상태가 바뀐 직후 시야 회전을 건너뛸 프레임 수.\n" +
+            "Input.GetAxis(\"Mouse X\")는 잠금이 걸리거나 풀리는 순간 큰 값이 한 번 튀는 경우가 있어, " +
+            "그 프레임을 버리지 않으면 커서를 다시 잠그는 순간 시야가 홱 돌아간다. 0이면 이 보호가 꺼진다.")]
+        public int lookSettleFrames = 2;
+
         [Tooltip("이동 속도 판정에 사용할 생존 수치 컴포넌트 (골절 시 감속 등)")]
         public SurvivalStats survivalStats;
 
@@ -51,10 +57,26 @@ namespace MakeGame.Player
         private Vector3 verticalVelocity;
         private float cameraPitch = 0f;
 
+        // 커서 잠금 상태가 바뀐 프레임을 알아보기 위한 직전 상태와, 그때 회전을 건너뛸 남은 프레임 수.
+        private bool lookCursorWasLocked;
+        private int lookSettleCounter;
+
         /// <summary>필요한 컴포넌트 참조를 캐싱한다.</summary>
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
+            lookCursorWasLocked = Cursor.lockState == CursorLockMode.Locked;
+            lookSettleCounter = Mathf.Max(0, lookSettleFrames);
+        }
+
+        /// <summary>
+        /// 이 컴포넌트는 타이틀 화면 동안 꺼져 있다가 켜진다(MainMenuController.SetGameplayEnabled).
+        /// 다시 켜지는 첫 프레임에도 마우스 델타가 튈 수 있으므로 같은 보호를 건다.
+        /// </summary>
+        private void OnEnable()
+        {
+            lookCursorWasLocked = Cursor.lockState == CursorLockMode.Locked;
+            lookSettleCounter = Mathf.Max(0, lookSettleFrames);
         }
 
         /// <summary>
@@ -68,9 +90,35 @@ namespace MakeGame.Player
 
         /// <summary>
         /// 마우스 입력으로 좌우(플레이어 몸체)/상하(카메라) 시점을 회전시킨다.
+        ///
+        /// **커서가 잠겨 있을 때만 돈다.** 커서 잠금은 MakeGame.Systems.CursorLockController가 한 곳에서
+        /// 판정하고(창 열림 · timeScale 0 · Shift 해제 키), 이 한 조건이 인벤토리·제작·퀘스트·지도 창
+        /// 조작, 일시정지, 타이틀·설정·엔딩·사망 화면을 전부 덮는다. 커서가 풀린 동안 마우스를 움직여도
+        /// 화면이 따라 돌지 않는다 - 감독이 요청한 "Shift를 누르면 마우스만 움직이고 시야는 그대로"가 이것이다.
+        ///
+        /// 이동(HandleMove)에는 이 조건을 걸지 않는다. 창을 열어 둔 채 걸을 수 있는 것은 기존 동작이다.
         /// </summary>
         private void HandleLook()
         {
+            bool cursorLocked = Cursor.lockState == CursorLockMode.Locked;
+
+            // 잠금 상태가 바뀐 프레임은 회전을 건너뛴다. 잠금 전환 직후 Input.GetAxis("Mouse X")가 큰
+            // 값으로 한 번 튀는 경우가 있어, 그대로 쓰면 커서를 다시 잠그는 순간 시야가 홱 돌아간다.
+            if (cursorLocked != lookCursorWasLocked)
+            {
+                lookCursorWasLocked = cursorLocked;
+                lookSettleCounter = Mathf.Max(0, lookSettleFrames);
+            }
+
+            if (!cursorLocked)
+                return;
+
+            if (lookSettleCounter > 0)
+            {
+                lookSettleCounter--;
+                return;
+            }
+
             float mouseX = Input.GetAxis("Mouse X") * lookSensitivity;
             float mouseY = Input.GetAxis("Mouse Y") * lookSensitivity;
 
