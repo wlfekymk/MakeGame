@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
 using MakeGame.Player;
@@ -78,6 +79,28 @@ namespace MakeGame.Systems
         [Tooltip("병입한 생수를 넣을 인벤토리. 증류기는 런타임에 설치되어 인스펙터 연결 수단이 없으므로," +
             " 비어 있으면 최초 병입 시 씬에서 자동으로 찾는다.")]
         public PlayerInventory targetInventory;
+
+        // ── 활성 증류기 목록 (정착 배치 2) ─────────────────────────────────────────────────────
+        //
+        // 왜 필요한가: 저장궤가 홈 반경 안의 증류기에서 생수를 자동으로 걷어 오려면(Design_Settlement
+        // 2-3 3번) Shelter가 주기적으로 "내 반경 안의 증류기"를 알아야 한다. Campfire.Active와 완전히
+        // 같은 방식이며, 매번 씬 전체를 훑지 않기 위한 것이다.
+
+        private static readonly List<WaterStill> activeStills = new List<WaterStill>();
+
+        /// <summary>현재 씬에 살아 있는 증류기 목록(읽기 전용).</summary>
+        public static IReadOnlyList<WaterStill> Active => activeStills;
+
+        private void OnEnable()
+        {
+            if (!activeStills.Contains(this))
+                activeStills.Add(this);
+        }
+
+        private void OnDisable()
+        {
+            activeStills.Remove(this);
+        }
 
         /// <summary>
         /// 생성 직후 캡슐 하나뿐인 밋밋한 프리팹 대신, 바스킷+지지대+집수 돔으로 구성된
@@ -206,13 +229,34 @@ namespace MakeGame.Systems
             if (!CanBottle(inventory))
                 return 0;
 
-            int bottles = GetAvailableBottleCount();
-            storedWater = Mathf.Max(0f, storedWater - bottles * waterPerBottle);
+            int bottles = ExtractBottles(int.MaxValue);
+            if (bottles <= 0)
+                return 0;
 
             for (int i = 0; i < bottles; i++)
                 inventory.AddItem(bottledWaterItem);
 
             AudioManager.Instance?.PlayPickup(); // 채집/획득과 같은 "받았다" 신호
+            return bottles;
+        }
+
+        /// <summary>
+        /// 저장된 물에서 생수 개수만큼만 물을 덜어내고 그 개수를 반환한다. **아이템을 지급하지 않는다** -
+        /// 지급처가 인벤토리가 아닌 경우(정착 배치 2: 저장궤가 밤사이 대신 걷어 두는 경로,
+        /// Shelter.TryBottleFromStill)를 위해 "물 → 병 수" 환산만 떼어낸 것이다.
+        /// 병 하나에 못 미치는 나머지 물은 CollectIntoBottles와 동일하게 저장통에 그대로 남는다.
+        /// </summary>
+        /// <param name="maxBottles">이번에 가져갈 최대 병 수(제한이 없으면 int.MaxValue).</param>
+        public int ExtractBottles(int maxBottles)
+        {
+            if (bottledWaterItem == null || waterPerBottle <= 0f || maxBottles <= 0)
+                return 0;
+
+            int bottles = Mathf.Min(maxBottles, GetAvailableBottleCount());
+            if (bottles <= 0)
+                return 0;
+
+            storedWater = Mathf.Max(0f, storedWater - bottles * waterPerBottle);
             return bottles;
         }
 

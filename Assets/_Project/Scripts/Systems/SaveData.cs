@@ -165,6 +165,26 @@ namespace MakeGame.Systems
 
         [Tooltip("설치된 슬롯 비트마스크. bit0=문 / bit1=침상 / bit2=저장궤 (Shelter.SlotDoor 등 상수 참고).")]
         public int slotMask;
+
+        // ── 저장궤 (정착 배치 2) ──────────────────────────────────────────────────────────
+        // 여기도 **추가만 했다.** 리스트 필드는 초기화 구문(= new List<>())이 있으므로 이 필드가 없던
+        // 옛 세이브를 읽어도 빈 리스트가 되어 NRE 없이 안전하다 - structures 필드를 처음 추가할 때와
+        // 완전히 같은 관례다(이 파일 맨 위 하위호환 설명 참고). 저장궤가 없는 쉼터/모닥불/증류기
+        // 항목에서는 세 필드 모두 비어 있는 채로 무시된다.
+        //
+        // 마지막 정산 시각(Shelter.lastSettleSeconds)은 **일부러 저장하지 않는다.** 불러오면 시계도
+        // 저장 시점으로 함께 되돌아가므로, 복원 후 첫 정산에서 현재 시계로 기준점을 다시 잡으면
+        // 경과가 정확히 0이 된다. 저장했다가 어긋나면 없던 시간이 통째로 익혀지는 쪽이 더 위험하다.
+
+        [Header("쉼터 저장궤 전용 (정착 배치 2)")]
+        [Tooltip("저장궤에 보관 중인 재료(연료/물통/생식품)의 이름+개수 목록.")]
+        public List<ItemCountEntry> chestItems = new List<ItemCountEntry>();
+
+        [Tooltip("저장궤가 밤사이 모아 둔, 아직 수거하지 않은 결과물(생수/익힌 음식)의 이름+개수 목록.")]
+        public List<ItemCountEntry> chestYield = new List<ItemCountEntry>();
+
+        [Tooltip("생식품 훈연 진행도(게임 내 초). dryingSecondsPerItem에 도달할 때마다 1개가 익는다.")]
+        public float chestDryingProgress;
     }
 
     /// <summary>

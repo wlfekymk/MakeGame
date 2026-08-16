@@ -523,6 +523,11 @@ namespace MakeGame.Systems
                     // StructureSaveEntry 1개 + 정수 1개로 끝난다(Design_Settlement 2-1).
                     level = sh.level,
                     slotMask = sh.slotMask,
+                    // 정착 배치 2: 저장궤의 보관물/결과물/훈연 진행도. ItemData는 직렬화할 수 없으므로
+                    // 인벤토리(InventorySaveEntry)와 같은 관례대로 itemName으로만 기록한다.
+                    chestItems = ToItemCountEntries(sh.ChestStock),
+                    chestYield = ToItemCountEntries(sh.ChestYield),
+                    chestDryingProgress = sh.DryingProgressSeconds,
                 });
             }
 
@@ -658,7 +663,61 @@ namespace MakeGame.Systems
             // 떠오르는 일은 없다.
             var shelter = go.GetComponent<Shelter>();
             if (shelter != null)
+            {
                 shelter.ApplySavedState(entry.level, entry.slotMask);
+
+                // 정착 배치 2: 저장궤 상태. 이름 → ItemData 해석은 이미 캐시를 들고 있는 이쪽에서 한다
+                // (Shelter가 같은 캐시를 또 만들지 않도록). 이름이 풀리지 않는 항목은 조용히 버려진다 -
+                // 인벤토리 복원(RestoreInventory)이 이름 미해결 항목을 다루는 방식과 같은 규칙이다.
+                shelter.RestoreChestState(
+                    ToShelterStacks(entry.chestItems),
+                    ToShelterStacks(entry.chestYield),
+                    entry.chestDryingProgress);
+            }
+        }
+
+        /// <summary>Shelter의 저장궤 묶음 목록을 이름+개수 저장 항목으로 바꾼다(ItemData는 직렬화 불가).</summary>
+        private static List<ItemCountEntry> ToItemCountEntries(IReadOnlyList<ShelterItemStack> stacks)
+        {
+            var entries = new List<ItemCountEntry>();
+            if (stacks == null)
+                return entries;
+
+            for (int i = 0; i < stacks.Count; i++)
+            {
+                ShelterItemStack stack = stacks[i];
+                if (stack == null || stack.data == null || stack.count <= 0)
+                    continue;
+
+                entries.Add(new ItemCountEntry { itemName = stack.data.itemName, count = stack.count });
+            }
+
+            return entries;
+        }
+
+        /// <summary>저장된 이름+개수 목록을 ItemData 참조가 붙은 저장궤 묶음으로 되돌린다.</summary>
+        private List<ShelterItemStack> ToShelterStacks(List<ItemCountEntry> entries)
+        {
+            var stacks = new List<ShelterItemStack>();
+            if (entries == null)
+                return stacks;
+
+            foreach (var entry in entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
+                    continue;
+
+                ItemData data = FindItemDataByName(entry.itemName);
+                if (data == null)
+                {
+                    Debug.LogWarning($"[SaveLoadController] 저장궤에 있던 '{entry.itemName}'의 ItemData를 찾지 못해 복원하지 못했습니다.");
+                    continue;
+                }
+
+                stacks.Add(new ShelterItemStack(data, entry.count));
+            }
+
+            return stacks;
         }
 
         /// <summary>저장된 물 증류기 한 대를 waterStillPrefab으로 재생성하고 저장된 물의 양을 되돌린다.</summary>

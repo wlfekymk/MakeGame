@@ -61,6 +61,51 @@ namespace MakeGame.Systems
         [Tooltip("침상 슬롯이 설치돼 있을 때 추가로 회복되는 체력량.")]
         public float bedSlotSleepHealBonus = 10f;
 
+        // ── 저장궤 = 자동 공급원 (정착 배치 2) ────────────────────────────────────────────────
+        //
+        // 왜 "보관"이 아니라 "공급"인가: 인벤토리에 용량 제한이 없어서 창고형 저장은 게임적 가치가
+        // 정확히 0이다(Design_Settlement 0장 실측 - PlayerInventory에 maxSlots가 없다). 그래서
+        // 저장궤는 넣어둔 것을 **홈 반경 안의 모닥불·증류기가 스스로 가져다 쓰는 공급원**이고,
+        // 동시에 **밤사이 결과물을 모아두는 곳**이다(2-3 3번 / 4장 아침 수거).
+        //
+        // 세 갈래로만 동작한다.
+        //  1) 연료  : 홈 반경 안의 모닥불이 꺼지기 직전에 저장궤에서 나뭇가지를 스스로 가져간다.
+        //  2) 물통  : 홈 반경 안의 증류기가 찬 물을 저장궤가 생수로 걷어 둔다(물통은 소모되지 않는다 -
+        //             수동 병입 규칙 HasBottleContainer와 완전히 같다).
+        //  3) 훈연  : 저장궤에 넣어둔 생식품이 시간이 지나면 익힌 것(ItemData.cookedResult)으로 바뀐다.
+        //             **새 자원을 만들지 않는다**(0장 경고) - 이미 있는 조리 결과 참조를 그대로 쓴다.
+        //
+        // 1·2는 실시간(각자 Update)으로 진행되는 것을 대신 걷어오는 것이라 이중 계산이 없고,
+        // 3은 오직 여기서만 진행되므로 **게임 내 시계 경과분**으로 누적한다(취침 스킵 포함, 아래 참고).
+
+        [Header("저장궤 자동 공급 (정착 배치 2)")]
+        [Tooltip("저장궤가 보관할 수 있는 연료(모닥불 fuelItem) 최대 개수.\n" +
+            "상한을 두는 이유: 보급은 '지을 게 없을 때'의 마지막 행동이라, 상한이 없으면 들고 있던 연료를 " +
+            "통째로 삼켜 나중에 슬롯 재료로 쓸 나뭇가지가 사라진다.")]
+        public int chestFuelCapacity = 10;
+
+        [Tooltip("저장궤가 보관할 수 있는 물통(증류기 requiredContainerItem) 최대 개수.\n" +
+            "물통은 병입에 소모되지 않으므로(WaterStill.HasBottleContainer) 1개만 넣어두면 영구히 동작한다.")]
+        public int chestContainerCapacity = 1;
+
+        [Tooltip("저장궤가 보관할 수 있는 생식품(isRawFood + cookedResult 보유) 최대 개수.")]
+        public int chestRawFoodCapacity = 6;
+
+        [Tooltip("생식품 1개를 익힌 것으로 바꾸는 데 필요한 **게임 내** 시간(초).\n" +
+            "secondsPerDay 600 기준 120초 = 0.2일. 밤 하나(0.5일 = 300초)를 통째로 자면 2개가 마르므로, " +
+            "가득 채운 저장궤(6개)를 비우는 데 사흘 밤이 걸린다 - 하루에 한 번 들르는 리듬에 맞춘 값이다.")]
+        public float dryingSecondsPerItem = 120f;
+
+        [Tooltip("모닥불의 남은 연료가 이 시간(초) 이하로 떨어지면 저장궤가 연료를 한 개 넣어준다.")]
+        public float campfireRefuelThresholdSeconds = 5f;
+
+        [Tooltip("자동 공급/정산을 실행하는 간격(실제 초). 매 프레임 돌 필요가 전혀 없는 처리다.")]
+        public float autoSupplyInterval = 0.5f;
+
+        [Tooltip("한 번의 정산이 인정하는 최대 게임 내 경과 시간(초). 비정상적으로 큰 시계 점프가" +
+            " 저장궤를 통째로 익혀버리는 것을 막는 안전장치다(600 = 하루, 기본 1800 = 사흘).")]
+        public float maxSettleSeconds = 1800f;
+
         // ── 승급/슬롯 재료 ────────────────────────────────────────────────────────────────────
         // ItemData 직접 참조 대신 **아이템 이름**으로 요구한다: 이 컴포넌트는 프리팹에만 붙어 있고
         // 프리팹 편집은 디렉터 전용이라(AGENT_BRIEF 2장 3번) 인스펙터로 ItemData를 배선할 방법이 없다.
@@ -234,6 +279,566 @@ namespace MakeGame.Systems
 
                 return baseHeal + (HasSlot(SlotBed) ? bedSlotSleepHealBonus : 0f);
             }
+        }
+
+        // ── 저장궤 상태 ───────────────────────────────────────────────────────────────────────
+        //
+        // 씬/프리팹에 직렬화하지 않는 **순수 런타임 상태**다(public 필드로 노출하면 프리팹에 죽은 키가
+        // 생긴다). 저장은 SaveData.StructureSaveEntry.chestItems/chestYield/chestDryingProgress로
+        // 가고, 복원은 RestoreChestState 하나로 들어온다.
+        //
+        // 이름이 아니라 ItemData 참조로 들고 있는 이유: 저장궤에 들어오는 경로가 (1) 플레이어 인벤토리
+        // (2) ItemData.cookedResult (3) WaterStill.bottledWaterItem 셋뿐이고 셋 다 이미 참조다.
+        // 이름 대조가 필요한 곳은 세이브 복원 한 곳뿐이라, 그 해석은 이름→ItemData 캐시를 이미 들고 있는
+        // SaveLoadController에 맡긴다(중복 캐시를 만들지 않는다).
+
+        private readonly List<ShelterItemStack> chestStock = new List<ShelterItemStack>();
+        private readonly List<ShelterItemStack> chestYield = new List<ShelterItemStack>();
+        private float dryingProgressSeconds;
+
+        private float autoSupplyTimer;
+        private float lastSettleSeconds;
+        private bool settleInitialized;
+
+        private static SurvivalClock cachedClock;
+
+        /// <summary>저장궤에 보관 중인 재료(연료/물통/생식품). 세이브 전용 읽기 창구다.</summary>
+        public IReadOnlyList<ShelterItemStack> ChestStock => chestStock;
+
+        /// <summary>수거를 기다리는 결과물(생수/익힌 음식). 세이브 전용 읽기 창구다.</summary>
+        public IReadOnlyList<ShelterItemStack> ChestYield => chestYield;
+
+        /// <summary>현재 훈연 진행도(게임 내 초). 세이브 전용 읽기 창구다.</summary>
+        public float DryingProgressSeconds => dryingProgressSeconds;
+
+        /// <summary>저장궤 기능이 실제로 켜져 있는지(= Lv2 이상 + 저장궤 슬롯 설치됨).</summary>
+        public bool ChestActive => level >= SlotUnlockLevel && HasSlot(SlotChest);
+
+        /// <summary>수거할 결과물이 하나라도 있는지. 프롬프트 UI가 매 프레임 물어봐도 안전하다.</summary>
+        public bool HasYield => chestYield.Count > 0;
+
+        /// <summary>
+        /// 세이브에서 읽은 저장궤 상태를 되돌린다(SaveLoadController.RestoreShelter 전용).
+        /// lastSettleSeconds는 **저장하지 않는다** - 불러오면 시계도 저장 시점으로 함께 되돌아가므로
+        /// 다음 정산에서 현재 시계로 다시 초기화하면 경과가 0이 되어 정확하다. 저장했다가 잘못 복원하면
+        /// 오히려 없던 시간이 통째로 익혀지는 쪽이 위험하다.
+        /// </summary>
+        public void RestoreChestState(List<ShelterItemStack> savedStock, List<ShelterItemStack> savedYield, float savedDryingProgress)
+        {
+            chestStock.Clear();
+            chestYield.Clear();
+
+            if (savedStock != null)
+            {
+                foreach (var stack in savedStock)
+                    AddToStacks(chestStock, stack != null ? stack.data : null, stack != null ? stack.count : 0);
+            }
+
+            if (savedYield != null)
+            {
+                foreach (var stack in savedYield)
+                    AddToStacks(chestYield, stack != null ? stack.data : null, stack != null ? stack.count : 0);
+            }
+
+            dryingProgressSeconds = Mathf.Max(0f, savedDryingProgress);
+            settleInitialized = false; // 다음 정산에서 복원된 시계 값으로 다시 기준점을 잡는다.
+        }
+
+        // ── 정산 루프 ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 저장궤가 켜져 있을 때만 도는 주기 처리. 프레임마다 돌 필요가 없어 autoSupplyInterval로 묶는다.
+        /// </summary>
+        private void Update()
+        {
+            if (!ChestActive)
+                return;
+
+            autoSupplyTimer += Time.deltaTime;
+            if (autoSupplyTimer < autoSupplyInterval)
+                return;
+
+            autoSupplyTimer = 0f;
+
+            SettleElapsedTime();
+            RunAutoSupply();
+        }
+
+        /// <summary>
+        /// **마지막 정산 시각과의 차이만큼** 훈연을 진행시킨다.
+        ///
+        /// 왜 Time.deltaTime이 아니라 시계인가: TrySleep이 시계를 다음 아침으로 점프시키는데
+        /// (Shelter.TrySleep), 실시간 기준으로 누적하면 취침으로 건너뛴 밤이 통째로 사라져 "밤사이
+        /// 집이 모아 둔다"가 성립하지 않는다. 시계 차이로 재면 취침 점프분이 그대로 들어온다.
+        /// 훈연은 다른 어떤 시스템도 진행시키지 않으므로 이 방식으로 이중 계산이 발생할 수 없다
+        /// (증류기/모닥불은 각자 실시간으로 Tick하므로 시계 차이를 쓰면 이중 계산이 된다 - 그쪽은
+        /// SettleHomesForSkippedTime에서 **건너뛴 시간에 대해서만** 따로 보정한다).
+        /// </summary>
+        private void SettleElapsedTime()
+        {
+            SurvivalClock clock = ResolveClock();
+            if (clock == null)
+                return;
+
+            if (!settleInitialized)
+            {
+                lastSettleSeconds = clock.elapsedSeconds;
+                settleInitialized = true;
+                return;
+            }
+
+            float delta = clock.elapsedSeconds - lastSettleSeconds;
+            lastSettleSeconds = clock.elapsedSeconds;
+            if (delta <= 0f)
+                return;
+
+            AdvanceDrying(Mathf.Min(delta, Mathf.Max(0f, maxSettleSeconds)));
+        }
+
+        /// <summary>
+        /// 저장궤 안의 생식품을 익힌 것으로 바꿔 결과물 칸으로 옮긴다. 넣어둔 생식품이 없으면 진행도를
+        /// 0으로 되돌린다 - 빈 저장궤가 시간을 쌓아두었다가 넣자마자 즉시 익히는 것을 막는다.
+        /// </summary>
+        private void AdvanceDrying(float seconds)
+        {
+            if (dryingSecondsPerItem <= 0f)
+                return;
+
+            if (FindDryableFood() == null)
+            {
+                dryingProgressSeconds = 0f;
+                return;
+            }
+
+            dryingProgressSeconds += seconds;
+
+            // guard: dryingSecondsPerItem이 아주 작게 설정돼도 프레임을 잡아먹지 않게 상한을 둔다.
+            for (int guard = 0; guard < 64 && dryingProgressSeconds >= dryingSecondsPerItem; guard++)
+            {
+                ItemData raw = FindDryableFood();
+                if (raw == null)
+                    break;
+
+                dryingProgressSeconds -= dryingSecondsPerItem;
+                RemoveFromStacks(chestStock, raw, 1);
+                AddToStacks(chestYield, raw.cookedResult, 1);
+            }
+
+            if (FindDryableFood() == null)
+                dryingProgressSeconds = 0f;
+        }
+
+        /// <summary>저장궤 안에서 익힐 수 있는 생식품 한 종류를 찾는다. 없으면 null.</summary>
+        private ItemData FindDryableFood()
+        {
+            foreach (var stack in chestStock)
+            {
+                if (stack != null && stack.count > 0 && IsDryableFood(stack.data))
+                    return stack.data;
+            }
+
+            return null;
+        }
+
+        /// <summary>익힌 결과가 정의된 생음식인지. 새 아이템을 만들지 않고 기존 cookedResult만 쓴다.</summary>
+        private static bool IsDryableFood(ItemData data)
+        {
+            return data != null && data.isRawFood && data.cookedResult != null;
+        }
+
+        // ── 자동 공급 ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 홈 반경 안의 모닥불에 연료를 넣어주고, 증류기의 찬 물을 생수로 걷어 저장궤에 쌓는다.
+        /// 둘 다 실시간으로 진행되는 것을 대신 처리하는 것이라 추가 생산이 아니다 - 플레이어가 매번
+        /// 손으로 넣고 걷으러 다니지 않아도 되는 것이 저장궤의 보상이다(Design_Settlement 2-3 3번).
+        /// </summary>
+        private void RunAutoSupply()
+        {
+            float radius = HomeRadius;
+            if (radius <= 0f)
+                return;
+
+            float radiusSqr = radius * radius;
+            Vector3 origin = transform.position;
+
+            var fires = Campfire.Active;
+            for (int i = 0; i < fires.Count; i++)
+            {
+                Campfire fire = fires[i];
+                if (fire == null || (fire.transform.position - origin).sqrMagnitude > radiusSqr)
+                    continue;
+
+                TryRefuelCampfire(fire, false);
+            }
+
+            var stills = WaterStill.Active;
+            for (int i = 0; i < stills.Count; i++)
+            {
+                WaterStill still = stills[i];
+                if (still == null || (still.transform.position - origin).sqrMagnitude > radiusSqr)
+                    continue;
+
+                TryBottleFromStill(still);
+            }
+        }
+
+        /// <summary>
+        /// 모닥불이 꺼지기 직전이면 저장궤에서 연료 하나를 꺼내 넣어준다.
+        /// allowRelight가 false이면 **이미 켜져 있는 불만** 먹여 살린다 - 차갑게 식은 모닥불을 저장궤가
+        /// 스스로 점화하면 발화 도구(라이터/파이어스타터) 규칙을 우회하게 된다. true는 취침으로
+        /// 건너뛴 시간을 정산하는 도중, 방금 전까지 타고 있던 불이 그 안에서 꺼진 경우에만 쓴다.
+        /// </summary>
+        private bool TryRefuelCampfire(Campfire fire, bool allowRelight)
+        {
+            if (fire == null || fire.fuelItem == null)
+                return false;
+
+            if (!fire.isLit && !allowRelight)
+                return false;
+
+            if (fire.isLit && fire.remainingFuelSeconds > campfireRefuelThresholdSeconds)
+                return false;
+
+            if (!RemoveFromStacks(chestStock, fire.fuelItem, 1))
+                return false;
+
+            fire.AddFuelFromStorage(1);
+            return true;
+        }
+
+        /// <summary>
+        /// 증류기에 병 하나 분량 이상의 물이 찼고 저장궤에 물통이 있으면, 생수로 걷어 저장궤에 쌓는다.
+        /// 물통은 소모하지 않는다(수동 병입 규칙 WaterStill.HasBottleContainer와 동일).
+        /// </summary>
+        private int TryBottleFromStill(WaterStill still)
+        {
+            if (still == null || still.bottledWaterItem == null)
+                return 0;
+
+            if (still.requiredContainerItem != null && CountInChest(still.requiredContainerItem) <= 0)
+                return 0;
+
+            int bottles = still.ExtractBottles(int.MaxValue);
+            if (bottles > 0)
+                AddToStacks(chestYield, still.bottledWaterItem, bottles);
+
+            return bottles;
+        }
+
+        /// <summary>
+        /// 취침으로 **건너뛴** 시간만큼 홈 반경 안의 증류기/모닥불을 앞으로 감는다.
+        ///
+        /// 왜 홈 반경 안만인가: 밖에 세워둔 증류기는 예전 그대로(취침 중 정지)다. 집 반경 안에서만
+        /// 밤이 실제로 흐르게 두면 "집에 시설을 모아두는 것"이 곧 밤사이 생산이 되고, 그것이 아침에
+        /// 수거할 것을 만든다(Design_Settlement 4장). 대칭으로 모닥불도 그 시간만큼 타 들어가므로
+        /// 취침이 연료를 공짜로 아껴주는 일은 없다 - 저장궤에 연료를 넣어둔 집만 아침에 불이 살아 있다.
+        /// 날씨 배율(WeatherSystem의 증류기 ×3 / 연료 ×1.5)은 건너뛴 시간에 적용하지 않는다. 건너뛴
+        /// 구간의 날씨는 애초에 정해진 적이 없고, 자는 동안의 날씨를 사후에 지어내는 것은 "비 오는 낮에
+        /// 나갈 것인가"라는 선택(4장)을 흐릴 뿐이다 - 비의 이득은 깨어 있을 때만 받는다.
+        /// </summary>
+        /// <param name="seconds">시계가 앞으로 점프한 게임 내 시간(초).</param>
+        public static void SettleHomesForSkippedTime(float seconds)
+        {
+            if (seconds <= 0f)
+                return;
+
+            var stills = WaterStill.Active;
+            for (int i = 0; i < stills.Count; i++)
+            {
+                WaterStill still = stills[i];
+                if (still == null)
+                    continue;
+
+                Shelter home = FindHomeContaining(still.transform.position);
+                if (home == null)
+                    continue;
+
+                still.Tick(seconds);
+                if (home.ChestActive)
+                    home.TryBottleFromStill(still);
+            }
+
+            var fires = Campfire.Active;
+            for (int i = 0; i < fires.Count; i++)
+            {
+                Campfire fire = fires[i];
+                if (fire == null)
+                    continue;
+
+                Shelter home = FindHomeContaining(fire.transform.position);
+                if (home == null)
+                    continue;
+
+                home.BurnCampfireThroughSkippedTime(fire, seconds);
+            }
+        }
+
+        /// <summary>
+        /// 모닥불을 건너뛴 시간만큼 태운다. 도중에 연료가 떨어지면 저장궤에서 한 개씩 이어 넣어,
+        /// 연료가 충분한 집이라면 아침에도 불이 켜져 있게 만든다. 저장궤가 비면 거기서 꺼진다.
+        /// </summary>
+        private void BurnCampfireThroughSkippedTime(Campfire fire, float seconds)
+        {
+            if (fire == null || !fire.isLit)
+                return;
+
+            // guard: 연료 상한(chestFuelCapacity)이 있어 반복은 그 개수 + 1을 넘지 않는다.
+            for (int guard = 0; guard < 128 && seconds > 0f; guard++)
+            {
+                float step = Mathf.Min(seconds, Mathf.Max(fire.remainingFuelSeconds, 0.01f));
+                fire.Tick(step);
+                seconds -= step;
+
+                if (fire.isLit)
+                    continue;
+
+                if (seconds <= 0f)
+                    break;
+
+                if (!ChestActive || !TryRefuelCampfire(fire, true))
+                    break;
+            }
+        }
+
+        // ── 보급 / 수거 ───────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 저장궤가 밤사이 모아둔 결과물을 한 번에 전부 인벤토리로 옮긴다. **아침에 할 일**이 이것이다.
+        /// 시간대 제한은 두지 않는다 - 강제하면 힐링이 아니라 출근이 된다(Design_Settlement 4장 마지막 줄).
+        /// </summary>
+        /// <returns>실제로 옮긴 개수(0이면 수거할 것이 없었다).</returns>
+        public int TryCollectYield(PlayerInventory inventory)
+        {
+            if (inventory == null || chestYield.Count == 0)
+                return 0;
+
+            int moved = 0;
+            var summary = new List<string>();
+
+            foreach (var stack in chestYield)
+            {
+                if (stack == null || stack.data == null || stack.count <= 0)
+                    continue;
+
+                for (int i = 0; i < stack.count; i++)
+                    inventory.AddItem(stack.data);
+
+                summary.Add($"{stack.data.itemName} {stack.count}");
+                moved += stack.count;
+            }
+
+            chestYield.Clear();
+            if (moved <= 0)
+                return 0;
+
+            AudioManager.Instance?.PlayPickup();
+            Debug.Log($"[Shelter] 저장궤 수거 - {string.Join(" · ", summary)}");
+            return moved;
+        }
+
+        /// <summary>
+        /// 인벤토리에서 저장궤가 실제로 쓸 수 있는 것(홈 반경 안 모닥불의 연료 / 증류기의 물통 /
+        /// 익힐 수 있는 생식품)만 골라 상한까지 넣는다. **쓸 곳이 없는 물건은 받지 않는다** - 창고가
+        /// 아니기 때문이고, 동시에 모닥불이 없는 집이 슬롯 재료용 나뭇가지를 삼키는 사고도 막힌다.
+        /// </summary>
+        /// <returns>실제로 넣은 개수(0이면 넣을 것이 없었다).</returns>
+        public int TryStockChest(PlayerInventory inventory)
+        {
+            if (inventory == null || !ChestActive)
+                return 0;
+
+            int stocked = 0;
+            var summary = new List<string>();
+
+            // 인벤토리를 직접 순회하며 지우면 인덱스가 흔들리므로, 넣을 종류를 먼저 모은다.
+            var kinds = new List<ItemData>();
+            foreach (var item in inventory.items)
+            {
+                if (item == null || item.data == null || kinds.Contains(item.data))
+                    continue;
+
+                if (GetChestCapacity(item.data) > 0)
+                    kinds.Add(item.data);
+            }
+
+            foreach (var data in kinds)
+            {
+                int take = GetStockableCount(inventory, data);
+                if (take <= 0 || !inventory.RemoveItems(data, take))
+                    continue;
+
+                AddToStacks(chestStock, data, take);
+                summary.Add($"{data.itemName} {take}");
+                stocked += take;
+            }
+
+            if (stocked <= 0)
+                return 0;
+
+            AudioManager.Instance?.PlayCraftSuccess();
+            Debug.Log($"[Shelter] 저장궤 보급 - {string.Join(" · ", summary)}");
+            return stocked;
+        }
+
+        /// <summary>
+        /// 이 아이템을 저장궤가 몇 개까지 받아주는지. 0이면 받지 않는다(= 쓸 곳이 없다).
+        /// 연료/물통은 **홈 반경 안에 그것을 쓰는 시설이 실제로 있을 때만** 받는다.
+        /// </summary>
+        public int GetChestCapacity(ItemData data)
+        {
+            if (data == null || !ChestActive)
+                return 0;
+
+            float radius = HomeRadius;
+            if (radius > 0f)
+            {
+                float radiusSqr = radius * radius;
+                Vector3 origin = transform.position;
+
+                var fires = Campfire.Active;
+                for (int i = 0; i < fires.Count; i++)
+                {
+                    Campfire fire = fires[i];
+                    if (fire != null && fire.fuelItem == data &&
+                        (fire.transform.position - origin).sqrMagnitude <= radiusSqr)
+                        return chestFuelCapacity;
+                }
+
+                var stills = WaterStill.Active;
+                for (int i = 0; i < stills.Count; i++)
+                {
+                    WaterStill still = stills[i];
+                    if (still != null && still.requiredContainerItem == data &&
+                        (still.transform.position - origin).sqrMagnitude <= radiusSqr)
+                        return chestContainerCapacity;
+                }
+            }
+
+            return IsDryableFood(data) ? chestRawFoodCapacity : 0;
+        }
+
+        /// <summary>
+        /// 지금 이 아이템을 저장궤에 몇 개까지 넣을 수 있는지(빈 자리와 소지량 중 작은 쪽).
+        ///
+        /// **마지막 한 개는 절대 가져가지 않는다.** 이 규칙이 없으면 물통 하나를 넣는 순간 원정지의
+        /// 증류기에서 손으로 병입할 수단이 사라지고(WaterStill.HasBottleContainer), 밤에 들고 있던
+        /// 마지막 생고기가 저장궤로 들어가 그날 먹을 것이 없어진다. 물통은 재제작이 가능하므로
+        /// (Recipe_물통: 대나무+노끈) 저장궤 전용 물통을 하나 더 만들면 되고, 그 비용은 "집이 알아서
+        /// 걷어둔다"의 대가로 타당하다. 힐링 게임에서 자동화가 손해로 느껴지면 아무도 안 쓴다.
+        /// </summary>
+        public int GetStockableCount(PlayerInventory inventory, ItemData data)
+        {
+            if (inventory == null || data == null)
+                return 0;
+
+            int room = GetChestCapacity(data) - CountInChest(data);
+            if (room <= 0)
+                return 0;
+
+            int spare = inventory.GetItemCount(data) - 1;
+            return Mathf.Max(0, Mathf.Min(room, spare));
+        }
+
+        /// <summary>수거 대기 중인 결과물을 "생수 2 · 구운고기 1" 형태의 한 줄로 만든다.</summary>
+        public string DescribeYield()
+        {
+            var parts = new List<string>();
+            foreach (var stack in chestYield)
+            {
+                if (stack != null && stack.data != null && stack.count > 0)
+                    parts.Add($"{stack.data.itemName} {stack.count}");
+            }
+
+            return parts.Count == 0 ? string.Empty : string.Join(" · ", parts);
+        }
+
+        /// <summary>지금 저장궤에 넣을 수 있는 것을 한 줄로 만든다. 없으면 null.</summary>
+        public string DescribeStockable(PlayerInventory inventory)
+        {
+            if (inventory == null || !ChestActive)
+                return null;
+
+            var parts = new List<string>();
+            var seen = new List<ItemData>();
+
+            foreach (var item in inventory.items)
+            {
+                if (item == null || item.data == null || seen.Contains(item.data))
+                    continue;
+
+                seen.Add(item.data);
+
+                int take = GetStockableCount(inventory, item.data);
+                if (take > 0)
+                    parts.Add($"{item.data.itemName} {take}");
+            }
+
+            return parts.Count == 0 ? null : string.Join(" · ", parts);
+        }
+
+        // ── 스택 유틸 ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>저장궤에 이 아이템이 몇 개 들어 있는지.</summary>
+        public int CountInChest(ItemData data)
+        {
+            if (data == null)
+                return 0;
+
+            foreach (var stack in chestStock)
+            {
+                if (stack != null && stack.data == data)
+                    return stack.count;
+            }
+
+            return 0;
+        }
+
+        private static void AddToStacks(List<ShelterItemStack> stacks, ItemData data, int count)
+        {
+            if (data == null || count <= 0)
+                return;
+
+            foreach (var stack in stacks)
+            {
+                if (stack != null && stack.data == data)
+                {
+                    stack.count += count;
+                    return;
+                }
+            }
+
+            stacks.Add(new ShelterItemStack(data, count));
+        }
+
+        private static bool RemoveFromStacks(List<ShelterItemStack> stacks, ItemData data, int count)
+        {
+            if (data == null || count <= 0)
+                return false;
+
+            for (int i = 0; i < stacks.Count; i++)
+            {
+                ShelterItemStack stack = stacks[i];
+                if (stack == null || stack.data != data || stack.count < count)
+                    continue;
+
+                stack.count -= count;
+                if (stack.count <= 0)
+                    stacks.RemoveAt(i);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>씬의 게임 내 시계. 정산의 기준이므로 한 번 찾아 정적으로 캐시한다.</summary>
+        private static SurvivalClock ResolveClock()
+        {
+            if (cachedClock == null)
+                cachedClock = FindAnyObjectByType<SurvivalClock>();
+
+            return cachedClock;
         }
 
         /// <summary>
@@ -434,7 +1039,15 @@ namespace MakeGame.Systems
 
             // "이 밤이 끝나는 아침"(TimeOfDay01 == 0.25)으로 이동시킨다. GetWakeDay 주석 참고 -
             // 예전의 ElapsedDays + 1은 자정을 넘긴 뒤에 자면 하루를 통째로 더 건너뛰었다.
-            clock.elapsedSeconds = GetWakeSeconds(clock);
+            float wakeSeconds = GetWakeSeconds(clock);
+            float skippedSeconds = Mathf.Max(0f, wakeSeconds - clock.elapsedSeconds);
+            clock.elapsedSeconds = wakeSeconds;
+
+            // [정착 배치 2] 건너뛴 밤을 홈 반경 안의 증류기/모닥불에도 그대로 흘려보낸다.
+            // 이 한 줄이 없으면 "자면 밤이 통째로 사라져서 아침에 걷을 것이 없다"가 된다
+            // (SettleHomesForSkippedTime 주석 참고). 저장궤 안 훈연은 시계 차이로 자동 반영되므로
+            // 여기서 따로 부르지 않는다 - 부르면 이중 계산이 된다.
+            SettleHomesForSkippedTime(skippedSeconds);
 
             if (survivalStats != null)
             {
@@ -457,23 +1070,45 @@ namespace MakeGame.Systems
         /// </summary>
         public string DescribeNextBuildAction(PlayerInventory inventory)
         {
-            int emptySlot = FindFirstEmptySlot();
+            // [정착 배치 2] 수거가 최우선이다 - 재료를 쓰지 않고, 아침에 집에 들르는 이유 그 자체다.
+            if (HasYield)
+                return $"수거: {DescribeYield()}";
 
+            // 지을 것이 막혔을 때만 보급이 실제 동작이 되므로, 안내도 그때만 덧붙인다(TryBuildNext와 동일 순서).
+            string stockSuffix = null;
+
+            int emptySlot = FindFirstEmptySlot();
             if (emptySlot >= 0)
             {
                 var slotReqs = GetSlotRequirements(emptySlot);
-                return HasAllMaterials(inventory, slotReqs)
-                    ? $"{SlotNames[emptySlot]} 설치 가능"
-                    : $"{SlotNames[emptySlot]}: {DescribeMissing(inventory, slotReqs)}";
+                if (HasAllMaterials(inventory, slotReqs))
+                    return $"{SlotNames[emptySlot]} 설치 가능";
+
+                stockSuffix = DescribeStockSuffix(inventory);
+                return $"{SlotNames[emptySlot]}: {DescribeMissing(inventory, slotReqs)}{stockSuffix}";
             }
 
             if (level >= maxLevel)
-                return "이미 최고 단계다 - 밤에 오면 취침할 수 있다";
+            {
+                stockSuffix = DescribeStockable(inventory);
+                return stockSuffix != null
+                    ? $"저장궤 보급: {stockSuffix}"
+                    : "이미 최고 단계다 - 밤에 오면 취침할 수 있다";
+            }
 
             var levelReqs = GetLevelRequirements(level + 1);
-            return HasAllMaterials(inventory, levelReqs)
-                ? $"Lv{level + 1} 승급 가능"
-                : $"Lv{level + 1} 승급: {DescribeMissing(inventory, levelReqs)}";
+            if (HasAllMaterials(inventory, levelReqs))
+                return $"Lv{level + 1} 승급 가능";
+
+            stockSuffix = DescribeStockSuffix(inventory);
+            return $"Lv{level + 1} 승급: {DescribeMissing(inventory, levelReqs)}{stockSuffix}";
+        }
+
+        /// <summary>보급 안내를 뒤에 붙일 꼬리표. 넣을 것이 없으면 빈 문자열이라 문장이 그대로 남는다.</summary>
+        private string DescribeStockSuffix(PlayerInventory inventory)
+        {
+            string stockable = DescribeStockable(inventory);
+            return stockable == null ? string.Empty : $" · 저장궤 보급: {stockable}";
         }
 
         /// <summary>
@@ -484,11 +1119,20 @@ namespace MakeGame.Systems
         /// <returns>실제로 무언가 지었으면 true.</returns>
         public bool TryBuildNext(PlayerInventory inventory)
         {
+            // [정착 배치 2] 아침 수거가 최우선이다. 재료를 전혀 쓰지 않고, 이것이 "아침에 할 일"이다.
+            if (TryCollectYield(inventory) > 0)
+                return true;
+
             int emptySlot = FindFirstEmptySlot();
             if (emptySlot >= 0 && TryInstallSlot(inventory, emptySlot))
                 return true;
 
             if (TryUpgrade(inventory))
+                return true;
+
+            // [정착 배치 2] 지을 수 있는 것이 아무것도 없을 때만 저장궤 보급으로 떨어진다.
+            // 순서가 중요하다 - 보급이 먼저면 슬롯 재료로 쓸 나뭇가지를 저장궤가 먼저 삼켜버린다.
+            if (TryStockChest(inventory) > 0)
                 return true;
 
             // 실패 이유는 남아 있는 첫 후보 기준으로 한 줄만 남긴다.
@@ -744,6 +1388,28 @@ namespace MakeGame.Systems
         public ShelterMaterialRequirement(string itemName, int count)
         {
             this.itemName = itemName;
+            this.count = count;
+        }
+    }
+
+    /// <summary>
+    /// 저장궤 안의 아이템 한 묶음(ItemData + 개수). 정착 배치 2.
+    /// ShelterMaterialRequirement가 **이름**을 쓰는 것과 반대로 여기는 **참조**를 쓴다: 이 묶음은
+    /// 인스펙터에 노출되는 설정값이 아니라 런타임 상태이고, 들어오는 경로(플레이어 인벤토리 /
+    /// ItemData.cookedResult / WaterStill.bottledWaterItem)가 전부 이미 ItemData 참조이기 때문이다.
+    /// 세이브는 이름으로 기록되며, 이름→ItemData 해석은 그 캐시를 이미 들고 있는 SaveLoadController가 한다.
+    /// </summary>
+    [System.Serializable]
+    public class ShelterItemStack
+    {
+        public ItemData data;
+        public int count;
+
+        public ShelterItemStack() { }
+
+        public ShelterItemStack(ItemData data, int count)
+        {
+            this.data = data;
             this.count = count;
         }
     }

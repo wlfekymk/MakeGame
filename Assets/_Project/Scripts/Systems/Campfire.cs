@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
 using MakeGame.Player;
@@ -44,6 +45,46 @@ namespace MakeGame.Systems
 
         [Tooltip("조리 성공 시 지급할 요리(Cooking) 스킬 경험치")]
         public float cookingExperience = 8f;
+
+        // ── 활성 모닥불 목록 (정착 배치 2) ─────────────────────────────────────────────────────
+        //
+        // 왜 필요한가: 저장궤가 홈 반경 안의 모닥불에 연료를 자동으로 넣어주려면(Design_Settlement 2-3
+        // 3번) Shelter가 주기적으로 "내 반경 안의 모닥불"을 알아야 한다. FindObjectsByType을 주기적으로
+        // 돌리는 대신 Shelter.activeShelters와 완전히 같은 방식의 정적 목록을 둔다 - 모닥불은 몇 채
+        // 되지 않지만 씬 전체 순회는 프레임마다 하기에 비싸다.
+
+        private static readonly List<Campfire> activeCampfires = new List<Campfire>();
+
+        /// <summary>현재 씬에 살아 있는 모닥불 목록(읽기 전용).</summary>
+        public static IReadOnlyList<Campfire> Active => activeCampfires;
+
+        private void OnEnable()
+        {
+            if (!activeCampfires.Contains(this))
+                activeCampfires.Add(this);
+        }
+
+        private void OnDisable()
+        {
+            activeCampfires.Remove(this);
+        }
+
+        /// <summary>
+        /// 저장궤(Shelter의 SlotChest)가 보관 중인 연료를 대신 넣어준다. 인벤토리/발화 도구를 전혀
+        /// 건드리지 않는 별도 경로다 - 소모 판정은 이미 저장궤 쪽에서 끝났고, 여기서는 그 결과만
+        /// 반영한다. TryLight와 달리 발화 도구를 요구하지 않는 이유: 이 경로는 "플레이어가 한 번 붙여
+        /// 놓은 불을 집이 계속 먹여 살린다"는 규칙이고(Shelter.TryRefuelCampfire 참고), 꺼진 지 오래인
+        /// 차가운 모닥불을 저장궤가 스스로 점화하지는 않는다.
+        /// </summary>
+        /// <param name="units">넣을 연료 개수(1개당 secondsPerFuel).</param>
+        public void AddFuelFromStorage(int units)
+        {
+            if (units <= 0)
+                return;
+
+            remainingFuelSeconds += secondsPerFuel * units;
+            isLit = true;
+        }
 
         /// <summary>
         /// 초기화 시점에 balanceConfig 폴백을 적용한다.
