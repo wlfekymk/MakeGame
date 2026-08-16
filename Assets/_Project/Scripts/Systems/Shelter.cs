@@ -614,21 +614,42 @@ namespace MakeGame.Systems
                 return 0;
 
             int moved = 0;
+            int leftBehind = 0;
             var summary = new List<string>();
 
+            // [B18] 예전에는 AddItem 성공 여부와 무관하게 아래에서 chestYield.Clear()를 불렀다.
+            // 용량이 도입된 지금 그대로 두면 **가방이 가득 찬 상태로 수거하는 순간 결과물이
+            // 저장궤에서도 인벤토리에서도 사라진다.** 들어간 만큼만 지우고 나머지는 남긴다.
             foreach (var stack in chestYield)
             {
                 if (stack == null || stack.data == null || stack.count <= 0)
                     continue;
 
+                int accepted = 0;
                 for (int i = 0; i < stack.count; i++)
-                    inventory.AddItem(stack.data);
+                {
+                    if (!inventory.TryAddItem(stack.data))
+                        break;
 
-                summary.Add($"{stack.data.itemName} {stack.count}");
-                moved += stack.count;
+                    accepted++;
+                }
+
+                if (accepted > 0)
+                {
+                    summary.Add($"{stack.data.itemName} {accepted}");
+                    moved += accepted;
+                }
+
+                leftBehind += stack.count - accepted;
+                stack.count -= accepted;
             }
 
-            chestYield.Clear();
+            // 다 비운 칸만 목록에서 뺀다.
+            chestYield.RemoveAll(stack => stack == null || stack.data == null || stack.count <= 0);
+
+            if (leftBehind > 0)
+                Debug.Log($"[Shelter] 가방이 가득 차 {leftBehind}개는 저장궤에 그대로 뒀다");
+
             if (moved <= 0)
                 return 0;
 

@@ -217,6 +217,15 @@ namespace MakeGame.Systems
             if (!rawFood.isRawFood || rawFood.cookedResult == null)
                 return false;
 
+            // [B18] **지우기 전에** 받을 수 있는지 본다. 순서를 지키지 않으면 생식품만 사라지고
+            // 익힌 음식은 못 받는 경우가 생긴다(생식품 스택이 2개 이상이면 칸이 비지 않는다).
+            if (!inventory.CanAccept(rawFood.cookedResult))
+            {
+                AudioManager.Instance?.PlayActionFail();
+                Debug.Log("[Campfire] 가방이 가득 차 조리할 수 없다");
+                return false;
+            }
+
             if (!inventory.RemoveItems(rawFood, 1))
                 return false;
 

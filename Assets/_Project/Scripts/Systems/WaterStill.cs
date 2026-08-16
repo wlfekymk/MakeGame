@@ -229,7 +229,25 @@ namespace MakeGame.Systems
             if (!CanBottle(inventory))
                 return 0;
 
-            int bottles = ExtractBottles(int.MaxValue);
+            // [B18] ExtractBottles는 저장된 물을 **실제로 덜어낸다.** 용량 도입 후 그대로 두면
+            // 가방이 가득 찼을 때 물만 사라지고 생수는 못 받는다. 받을 수 있는 개수를 먼저 구해서
+            // 그만큼만 덜어낸다.
+            int acceptable = 0;
+            while (inventory.CanAccept(bottledWaterItem, acceptable + 1))
+            {
+                acceptable++;
+                if (acceptable >= 64)   // 저장통 상한(12유닛)을 훨씬 넘는 안전 상한
+                    break;
+            }
+
+            if (acceptable <= 0)
+            {
+                AudioManager.Instance?.PlayActionFail();
+                Debug.Log("[WaterStill] 가방이 가득 차 물을 담을 수 없다");
+                return 0;
+            }
+
+            int bottles = ExtractBottles(acceptable);
             if (bottles <= 0)
                 return 0;
 

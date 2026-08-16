@@ -198,8 +198,20 @@ namespace MakeGame.Systems
                 if (isNight && nightYieldBonus > 0)
                     yieldCount += nightYieldBonus;
 
+                // [B18] 용량 도입 후 AddItem이 거부될 수 있다. 거부되면 사냥감은 이미 죽었는데
+                // 고기가 사라진다 - 리스폰까지 기다려야 하므로 채집 실패보다 손해가 크다.
+                // 들어간 만큼만 세고, 하나도 못 넣었으면 그 사실을 남긴다.
+                int taken = 0;
                 for (int i = 0; i < yieldCount; i++)
-                    inventory.AddItem(yieldItem);
+                {
+                    if (!inventory.TryAddItem(yieldItem))
+                        break;
+
+                    taken++;
+                }
+
+                if (taken < yieldCount)
+                    Debug.Log($"[HuntableCreature] 가방이 가득 차 {yieldCount - taken}개를 못 챙겼다");
 
                 if (skills != null)
                     skills.AddExperience(SkillType.Hunting, huntExperience);

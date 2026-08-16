@@ -106,6 +106,14 @@ namespace MakeGame.Systems
 
             /// <summary>이 노드에 지급할 yieldItem이 설정되지 않았다(스포너/데이터 오류). 역시 플레이어 잘못이 아니다.</summary>
             NoYieldItem = 4,
+
+            /// <summary>
+            /// 인벤토리에 빈 칸이 없어 수확물을 받을 수 없다.
+            /// [B18] 용량 도입과 함께 생겼다. 이 검사가 없으면 Harvest()가 remainingHarvestCount를
+            /// 깎은 뒤 AddItem이 조용히 거부해 **수확물이 증발한다** - 이 프로젝트가 이미 낸
+            /// "채집이 반응 없이 무시된다" 사고와 같은 유형이다.
+            /// </summary>
+            InventoryFull = 5,
         }
 
         /// <summary>
@@ -415,6 +423,11 @@ namespace MakeGame.Systems
 
             if (requiresTool && requiredTool != null && inventory.FindItem(requiredTool) == null)
                 return HarvestFailure.MissingTool;
+
+            // [B18] 도구 검사 **뒤**에 둔다. 도구도 없고 가방도 찼을 때는 도구 쪽을 먼저 알려주는 것이
+            // 맞다(도구가 없으면 어차피 못 캔다). CanAccept는 상태를 바꾸지 않아 매 프레임 호출해도 안전하다.
+            if (!inventory.CanAccept(yieldItem, GetEffectiveYield(inventory)))
+                return HarvestFailure.InventoryFull;
 
             return HarvestFailure.None;
         }

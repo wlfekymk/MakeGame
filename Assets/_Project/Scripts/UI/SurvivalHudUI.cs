@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using MakeGame.Data;
 using MakeGame.Player;
 using MakeGame.Systems;
 
@@ -69,6 +70,29 @@ namespace MakeGame.UI
         private GameObject bleedingIcon;
         private GameObject brokenBoneIcon;
 
+        // 가방(인벤토리 칸) 상태 칩. 상태 이상 아이콘과 같은 줄에 살고, 상태 이상과 같은 규칙으로
+        // **필요할 때만 나타난다**(ArtDirection.md 4.1의 "발생 시에만 나타남" = Tier 0 취급).
+        private Text inventoryChip;
+        private float capacityRefreshTimer = 0f;
+        private string lastDisplayedCapacityText = null;
+        private Color lastDisplayedCapacityColor;
+
+        // 칸이 차오르는 속도는 초 단위로 느리므로 매 프레임 UsedSlots(소지품 전수 순회)를 셀 이유가 없다.
+        private const float CapacityRefreshInterval = 0.25f;
+
+        // 이 비율 이상 차면 칩이 나타난다. **가득 찬 뒤에 알리면 이미 늦다** - 채집 도중에 한 칸씩
+        // 줄어드는 것을 보고 정리할 시간을 주는 것이 이 칩의 존재 이유다.
+        private const float CapacityWarnRatio = 0.8f;
+
+        // 거부 문구를 화면에 남겨두는 시간(초).
+        private const float RejectMessageDuration = 3f;
+        private string rejectedItemName = null;
+        private float rejectMessageUntil = -1f;
+
+        // 색은 새로 만들지 않는다(ArtDirection.md 1장). 이 파일에 이미 있는 두 값을 그대로 쓴다.
+        private static readonly Color CapacityWarnColor = new Color(1f, 0.9f, 0.4f, 1f);   // 목표 줄과 같은 옅은 금색
+        private static readonly Color CapacityFullColor = new Color(0.8f, 0.2f, 0.2f, 1f); // Danger Red #CC3333
+
         // 성능 개선(#7): Update()가 매 프레임 값 변화와 무관하게 $"..." 문자열 보간으로 .text를 다시 만들면
         // 불필요한 GC 할당이 누적된다. 화면에 실제로 표시되는 값(정수 일수/단계/퍼센트, 불리언 플래그)을
         // 캐시해두고, 그 표시용 값이 실제로 바뀐 프레임에만 문자열을 새로 만들어 대입한다.
@@ -109,6 +133,12 @@ namespace MakeGame.UI
             playerInventory = FindAnyObjectByType<PlayerInventory>();
 
             BuildUI();
+
+            // 용량 때문에 채집이 거부된 사실은 반드시 화면에 나가야 한다. 이 프로젝트는 이미
+            // "채집이 소리도 텍스트도 없이 무시되는" 사고를 냈고, PlayerInventory가 그 통로로
+            // AddRejected를 열어두었다(PlayerInventory.cs AddRejected 주석).
+            if (playerInventory != null)
+                playerInventory.AddRejected += OnInventoryAddRejected;
         }
 
         /// <summary>
@@ -117,8 +147,27 @@ namespace MakeGame.UI
         /// </summary>
         private void OnDestroy()
         {
+            if (playerInventory != null)
+                playerInventory.AddRejected -= OnInventoryAddRejected;
+
             if (Instance == this)
                 Instance = null;
+        }
+
+        /// <summary>
+        /// 인벤토리가 가득 차 아이템을 받지 못했을 때 호출된다(PlayerInventory.AddRejected).
+        /// 새 패널을 만들지 않고, 가방 칩의 문구를 몇 초 동안 "무엇이 거부됐는지"로 덮어쓴다 -
+        /// 용량 정보가 원래 살던 자리에서 그대로 사유를 말하게 하는 것이 가장 읽히는 배치다.
+        /// </summary>
+        private void OnInventoryAddRejected(ItemData itemData)
+        {
+            rejectedItemName = itemData != null && !string.IsNullOrEmpty(itemData.itemName)
+                ? itemData.itemName
+                : "아이템";
+            rejectMessageUntil = Time.unscaledTime + RejectMessageDuration;
+
+            // 다음 프레임에 곧바로 반영되도록 폴링 대기를 취소한다(0.25초 늦게 뜨면 채집한 순간과 어긋난다).
+            capacityRefreshTimer = 0f;
         }
 
         /// <summary>
@@ -205,6 +254,19 @@ namespace MakeGame.UI
             // 개선(ArtDirection.md 1.3): 출혈 아이콘 색도 체력 바와 동일하게 Danger Red #CC3333로 통일.
             bleedingIcon = CreateStatusIcon(statusRowGo.transform, "출혈", new Color(0.8f, 0.2f, 0.2f, 1f), "status_bleeding");
             brokenBoneIcon = CreateStatusIcon(statusRowGo.transform, "골절", new Color(0.8f, 0.8f, 0.8f, 1f), "status_broken_bone");
+
+            // 가방 칩. 상태 이상 아이콘과 같은 줄을 쓰는 이유는 (1) 그 줄이 이미 "조건부로만 나타나는 것들"의
+            // 자리이고, (2) HUD 패널 높이를 늘리지 않아도 되기 때문이다 - 이 줄은 어차피 22px를 늘 비워두고
+            // 있어서 새 정보를 넣어도 다른 수치가 밀리지 않는다. HUD에 상시 한 줄을 더하는 것은
+            // ArtDirection.md 4.1(정보 위계)에 반한다: 가방 칸은 체력·허기·갈증과 같은 급이 아니다.
+            inventoryChip = UIBuilder.CreateText(statusRowGo.transform, "InventoryCapacity", "", 12,
+                CapacityWarnColor, TextAnchor.MiddleLeft);
+            // 좁은 HUD 폭(280)에서 문구가 두 줄로 접히면 22px 줄 높이를 넘어 아래 진행도 문구를 덮는다.
+            inventoryChip.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var chipLayout = inventoryChip.gameObject.AddComponent<LayoutElement>();
+            chipLayout.minHeight = 18f;
+            chipLayout.preferredWidth = 170f;
+            inventoryChip.gameObject.SetActive(false);
 
             // 개선(B4-14, ArtDirection.md 4.3): 폰트 4단계(20/15~16/11~12/16) 밖이었던 13pt를
             // Body 단계(11~12)로 스냅했다(보조 진행도 문구라 본문 취급이 맞다).
@@ -404,7 +466,55 @@ namespace MakeGame.UI
                 }
             }
 
+            UpdateInventoryCapacityChip();
             UpdateObjectiveFallback();
+        }
+
+        /// <summary>
+        /// 가방 칩을 갱신한다. 평소에는 아예 보이지 않고, 다음 두 경우에만 나타난다:
+        /// · 칸이 CapacityWarnRatio(80%) 이상 찼다 → "가방 24/30"(금색), 꽉 차면 Danger Red.
+        /// · 방금 용량 때문에 채집이 거부됐다 → 몇 초 동안 무엇이 거부됐는지를 그 자리에 표시.
+        /// 창(Tab)을 열어야만 알 수 있으면 채집하다 가득 찬 것을 모른 채 계속 줍게 되므로 HUD에도 둔다.
+        /// </summary>
+        private void UpdateInventoryCapacityChip()
+        {
+            if (inventoryChip == null || playerInventory == null)
+                return;
+
+            capacityRefreshTimer -= Time.unscaledDeltaTime;
+            if (capacityRefreshTimer > 0f)
+                return;
+            capacityRefreshTimer = CapacityRefreshInterval;
+
+            int used = playerInventory.UsedSlots;
+            int capacity = playerInventory.SlotCapacity;
+            bool isFull = used >= capacity;
+            bool isNearFull = capacity > 0 && (float)used / capacity >= CapacityWarnRatio;
+            bool showReject = Time.unscaledTime <= rejectMessageUntil && !string.IsNullOrEmpty(rejectedItemName);
+
+            bool show = showReject || isNearFull;
+            if (inventoryChip.gameObject.activeSelf != show)
+                inventoryChip.gameObject.SetActive(show);
+
+            if (!show)
+                return;
+
+            string text = showReject
+                ? $"가방 가득 참 · {rejectedItemName} 못 챙김"
+                : $"가방 {used}/{capacity}";
+            Color color = (showReject || isFull) ? CapacityFullColor : CapacityWarnColor;
+
+            if (text != lastDisplayedCapacityText)
+            {
+                inventoryChip.text = text;
+                lastDisplayedCapacityText = text;
+            }
+
+            if (color != lastDisplayedCapacityColor)
+            {
+                inventoryChip.color = color;
+                lastDisplayedCapacityColor = color;
+            }
         }
 
         /// <summary>

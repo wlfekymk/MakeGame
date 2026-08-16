@@ -131,11 +131,21 @@ namespace MakeGame.Systems
 
             if (playerInventory != null)
             {
-                foreach (var item in playerInventory.items)
+                // 스택 단위로 접어 기록한다(정착 배치 3). 야자잎 42개가 42줄이 아니라 3줄이 된다.
+                // 한 스택 안의 remainingUses가 대표값 하나로 접혀도 정보가 사라지지 않는 이유:
+                // 스택으로 묶이는 것은 ItemData.IsStackable(maxUses <= 1)뿐이고, 이들은 인벤토리에
+                // 있는 동안 remainingUses가 항상 같은 값이다(무제한 -1 또는 1회용 1). 내구도가 닳는
+                // 도구(창/손도끼/라이터)는 스택되지 않아 인스턴스마다 한 줄씩 그대로 기록된다.
+                foreach (var stack in playerInventory.GetStacks())
                 {
-                    if (item.data == null)
+                    if (stack.data == null)
                         continue;
-                    data.inventory.Add(new InventorySaveEntry { itemName = item.data.itemName, remainingUses = item.remainingUses });
+                    data.inventory.Add(new InventorySaveEntry
+                    {
+                        itemName = stack.data.itemName,
+                        remainingUses = stack.RemainingUses,
+                        count = stack.count
+                    });
                 }
             }
 
@@ -328,8 +338,23 @@ namespace MakeGame.Systems
                     if (itemData == null)
                         continue;
 
-                    var invItem = new InventoryItem(itemData) { remainingUses = saved.remainingUses };
-                    playerInventory.items.Add(invItem);
+                    // saved.Count는 옛 세이브(count 키가 없어 0으로 읽히는 항목)를 1개로 해석한다.
+                    // 따라서 야자잎이 42줄로 나열된 옛 세이브도 42개 그대로 복원되고, 복원된 뒤
+                    // 스택 뷰(GetStacks)에서 3칸으로 접혀 보인다 - 아이템이 사라지는 경로가 없다.
+                    // 용량 검사를 거치지 않는 AddItemIgnoringCapacity를 쓰는 이유는 PlayerInventory
+                    // 쪽 주석 참고(넘치면 버리는 대신 넘친 채로 복원하고 경고만 남긴다).
+                    int count = saved.Count;
+                    for (int i = 0; i < count; i++)
+                        playerInventory.AddItemIgnoringCapacity(itemData, saved.remainingUses);
+                }
+
+                playerInventory.NotifyInventoryChanged();
+
+                if (playerInventory.UsedSlots > playerInventory.SlotCapacity)
+                {
+                    Debug.LogWarning($"[SaveLoad] 복원된 인벤토리가 칸 상한을 넘었다" +
+                        $" ({playerInventory.UsedSlots}/{playerInventory.SlotCapacity}칸)." +
+                        " 아이템은 그대로 두고, 칸이 빌 때까지 새로 줍는 것만 막힌다.");
                 }
             }
 

@@ -387,6 +387,11 @@ namespace MakeGame.UI
                     // 실측(Balance_SceneSnapshot.md): 금속조각은 손도끼가 있어야 채집된다.
                     return node.requiredTool != null ? $"{node.requiredTool.itemName} 필요" : "도구 필요";
 
+                case ResourceNode.HarvestFailure.InventoryFull:
+                    // [B18] 용량 도입으로 생긴 사유. "가방이 가득 찼다"만 말하면 무엇을 버려야 할지
+                    // 모르므로, 버릴 수 있는 곳(인벤토리 키)까지 알려준다.
+                    return "가방이 가득 찼다 - Tab에서 정리하거나 저장궤에 넣어라";
+
                 case ResourceNode.HarvestFailure.NoInventory:
                 case ResourceNode.HarvestFailure.NoYieldItem:
                 default:

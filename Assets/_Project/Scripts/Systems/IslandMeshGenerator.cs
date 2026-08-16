@@ -330,6 +330,10 @@ namespace MakeGame.Systems
         private static void BuildGroundCaps(Transform surfaceRoot, GameObject islandObject, float radius,
             float phaseA, float phaseB)
         {
+            // [B15 기록] 지면 패치의 출처를 여기서 확정했다. 이 메서드 첫 줄에 `return;` 을 넣어
+            // 캡을 통째로 끄자 패치가 완전히 사라졌다 — 가설 7개를 거친 뒤에야 반으로 가르는 실험을
+            // 한 것이 이 추적의 교훈이다. 같은 의심이 또 생기면 같은 방법을 먼저 써라.
+            // (const bool 플래그로 남기면 CS0162 "도달 불가 코드" 경고가 나므로 코드로 두지 않는다.)
             var sourceFilter = islandObject.GetComponent<MeshFilter>();
             if (sourceFilter == null || sourceFilter.sharedMesh == null)
                 return; // islandPlaceholderPrefab을 쓰는 구성이면 지형 메시를 알 수 없으므로 조용히 건너뛴다.
@@ -338,7 +342,10 @@ namespace MakeGame.Systems
 
             // 지형 최대 높이는 WorldMapManager.terrainMaxHeight(인스펙터 값, 실기에서 2.5 → 8로 상향)라
             // 코드 상수로 가정하면 안 된다. 메시 바운즈에서 읽어 항상 실제 지형에 맞춘다.
-            float peakHeight = Mathf.Max(0.01f, source.bounds.max.y);
+            // [B15] HighlandCap 제거로 이 값을 읽는 곳이 사라졌지만, 캡 오프셋 주석과 진단 시
+            // 지형 높이를 확인하는 기준으로 남긴다. 사용처가 없으면 컴파일러가 CS0219를 내므로
+            // 실제로 안 쓰게 되면 지워야 한다 - 지금은 아래 주석이 참조한다.
+            _ = Mathf.Max(0.01f, source.bounds.max.y);
 
             // 캡을 띄우는 높이. 8cm 고정이었는데, terrainMaxHeight가 3배 넘게 커지면 같은 8cm도 상대적으로
             // 얇아져 원거리에서 깊이 정밀도에 눌릴 수 있다. 지형 기복에 비례시키되 하한 8cm를 유지한다.
@@ -404,7 +411,6 @@ namespace MakeGame.Systems
 
             // 캡 경계를 흩뜨리는 폭. 삼각형 하나(2~5m)보다 넓은 띠에 걸쳐 포함/제외가 섞이게 만들어
             // 경계가 선이 아니라 점묘(stipple)로 읽히게 하는 것이 목적이다.
-            float highlandDither = Mathf.Max(0.4f, peakHeight * 0.13f);   // 고도 기준 ±0.55m ≈ 평면상 ±6m
             float radialDither = radius * 0.05f;                          // 반지름 기준 ±2.5%R
 
             // [B11 "황갈색 각진 조각" 원인규명 — 지면 캡 구조 자체를 뒤집는다]
@@ -456,30 +462,16 @@ namespace MakeGame.Systems
             // toneCount 3: 같은 초록 한 장이 섬을 덮던 문제(아래 BuildCapLayer 주석) 해소용.
             // [B11] 이제 지형 본체도 같은 Meadow Green이라, 이 캡은 "색을 덮는 판"이 아니라 "톤을 얹는 판"이다
             //       - 빠진 삼각형이 있어도 그 자리에 같은 색이 있을 뿐이라 얼룩이 될 수 없다.
-            BuildCapLayer(surfaceRoot, source, radius, "GrassCap", StructureVisualBuilder.MeadowGreen,
-                capOffset, radius * 0.75f, "leaf",
-                (centroid, distance, angle) => distance <= GrassEdge(centroid, angle),
-                // 3톤 × 최대 0.50 혼합 = Meadow Green(색상각 80°) → 약 88° 사이의 색조 변주.
-                // 상대휘도는 세 톤 모두 0.609로 동일하다(ToneVariant) → 명도 단차 0%.
-                // [B15 디렉터] 톤 변주를 **끈다**(3 → 1).
-                // 실기 증거: 지형 본체를 모래 → 초록으로 뒤집자 지면의 각진 패치가 "황갈색"에서
-                // "연한 초록"으로 **같이 바뀌었다.** 패치 색이 캡 색을 따라간다는 것은 패치가 캡
-                // 안에서 만들어진다는 직접 증거이고, 캡 안의 유일한 색 변화 요인이 톤 변주다.
-                // ToneVariant는 상대휘도를 산술적으로 고정하지만, 실제 화면은 URP 조명(램버트 + SSAO +
-                // 톤매핑)을 거치므로 **입력 휘도가 같아도 출력 밝기가 같다는 보장이 없다.**
-                // 톤 변주는 "있으면 좋은 것"이고 얼룩덜룩한 지면은 명백한 손해다 - 단색을 택한다.
-                1);
-
-            // 정상부의 밝은 풀. 반지름이 아니라 고도로 잘라내, 지형 굴곡(펄린 노이즈로 생긴 등성이)이
-            // 그대로 색 경계가 된다 - 원형으로 잘라내면 또 하나의 완벽한 동심원이 생겨 인공적으로 보인다.
-            // 0.86은 코사인 지형에서 대략 0.34R 안쪽(정상부)에 해당한다(cos(0.34·π/2) ≈ 0.86).
-            // 디더 항이 이 배치의 핵심 수정이다 - 없으면 컷이 펄린 격자(20m 축 정렬)를 그대로 따라간다.
-            BuildCapLayer(surfaceRoot, source, radius, "HighlandCap",
-                Shade(ToneVariant(StructureVisualBuilder.MeadowGreen, StructureVisualBuilder.FrondGreen, 0.55f), 1.05f),
-                capOffset + 0.06f, radius * 0.75f, "leaf",
-                (centroid, distance, angle) =>
-                    centroid.y >= peakHeight * 0.86f + (Hash01(centroid) - 0.5f) * highlandDither
-                    && distance <= GrassBoundaryRadius(angle, radius, phaseA, phaseB));
+            // [B15] **GrassCap과 HighlandCap을 제거했다.**
+            // 이유: 지형 본체를 모래 → Meadow Green으로 뒤집은 순간(B14) 이 두 캡은 "같은 색 위에
+            // 같은 색을 덮는 판"이 됐다. 지형 본체와 색·텍스처("leaf")·타일링(radius×0.75)이 전부
+            // 같으므로 화면에 더하는 정보가 0인데, 지면에서 0.08m 떠 있는 별도 메시라는 사실 때문에
+            // **각진 패치**만 만들고 있었다.
+            // 실기 확정: 캡 3장을 전부 끄자 패치가 완전히 사라지고 지면이 매끈한 단색이 됐다.
+            // 이 추적에서 틀린 가설을 7개 거쳤다(풀포기 / 미리보기 UI / z-파이팅 / 텍스처 타일링 /
+            // 캡 셀렉터 버그 / 지형 본체 노출 / 톤 변주). 마지막 두 개는 실재하는 별개 결함이라
+            // 고친 것이 맞지만, 신고된 증상의 원인은 "덮을 필요가 없는 것을 덮고 있었다"였다.
+            // 모래 캡 2장은 남긴다 — 지형 본체와 색이 다르므로 실제로 해변을 만든다.
 
             // [B11 신규] 마른 모래 해변. 예전에는 "캡을 안 덮어서 드러난 지형"이 이 역할을 했는데, 바로
             // 그 노출이 이번 얼룩 신고의 정체였다. 같은 그림을 **명시적인 덮개**로 다시 만든다 -

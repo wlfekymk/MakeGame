@@ -24,6 +24,19 @@ namespace MakeGame.Data
         [Tooltip("최대 사용 횟수. -1이면 무제한 사용 (예: 고무보트)")]
         public int maxUses = 1;
 
+        /// <summary>
+        /// maxStackSize가 설정되지 않은(0 이하) 아이템이 쓰는 코드 기본 스택 상한.
+        /// 32개 .asset 중 어느 것도 아직 이 키를 갖고 있지 않으므로, 당분간 모든 아이템이 이 값을 쓴다.
+        /// </summary>
+        public const int DefaultMaxStackSize = 20;
+
+        [Header("스택 (정착 배치 3)")]
+        [Tooltip("한 칸에 겹쳐 담을 수 있는 최대 개수. 0 이하이면 코드 기본값(DefaultMaxStackSize=20)을 쓴다.\n" +
+            "기존 .asset에는 이 키가 없어 역직렬화 시 0으로 읽힐 수 있으므로, 값을 직접 읽지 말고 반드시" +
+            " MaxStackSize 프로퍼티를 거쳐라 - 0을 기본값으로 되돌리는 폴백이 거기에 있다.\n" +
+            "개별 상태(남은 내구도)가 있는 도구(maxUses > 1: 창/손도끼/라이터)는 이 값과 무관하게 항상 1칸이다.")]
+        public int maxStackSize = DefaultMaxStackSize;
+
         [Tooltip("특대 섬은 해류가 너무 강해 이 아이템을 들고 갈 수 없는지 여부 (고무보트 전용 제약).\n" +
             "대형(대) 섬은 배 도면(1~2단계)을 구할 수 있는 유일한 장소라 처음부터 갈 수 있어야 하므로 제약에서 " +
             "제외했다 (자세한 내용은 PlayerInventory.CanCarryToIsland 참고).")]
@@ -82,6 +95,25 @@ namespace MakeGame.Data
         /// 이 아이템이 사용 횟수 무제한인지 여부를 반환한다.
         /// </summary>
         public bool IsUnlimited => maxUses < 0;
+
+        /// <summary>
+        /// 이 아이템을 한 칸에 겹쳐 담을 수 있는지 여부.
+        /// 판정 기준은 "개별 상태가 있는가" 하나다 - InventoryItem이 인스턴스별로 들고 있는 가변 상태는
+        /// remainingUses뿐이므로, 그 값이 인스턴스마다 달라질 수 있는 아이템만 스택에서 제외한다.
+        /// · maxUses &gt; 1 (창 15 / 손도끼 20 / 라이터 5) → 반쯤 닳은 것과 새 것을 한 칸에 합치면
+        ///   남은 내구도 정보가 사라진다. 스택 불가.
+        /// · maxUses &lt; 0 (칼 / 물통 / 고무보트 / 파이어스타터) → IsUnlimited라 Use()가 값을 건드리지
+        ///   않는다. remainingUses는 영원히 -1이다. 개별 상태가 없으므로 스택 가능.
+        /// · maxUses == 1 (나머지 26종: 자원·음식·키트·치료제) → 1회 쓰면 인벤토리에서 사라지므로
+        ///   인벤토리 안에 있는 동안 remainingUses는 항상 1이다. 개별 상태가 없으므로 스택 가능.
+        /// </summary>
+        public bool IsStackable => maxUses <= 1;
+
+        /// <summary>
+        /// 실제로 적용되는 한 칸당 최대 개수. 스택 불가 아이템은 1, 그 외에는 maxStackSize(0 이하면
+        /// 코드 기본값)를 돌려준다. **maxStackSize 필드를 직접 읽지 말고 항상 이 프로퍼티를 써라.**
+        /// </summary>
+        public int MaxStackSize => IsStackable ? (maxStackSize > 0 ? maxStackSize : DefaultMaxStackSize) : 1;
 
         /// <summary>
         /// 이 아이템이 섭취/사용 가능한지 여부를 반환한다 (허기·갈증 회복 효과 또는 상태 이상 치료 효과가 있는 경우).
