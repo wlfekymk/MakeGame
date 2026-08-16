@@ -75,6 +75,24 @@ namespace MakeGame.UI
         private const KeyCode PreviewAircraftEndingKey = KeyCode.F7;
         private const KeyCode PreviewGameOverKey = KeyCode.F8;
 
+        // [B31] 개발용 재료 지급 키. 감독이 "재료가 없어서 실기 확인을 못 한다"고 해서 넣었다.
+        // 릴리스 빌드에는 절대 들어가지 않는다 - 아래 HandleScreenPreviewKeys와 같은
+        // #if UNITY_EDITOR || DEVELOPMENT_BUILD + Debug.isDebugBuild 이중 가드 안에서만 산다.
+        private const KeyCode GrantMaterialsKey = KeyCode.F4;
+
+        /// <summary>
+        /// F4로 한 번에 지급할 개발용 재료표. 이름은 ScriptableObjects/Item_*.asset의 itemName과
+        /// 정확히 같아야 한다(문자열 대조다 - 오타는 조용히 무시된다).
+        /// 수량은 "인벤토리 30칸, 스택 20개" 규격에 맞춰 잡았다: 스택 아이템 10종 x 20개 = 10칸,
+        /// 도구 3종 x 1개 = 3칸. 합쳐도 13칸이라 가득 차지 않는다.
+        /// </summary>
+        private static readonly (string name, int count)[] DevelopmentMaterials =
+        {
+            ("나뭇가지", 20), ("노끈", 20), ("대나무", 20), ("야자잎", 20), ("돌조각", 20),
+            ("천조각", 20), ("금속조각", 20), ("부싯돌", 10), ("코코넛", 5), ("생수", 5),
+            ("칼", 1), ("손도끼", 1), ("창", 1),
+        };
+
         private EndingUI cachedEndingUI;
         private GameOverUI cachedGameOverUI;
 
@@ -234,10 +252,75 @@ namespace MakeGame.UI
                 ToggleEndingPreview(aircraft: true);
             else if (Input.GetKeyDown(PreviewGameOverKey))
                 ToggleGameOverPreview();
+            else if (Input.GetKeyDown(GrantMaterialsKey))
+                GrantDevelopmentMaterials();
 #endif
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// [B31] 개발용 재료 한 뭉치를 인벤토리에 넣는다(F4).
+        ///
+        /// **용량을 무시하지 않는다.** AddItemIgnoringCapacity를 쓰면 30칸을 넘겨 인벤토리 UI와
+        /// 저장이 정의되지 않은 상태로 들어간다. TryAddItem으로 넣고 실패하면 거기서 멈춘 뒤
+        /// 몇 개를 넣었는지 로그로 알려준다 - 이 프로젝트는 아이템이 조용히 사라진 사고가 4번 있었고,
+        /// 개발 도구라도 같은 규칙을 지킨다.
+        /// </summary>
+        private void GrantDevelopmentMaterials()
+        {
+            if (inventory == null)
+                inventory = FindAnyObjectByType<PlayerInventory>();
+            if (inventory == null)
+            {
+                Debug.LogWarning("[DebugHud] PlayerInventory를 찾지 못해 재료를 지급하지 못했다.");
+                return;
+            }
+
+            var registry = MakeGame.Data.ItemDataRegistry.LoadFromResources();
+            if (registry == null || registry.allItems == null)
+            {
+                Debug.LogWarning("[DebugHud] ItemDataRegistry를 불러오지 못해 재료를 지급하지 못했다.");
+                return;
+            }
+
+            int granted = 0;
+            int rejected = 0;
+            foreach (var wanted in DevelopmentMaterials)
+            {
+                MakeGame.Data.ItemData found = null;
+                foreach (var candidate in registry.allItems)
+                {
+                    if (candidate != null && candidate.itemName == wanted.name)
+                    {
+                        found = candidate;
+                        break;
+                    }
+                }
+
+                if (found == null)
+                {
+                    Debug.LogWarning($"[DebugHud] 재료표의 '{wanted.name}'을(를) 레지스트리에서 찾지 못했다.");
+                    continue;
+                }
+
+                for (int i = 0; i < wanted.count; i++)
+                {
+                    if (inventory.TryAddItem(found))
+                        granted++;
+                    else
+                    {
+                        rejected++;
+                        break;
+                    }
+                }
+            }
+
+            inventory.NotifyInventoryChanged();
+            Debug.Log(rejected > 0
+                ? $"[DebugHud] 개발용 재료 {granted}개 지급. 가방이 차서 {rejected}종은 중간에 멈췄다."
+                : $"[DebugHud] 개발용 재료 {granted}개 지급 완료.");
+        }
+
         /// <summary>
         /// 엔딩 화면 미리보기를 켜고 끈다. 이미 같은 종류를 보고 있으면 닫고, 다른 종류를 보고 있으면
         /// 그쪽으로 갈아탄다(EndingUI.DebugPreviewEnding이 내부에서 먼저 닫고 처음부터 다시 재생한다).
