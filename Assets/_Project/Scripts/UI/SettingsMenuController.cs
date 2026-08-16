@@ -237,6 +237,7 @@ namespace MakeGame.UI
             KeyCode craft = craftingUI != null ? craftingUI.toggleKey : KeyCode.V;
             KeyCode map = minimapUI != null ? minimapUI.toggleKey : KeyCode.M;
             KeyCode quest = questUI != null ? questUI.toggleKey : KeyCode.J;
+            KeyCode build = BuildingSystem.Instance != null ? BuildingSystem.Instance.toggleKey : KeyCode.B;
             KeyCode dive = playerController != null ? playerController.diveKey : KeyCode.LeftControl;
 
             controlsBuilder.Clear();
@@ -249,7 +250,10 @@ namespace MakeGame.UI
             controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 세계 지도 / 이동\n");
             // [B24] 퀘스트 창. 지도 설명도 함께 고쳤다 - 배치 21에서 섬 목록 패널이 세계 지도로 흡수돼
             // "섬 목록 / 이동"은 더 이상 존재하지 않는 창을 가리키고 있었다.
-            controlsBuilder.Append('[').Append(quest.ToString()).Append("] 퀘스트 (할 일)\n");
+            controlsBuilder.Append('[').Append(quest.ToString()).Append("] 퀘스트 (할 일)    [")
+                .Append(build.ToString()).Append("] 건축\n");
+            // [B25] 건축 모드는 조작이 따로 놀아서 한 줄을 더 준다.
+            controlsBuilder.Append("건축 중 — 1~4 부품 · 휠/[Q] 회전 · 좌클릭 설치 · 우클릭 철거\n");
             // 수영은 지상 조작과 키가 겹쳐(Space) 따로 묶어주지 않으면 오해를 산다.
             controlsBuilder.Append("수영 중 — Space 떠오르기 · [").Append(dive.ToString()).Append("] 잠수\n");
 

@@ -281,6 +281,12 @@ namespace MakeGame.Systems
             velocity.space = ParticleSystemSimulationSpace.World;
             velocity.x = new ParticleSystem.MinMaxCurve(rainWind.x * 0.8f, rainWind.x * 1.2f);
             velocity.z = new ParticleSystem.MinMaxCurve(rainWind.y * 0.8f, rainWind.y * 1.2f);
+            // [B25 감독 수정] y를 빼먹으면 안 된다. velocityOverLifetime의 x/y/z는 **셋 다 같은 커브
+            // 모드**여야 하는데, x/z만 TwoConstants로 바꾸면 y는 기본값인 Constant로 남아 모드가
+            // 갈린다. 그러면 비가 내리는 동안 매 프레임 "Particle Velocity curves must all be in the
+            // same mode" 에러가 쏟아진다(실기에서 750개까지 확인했다). 낙하는 startSpeed와 중력이
+            // 맡으므로 값 자체는 0이면 되지만, **2인자 생성자**를 써서 모드를 맞추는 게 핵심이다.
+            velocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
 
             var renderer = rainParticles.GetComponent<ParticleSystemRenderer>();
             if (renderer != null)

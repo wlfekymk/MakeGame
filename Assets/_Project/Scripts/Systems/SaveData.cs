@@ -73,6 +73,11 @@ namespace MakeGame.Systems
 
         [Header("경비행기 수리 진행")]
         public bool aircraftRepairComplete;
+
+        // [B25] 건축 시스템(바닥/벽/문/창문)이 놓은 조각 전체. BuildingSystem이 스스로 JsonUtility로
+        // 직렬화한 문자열을 그대로 담는다. **추가만 했다** - JsonUtility는 JSON에 없는 필드를 건드리지
+        // 않으므로 옛 세이브를 읽으면 ""로 남고, RestoreFromJson은 ""/null에서 아무것도 하지 않는다.
+        public string buildStructureJson = "";
         public List<ItemCountEntry> aircraftCollectedMaterials = new List<ItemCountEntry>();
 
         [Header("설치 구조물 (B2-15 1단계)")]

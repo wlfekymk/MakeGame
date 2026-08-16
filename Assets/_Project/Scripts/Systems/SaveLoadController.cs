@@ -164,6 +164,12 @@ namespace MakeGame.Systems
                 }
             }
 
+            // [B25] 건축 조각. BuildingSystem은 RuntimeInitializeOnLoadMethod로 스스로 생기므로
+            // 씬 배선이 없다 - Instance로만 접근한다. 아무것도 안 지었으면 ""가 저장된다.
+            data.buildStructureJson = BuildingSystem.Instance != null
+                ? BuildingSystem.Instance.SerializeToJson()
+                : "";
+
             if (aircraftRepair != null)
             {
                 data.aircraftRepairComplete = aircraftRepair.isRepairComplete;
@@ -381,6 +387,12 @@ namespace MakeGame.Systems
                 // 외형이 맞는 단계로 돌아온다. (systems-engineer 요청, 소유권상 감독이 넣는다.)
                 boatConstruction.NotifyProgressChanged();
             }
+
+            // [B25] 건축 조각 복원. **반드시 RegenerateWorld(위쪽 291줄) 뒤여야 한다** -
+            // 순서가 뒤집히면 새 지형을 만드는 도중의 레이캐스트에 방금 되살린 조각이 섞인다.
+            // 조각은 저장된 절대 좌표로 되살아나므로 지형 재생성 자체에는 의존하지 않는다.
+            if (BuildingSystem.Instance != null)
+                BuildingSystem.Instance.RestoreFromJson(data.buildStructureJson);
 
             if (aircraftRepair != null)
             {

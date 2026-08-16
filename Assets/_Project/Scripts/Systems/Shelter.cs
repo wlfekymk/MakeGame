@@ -233,10 +233,28 @@ namespace MakeGame.Systems
             return null;
         }
 
-        /// <summary>주어진 좌표가 어떤 집의 홈 반경 안인지 여부. SurvivalTickDriver가 이 값을 쓴다.</summary>
+        /// <summary>
+        /// 주어진 좌표가 "내 집" 안인지 여부. SurvivalTickDriver가 이 값을 쓴다.
+        ///
+        /// 판정은 **두 갈래의 OR**다(감독 결정: "건축물이 집 판정을 이어받는다").
+        ///  (1) 기존 그대로 - Lv2 이상 쉼터의 홈 반경 안(Lv1 0m / Lv2 8m / Lv3 14m).
+        ///  (2) 새로 추가 - 자유 건축으로 지은 **막힌 실내**(BuildingSystem이 판정한다).
+        /// (1)은 한 줄도 바뀌지 않았다. 밤사이 증류기 수확·모닥불 유지(SettleHomesForSkippedTime)는
+        /// 저장궤·침상이 달린 "집 객체" 자체가 필요해서 여전히 FindHomeContaining을 거치므로 이 OR의
+        /// 영향을 전혀 받지 않는다. 실제로 넓어지는 것은 IsInsideHome을 쓰는 곳 - 일사병 그늘 판정
+        /// (SurvivalTickDriver.IsCurrentlyShaded) 하나뿐이다. 즉 지붕까지 덮은 건축물 실내에서
+        /// 일사병이 회복되고, 허기·갈증은 집 안에서도 그대로 진행된다(압박을 0으로 만들지 않는다).
+        ///
+        /// 왜 반경이 아니라 실내인가: 쉼터는 반경 하나로 집을 흉내 냈지만, 건축물은 벽이 실제로 존재하므로
+        /// "안에 있다"를 형상으로 판정할 수 있다. 벽만 몇 장 세워 놓고 집 대접을 받는 일이 없어야 해서
+        /// 반경이 아니라 **둘러싸였는지**를 묻는다.
+        /// </summary>
         public static bool IsInsideHome(Vector3 worldPosition)
         {
-            return FindHomeContaining(worldPosition) != null;
+            if (FindHomeContaining(worldPosition) != null)
+                return true;
+
+            return BuildingSystem.IsInsideEnclosedStructure(worldPosition);
         }
 
         /// <summary>지정한 슬롯이 설치돼 있는지 여부.</summary>
