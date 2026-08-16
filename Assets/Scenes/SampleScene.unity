@@ -976,6 +976,8 @@ MonoBehaviour:
     baseChance: 0.2
   - type: 3
     baseChance: 0.15
+    minimumIslandSize: 1
+    guaranteedCount: 1
   - type: 4
     baseChance: 0.2
   - type: 5

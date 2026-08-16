@@ -59,6 +59,19 @@ namespace MakeGame.Systems
                 " 엔트리와의 비율만 의미가 있다(예: 0.25와 0.10이면 2.5배 더 자주 나온다).")]
             [Range(0f, 1f)]
             public float baseChance = 0.2f;
+
+            // ── [B34] 규모 제한 + 보장 마릿수 ──────────────────────────────────────
+            // 감독 지시: "Hazard_Bear를 중급섬 이상에 배치해줘."
+            // **둘 다 필드 추가만 했다.** 씬(SampleScene.unity:972~)의 기존 엔트리 6개에는 이 두 키가
+            // 없으므로 Small(=0) / 0으로 읽히고, 그건 정확히 예전 동작이다. IslandResourceSpawner의
+            // resourceEntries가 minimumIslandSize를 쓰는 것과 같은 방식이며, 필드 순서를 바꾸거나
+            // 기존 필드를 지우면 씬이 통째로 어긋나므로 **반드시 뒤에만 붙인다.**
+            [Tooltip("이 규모 미만의 섬에는 아예 배치되지 않는다. Small이면 제한 없음.")]
+            public IslandSize minimumIslandSize = IslandSize.Small;
+
+            [Tooltip("규모 조건을 만족하는 섬에 최소 이만큼은 확정 배치한다. 0이면 순수 확률 배치.\n" +
+                "섬 전체 마릿수를 늘리지는 않는다 - 앞쪽 자리의 종류를 이 종류로 덮어쓸 뿐이다.")]
+            public int guaranteedCount = 0;
         }
 
         [Tooltip("섬에 등장 가능한 위험 요소 종류와 종류별 상대 가중치 목록")]
@@ -210,10 +223,12 @@ namespace MakeGame.Systems
 
             // 가중치 합. 엔트리가 비어 있거나 전부 0 이하면 배치할 종류가 없으므로 그대로 끝낸다
             // (예전 구조에서도 baseChance가 0이면 절대 등장하지 않았다 — 동작이 같다).
+            // [B34] 이 섬 규모에서 허용되는 엔트리만 가중치에 넣는다. 곰처럼 minimumIslandSize가
+            // 걸린 종류는 소형 섬에서 아예 후보에서 빠지고, 그만큼 다른 종류의 비율이 올라간다.
             float totalWeight = 0f;
             foreach (var entry in hazardEntries)
             {
-                if (entry != null && entry.baseChance > 0f)
+                if (entry != null && entry.baseChance > 0f && entry.minimumIslandSize <= island.size)
                     totalWeight += entry.baseChance;
             }
             if (totalWeight <= 0f)
@@ -225,9 +240,26 @@ namespace MakeGame.Systems
             float radius = GetScatterRadius(island.size);
             int hazardCount = ComputeHazardCount(island.size);
 
+            // [B34] 보장 배치 목록. 규모 조건을 만족하는 엔트리의 guaranteedCount만큼 앞자리를 채운다.
+            // 섬 전체 마릿수(hazardCount)는 늘리지 않는다 - 마릿수는 면적이 정하는 값이고 여기서
+            // 건드리면 밀도 설계가 깨진다. 보장 수가 마릿수를 넘으면 넘는 만큼은 버린다.
+            guaranteedEntries.Clear();
+            foreach (var entry in hazardEntries)
+            {
+                if (entry == null || entry.minimumIslandSize > island.size || entry.guaranteedCount <= 0)
+                    continue;
+                for (int g = 0; g < entry.guaranteedCount && guaranteedEntries.Count < hazardCount; g++)
+                    guaranteedEntries.Add(entry);
+            }
+
             for (int i = 0; i < hazardCount; i++)
             {
-                HazardEntry entry = PickWeightedEntry(rng, totalWeight);
+                // [B34] **rng는 언제나 정확히 1회 소비한다.** 보장 배치를 "뽑지 않고 끼워 넣는"
+                // 방식으로 만들면 난수 소비량이 줄어 그 뒤의 위치/지터 시퀀스가 통째로 밀리고,
+                // 같은 worldSeed의 기존 월드가 달라진다. 그래서 뽑기는 그대로 하고 **결과만 덮어쓴다.**
+                HazardEntry entry = PickWeightedEntry(rng, totalWeight, island.size);
+                if (i < guaranteedEntries.Count)
+                    entry = guaranteedEntries[i];
                 if (entry == null)
                     continue;
 
@@ -323,7 +355,7 @@ namespace MakeGame.Systems
         /// (마릿수 루프의 난수 소비량을 일정하게 유지해 시퀀스 추적을 단순하게 만든다).
         /// totalWeight는 호출자가 미리 계산해 넘긴다 — 매 마리마다 리스트를 다시 합산하지 않기 위함이다.
         /// </summary>
-        private HazardEntry PickWeightedEntry(System.Random rng, float totalWeight)
+        private HazardEntry PickWeightedEntry(System.Random rng, float totalWeight, IslandSize islandSize)
         {
             float roll = rng.NextValue01() * totalWeight;
             float accumulated = 0f;
@@ -331,7 +363,9 @@ namespace MakeGame.Systems
             for (int i = 0; i < hazardEntries.Count; i++)
             {
                 HazardEntry entry = hazardEntries[i];
-                if (entry == null || entry.baseChance <= 0f)
+                // [B34] 규모 미달 엔트리는 호출자가 totalWeight에서도 뺐으므로 여기서도 똑같이 빼야
+                // 한다. 한쪽만 빼면 누적합이 어긋나 마지막 구간이 통째로 안 뽑히거나 넘친다.
+                if (entry == null || entry.baseChance <= 0f || entry.minimumIslandSize > islandSize)
                     continue;
 
                 accumulated += entry.baseChance;
@@ -343,12 +377,15 @@ namespace MakeGame.Systems
             for (int i = hazardEntries.Count - 1; i >= 0; i--)
             {
                 HazardEntry entry = hazardEntries[i];
-                if (entry != null && entry.baseChance > 0f)
+                if (entry != null && entry.baseChance > 0f && entry.minimumIslandSize <= islandSize)
                     return entry;
             }
 
             return null;
         }
+
+        /// <summary>[B34] 보장 배치용 재사용 버퍼. 섬마다 Clear해서 쓴다(매 섬 new 방지).</summary>
+        private readonly List<HazardEntry> guaranteedEntries = new List<HazardEntry>();
 
         /// <summary>
         /// SharkSpawner처럼 섬이 아닌 곳(바다 한가운데)에 위험 요소를 배치해야 하는 다른 스포너가
