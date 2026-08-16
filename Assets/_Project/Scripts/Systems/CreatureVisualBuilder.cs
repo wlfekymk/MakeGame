@@ -403,12 +403,17 @@ namespace MakeGame.Systems
         ///   목 능선보다 6.7cm 아래로 처진다. 귀는 지름 0.15m로 두개골 위 0.11m만 솟는다.
         ///   코끝~엉덩이 **2.52m** · 다리 사이 배 밑 공간 0.83m(길이/높이 = 1.42).
         ///
-        /// ── 파츠 6개(예전 4개) - 부위별 색을 나누려면 렌더러가 나뉘어야 한다 ────────────────
+        /// ── 파츠 9개(예전 6개) - 렌더러가 나뉘는 기준이 **색**과 **움직임의 소속** 둘이다 ──────
         ///   루트(다리 하단 + 발 + 발뒤꿈치 패드, 마른 진흙 회갈색 · bearpad) ← **콜라이더가 여기 있다**
-        ///   Coat     : 몸통 + 혹 + 머리 + 귀 + 꼬리 + 목/어깨 털 다발 (옅은 금갈색 grizzled · bearfur)
-        ///   Underside: 배 껍질 + 다리 상부 4 + 배 밑 털 다발 + 발톱 20 (거의 검정 · bearfur)
+        ///   Coat     : 몸통 + 머리 + 귀 + 꼬리 + 목 털 다발 (옅은 금갈색 grizzled · bearfur)
+        ///   Hump     : [B34] 어깨 혹 + 혹 능선 털 (Coat와 **같은 색·같은 머티리얼**. 오브젝트만 나눴다 -
+        ///              CreatureMotion이 이 덩어리만 한 박자 늦게 끌고 다니는 관성 연출 때문이다)
+        ///   Underside: 배 껍질 + 배 밑 털 다발 (거의 검정 · bearfur)
+        ///   Limbs    : [B34] 다리 상부 4 (Underside와 같은 색/머티리얼. 몸통 오프셋의 절반만 따라간다)
+        ///   Claws    : [B34] 발톱 20 (Underside와 같은 색/머티리얼. 발과 함께 **지면에 고정**된다)
         ///   Snout    : 주둥이 + 코 (젖은 짙은 색 · bearpad)
         ///   EyeL/EyeR: 스포너가 만든 구체를 옮겨 씀(새로 만들지 않는다)
+        /// 파츠가 늘어도 머티리얼은 예전 그대로 5장뿐이다(루트 · Coat+Hump · Underside+Limbs+Claws · Snout · 눈).
         /// 메시는 종류당 1장 정적 캐시, 머티리얼은 (색+텍스처)당 1장 공유 캐시 → 개체가 몇 마리든
         /// 신규 생성 0이다. 발이 지면에 닿는 것은 SnapPivotForJitter가 sizeJitter까지 보정한다.
         ///
@@ -424,8 +429,26 @@ namespace MakeGame.Systems
 
             MeterSpacePart(body.transform, "Coat", BearBodyScale, CreatureMeshLibrary.BearCoatMeters(),
                 BearCoatColor(bodyColor), BearFurTexture);
+
+            // [B34] 어깨 혹. Coat와 색/텍스처가 같아 머티리얼도 같은 한 장을 공유하므로(Shared 캐시)
+            // 정지 상태에서는 예전과 구분되지 않는다. 파츠를 나눈 목적은 CreatureMotion이 이 덩어리만
+            // 한 박자 늦게 끌고 다니기 위해서다 - 이름 "Hump"는 CreatureMotion.AttachBear가 찾는 이름이라
+            // 바꾸면 관성 연출이 조용히 죽는다.
+            MeterSpacePart(body.transform, "Hump", BearBodyScale, CreatureMeshLibrary.BearHumpMeters(),
+                BearCoatColor(bodyColor), BearFurTexture);
+
             MeterSpacePart(body.transform, "Underside", BearBodyScale, CreatureMeshLibrary.BearUndersideMeters(),
                 BearUndersideColor(bodyColor), BearFurTexture);
+
+            // [B34] 다리 상부와 발톱. 색/텍스처가 Underside와 같아 머티리얼도 같은 한 장을 공유하므로
+            // 정지 상태에서는 예전 한 덩어리였을 때와 구분되지 않는다. 나눈 것은 **움직임의 소속**뿐이다
+            // (Limbs = 몸통 오프셋의 절반 / Claws = 발과 함께 지면 고정). 이름을 바꾸면 CreatureMotion이
+            // 파츠를 못 찾아 전부 몸통과 함께 움직이고, 발톱이 발에서 빠진다.
+            MeterSpacePart(body.transform, "Limbs", BearBodyScale, CreatureMeshLibrary.BearLimbsMeters(),
+                BearUndersideColor(bodyColor), BearFurTexture);
+            MeterSpacePart(body.transform, "Claws", BearBodyScale, CreatureMeshLibrary.BearClawsMeters(),
+                BearUndersideColor(bodyColor), BearFurTexture);
+
             MeterSpacePart(body.transform, "Snout", BearBodyScale, CreatureMeshLibrary.BearMuzzleMeters(),
                 BearMuzzleColor(bodyColor), BearPadTexture);
 
@@ -754,8 +777,10 @@ namespace MakeGame.Systems
         // 여기에 **어깨 혹**이 따로 얹힌다: z 0.24에서 높이 1.49 · 반지름 0.290 → 꼭대기 **1.78m**.
         // 실루엣은 혹 1.78 → 등 1.615 → 엉덩이 1.375로 앞이 높고 뒤로 흘러내린다(불곰 옆모습).
         //
-        // 메시가 네 장으로 나뉜 이유는 오직 **부위별 색**이다(URP Lit은 정점 색을 읽지 않는다).
-        // 형태를 나눈 것이 아니라 같은 한 마리를 재질 경계로 자른 것이고, 네 장 모두 정적 캐시라
+        // 메시가 여러 장으로 나뉜 첫 번째 이유는 **부위별 색**이다(URP Lit은 정점 색을 읽지 않는다).
+        // [B34] 두 번째 이유가 생겼다: **움직임의 소속**. Hump/Limbs/Claws 세 장은 색이 이웃 파츠와
+        // 똑같은데도(같은 머티리얼을 공유한다) 서로 다른 타이밍으로 움직여야 해서 잘라 낸 것이다.
+        // 형태를 나눈 것이 아니라 같은 한 마리를 자른 것이고, 일곱 장 모두 정적 캐시라
         // 개체가 몇 마리든 메시는 4장뿐이다.
         //
         // ★★ [B33 사고 - 반드시 읽어라] 이 파일에는 좌표 공간이 **두 개** 있고, 이름이 그 구분이다.
@@ -768,7 +793,7 @@ namespace MakeGame.Systems
         // x×1.16 · y×0.56 · z×0.39로 찌그러졌다. 그 결과 씬에서 (a) 눈이 쪼그라든 머리 앞 허공에 뜨고
         // (b) 다리 상부(자식)와 다리 하부(루트)가 어긋나 사방으로 벌어지고 (c) 발톱이 z로 0.39배
         // 눌려 굵은 갈고리가 아니라 철사 낙서로 보였다. **세 증상의 원인은 이 한 줄이었다.**
-        // → 곰의 네 메시 중 규격으로 나누는 것은 BearPawUnit **하나뿐**이다.
+        // → 곰의 일곱 메시 중 규격으로 나누는 것은 BearPawUnit **하나뿐**이다.
 
         /// <summary>곰 몸통 단면의 좌우 눌림. 가슴 폭 = 0.420 × 2 × 0.92 = 0.773m.</summary>
         private const float BearTorsoFlatten = 0.92f;
@@ -860,7 +885,8 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 곰 겉가죽(등·어깨·머리). 몸통 + 어깨 혹 + 두개골 + 귀 2 + 꼬리 + **목/어깨 털 다발**.
+        /// 곰 겉가죽(등·머리). 몸통 + 두개골 + 귀 2 + 꼬리 + **목 털 다발**.
+        /// [B34] 어깨 혹과 그 능선 털은 BearHumpMeters()로 빠졌다(형태는 그대로, 오브젝트만 분리).
         /// 스펙의 "목의 경계가 거의 없이"를 굵기로 답한다: 목 단면 폭 0.414m vs 두개골 폭 0.380m라
         /// 거의 같은 굵기로 이어지고, 머리 꼭대기(1.398m)가 목 능선(1.465m)보다 6.7cm 낮게 처진다.
         /// </summary>
@@ -877,11 +903,8 @@ namespace MakeGame.Systems
                 spine[i] = new Vector3(0f, BearSpineY[i], BearSpineZ[i]);
             builder.AddTube(spine, BearSpineR, 12, true, true, 3f, new Vector3(BearTorsoFlatten, 1f, 1f));
 
-            var hump = new Vector3[BearHumpZ.Length];
-            for (int i = 0; i < hump.Length; i++)
-                hump[i] = new Vector3(0f, BearHumpY[i], BearHumpZ[i]);
-            builder.AddTube(hump, BearHumpR, 8, true, true, 2f, new Vector3(BearHumpFlatten, 1f, 1f));
-
+            // [B34] 어깨 혹은 여기서 빠져 BearHumpMeters()로 옮겨갔다. 형태/색/재질은 그대로이고
+            // 오브젝트만 분리한 것이라 정지 상태의 겉모습은 바뀌지 않는다 - 이유는 그쪽 주석 참고.
             builder.AddTube(BearSkull, BearSkullR, 12, true, true, 2f, new Vector3(1f, 0.86f, 1f));
 
             AddBearEar(builder, 1f);
@@ -892,20 +915,63 @@ namespace MakeGame.Systems
                 new[] { new Vector3(0f, 0.300f, -1.20f), new Vector3(0f, 0.230f, -1.30f) },
                 new[] { 0.055f, 0.026f }, 5, true, true, 1f, Vector3.one);
 
-            // 털 실루엣(목·어깨). 난수는 결정적 System.Random이라 어떤 실행에서도 같은 모양이다.
+            // 털 실루엣(목). 난수는 결정적 System.Random이라 어떤 실행에서도 같은 모양이다.
+            // 혹 능선 털 8다발은 혹과 함께 움직여야 하므로 BearHumpMeters()로 옮겼다(난수열은 그대로 유지된다).
             var random = new System.Random(8317);
             AddBearNeckRuff(builder, random);
-            AddBearHumpRidge(builder, random);
 
             return Store("bearCoat", builder.Finish("Cre_BearCoat"));
         }
 
         /// <summary>
-        /// 곰 아랫면(배 밑 · 다리 안쪽 · 발톱). 스펙의 "거의 검은색" 구역을 통째로 담는다.
+        /// [B34] 곰 어깨 혹(hump)만 따로 뽑은 메시. 색·텍스처·재질은 Coat와 **완전히 같고**(같은 공유
+        /// 머티리얼을 쓴다) 형태도 예전에 Coat 안에 있던 것 그대로다 - **정지 상태의 겉모습은 바뀌지 않는다.**
+        /// 렌더러를 하나 더 써 가며 분리한 이유는 오직 하나, 이 덩어리가 몸통과 **다른 타이밍으로** 움직여야
+        /// 하기 때문이다(CreatureMotion의 혹 관성 - 몸통이 먼저 뜨고 혹이 한 박자 늦게 따라온다).
+        /// 스펙 5장이 말하는 "어깨 혹의 관성"은 옆모습 실루엣 최고점(1.78m)이 걸음마다 등선 위에서
+        /// 출렁이는 것이고, 그건 혹이 독립된 트랜스폼일 때만 만들 수 있다.
+        ///
+        /// 파묻힘 여유: 혹 아랫면은 y 0.30이고(z 0.24에서 중심 0.59 · 반지름 0.29) 같은 z의 몸통 등선은
+        /// y 0.755다 - **45cm가 몸통 안에 묻혀 있다.** CreatureMotion이 허용하는 최대 어긋남(6cm)의 7배가
+        /// 넘으므로 어떤 위상에서도 혹과 몸통 사이에 틈이 벌어지지 않는다. 두 표면이 겹쳐 있지도 않아
+        /// z-파이팅도 없다(예전에도 한 메시 안에서 서로 관통해 있던 그대로다).
+        ///
+        /// 난수 정렬: 능선 털 8다발은 예전에 목 갈기 18다발과 **같은 System.Random(8317)** 을 이어 썼다.
+        /// 그냥 새 난수를 만들면 털 모양이 통째로 바뀌므로, 목 갈기를 버리는 Builder에 한 번 흘려보내
+        /// 난수 소비 순서를 예전과 정확히 같게 맞춘다(Finish를 부르지 않으므로 메시는 만들어지지 않는다).
+        /// </summary>
+        public static Mesh BearHumpMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("bearHump", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            var hump = new Vector3[BearHumpZ.Length];
+            for (int i = 0; i < hump.Length; i++)
+                hump[i] = new Vector3(0f, BearHumpY[i], BearHumpZ[i]);
+            builder.AddTube(hump, BearHumpR, 8, true, true, 2f, new Vector3(BearHumpFlatten, 1f, 1f));
+
+            var random = new System.Random(8317);
+            AddBearNeckRuff(new Builder(), random); // 결과는 버리고 난수 소비 순서만 예전과 맞춘다
+            AddBearHumpRidge(builder, random);
+
+            return Store("bearHump", builder.Finish("Cre_BearHump"));
+        }
+
+        /// <summary>
+        /// 곰 아랫면(배 밑). 스펙의 "거의 검은색" 구역 중 **몸통에 붙어 함께 움직이는 것만** 담는다.
         /// 배 껍질은 몸통 표면에서 1.4cm 밖으로 띄운 반쪽 껍데기라 z-파이팅이 없고, 그 가장자리는
         /// 배 밑 털 다발이 덮어 이음매가 보이지 않는다.
-        /// 발톱 20개(앞 5 × 2 = 길이 0.12m · 뒤 5 × 2 = 0.07m)도 여기 있다 - 회갈색 발바닥 위에서
-        /// 거의 검은 갈고리가 대비로 튀어 보이게 하려고 일부러 아랫면 쪽 재질에 붙였다.
+        ///
+        /// [B34] 예전에는 여기에 다리 상부 4개와 발톱 20개도 함께 있었다. 셋을 갈라 놓은 이유는
+        /// **움직임의 소속이 서로 다르기 때문**이다(색은 셋 다 같아서 머티리얼은 여전히 한 장을 공유한다):
+        ///   배 껍질  = 몸통에 붙어 있다   → 몸통과 100% 같이 움직여야 한다(간격이 1.4cm뿐이다)
+        ///   다리 상부 = 몸통과 발 사이다   → BearLimbsMeters. 몸통 움직임의 절반만 따라간다
+        ///   발톱     = 발에 박혀 있다     → BearClawsMeters. 발(루트)과 함께 **지면에 고정**된다
+        ///             (발톱 뿌리는 발바닥 안에 1.5cm밖에 안 묻혀 있어 조금만 움직여도 발에서 빠진다)
+        /// 자세한 여유 계산은 CreatureMotion의 "관절 여유" 주석에 정리해 뒀다.
         /// </summary>
         public static Mesh BearUndersideMeters()
         {
@@ -916,20 +982,58 @@ namespace MakeGame.Systems
             var builder = new Builder();
 
             AddBearBellyShell(builder);
+            AddBearBellyFringe(builder, new System.Random(4903));
+
+            return Store("bearUnder", builder.Finish("Cre_BearUnderside"));
+        }
+
+        /// <summary>
+        /// [B34] 곰 다리 상부 4개(어깨/골반 ~ 무릎/정강이). 색·텍스처는 아랫면과 완전히 같고 형태도
+        /// 예전 그대로다 - 몸통과 발 **사이**에 걸쳐 있다는 이유 하나로만 따로 뽑았다.
+        ///
+        /// 이 부위는 위로는 몸통 안에 2.2cm(앞다리 시작 링 기준) 묻혀 있고, 아래로는 다리 하부와
+        /// 6cm 겹쳐 있다. 몸통만 움직이면 위쪽 이음매가, 발만 따라가면 무릎 이음매가 벌어지므로,
+        /// CreatureMotion이 몸통 오프셋의 **절반**만 여기에 준다(양쪽 여유를 반씩 나눠 쓴다).
+        /// </summary>
+        public static Mesh BearLimbsMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("bearLimbs", out cached))
+                return cached;
+
+            var builder = new Builder();
 
             AddBearForeLegUpper(builder, 1f);
             AddBearForeLegUpper(builder, -1f);
             AddBearHindLegUpper(builder, 1f);
             AddBearHindLegUpper(builder, -1f);
 
+            return Store("bearLimbs", builder.Finish("Cre_BearLimbs"));
+        }
+
+        /// <summary>
+        /// [B34] 곰 발톱 20개(앞 5 × 2 = 길이 0.12m · 뒤 5 × 2 = 0.07m). 회갈색 발바닥 위에서 거의 검은
+        /// 갈고리가 대비로 튀어 보이도록 아랫면 색을 그대로 쓴다(예전과 같은 공유 머티리얼).
+        ///
+        /// 형태는 예전 그대로이고, 따로 뽑은 이유는 **발과 함께 지면에 고정돼야** 하기 때문이다.
+        /// 앞발톱 뿌리는 z 0.570이고 앞발 앞 끝은 z 0.585다 - 발 안에 겨우 1.5cm 묻혀 있어서,
+        /// 몸통을 따라 2cm만 움직여도 발톱 다섯 개가 발에서 빠져 허공에 뜬다.
+        /// CreatureMotion은 이 파츠를 아예 건드리지 않는다(planted).
+        /// </summary>
+        public static Mesh BearClawsMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("bearClaws", out cached))
+                return cached;
+
+            var builder = new Builder();
+
             AddBearClaws(builder, 1f, true);
             AddBearClaws(builder, -1f, true);
             AddBearClaws(builder, 1f, false);
             AddBearClaws(builder, -1f, false);
 
-            AddBearBellyFringe(builder, new System.Random(4903));
-
-            return Store("bearUnder", builder.Finish("Cre_BearUnderside"));
+            return Store("bearClaws", builder.Finish("Cre_BearClaws"));
         }
 
         /// <summary>

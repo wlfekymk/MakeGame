@@ -85,6 +85,17 @@ namespace MakeGame.Systems
         private Vector3[] breathBaseScales;
         private float breathPhase;
 
+        /// <summary>
+        /// [B34] 곰 전용 프로시저럴 모션(걸음 바운스 · 어깨 혹 관성 · 포효/돌진/슬램). 곰이 아니면 null이다.
+        ///
+        /// 위 숨쉬기와 채널이 겹치지 않는다: 숨쉬기는 자식의 **localScale**만, 모션은 자식의
+        /// **localPosition**만 쓴다. 둘 다 루트(콜라이더)는 절대 건드리지 않으므로 전투/접촉 판정은
+        /// 어느 쪽에도 영향을 받지 않는다. 숨쉬기를 CreatureMotion으로 옮기지 않은 이유도 여기 있다 -
+        /// 숨쉬기는 timeScale = 0인 엔딩/사망 화면에서도 계속 돌아야 해서 unscaledDeltaTime을 쓰지만,
+        /// 모션은 반대로 그 화면에서 완전히 멈춰야 한다(CreatureMotion 클래스 주석의 제약 (3)).
+        /// </summary>
+        private CreatureMotion bearMotion;
+
         /// <summary>현재 이 위험 요소가 활성 상태(물리쳐지지 않음)인지 여부.</summary>
         public bool IsActive => !isDefeated;
 
@@ -158,16 +169,45 @@ namespace MakeGame.Systems
             if (count <= 0)
                 return;
 
-            breathParts = new Transform[count];
-            breathBaseScales = new Vector3[count];
+            var parts = new Transform[count];
+            var scales = new Vector3[count];
+            int kept = 0;
             for (int i = 0; i < count; i++)
             {
-                breathParts[i] = transform.GetChild(i);
-                breathBaseScales[i] = breathParts[i].localScale;
+                Transform child = transform.GetChild(i);
+                if (child == null)
+                    continue;
+
+                // [B34] 발톱만 흉곽 펄스에서 뺀다. 발톱 뿌리는 발바닥 안에 1.5cm밖에 안 묻혀 있는데
+                // (CreatureMeshLibrary.BearClawsMeters 참고) 발은 루트에 있어 절대 스케일되지 않으므로,
+                // 발톱만 1.6% 부풀면 숨 쉴 때마다 발 끝에서 최대 7mm씩 떠올랐다 가라앉는다.
+                // 지금까지도 그랬지만(발톱이 Underside 안에 있었다) 이제 발톱은 "지면 고정" 파츠라
+                // CreatureMotion도 건드리지 않는다 - 두 연출의 약속을 여기서도 맞춘다.
+                if (child.name == "Claws")
+                    continue;
+
+                parts[kept] = child;
+                scales[kept] = child.localScale;
+                kept++;
             }
+
+            breathParts = new Transform[kept];
+            breathBaseScales = new Vector3[kept];
+            System.Array.Copy(parts, breathParts, kept);
+            System.Array.Copy(scales, breathBaseScales, kept);
 
             // 개체마다 다른 위상. UnityEngine.Random을 쓰지 않는다(재현성 규칙 - AGENT_BRIEF 2장 6번).
             breathPhase = Mathf.Repeat(islandIndex * 1.31f + spawnOrder * 0.77f, 6.2831853f);
+
+            // [B34] 프로시저럴 모션을 붙인다. 여기(Start)에서 붙이는 이유는 위 숨쉬기와 같다 -
+            // 시각 파츠가 전부 만들어지고 예전 파츠 정리(Destroy)까지 끝난 뒤라야 자식 목록이 확정된다.
+            // 위상 씨앗도 숨쉬기와 같은 결정적 식별자에서 뽑되, 두 연출이 한 박자로 겹쳐 보이지 않도록
+            // 계수를 다르게 준다.
+            bearMotion = CreatureMotion.AttachBear(gameObject,
+                Mathf.Repeat(islandIndex * 2.07f + spawnOrder * 1.43f, 6.2831853f));
+
+            if (bearMotion != null && isDefeated)
+                bearMotion.enabled = false;
         }
 
         /// <summary>
@@ -196,6 +236,10 @@ namespace MakeGame.Systems
                 currentHealth = maxHealth;
                 respawnTimer = 0f;
                 SetVisualActive(true);
+
+                // [B34] 다시 나타났으니 모션도 되살린다(처치 시 원자세로 되돌린 뒤 꺼 뒀다).
+                if (bearMotion != null)
+                    bearMotion.enabled = true;
             }
         }
 
@@ -349,8 +393,23 @@ namespace MakeGame.Systems
                 respawnTimer = 0f;
                 SetVisualActive(false);
 
+                // [B34 패배] 모션을 끊고 파츠를 원자세로 되돌린 뒤 정지시킨다. 되돌리지 않으면
+                // 재등장(respawnSeconds 뒤)했을 때 몸통이 마지막 프레임 자세로 어긋난 채 나타난다.
+                if (bearMotion != null)
+                {
+                    bearMotion.StopAndReset();
+                    bearMotion.enabled = false;
+                }
+
                 if (skills != null)
                     skills.AddExperience(SkillType.Physical, defeatExperience);
+            }
+            else if (bearMotion != null)
+            {
+                // [B34 피격 후 생존] 맞고도 버틴 곰은 포효로 반응한다. 지금 이 프로젝트에 상태 기계가
+                // 없으므로, "공격받음"을 알 수 있는 유일한 지점이 여기다. 시퀀스가 이미 재생 중이면
+                // CreatureMotion이 알아서 무시하므로 연타로 눌러도 동작이 되감기지 않는다.
+                bearMotion.PlayRoar();
             }
 
             return true;
@@ -370,6 +429,22 @@ namespace MakeGame.Systems
             respawnTimer = 0f;
             currentHealth = defeated ? 0f : maxHealth;
             SetVisualActive(!defeated);
+
+            // [B34] 처치 상태로 복원되면 모션도 원자세로 되돌린 뒤 멈춘다(TryAttack의 처치 경로와 동일).
+            // 이 메서드는 Start보다 먼저 불릴 수 있으므로(세이브 복원 순서) bearMotion이 아직 null일 수
+            // 있고, 그 경우는 Start가 isDefeated를 보고 처음부터 꺼진 채로 붙인다.
+            if (bearMotion != null)
+            {
+                if (defeated)
+                {
+                    bearMotion.StopAndReset();
+                    bearMotion.enabled = false;
+                }
+                else
+                {
+                    bearMotion.enabled = true;
+                }
+            }
         }
 
         /// <summary>
@@ -423,7 +498,7 @@ namespace MakeGame.Systems
         /// </summary>
         private void OnTriggerEnter(Collider other)
         {
-            TryApplyContactDamage(other);
+            TryApplyContactDamage(other, true);
         }
 
         /// <summary>
@@ -433,13 +508,19 @@ namespace MakeGame.Systems
         private void OnTriggerStay(Collider other)
         {
             if (contactCooldownTimer <= 0f)
-                TryApplyContactDamage(other);
+                TryApplyContactDamage(other, false);
         }
 
         /// <summary>
         /// 물리쳐지지 않은 상태일 때만 접촉 대상에게 위험 효과를 적용하고, 쿨다운을 초기화한다.
+        ///
+        /// [B34] firstContact는 곰의 연출 분기에만 쓰인다(피해 계산은 예전 그대로 두 경로가 완전히 같다).
+        /// 위험 요소에는 이동/추격 코드가 없어 "다가온다/때린다"를 알 수 있는 지점이 접촉뿐이라,
+        /// 지금은 접촉의 처음/지속을 그 두 상태의 대역으로 쓴다. 추격 AI가 생기면 PlayCharge는
+        /// 접촉이 아니라 추격 시작 지점으로 옮겨야 한다.
         /// </summary>
-        private void TryApplyContactDamage(Collider other)
+        /// <param name="firstContact">이번이 접촉이 시작된 순간인지(OnTriggerEnter), 붙어 있는 동안의 반복 피격인지(OnTriggerStay).</param>
+        private void TryApplyContactDamage(Collider other, bool firstContact)
         {
             if (isDefeated)
                 return;
@@ -451,6 +532,14 @@ namespace MakeGame.Systems
             ApplyHazardEffect(stats);
             contactCooldownTimer = contactDamageCooldown;
             AudioManager.Instance?.PlayDamage(); // 피해를 입었을 때 경고 효과음
+
+            if (bearMotion != null)
+            {
+                if (firstContact)
+                    bearMotion.PlayCharge();  // 달려들어 덮치는 첫 순간
+                else
+                    bearMotion.PlaySlam();    // 붙어 있는 동안 앞발을 내려친다
+            }
         }
     }
 }

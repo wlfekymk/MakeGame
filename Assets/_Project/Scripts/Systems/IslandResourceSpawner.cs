@@ -368,6 +368,7 @@ namespace MakeGame.Systems
             // 그대로 지키도록 만들어져 있어서, 콜라이더·GetHalfHeight·ResourceNode.RootTopLocalY 계산이
             // 하나도 달라지지 않는다.
             ApplyRootMesh(go, itemName, shapeVariant);
+            WidenHarvestCollider(go, itemName, scale);
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer != null)
@@ -446,6 +447,13 @@ namespace MakeGame.Systems
                     scale = new Vector3(0.55f, 0.05f, 0.4f);
                     break;
                 case "야자잎": // 짧은 잎자루 위로 잎맥 있는 잎 3장이 부채꼴로 퍼짐 (AddResourceDetailParts에서 추가)
+                    // 이 스케일은 **보이는 잎자루(지름 5cm · 높이 16cm)**의 크기이고, 잎 3장은 여기에
+                    // 포함되지 않는다(AddMeshPart가 부모 스케일을 정확히 상쇄해 미터 메시를 그대로 세운다).
+                    // 그래서 채집 판정을 이 스케일에 맡기면 지름 5cm짜리 막대만 맞고 폭 1m가 넘는 잎은
+                    // 통째로 허공이 된다 - 조준이 거의 안 맞던 실제 원인이다.
+                    // **콜라이더는 WidenHarvestCollider가 따로 넓힌다**(대나무에서 검증한 "보이는 굵기와
+                    // 채집 판정을 분리한다" 규칙과 같다). 이 값을 키워서 고치려 하지 마라 - 잎자루가
+                    // 함께 굵어지고, 잎이 붙는 높이(stemTop = parentScale.y × 0.9)까지 같이 올라간다.
                     primitive = PrimitiveType.Cylinder;
                     scale = new Vector3(0.05f, 0.08f, 0.05f);
                     break;
@@ -544,6 +552,42 @@ namespace MakeGame.Systems
             var filter = go.GetComponent<MeshFilter>();
             if (filter != null)
                 filter.sharedMesh = mesh;
+        }
+
+        /// <summary>
+        /// **채집 판정 콜라이더만** 실제 실루엣에 맞춰 넓힌다. 보이는 메시는 한 폴리곤도 건드리지 않는다.
+        ///
+        /// 대부분의 자원은 루트 프리미티브 자체가 실루엣의 대부분이라 "루트 스케일 = 콜라이더"로 충분하다
+        /// (돌조각: 구 반지름 0.25m, 대나무: 캡슐 반지름 0.15m). 그런데 야자잎만은 루트가 **잎자루**이고
+        /// 실루엣의 99%가 AddMeshPart로 붙는 잎 3장이다. AddMeshPart는 부모 스케일을 정확히 상쇄하므로
+        /// (자식 localScale = S⁻¹) 잎 크기는 루트 스케일과 완전히 독립이고, 결과적으로 지름 5cm짜리
+        /// 콜라이더가 폭 1m가 넘는 잎을 대표하고 있었다.
+        ///
+        /// 여기서 콜라이더 필드(=로컬 단위)를 직접 조정한다. 루트 스케일을 키우는 방식은 잎자루 굵기와
+        /// 잎이 붙는 높이가 함께 변해 승인된 디자인이 바뀌므로 쓸 수 없다.
+        ///
+        /// 목표 반지름 0.24m의 근거: 잎 길이가 0.44~0.58m(FrondMeters 변주 0~2)이므로 잎 하나의 안쪽
+        /// 절반을 덮는 값이고, 대나무(보이는 포기 반경 0.34m에 콜라이더 반지름 0.15m)와 같은 비율대다.
+        /// 예전 판정(반지름 0.025m)의 약 10배다.
+        ///
+        /// 캡슐은 높이(0.16~0.20m)보다 지름(0.48m)이 커서 Unity가 **구로 클램프**한다 - 잎이 사방으로
+        /// 퍼진 납작한 부채꼴에는 오히려 이쪽이 맞다. 지터(scale.x = scale.z)를 나눠 주므로 개체마다
+        /// 판정 크기가 흔들리지 않고 항상 정확히 0.24m다(잎 메시가 미터 고정이라 그게 맞다).
+        /// </summary>
+        private void WidenHarvestCollider(GameObject go, string itemName, Vector3 scale)
+        {
+            if (itemName != "야자잎")
+                return;
+
+            var capsule = go.GetComponent<CapsuleCollider>();
+            if (capsule == null)
+                return;
+
+            const float FrondHitRadiusMeters = 0.24f;
+
+            // CapsuleCollider의 월드 반지름 = radius x max(|scale.x|, |scale.z|).
+            float horizontal = Mathf.Max(0.0001f, Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.z)));
+            capsule.radius = FrondHitRadiusMeters / horizontal;
         }
 
         /// <summary>

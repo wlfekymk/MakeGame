@@ -61,12 +61,41 @@ namespace MakeGame.Player
         private bool lookCursorWasLocked;
         private int lookSettleCounter;
 
-        /// <summary>필요한 컴포넌트 참조를 캐싱한다.</summary>
+        /// <summary>필요한 컴포넌트 참조를 캐싱하고, 카메라 흔들림 컴포넌트를 붙인다.</summary>
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
             lookCursorWasLocked = Cursor.lockState == CursorLockMode.Locked;
             lookSettleCounter = Mathf.Max(0, lookSettleFrames);
+            EnsureCameraShake();
+        }
+
+        /// <summary>
+        /// [B34] 카메라에 CameraShake를 붙인다(없을 때만). 곰의 충격 훅(CreatureMotion.OnImpact)을
+        /// 받아 화면을 흔드는 컴포넌트이며, 씬 파일을 편집하지 않고 붙이기 위해 카메라를 소유한
+        /// 이쪽에서 런타임에 단다.
+        ///
+        /// PlayerController가 아니라 **카메라 오브젝트**에 붙이는 이유: 이 컴포넌트는 타이틀 화면
+        /// 동안 꺼져 있고(MainMenuController.SetGameplayEnabled) 사망·엔딩에서도 꺼지는데, 흔들림은
+        /// 카메라의 위치 채널을 스스로 정리(원위치 복구)해야 하므로 컨트롤러의 on/off에 묶이면 안 된다.
+        /// 흔들림은 localPosition만 쓰므로 HandleLook의 회전(localEulerAngles)과 채널이 겹치지 않는다.
+        ///
+        /// Awake는 컴포넌트가 비활성(enabled = false) 상태여도 호출되므로, 타이틀에서 시작하는
+        /// 흐름에서도 부착은 반드시 한 번 일어난다.
+        /// </summary>
+        private void EnsureCameraShake()
+        {
+            if (cameraTransform == null)
+                return;
+
+            CameraShake shake = cameraTransform.GetComponent<CameraShake>();
+            if (shake == null)
+                shake = cameraTransform.gameObject.AddComponent<CameraShake>();
+
+            // 이미 붙어 있고 대상이 잡혀 있으면 그대로 둔다. 원래 위치(basePosition)를 Awake에서
+            // 기억해 둔 뒤라, 여기서 대상을 갈아끼우면 기준점이 어긋난다.
+            if (shake.shakeTarget == null)
+                shake.shakeTarget = cameraTransform;
         }
 
         /// <summary>

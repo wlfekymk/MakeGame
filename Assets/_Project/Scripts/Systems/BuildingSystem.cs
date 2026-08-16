@@ -30,6 +30,11 @@ namespace MakeGame.Systems
         OffDeck = 7,
         /// <summary>계단이 지나가는 자리라 바닥을 덮을 수 없다.</summary>
         StairInTheWay = 8,
+        /// <summary>
+        /// 뗏목 본체(선체 옆구리·난간·돛대 등 갑판 윗면이 아닌 부분)가 앞을 막고 있다.
+        /// 레이가 뗏목을 투과해 뒤쪽 지형에 자리를 잡던 것을 막은 결과다. **새 값은 끝에만 붙인다.**
+        /// </summary>
+        BlockedByRaft = 9,
     }
 
     /// <summary>
@@ -142,6 +147,21 @@ namespace MakeGame.Systems
         /// </summary>
         private const float DeckSurfaceTolerance = 0.5f;
 
+        /// <summary>
+        /// 레이가 아무것도 맞히지 못했을 때 쓰는 가상 조준 거리(m). 2층 이상에서 정면을 보면 8m 안에
+        /// 지형도 조각도 없는 것이 정상이라, 이 값이 없으면 위층에서는 아무것도 지을 수 없다.
+        /// 팔 길이보다 조금 긴 4m로 잡아, 겨눈 것이 없을 때 조각이 발밑 근처에만 생기게 한다.
+        /// </summary>
+        private const float NoHitAimDistance = 4f;
+
+        /// <summary>
+        /// 뗏목 본체에 막혔다고 인정하려면 채택한 히트보다 이만큼(m)은 확실히 앞서야 한다.
+        /// 갑판 윗면 콜라이더(DeckSurface)의 윗면과 선체 상자의 윗면은 **같은 평면**이라
+        /// (RaftStructure: 둘 다 DeckSurfaceY) 갑판을 내려다보면 두 거리가 사실상 같게 나온다.
+        /// 이 여유가 없으면 반올림 오차 한 번에 갑판 건축 전체가 "막힘"으로 뒤집힌다.
+        /// </summary>
+        private const float RaftBlockBias = 0.05f;
+
         // ────────────────────────────────────────────────────────────────────────
         // 상태
         // ────────────────────────────────────────────────────────────────────────
@@ -235,6 +255,24 @@ namespace MakeGame.Systems
         private readonly HashSet<long> bfsVisited = new HashSet<long>();
         private readonly List<BuildPieceCost> refundBuffer = new List<BuildPieceCost>();
         private readonly List<BuildPieceCost> placementCostBuffer = new List<BuildPieceCost>();
+
+        // ResolveWallTarget이 후보를 고르는 동안 쓰는 작업 필드. 호출이 중첩되지 않으므로 지역 변수를
+        // 여러 개 ref로 넘기는 대신 여기 둔다(할당 0). '빈 자리'와 '이미 찬 자리'를 따로 들고 있다가
+        // 빈 자리를 우선 고른다 - 아래 벽을 겨눴을 때 그 벽 자신이 이겨 버리면 위층을 못 올린다.
+        private bool wallPickFound;
+        private float wallPickSqr;
+        private int wallPickLevel;
+        private float wallPickY;
+        private int wallPickEdgeX;
+        private int wallPickEdgeZ;
+        private int wallPickAxis;
+        private bool wallPickTakenFound;
+        private float wallPickTakenSqr;
+        private int wallPickTakenLevel;
+        private float wallPickTakenY;
+        private int wallPickTakenEdgeX;
+        private int wallPickTakenEdgeZ;
+        private int wallPickTakenAxis;
         private readonly List<PlacedPiece> rebuildBuffer = new List<PlacedPiece>();
 
         private Dictionary<string, ItemData> itemByName;
@@ -339,12 +377,13 @@ namespace MakeGame.Systems
             {
                 case BuildBlockReason.None: return "설치 가능";
                 case BuildBlockReason.Occupied: return "이미 조각이 있다";
-                case BuildBlockReason.NoSupportingFloor: return "받쳐 줄 바닥이 없다";
+                case BuildBlockReason.NoSupportingFloor: return "받쳐 줄 바닥이나 아래 벽이 없다";
                 case BuildBlockReason.GroundTooUneven: return "지면이 고르지 않다";
                 case BuildBlockReason.NotOnGround: return "땅 위가 아니다";
                 case BuildBlockReason.NotEnoughMaterials: return "재료가 모자란다";
                 case BuildBlockReason.OffDeck: return "갑판 밖이다";
                 case BuildBlockReason.StairInTheWay: return "계단이 지나가는 자리다";
+                case BuildBlockReason.BlockedByRaft: return "뗏목이 가로막았다 - 갑판 위를 겨눠라";
                 default: return "놓을 자리를 찾는 중";
             }
         }
@@ -675,12 +714,19 @@ namespace MakeGame.Systems
             Transform camTransform = cam.transform;
             Ray ray = new Ray(camTransform.position, camTransform.forward);
 
-            if (!CastBuildRay(ray, out RaycastHit hit, out PlacedPiece piece, out BuildSpace space, out bool deckSurface))
+            if (!CastBuildRay(ray, out Vector3 worldPoint, out Vector3 worldNormal, out PlacedPiece piece,
+                    out BuildSpace space, out bool deckSurface, out bool blockedByRaft))
+            {
+                // 허공은 CastBuildRay가 가상 조준점으로 되살리므로 여기 오지 않는다. 여기 오는 것은
+                // "뗏목이 가로막았다" 하나뿐이라, 그 사유를 그대로 띄운다.
+                if (blockedByRaft)
+                    blockReason = BuildBlockReason.BlockedByRaft;
                 return;
+            }
 
             targetSpace = space;
-            Vector3 point = WorldToSpace(space, hit.point);
-            Vector3 normal = WorldToSpaceDirection(space, hit.normal);
+            Vector3 point = WorldToSpace(space, worldPoint);
+            Vector3 normal = WorldToSpaceDirection(space, worldNormal);
 
             switch (selectedType)
             {
@@ -896,23 +942,28 @@ namespace MakeGame.Systems
             blockReason = BuildBlockReason.None;
         }
 
-        /// <summary>벽/문/창문의 놓을 자리를 정한다. **바닥(갑판 포함)의 네 모서리에만 붙는다.**</summary>
+        /// <summary>
+        /// 벽/문/창문의 놓을 자리를 정한다. 지지는 **둘 중 하나만 있으면 된다**:
+        ///  (a) 그 층에 받쳐 줄 바닥(갑판 포함)이 있다 - 예전부터의 규칙.
+        ///  (b) **같은 모서리의 바로 아래층에 벽류가 있다**(감독 지시, 배치 37). 벽은 원래 아래 벽이
+        ///      받치는 물건이고, 이 규칙이 있어야 계단으로 올라간 자리처럼 **바닥 조각이 없는 층**에서도
+        ///      벽을 올릴 수 있다. 한 번에 한 층씩만 올라가므로 연쇄로 쌓으면 탑이 된다(허용).
+        ///
+        /// 후보는 **빈 자리를 우선**한다. 아래 벽을 겨누면 그 벽 자신(이미 찬 자리)이 거리상 항상 더
+        /// 가까워서, 우선순위가 없으면 "이미 조각이 있다"만 뜨고 위층을 영영 못 올린다.
+        /// </summary>
         private void ResolveWallTarget(BuildSpace space, Vector3 point)
         {
             int centerX = CellIndexOf(point.x);
             int centerZ = CellIndexOf(point.z);
 
-            bool found = false;
-            float bestSqr = float.MaxValue;
-            int bestLevel = 0;
-            float bestY = 0f;
-            int bestEdgeX = 0;
-            int bestEdgeZ = 0;
-            int bestAxis = 0;
+            wallPickFound = false;
+            wallPickSqr = float.MaxValue;
+            wallPickTakenFound = false;
+            wallPickTakenSqr = float.MaxValue;
 
-            // 조준점 주변 3x3 칸의 바닥을 훑어 가장 가까운 모서리를 고른다. 조준점이 벽 위라 셀
-            // 경계에 딱 걸려도(어느 쪽 셀로 반올림될지 모르는 상황) 옆 칸 바닥이 후보에 들어오므로
-            // "벽을 보고 있는데 붙일 데가 없다"가 되지 않는다.
+            // 조준점 주변 3x3 칸의 모서리를 훑는다. 조준점이 벽 위라 셀 경계에 딱 걸려도(어느 쪽 셀로
+            // 반올림될지 모르는 상황) 옆 칸이 후보에 들어오므로 "벽을 보고 있는데 붙일 데가 없다"가 되지 않는다.
             for (int ox = -1; ox <= 1; ox++)
             {
                 for (int oz = -1; oz <= 1; oz++)
@@ -920,36 +971,32 @@ namespace MakeGame.Systems
                     int cx = centerX + ox;
                     int cz = centerZ + oz;
                     SupportRef support = FindSupportNear(space, cx, cz, point.y);
-                    if (!support.valid)
-                        continue;
 
                     for (int side = 0; side < 4; side++)
                     {
                         GetEdgeOfCell(cx, cz, side, out int ex, out int ez, out int axis);
-                        Vector3 mid = EdgeMidpoint(ex, ez, axis, support.y);
 
-                        // 벽 높이의 절반쯤을 기준으로 재야 "벽 위쪽을 겨눴을 때"도 그 모서리가 이긴다.
-                        mid.y += LevelHeight * 0.5f;
-                        float sqr = (mid - point).sqrMagnitude;
-                        if (sqr >= bestSqr)
-                            continue;
+                        if (support.valid)
+                            ConsiderWallEdge(space, point, ex, ez, axis, support.level, support.y);
 
-                        bestSqr = sqr;
-                        bestLevel = support.level;
-                        bestY = support.y;
-                        bestEdgeX = ex;
-                        bestEdgeZ = ez;
-                        bestAxis = axis;
-                        found = true;
+                        if (TryGetWallSupport(space, ex, ez, axis, point.y, out int stackLevel, out float stackY))
+                            ConsiderWallEdge(space, point, ex, ez, axis, stackLevel, stackY);
                     }
                 }
             }
 
-            if (!found)
+            bool useTaken = !wallPickFound;
+            if (useTaken && !wallPickTakenFound)
             {
                 blockReason = BuildBlockReason.NoSupportingFloor;
                 return;
             }
+
+            int bestLevel = useTaken ? wallPickTakenLevel : wallPickLevel;
+            float bestY = useTaken ? wallPickTakenY : wallPickY;
+            int bestEdgeX = useTaken ? wallPickTakenEdgeX : wallPickEdgeX;
+            int bestEdgeZ = useTaken ? wallPickTakenEdgeZ : wallPickEdgeZ;
+            int bestAxis = useTaken ? wallPickTakenAxis : wallPickAxis;
 
             hasTarget = true;
             targetCellX = bestEdgeX;
@@ -959,7 +1006,7 @@ namespace MakeGame.Systems
             targetPosition = EdgeMidpoint(bestEdgeX, bestEdgeZ, bestAxis, bestY);
             targetYaw = GetYawFor(selectedType, bestAxis);
 
-            if (wallByKey.ContainsKey(PieceKey(space, bestEdgeX, bestEdgeZ, bestLevel, bestAxis)))
+            if (useTaken)
             {
                 blockReason = BuildBlockReason.Occupied;
                 return;
@@ -967,6 +1014,87 @@ namespace MakeGame.Systems
 
             targetValid = true;
             blockReason = BuildBlockReason.None;
+        }
+
+        /// <summary>
+        /// 벽 후보 하나를 점수 매겨 최선값에 반영한다. 빈 자리와 이미 찬 자리를 따로 들고 있다가
+        /// ResolveWallTarget이 빈 자리를 우선 고른다. 매 프레임 도는 경로라 델리게이트/할당을 쓰지 않고
+        /// 필드에 직접 쓴다(호출이 중첩되지 않으므로 안전하다).
+        /// </summary>
+        private void ConsiderWallEdge(BuildSpace space, Vector3 point, int edgeX, int edgeZ, int axis, int level, float baseY)
+        {
+            Vector3 mid = EdgeMidpoint(edgeX, edgeZ, axis, baseY);
+
+            // 벽 높이의 절반쯤을 기준으로 재야 "벽 위쪽을 겨눴을 때"도 그 모서리가 이긴다.
+            mid.y += LevelHeight * 0.5f;
+            float sqr = (mid - point).sqrMagnitude;
+
+            if (wallByKey.ContainsKey(PieceKey(space, edgeX, edgeZ, level, axis)))
+            {
+                if (sqr >= wallPickTakenSqr)
+                    return;
+
+                wallPickTakenSqr = sqr;
+                wallPickTakenLevel = level;
+                wallPickTakenY = baseY;
+                wallPickTakenEdgeX = edgeX;
+                wallPickTakenEdgeZ = edgeZ;
+                wallPickTakenAxis = axis;
+                wallPickTakenFound = true;
+                return;
+            }
+
+            if (sqr >= wallPickSqr)
+                return;
+
+            wallPickSqr = sqr;
+            wallPickLevel = level;
+            wallPickY = baseY;
+            wallPickEdgeX = edgeX;
+            wallPickEdgeZ = edgeZ;
+            wallPickAxis = axis;
+            wallPickFound = true;
+        }
+
+        /// <summary>
+        /// 이 모서리에서 조준점 아래로 가장 가까운 벽류를 찾아, 그 **꼭대기**를 새 벽의 밑면으로 돌려준다.
+        /// 바닥 지지(FindSupportNear)와 같은 기준으로 "조준점보다 위에 있는 것은 딛는 것이 아니다"를 적용한다.
+        /// </summary>
+        private bool TryGetWallSupport(BuildSpace space, int edgeX, int edgeZ, int axis, float y,
+            out int level, out float baseY)
+        {
+            level = 0;
+            baseY = 0f;
+
+            int start = LevelOf(y);
+            bool found = false;
+            float bestDelta = float.MaxValue;
+
+            // 아래 벽은 밑면이 y보다 최대 한 층 아래에 있을 수 있어 두 층 아래까지 본다.
+            for (int d = -2; d <= 1; d++)
+            {
+                int candidate = start + d;
+                if (!wallByKey.TryGetValue(PieceKey(space, edgeX, edgeZ, candidate, axis), out PlacedPiece wall))
+                    continue;
+
+                // 아래 벽의 꼭대기가 조준점보다 한참 위면 그 벽 위에 올리려는 것이 아니다.
+                // 여유를 벽 높이의 60%로 두어, 벽의 중간쯤을 겨눠도 "그 위"가 후보로 잡히게 한다
+                // (꼭대기 모서리를 정확히 겨누게 만들면 조작이 너무 까다롭다).
+                float topY = wall.position.y + LevelHeight;
+                if (topY > y + LevelHeight * 0.6f)
+                    continue;
+
+                float delta = Mathf.Abs(topY - y);
+                if (delta >= bestDelta)
+                    continue;
+
+                bestDelta = delta;
+                level = candidate + 1;
+                baseY = topY;
+                found = true;
+            }
+
+            return found;
         }
 
         /// <summary>
@@ -1106,18 +1234,32 @@ namespace MakeGame.Systems
         /// 지형/조각/갑판만 걸러서 가장 가까운 히트를 돌려준다. 초목·자원 노드·사냥감·플레이어는
         /// 통과시킨다(TerrainSampler가 "Island_" 접두사만 지형으로 인정하는 것과 같은 이유 -
         /// 콜라이더가 붙은 장식물에 조준이 걸리면 배치 높이가 통째로 틀어진다).
+        ///
+        /// **아무것도 안 맞아도 실패로 끝내지 않는다.** 2층에 올라가 정면을 보면 8m 안에 지형도 조각도
+        /// 없어서 예전에는 그대로 "놓을 자리 없음"이 됐다 - 계단으로 올라간 자리에서 벽이 안 서던
+        /// 실제 원인이 이것이다. 히트가 없으면 시선 앞 NoHitAimDistance 지점을 조준점으로 삼아,
+        /// 그 주변의 바닥·벽을 근거로 자리를 잡는다(실물이 없으므로 조각 참조는 null이고 철거는 그대로 실패한다).
+        ///
+        /// **"허공(히트 없음)"과 "뗏목에 막힘"은 다른 결과다.** 앞의 것만 가상 조준점 폴백을 탄다.
+        /// 뗏목 선체 옆구리·난간을 겨눈 경우는 blockedByRaft로 실패를 확정하고 폴백도 타지 않는다 -
+        /// 폴백을 태우면 옆구리를 겨눴을 때 조각이 허공에 뜨고, 그냥 통과시키면 뒤쪽 섬 지형에 잡힌다.
         /// </summary>
-        private bool CastBuildRay(Ray ray, out RaycastHit bestHit, out PlacedPiece bestPiece,
-            out BuildSpace space, out bool deckSurface)
+        private bool CastBuildRay(Ray ray, out Vector3 hitPoint, out Vector3 hitNormal, out PlacedPiece bestPiece,
+            out BuildSpace space, out bool deckSurface, out bool blockedByRaft)
         {
-            bestHit = default;
+            hitPoint = ray.origin;
+            hitNormal = -ray.direction;
             bestPiece = null;
             space = BuildSpace.Ground;
             deckSurface = false;
+            blockedByRaft = false;
 
             int count = Physics.RaycastNonAlloc(ray, rayBuffer, buildDistance);
             bool found = false;
             float bestDistance = float.MaxValue;
+
+            // 뗏목 본체에 막힌 가장 가까운 지점. 채택한 히트보다 앞서면 조준 실패로 확정한다.
+            float raftBlockDistance = float.MaxValue;
 
             for (int i = 0; i < count; i++)
             {
@@ -1135,7 +1277,14 @@ namespace MakeGame.Systems
                     if (!isTerrain)
                     {
                         if (!IsDeckCollider(collider.transform))
+                        {
+                            // 뗏목 본체(선체 상자·난간·돛대·승선 발판)에 맞은 히트. 예전에는 여기서 그냥
+                            // 다음 히트로 넘어가 레이가 뗏목을 투과했다 - 옆구리를 겨누면 뒤쪽 섬 지형에
+                            // 조각이 잡혔다. 거리만 기억해 두고 루프가 끝난 뒤 채택 히트와 견준다.
+                            if (hit.distance < raftBlockDistance && IsRaftCollider(collider.transform))
+                                raftBlockDistance = hit.distance;
                             continue;
+                        }
                         onDeck = true;
                     }
                 }
@@ -1144,7 +1293,8 @@ namespace MakeGame.Systems
                     continue;
 
                 bestDistance = hit.distance;
-                bestHit = hit;
+                hitPoint = hit.point;
+                hitNormal = hit.normal;
                 bestPiece = piece;
                 space = piece != null ? piece.space : (onDeck ? BuildSpace.Deck : BuildSpace.Ground);
                 deckSurface = onDeck;
@@ -1156,13 +1306,54 @@ namespace MakeGame.Systems
                 // 갑판 윗면인지 선체 옆구리인지 가른다. 뗏목의 콜라이더는 선체 전체를 덮는 상자 하나라
                 // (RaftStructure.ApplyHullCollider) 옆면도 같은 콜라이더에 맞는다. 높이와 법선을 둘 다
                 // 봐야 "물에 잠긴 옆구리에 집이 붙는" 일이 없다.
-                Vector3 localPoint = WorldToSpace(BuildSpace.Deck, bestHit.point);
-                Vector3 localNormal = WorldToSpaceDirection(BuildSpace.Deck, bestHit.normal);
+                Vector3 localPoint = WorldToSpace(BuildSpace.Deck, hitPoint);
+                Vector3 localNormal = WorldToSpaceDirection(BuildSpace.Deck, hitNormal);
                 if (Mathf.Abs(localPoint.y) > DeckSurfaceTolerance || localNormal.y < 0.5f)
-                    return false;
+                {
+                    // 갑판 콜라이더의 옆면·아랫면을 긁은 것도 "뗏목에 막힘"이다(허공이 아니다).
+                    found = false;
+                    if (bestDistance < raftBlockDistance)
+                        raftBlockDistance = bestDistance;
+                }
             }
 
-            return found;
+            // 뗏목이 앞을 가로막았으면 그 뒤에서 찾은 자리는 버리고, 폴백도 타지 않고 실패로 끝낸다.
+            // RaftBlockBias만큼 확실히 앞설 때만 막힌 것으로 본다 - 갑판 윗면과 선체 윗면은 같은 평면이라
+            // 갑판을 내려다볼 때 두 거리가 같게 나오고, 그 경우는 갑판이 이겨야 한다.
+            if (raftBlockDistance < (found ? bestDistance : float.MaxValue) - RaftBlockBias)
+            {
+                blockedByRaft = true;
+                hitPoint = ray.origin + ray.direction * raftBlockDistance;
+                hitNormal = -ray.direction;
+                bestPiece = null;
+                space = BuildSpace.Ground;
+                deckSurface = false;
+                return false;
+            }
+
+            if (found)
+                return true;
+
+            // 히트 없음(=허공) - 시선 앞 한 지점을 가상의 조준점으로 삼는다.
+            hitPoint = ray.origin + ray.direction * NoHitAimDistance;
+            hitNormal = -ray.direction;
+            bestPiece = null;
+            deckSurface = false;
+            space = IsDeckAimPoint(hitPoint) ? BuildSpace.Deck : BuildSpace.Ground;
+            return true;
+        }
+
+        /// <summary>실물에 맞지 않은 조준점이 갑판 격자 안쪽인지(갑판 위 허공을 겨눈 경우).</summary>
+        private bool IsDeckAimPoint(Vector3 worldPoint)
+        {
+            if (!IsDeckReady)
+                return false;
+
+            Vector3 local = WorldToSpace(BuildSpace.Deck, worldPoint);
+            if (local.y < -DeckSurfaceTolerance || local.y > LevelHeight * 3f)
+                return false;
+
+            return IsDeckCellInBounds(CellIndexOf(local.x), CellIndexOf(local.z));
         }
 
         /// <summary>이 콜라이더가 뗏목 갑판(또는 그 부속)인지. 부모를 거슬러 DeckRoot에 닿으면 참이다.</summary>
@@ -1174,6 +1365,26 @@ namespace MakeGame.Systems
             while (t != null)
             {
                 if (t == boundDeckRoot)
+                    return true;
+                t = t.parent;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 이 콜라이더가 지금 결속된 뗏목의 일부인지(선체 상자·난간·돛대·승선 발판 등, 갑판 윗면이
+        /// 아닌 부속까지 포함). 갑판 윗면 판정은 IsDeckCollider가 따로 하므로 여기서는 손대지 않는다.
+        /// </summary>
+        private bool IsRaftCollider(Transform t)
+        {
+            RaftStructure raft = boundRaft != null ? boundRaft : RaftStructure.Active;
+            if (raft == null)
+                return false;
+
+            Transform raftRoot = raft.transform;
+            while (t != null)
+            {
+                if (t == raftRoot)
                     return true;
                 t = t.parent;
             }
@@ -1582,7 +1793,9 @@ namespace MakeGame.Systems
 
             Transform camTransform = cam.transform;
             Ray ray = new Ray(camTransform.position, camTransform.forward);
-            if (!CastBuildRay(ray, out RaycastHit _, out PlacedPiece piece, out BuildSpace _, out bool _) || piece == null)
+            // 조준한 실물이 있어야만 부순다. 히트가 없을 때 CastBuildRay가 만들어 주는 가상 조준점은
+            // 조각 참조가 null이라 여기서 그대로 걸러진다(허공을 우클릭해도 아무 일도 없다).
+            if (!CastBuildRay(ray, out _, out _, out PlacedPiece piece, out _, out _, out _) || piece == null)
             {
                 AudioManager.Instance?.PlayActionFail();
                 return;
@@ -1591,6 +1804,16 @@ namespace MakeGame.Systems
             if (piece.type == BuildPieceType.Floor && HasLoadAbove(piece))
             {
                 Debug.LogWarning("[BuildingSystem] 이 바닥 위에 얹힌 조각이 있어 부술 수 없다. 위쪽부터 철거하라.");
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
+            // 벽 위에 벽을 쌓을 수 있게 됐으니(배치 37) 반대쪽 대칭도 맞춘다 - 아래 벽을 먼저 부수면
+            // 위 벽이 허공에 뜬다. 바닥에 이미 적용하던 "위에 얹힌 것이 있으면 못 부순다"와 같은 원칙이다.
+            if (IsWallType(piece.type)
+                && wallByKey.ContainsKey(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level + 1, piece.axis)))
+            {
+                Debug.LogWarning("[BuildingSystem] 이 벽 위에 다른 벽이 얹혀 있어 부술 수 없다. 위쪽부터 철거하라.");
                 AudioManager.Instance?.PlayActionFail();
                 return;
             }
@@ -1625,6 +1848,12 @@ namespace MakeGame.Systems
 
             AudioManager.Instance?.PlayBreak();
             Changed?.Invoke();
+        }
+
+        /// <summary>벽/문/창문처럼 셀 모서리에 서는 부품인지.</summary>
+        private static bool IsWallType(BuildPieceType type)
+        {
+            return type == BuildPieceType.Wall || type == BuildPieceType.Doorway || type == BuildPieceType.Window;
         }
 
         /// <summary>이 바닥이 사라지면 공중에 뜨는 조각이 있는지 확인한다.</summary>
@@ -2030,6 +2259,10 @@ namespace MakeGame.Systems
         /// 정상이고, 그 구멍 때문에 2층 집 전체가 실외가 되면 안 된다.
         ///
         /// **지면과 뗏목 갑판 양쪽에서 동작한다.** 지면에서 실패하면 좌표를 갑판 로컬로 바꿔 한 번 더 본다.
+        ///
+        /// [배치 37] 벽이 아래 벽만으로도 설 수 있게 됐지만 **실내 판정은 바뀌지 않는다.** 시작 조건이
+        /// TryGetFloorUnder(발밑 바닥)이고 탐색도 바닥이 있는 칸으로만 번지므로, 바닥 없이 벽만 두른
+        /// 기둥은 어떤 경우에도 실내가 되지 않는다(비를 피하는 버그가 생기지 않는다).
         /// </summary>
         public static bool IsInsideEnclosedStructure(Vector3 worldPos)
         {

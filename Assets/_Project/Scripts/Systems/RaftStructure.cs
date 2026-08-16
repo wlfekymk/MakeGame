@@ -59,6 +59,13 @@ namespace MakeGame.Systems
         /// <summary>건축 전용 컨테이너 이름. 갑판 재생성이 절대로 지우지 않는 유일한 자식이다.</summary>
         public const string PlacedStructuresName = "PlacedStructures";
 
+        /// <summary>
+        /// 갑판 윗면을 대표하는 콜라이더의 이름. **DeckRoot의 자식**이어야 한다는 점이 이 오브젝트의
+        /// 존재 이유 전부다 - BuildingSystem.IsDeckCollider가 "맞은 콜라이더의 부모를 거슬러 DeckRoot에
+        /// 닿는가"로 Deck 공간을 판정하기 때문이다(BuildingSystem.cs:1306).
+        /// </summary>
+        public const string DeckSurfaceName = "DeckSurface";
+
         /// <summary>승선 발판이 고물에서 해변 쪽으로 뻗는 수평 거리.</summary>
         private const float RampRun = 2.2f;
 
@@ -95,6 +102,12 @@ namespace MakeGame.Systems
 
         /// <summary>건축 시스템이 소유하는 컨테이너. 여기 있는 것은 갑판 재생성에서 살아남는다.</summary>
         private Transform placedStructures;
+
+        /// <summary>
+        /// 갑판 윗면 콜라이더(DeckRoot의 자식). 선체 BoxCollider 안에 완전히 들어가는 얇은 판이라
+        /// 물리적으로는 아무것도 바꾸지 않고, 오직 "이 히트는 갑판이다"를 건축 시스템에 알리는 표식이다.
+        /// </summary>
+        private BoxCollider deckSurfaceCollider;
 
         /// <summary>
         /// 씬에 살아 있는 뗏목. 없으면 null이다.
@@ -480,6 +493,14 @@ namespace MakeGame.Systems
                 container.transform.SetParent(deckRoot, false);
                 placedStructures = container.transform;
             }
+
+            if (deckSurfaceCollider == null)
+            {
+                var surface = new GameObject(DeckSurfaceName);
+                surface.transform.SetParent(deckRoot, false);
+                deckSurfaceCollider = surface.AddComponent<BoxCollider>();
+                deckSurfaceCollider.enabled = false; // 널이 깔리기 전에는 갑판이 없다
+            }
         }
 
         /// <summary>
@@ -812,6 +833,44 @@ namespace MakeGame.Systems
 
             hullCollider.center = new Vector3(0f, top * 0.5f, 0f);
             hullCollider.size = new Vector3(width, top, length);
+
+            ApplyDeckSurfaceCollider(level);
+        }
+
+        /// <summary>
+        /// 갑판 윗면 콜라이더를 현재 단계의 널 범위에 맞춘다.
+        ///
+        /// **왜 이게 따로 필요한가(이번 배치에서 고친 버그):** 건축 시스템은 레이가 맞은 콜라이더의
+        /// 부모를 거슬러 올라가 DeckRoot에 닿을 때만 BuildSpace.Deck으로 전환한다
+        /// (BuildingSystem.IsDeckCollider). 그런데 뗏목의 콜라이더는 (1) 뗏목 **본체**에 붙은 선체
+        /// BoxCollider와 (2) RaftVisual 밑의 승선 발판뿐이고, DeckRoot는 이 둘의 **형제/부모**라
+        /// 부모 사슬로 절대 닿지 않는다. 그래서 갑판을 정면으로 조준해도 그 히트는 "지형도 조각도
+        /// 갑판도 아님"으로 버려졌고(BuildingSystem.cs:1251의 continue), 갑판 위 건축이 한 번도
+        /// 성립하지 않았다. DeckRoot 밑에 실제 콜라이더를 하나 두는 것으로 조건을 충족시킨다.
+        ///
+        /// 이 판은 널판과 정확히 같은 자리(중심 y = DeckPlankY, 두께 = 널 두께)에 있고, 2단계 이상에서
+        /// 선체 콜라이더의 윗면이 이미 DeckSurfaceY이므로 **선체 상자 안에 완전히 들어간다** -
+        /// 새로 막히는 면이 생기지 않아 이동/충돌은 종전과 1mm도 다르지 않다.
+        /// 이름이 "Island_"로 시작하지 않으므로 TerrainSampler.SnapToGround를 오염시키지도 않는다.
+        /// </summary>
+        private void ApplyDeckSurfaceCollider(int level)
+        {
+            if (deckSurfaceCollider == null)
+                return;
+
+            GetDeckedSpan(level, out float minZ, out float maxZ);
+            float span = maxZ - minZ;
+
+            if (span <= 0.01f)
+            {
+                deckSurfaceCollider.enabled = false;
+                return;
+            }
+
+            // DeckRoot는 뗏목 본체와 로컬 원점/회전이 같으므로(EnsureDeckRoot) 아래 값은 곧 뗏목 로컬이다.
+            deckSurfaceCollider.center = new Vector3(0f, DeckPlankY, (minZ + maxZ) * 0.5f);
+            deckSurfaceCollider.size = new Vector3(DeckWidth, DeckPlankThickness, span);
+            deckSurfaceCollider.enabled = true;
         }
 
         /// <summary>
