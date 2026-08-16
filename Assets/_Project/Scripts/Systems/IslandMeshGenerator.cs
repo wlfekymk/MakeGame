@@ -183,6 +183,26 @@ namespace MakeGame.Systems
         public const int MaxVegetationInstancesPerIsland = 220;
 
         /// <summary>
+        /// [B29] 섬 하나에 놓는 바위 무리의 절대 상한(무리 1개 = 렌더러 3~4개).
+        ///
+        /// 초목 상한(220)과 **일부러 분리한다.** 그 상한은 "야자수 16 + 덤불 48 + 풀포기 156 = 정확히 220"
+        /// 이라는 등식 위에 서 있고(위 주석), 바위를 그 안에 넣으면 트림이 발동해 **초목이 대신 깎인다** -
+        /// "바위를 넣었더니 숲이 성겨졌다"는 조용한 회귀가 된다. 예산은 따로 세우고 따로 갚는다.
+        ///
+        /// 갚은 내역(특대 섬, 반지름 200 기준):
+        ///   렌더러 — 덤불 1개가 3 → 1로 줄었다(로브 3개를 메시 한 장에 구웠다). 48개 × -2 = **-96**.
+        ///            바위 12무리 × 3.5 = +42, 표류물 +9 → **순 -45**(508 → 463).
+        ///   삼각형 — 덤불 2,880 → 4,416(로브가 각져지고 잎끝 8장이 생겼다),
+        ///            풀포기 3,120 → 6,240(잎이 2마디로 휘었다), 바위 +1,680, 표류물 +792.
+        ///            합계 9,264 → 16,392. B9 이전(157,824)의 10.4%이고, 늘어난 몫은 전부
+        ///            "화면에서 실제로 보이는 형태"에 들어갔다(ArtDirection 2장 디테일 밀도 규칙).
+        /// </summary>
+        public const int MaxRockClustersPerIsland = 12;
+
+        /// <summary>[B29] 섬 하나에 놓는 표류물(궤짝/통/널판)의 절대 상한. 하나당 렌더러 1개다.</summary>
+        public const int MaxDriftItemsPerIsland = 9;
+
+        /// <summary>
         /// 섬 지형 오브젝트 위에 (1) 내륙 풀밭 캡 메시와 (2) 초목(야자수/덤불/풀포기)을 배치한다.
         ///
         /// 왜 필요했나: 지형은 단색(당시 모래 #C2B280, B11부터 Meadow Green)으로 칠한 메시 하나뿐이고 초목을 만드는 코드는 프로젝트
@@ -196,7 +216,7 @@ namespace MakeGame.Systems
         /// 아이템이 하늘로 떠오르는" 사고가 재발한다. 그래서 프리미티브를 만들고 콜라이더를 지우는
         /// (Destroy가 프레임 끝까지 지연되는) 방식조차 쓰지 않고, 아예 콜라이더가 생기지 않는 경로
         /// (공유 메시 + 빈 GameObject + MeshFilter/MeshRenderer)로 만든다. 공유 메시는 내장 프리미티브
-        /// (GetPrimitiveMesh)이거나 이 클래스가 만든 저폴리 메시(GetLowPolyLobeMesh/GetGrassBladeMesh)이며,
+        /// (GetPrimitiveMesh)이거나 이 클래스가 만든 저폴리 메시(GetBushClumpMesh/GetGrassBladeMesh 등)이며,
         /// 후자는 프리미티브를 거치지 않으므로 콜라이더가 한 프레임도 존재하지 않는다.
         ///
         /// [결정성] 배치에 UnityEngine.Random을 일절 쓰지 않는다. 호출자가 넘긴 섬별 System.Random
@@ -245,7 +265,14 @@ namespace MakeGame.Systems
             //    게다가 줄기 색상각 30° / 잎 95°로 65° 벌어져 있어 대비가 명도 단독에 기대지 않는다.)
             //   하늘(daySkyTint #73A6D9, 색상각 210°) 앞에서는 거의 보색이라 실루엣이 색으로 분리되고,
             //   지면(Meadow Green 155 / Island Sand 178) 앞에서는 여전히 1.65~1.89배 어두워 분리된다.
-            Material trunkMaterial = StructureVisualBuilder.CreateColorMaterial(PalmBarkColor, "wood");
+            //
+            // [B29] 섬마다 새로 만들던 것을 **월드 전체 공유 캐시**로 바꿨다. 색·텍스처 조합이 섬마다
+            // 완전히 동일한데(전부 위 팔레트 상수의 결정적 변주다) 섬 9개가 각자 8장씩 만들고 있어
+            // 머티리얼이 72장이었다. ResourceVisualLibrary.GetMaterial은 (색+텍스처)당 한 장을 돌려주고
+            // enableInstancing까지 켜 주므로, 같은 메시를 쓰는 초목 수백 개가 실제로 인스턴싱된다
+            // (자원 노드가 B28에서 같은 이유로 같은 캐시로 옮겼다 - 그쪽이 원본이다).
+            // 색 값은 한 채널도 바꾸지 않았다. 위 B8~B11의 대비 계산은 전부 그대로 유효하다.
+            Material trunkMaterial = ResourceVisualLibrary.GetMaterial(PalmBarkColor, "bark");
 
             // 잎/덤불/풀을 각각 단색 한 장으로 칠하면 같은 초록이 반지름 200m를 덮어 "한 톤"으로 읽힌다.
             // 프리미티브(=렌더러) 개수를 늘리지 않고 톤만 늘리는 유일한 방법이 머티리얼 장수를 늘려
@@ -255,24 +282,39 @@ namespace MakeGame.Systems
             // 변주는 "명도"가 아니라 "색상"으로 준다 - 명도를 깎으면 위에서 확보한 줄기-잎 대비가
             // 같이 무너지기 때문이다. Frond Green ↔ Meadow Green 사이를 조금 섞어 황록/청록 쪽으로만
             // 흔들고 상대휘도는 147~150으로 유지한다.
+            // [B29] 야자잎만 "leaf" → "frond"(잎맥 결) 텍스처로 바꿨다. 색은 그대로다.
             var frondMaterials = new[]
             {
-                StructureVisualBuilder.CreateColorMaterial(StructureVisualBuilder.FrondGreen, "leaf"),
-                StructureVisualBuilder.CreateColorMaterial(
-                    Color.Lerp(StructureVisualBuilder.FrondGreen, StructureVisualBuilder.MeadowGreen, 0.35f), "leaf"),
+                ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.FrondGreen, "frond"),
+                ResourceVisualLibrary.GetMaterial(
+                    Color.Lerp(StructureVisualBuilder.FrondGreen, StructureVisualBuilder.MeadowGreen, 0.35f), "frond"),
             };
             var bushMaterials = new[]
             {
-                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.FrondGreen, 0.82f), "leaf"),
-                StructureVisualBuilder.CreateColorMaterial(
+                ResourceVisualLibrary.GetMaterial(Shade(StructureVisualBuilder.FrondGreen, 0.82f), "leaf"),
+                ResourceVisualLibrary.GetMaterial(
                     Shade(Color.Lerp(StructureVisualBuilder.FrondGreen, StructureVisualBuilder.MeadowGreen, 0.40f), 0.90f), "leaf"),
             };
             var tuftMaterials = new[]
             {
-                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.86f), "leaf"),
-                StructureVisualBuilder.CreateColorMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.98f), "leaf"),
-                StructureVisualBuilder.CreateColorMaterial(
+                ResourceVisualLibrary.GetMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.86f), "leaf"),
+                ResourceVisualLibrary.GetMaterial(Shade(StructureVisualBuilder.MeadowGreen, 0.98f), "leaf"),
+                ResourceVisualLibrary.GetMaterial(
                     Shade(Color.Lerp(StructureVisualBuilder.MeadowGreen, StructureVisualBuilder.FrondGreen, 0.35f), 0.90f), "leaf"),
+            };
+
+            // [B29 신규] 바위/표류물 머티리얼도 같은 공유 캐시에서 받는다(월드 전체가 5장을 나눠 쓴다).
+            var rockMaterials = new[]
+            {
+                ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.WeatheredStone, "rock"),
+                ResourceVisualLibrary.GetMaterial(Shade(StructureVisualBuilder.WeatheredStone, 0.84f), "rock"),
+                ResourceVisualLibrary.GetMaterial(
+                    Saturate(Shade(StructureVisualBuilder.WeatheredStone, 1.06f), 1.15f), "rock"),
+            };
+            var driftMaterials = new[]
+            {
+                ResourceVisualLibrary.GetMaterial(Shade(StructureVisualBuilder.Driftwood, 0.88f), "driftwood"),
+                ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.SupplyKhaki, "driftwood"),
             };
 
             // (1) 지면 색 구분: 정상부 밝은 풀 / 내륙 풀 / 마른 모래 / 젖은 모래의 4단(전부 덮개 메시다 - B11).
@@ -348,6 +390,159 @@ namespace MakeGame.Systems
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.5f, radius * 0.70f);
                 CreateGrassTuft(root.transform, TerrainSampler.SnapToGround(spot), rng, tuftMaterials[i % tuftMaterials.Length]);
             }
+
+            // ── [B29] 여기서부터 바위·표류물. 난수 소비를 **초목 루프 뒤에** 두는 것이 중요하다 ──
+            // 이 스트림(VegetationSeedSalt 대역)은 초목 전용이라 세이브 키와 무관하지만, 앞에 끼워 넣으면
+            // 같은 worldSeed에서 기존 숲 배치가 통째로 밀린다. 뒤에 붙이면 초목은 1cm도 움직이지 않는다.
+
+            // (3) 바위 무리. 개수는 반지름 선형(초목과 같은 규칙) - 소형 3 / 중형 5 / 대형 8 / 특대 12.
+            //     하나짜리 바위는 "떨어뜨려 놓은 공"으로 읽혀서, 항상 큰 덩어리 1 + 작은 덩어리 2~3의
+            //     무리로 만든다(CreateRockCluster 주석).
+            int rockClusterCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.06f), 3, MaxRockClustersPerIsland);
+            for (int i = 0; i < rockClusterCount; i++)
+            {
+                // 풀밭과 마른 모래 양쪽에 걸치게 0.78R까지 내보낸다 - 해변에 반쯤 박힌 바위가
+                // 해안선을 읽히게 하는 가장 싼 수단이다(자원 노드 돌조각은 0.5m급이라 그 역할을 못 한다).
+                // 안쪽 한계를 초목보다 **더 크게** 잡는다(innerClearRadius + 4m). 바위는 폭이 최대 3.6m라
+                // 시작 섬의 경비행기 잔해(중심에서 7.2m, 반경 3m)나 배 작업대(6.7m)와 겹치면
+                // 상호작용 대상이 돌덩이에 파묻힌다 - 덤불(폭 2.2m, 0.8×innerClear)보다 위험이 크다.
+                Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius + 4f, radius * 0.78f);
+                CreateRockCluster(root.transform, TerrainSampler.SnapToGround(spot), rng,
+                    rockMaterials, i);
+            }
+
+            // (4) 표류물. 파도선 근처(0.845R~0.925R = 축축한 모래 띠)에만 놓는다. 젖은 모래 경계는
+            //     DampEdge(0.90R)이고 물가(y=0 등고선)는 0.93~0.97R이라, 이 범위면 "막 밀려와 반쯤
+            //     모래에 박힌" 위치가 된다. 개수는 소형 2 / 중형 4 / 대형 7 / 특대 9.
+            int driftCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.05f), 2, MaxDriftItemsPerIsland);
+            for (int i = 0; i < driftCount; i++)
+            {
+                Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, radius * 0.845f, radius * 0.925f);
+                CreateDriftItem(root.transform, TerrainSampler.SnapToGround(spot), rng,
+                    driftMaterials[i % driftMaterials.Length], i);
+            }
+        }
+
+        /// <summary>
+        /// 바위 무리 하나(큰 덩어리 1 + 작은 덩어리 2~3, 렌더러 3~4개).
+        ///
+        /// 형태 규칙 세 가지 - 셋 다 "놓인 공"과 "박힌 바위"를 가르는 신호다:
+        ///  (1) 각진 면. 메시가 정이십면체를 80면으로 소분할한 뒤 방향 함수로 반지름을 흔든 것이라
+        ///      평면 셰이딩된 면이 서로 다른 각도로 꺾인다 = 균열/절리로 읽힌다(WorldMeshBuilder.AddChunk).
+        ///      직전 배치에서 돌조각(자원)에 쓴 것과 같은 계열이고, 큰 바위는 화면 점유가 훨씬 크므로
+        ///      면 수만 20 → 80으로 올렸다(작은 위성 덩어리는 20면 그대로다).
+        ///  (2) 지면에 파묻힌다. 중심을 높이의 22~34%만큼 내려 밑동을 지면 아래로 넣는다.
+        ///      SnapToGround가 준 y는 **지형 표면**이고 캡은 그 위 8cm에 떠 있으므로, 22%(최소 0.2m)면
+        ///      캡보다 확실히 아래로 들어간다.
+        ///  (3) 작은 덩어리가 큰 덩어리 쪽으로 기운다. 기울기 축은 두 덩어리를 잇는 방향에 수직인
+        ///      수평축이라, 위쪽이 큰 바위 쪽으로 넘어가 "기대어 쌓인" 그림이 된다.
+        ///
+        /// 콜라이더는 붙이지 않는다(CreatePart 경로 = 프리미티브를 아예 거치지 않는다). 바위는 지금
+        /// 통과할 수 있지만, 콜라이더를 붙이는 순간 TerrainSampler와 초목/자원 배치가 전부 영향을 받는다
+        /// (파일 상단 [콜라이더 절대 금지] 주석). 물리를 주려면 디렉터 결정이 필요하다.
+        /// </summary>
+        private static void CreateRockCluster(Transform parent, Vector3 groundPosition, System.Random rng,
+            Material[] materials, int index)
+        {
+            float mainWidth = rng.NextFloat(1.7f, 3.6f);
+            float mainHeight = mainWidth * rng.NextFloat(0.50f, 0.84f);
+            float mainDepth = mainWidth * rng.NextFloat(0.74f, 1.02f);
+            float yaw = rng.NextFloat(0f, 360f);
+            int satelliteCount = rng.NextInt(2, 4); // 2 또는 3
+
+            var cluster = new GameObject("Deco_RockCluster");
+            cluster.transform.SetParent(parent, false);
+            cluster.transform.position = groundPosition;
+            // 뿌리는 yaw만 + 스케일 1(균등). 자식이 비균일 스케일이라도 전단이 생기지 않는다.
+            cluster.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+
+            float mainSink = Mathf.Max(0.2f, mainHeight * rng.NextFloat(0.22f, 0.34f));
+            CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
+                new Vector3(0f, mainHeight * 0.5f - mainSink, 0f),
+                new Vector3(mainWidth, mainHeight, mainDepth),
+                Quaternion.Euler(rng.NextFloat(-7f, 7f), rng.NextFloat(0f, 360f), rng.NextFloat(-7f, 7f)),
+                materials[index % materials.Length]);
+
+            for (int i = 0; i < satelliteCount; i++)
+            {
+                float width = mainWidth * rng.NextFloat(0.26f, 0.60f);
+                float height = width * rng.NextFloat(0.52f, 0.98f);
+                float angle = rng.NextFloat(0f, Mathf.PI * 2f);
+                float lean = rng.NextFloat(9f, 26f);
+
+                var direction = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                float distance = mainWidth * 0.42f + width * 0.32f;
+                float sink = Mathf.Max(0.12f, height * rng.NextFloat(0.20f, 0.36f));
+
+                // Cross(direction, up)을 축으로 +lean만큼 돌리면 위쪽이 -direction, 즉 큰 바위 쪽으로 넘어간다.
+                Quaternion tilt = Quaternion.AngleAxis(lean, Vector3.Cross(direction, Vector3.up))
+                    * Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
+
+                CreatePart(cluster.transform, $"Deco_RockChip{i}",
+                    GetBoulderMesh(index * 3 + i + 1, false),
+                    direction * distance + new Vector3(0f, height * 0.5f - sink, 0f),
+                    new Vector3(width, height, width * rng.NextFloat(0.72f, 1.05f)),
+                    tilt, materials[(index + i + 1) % materials.Length]);
+            }
+        }
+
+        /// <summary>
+        /// 표류물 하나(궤짝 / 통 / 널판 더미 중 하나, 렌더러 1개).
+        ///
+        /// 셋 다 디테일을 메시에 구웠다 - 궤짝의 널판 홈과 모서리 프레임, 통의 테 3줄, 널판 더미의
+        /// 겹친 판 3장이 전부 정점이라 파츠는 하나뿐이다(B28 대나무 마디와 같은 처리).
+        /// 파도에 밀려온 것으로 읽히게 하는 것은 형태가 아니라 **자세**다: 모래에 15~35% 파묻히고,
+        /// 옆으로 12~34도 기울어 있으며, 방향이 해안선과 무관하게 제각각이다.
+        ///
+        /// 회전과 비균일 스케일이 같은 오브젝트에 걸리지만 부모(IslandSurface)는 스케일 1이라
+        /// 전단이 생기지 않는다(T·R·S 순서상 스케일이 먼저 자기 로컬에서 적용된다).
+        /// </summary>
+        private static void CreateDriftItem(Transform parent, Vector3 groundPosition, System.Random rng,
+            Material material, int index)
+        {
+            float yaw = rng.NextFloat(0f, 360f);
+            float leanRoll = rng.NextFloat(0f, 1f);
+            float leanAxis = rng.NextFloat(0f, 360f);
+            float scale = rng.NextFloat(0.85f, 1.25f);
+
+            // 메시 규격은 셋 다 [-0.5,0.5]^3 단위 상자다 → 아래 size는 **미터** 그대로이고, 호출부가
+            // 스케일을 따로 곱하지 않는다(과거 "메시만 바꾸고 호출부 스케일을 그대로 둔" 사고 방지).
+            Vector3 size;
+            Mesh mesh;
+            float lean;
+            switch (index % 3)
+            {
+                case 0: // 궤짝: 모서리로 처박혀 있어야 "떠내려온 것"으로 읽힌다.
+                    mesh = GetCrateMesh();
+                    size = new Vector3(0.82f, 0.66f, 0.74f) * scale;
+                    lean = Mathf.Lerp(14f, 34f, leanRoll);
+                    break;
+                case 1: // 통: 옆으로 굴러 누운 자세. 90도 근처로 눕혀야 "굴러온 통"이 된다.
+                    mesh = GetBarrelMesh();
+                    size = new Vector3(0.60f, 0.86f, 0.60f) * scale;
+                    lean = Mathf.Lerp(74f, 96f, leanRoll);
+                    break;
+                default: // 널판 더미: 길고 납작해서 조금만 기울여도 한쪽 끝이 크게 들린다.
+                    mesh = GetPlankPileMesh();
+                    size = new Vector3(2.10f, 0.22f, 0.86f) * scale;
+                    lean = Mathf.Lerp(3f, 11f, leanRoll);
+                    break;
+            }
+
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f)
+                * Quaternion.AngleAxis(lean, Quaternion.Euler(0f, leanAxis, 0f) * Vector3.forward);
+
+            // 파묻힘: 기울인 상태의 세로 반높이를 실제로 계산한 뒤 그 일부만 지면 아래로 넣는다.
+            // 상수 비율(예: "세로 크기의 22%")로 하면 길게 누운 널판 더미가 통째로 땅에 잠긴다 -
+            // 회전을 무시한 값을 쓰는 것이 이 프로젝트가 반복해서 낸 사고 유형이라 여기서 계산한다.
+            float radians = lean * Mathf.Deg2Rad;
+            float verticalHalf = 0.5f * (size.y * Mathf.Abs(Mathf.Cos(radians))
+                + Mathf.Max(size.x, size.z) * Mathf.Abs(Mathf.Sin(radians)));
+            float sink = Mathf.Min(0.16f, verticalHalf * 0.34f);
+
+            var part = CreatePart(parent, "Deco_Drift" + (index % 3), mesh,
+                Vector3.zero, size, rotation, material);
+            part.transform.position = groundPosition + Vector3.up * (verticalHalf - sink);
         }
 
         /// <summary>
@@ -864,7 +1059,9 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 덤불 한 개(눌린 구체 3개, 렌더러 3개). 야자수보다 낮아 시야를 막지 않는 높이로 유지한다.
+        /// 덤불 한 개(포기 전체가 메시 한 장, 렌더러 1개 · 92삼각형). 야자수보다 낮아 시야를 막지 않는다.
+        /// [B29] 로브 3개를 별도 파츠로 붙이던 것을 메시에 구워 렌더러를 3 → 1로 줄이고, 남은 예산으로
+        /// 잎끝 8장을 넣었다(GetBushClumpMesh). 폭·높이 범위와 난수 소비는 예전과 완전히 동일하다.
         ///
         /// [B8] 예전에는 매끈한 타원 2개가 거의 동심으로 겹쳐 있어 실루엣이 하나의 매끈한 돌덩이였고,
         /// 돌조각 자원 노드와 구분되지 않았다. 자연물 중 "덤불"만 가진 신호는 (a) 위쪽이 울퉁불퉁하게
@@ -882,30 +1079,33 @@ namespace MakeGame.Systems
             float height = rng.NextFloat(0.6f, 1.0f); // 폭 대비 확실히 낮게 - 납작한 비례가 돌과의 1차 구분
             float yaw = rng.NextFloat(0f, 360f);
 
-            var bush = new GameObject("Veg_Bush");
-            bush.transform.SetParent(parent, false);
+            // [B29] 난수 소비 순서·횟수를 예전과 **한 번도 다르지 않게** 유지한다. 로브 3개가 메시 한 장에
+            // 구워졌지만(아래 GetBushClumpMesh), 여기서 값을 덜 뽑으면 같은 worldSeed에서 뒤따르는
+            // 풀포기 배치가 통째로 밀린다. 뽑은 값 중 실제로 쓰는 것은 기울기와 변주 선택뿐이다.
+            float tiltZ = rng.NextFloat(-10f, 10f);   // (예전 주 로브의 기울기 - 이제 포기 전체의 기울기다)
+            rng.NextInsideUnitCircle();                // 예전 로브0 오프셋
+            float variantRoll = rng.NextFloat(0.50f, 0.76f); // 예전 로브0 크기 → 지금은 메시 변주 선택
+            rng.NextFloat(0.55f, 0.80f);               // 예전 로브0 높이
+            float tiltX = rng.NextFloat(-22f, 22f) * 0.35f;  // 예전 로브0 X기울기 → 포기 전체에 얕게
+            rng.NextFloat(-22f, 22f);                  // 예전 로브0 Z기울기
+            rng.NextInsideUnitCircle();                // 예전 로브1 오프셋
+            rng.NextFloat(0.50f, 0.76f);               // 예전 로브1 크기
+            rng.NextFloat(0.55f, 0.80f);               // 예전 로브1 높이
+            rng.NextFloat(-22f, 22f);                  // 예전 로브1 X기울기
+            rng.NextFloat(-22f, 22f);                  // 예전 로브1 Z기울기
+
+            // 메시 규격: x·z ∈ [-0.5, 0.5], **y ∈ [0, 1]이고 원점이 밑동**이다(구 규격이 아니다).
+            // 그래서 위치는 지면 그대로, 스케일은 (폭, 높이, 깊이)를 미터로 넣으면 된다.
+            // 예전 3파츠 구성과 화면상 크기가 같도록 폭·높이 범위는 한 글자도 바꾸지 않았다.
+            int variant = Mathf.Clamp(Mathf.FloorToInt((variantRoll - 0.50f) / 0.26f * 3f), 0, 2);
+            var bush = CreatePart(parent, "Veg_Bush", GetBushClumpMesh(variant),
+                Vector3.zero, new Vector3(width, height, width * 0.9f),
+                Quaternion.Euler(tiltX, yaw, tiltZ), material);
             bush.transform.position = groundPosition;
-            bush.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-
-            Mesh lobeMesh = GetLowPolyLobeMesh();
-            CreatePart(bush.transform, "Veg_BushMain", lobeMesh,
-                new Vector3(0f, height * 0.42f, 0f), new Vector3(width, height, width * 0.9f),
-                Quaternion.Euler(0f, 0f, rng.NextFloat(-10f, 10f)), material);
-
-            for (int i = 0; i < 2; i++)
-            {
-                Vector2 offset = rng.NextInsideUnitCircle() * (width * 0.34f);
-                float lobeScale = rng.NextFloat(0.50f, 0.76f);
-                // 로브를 본체보다 살짝 위로 올려 윤곽선 위쪽에 혹이 생기게 한다(돌은 이런 혹이 없다).
-                CreatePart(bush.transform, $"Veg_BushLobe{i}", lobeMesh,
-                    new Vector3(offset.x, height * rng.NextFloat(0.55f, 0.80f), offset.y),
-                    new Vector3(width * lobeScale, height * lobeScale * 1.15f, width * lobeScale),
-                    Quaternion.Euler(rng.NextFloat(-22f, 22f), 0f, rng.NextFloat(-22f, 22f)), material);
-            }
         }
 
         /// <summary>
-        /// 풀포기 한 개(잎 3장 부채꼴, 12삼각형). 가장 저렴한 파츠라 개수가 제일 많아 렌더러 1개를 유지한다.
+        /// 풀포기 한 개(잎 5장 부채꼴, 양면·2마디라 40삼각형). 개수가 제일 많아 렌더러 1개를 유지한다.
         /// [B8] 두께를 폭의 80% → 30%로 줄이고 좌우로 살짝 눕혀, 위에서 봐도 "납작한 덩어리"가 아니라
         /// 풀잎 다발이 서 있는 것처럼 보이게 한다.
         /// [B9] 그 "눌린 구"(768삼각형)를 같은 규격의 잎 부채꼴 메시(12삼각형)로 교체했다. 눌린 구가
@@ -1019,36 +1219,161 @@ namespace MakeGame.Systems
         /// 평면 셰이딩을 위해 정점을 면마다 분리한다(60정점) - 정점 수는 삼각형과 달리 이 프로젝트의
         /// 병목이 아니고, 공유 정점으로 부드럽게 셰이딩하면 20면짜리 저폴리가 찌그러진 구로 보인다.
         /// </summary>
-        private static Mesh GetLowPolyLobeMesh()
+        /// <summary>
+        /// [B29] 덤불 한 포기 전체를 담은 메시(로브 3개 + 삐져나온 잎끝 8장, 92삼각형).
+        ///
+        /// 예전에는 정이십면체 로브 3개가 각각 별도 파츠였다(B9). 형태는 맞았지만 파츠 3개를 쓰면서도
+        /// 실루엣은 "매끈한 덩어리 3개"였다 - 덤불에만 있는 신호인 **삐져나온 잎끝**이 없었기 때문이다.
+        /// 지금은 로브를 메시 안으로 옮기고(파츠 3 → 1) 그 예산으로 잎끝을 넣었다.
+        ///   · 로브: 방향 함수로 반지름을 흔든 각진 덩어리(WorldMeshBuilder.AddChunk) - 매끈한 구가
+        ///     아니라 울퉁불퉁해서 바위와 형태가 겹치지 않는다.
+        ///   · 잎끝: 두께 없는 양면 사각면 8장. 윤곽선 위로 튀어나와야 20m 밖에서 "잎"으로 읽힌다.
+        ///
+        /// **규격(호출부와의 계약): x·z ∈ [-0.5, 0.5], y ∈ [0, 1], 원점이 밑동.**
+        /// 구 규격([-0.5,0.5]^3)이 아니다. CreateBush가 위치에 지면 좌표를 그대로 넣고 스케일에
+        /// (폭, 높이, 깊이)를 미터로 넣는 것이 이 규격 때문이다 - 둘 중 하나만 바꾸면 안 된다.
+        /// </summary>
+        private static Mesh GetBushClumpMesh(int variant)
         {
-            if (lowPolyLobeMesh != null)
-                return lowPolyLobeMesh;
+            int v = Mathf.Abs(variant) % 3;
+            string key = "bushClump" + v;
+            Mesh cached;
+            if (decorationMeshCache.TryGetValue(key, out cached) && cached != null)
+                return cached;
 
-            const float phi = 1.6180340f;
-            var basePoints = new[]
+            var builder = new WorldMeshBuilder();
+            int seed = 4300 + v * 17;
+
+            builder.AddChunk(new Vector3(0f, 0.42f, 0f), new Vector3(1.00f, 0.80f, 0.94f), seed, 0.30f, 0);
+            builder.AddChunk(new Vector3(-0.17f, 0.62f, 0.12f), new Vector3(0.62f, 0.58f, 0.60f), seed + 5, 0.34f, 0);
+            builder.AddChunk(new Vector3(0.19f, 0.57f, -0.14f), new Vector3(0.56f, 0.54f, 0.54f), seed + 11, 0.34f, 0);
+
+            // 잎끝: 로브 표면에서 바깥·위로 뻗는다. 끝을 가늘게 좁혀 "판"이 아니라 "잎"으로 읽히게 한다.
+            const int bladeCount = 8;
+            for (int i = 0; i < bladeCount; i++)
             {
-                new Vector3(-1f, phi, 0f), new Vector3(1f, phi, 0f),
-                new Vector3(-1f, -phi, 0f), new Vector3(1f, -phi, 0f),
-                new Vector3(0f, -1f, phi), new Vector3(0f, 1f, phi),
-                new Vector3(0f, -1f, -phi), new Vector3(0f, 1f, -phi),
-                new Vector3(phi, 0f, -1f), new Vector3(phi, 0f, 1f),
-                new Vector3(-phi, 0f, -1f), new Vector3(-phi, 0f, 1f),
-            };
-            // 반지름 0.5 = 지름 1. 내장 Sphere와 같은 규격이라 호출부 스케일 의미가 바뀌지 않는다.
-            for (int i = 0; i < basePoints.Length; i++)
-                basePoints[i] = basePoints[i].normalized * 0.5f;
+                float angle = (i * 360f / bladeCount + v * 17f) * Mathf.Deg2Rad;
+                var outward = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                var side = new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle));
 
-            int[] faces =
-            {
-                0, 11, 5,  0, 5, 1,   0, 1, 7,   0, 7, 10,  0, 10, 11,
-                1, 5, 9,   5, 11, 4,  11, 10, 2, 10, 7, 6,  7, 1, 8,
-                3, 9, 4,   3, 4, 2,   3, 2, 6,   3, 6, 8,   3, 8, 9,
-                4, 9, 5,   2, 4, 11,  6, 2, 10,  8, 6, 7,   9, 8, 1,
-            };
+                float lift = 0.52f + 0.10f * Mathf.Sin(angle * 3f + v);
+                Vector3 baseCenter = outward * 0.26f + new Vector3(0f, lift, 0f);
+                Vector3 tipCenter = outward * (0.46f + 0.04f * Mathf.Sin(angle * 2f))
+                    + new Vector3(0f, lift + 0.34f, 0f);
 
-            lowPolyLobeMesh = BuildFlatShadedMesh("Veg_LobeIcosa", basePoints, faces, true);
-            return lowPolyLobeMesh;
+                Vector3 b0 = baseCenter - side * 0.075f;
+                Vector3 b1 = baseCenter + side * 0.075f;
+                Vector3 t1 = tipCenter + side * 0.018f;
+                Vector3 t0 = tipCenter - side * 0.018f;
+                builder.AddQuad(b0, b1, t1, t0, Vector3.up, true);
+            }
+
+            Mesh mesh = builder.Finish("Veg_BushClump" + v);
+            decorationMeshCache[key] = mesh;
+            return mesh;
         }
+
+        /// <summary>
+        /// [B29] 큰 바위 / 곁에 붙는 작은 덩어리의 공유 메시(구 규격 [-0.5,0.5]^3).
+        ///
+        /// large면 정이십면체를 한 번 소분할한 80면, 아니면 20면이다. 면 수를 크기에 맞춰 나누는 이유는
+        /// ArtDirection 2장의 디테일 밀도 규칙 그대로다 - 3m짜리 바위는 화면을 크게 차지하니 20면이면
+        /// 실루엣이 각져 보이고, 0.8m짜리 곁돌은 80면을 줘도 화면에 도달하지 않는다.
+        /// 변주는 4종뿐이고 전부 정적 캐시라, 섬 9개의 바위 전부가 이 8장을 나눠 쓴다.
+        /// </summary>
+        private static Mesh GetBoulderMesh(int variant, bool large)
+        {
+            int v = Mathf.Abs(variant) % 4;
+            string key = (large ? "boulder" : "rockChip") + v;
+            Mesh cached;
+            if (decorationMeshCache.TryGetValue(key, out cached) && cached != null)
+                return cached;
+
+            Mesh mesh = WorldMeshBuilder.Chunk("Deco_" + key, Vector3.one,
+                large ? 7100 + v * 13 : 7700 + v * 19, large ? 0.32f : 0.44f, large ? 1 : 0);
+            decorationMeshCache[key] = mesh;
+            return mesh;
+        }
+
+        /// <summary>
+        /// [B29] 표류 궤짝(구 규격 [-0.5,0.5]^3). 몸통 상자 하나에 모서리 기둥 4개와 결속 띠 1개를
+        /// 겹쳐 구웠다 - 널판 사이의 홈이 실루엣이 아니라 그림자로 읽히는 것이 목표라 파츠로 나눌 이유가 없다.
+        /// 자연물과 인공물을 가르는 신호(ArtDirection 2장 4번)인 "각진 모서리 + 결속"을 그대로 쓴다.
+        /// </summary>
+        private static Mesh GetCrateMesh()
+        {
+            Mesh cached;
+            if (decorationMeshCache.TryGetValue("crate", out cached) && cached != null)
+                return cached;
+
+            var builder = new WorldMeshBuilder();
+            builder.AddBox(Vector3.zero, new Vector3(0.86f, 0.86f, 0.86f), Quaternion.identity);
+            for (int i = 0; i < 4; i++)
+            {
+                float x = (i < 2 ? -1f : 1f) * 0.43f;
+                float z = (i % 2 == 0 ? -1f : 1f) * 0.43f;
+                builder.AddBox(new Vector3(x, 0f, z), new Vector3(0.14f, 1.0f, 0.14f), Quaternion.identity);
+            }
+            builder.AddBox(new Vector3(0f, 0.06f, 0f), new Vector3(1.0f, 0.13f, 0.92f), Quaternion.identity);
+            builder.AddBox(new Vector3(0f, 0.06f, 0f), new Vector3(0.92f, 0.13f, 1.0f), Quaternion.identity);
+
+            Mesh mesh = builder.Finish("Deco_Crate");
+            decorationMeshCache["crate"] = mesh;
+            return mesh;
+        }
+
+        /// <summary>
+        /// [B29] 표류 통(구 규격 [-0.5,0.5]^3). 배가 부른 옆선과 테 2줄을 **반지름 변화만으로** 만든다
+        /// (B28에서 대나무 마디를 원반 파츠 → 줄기 굵기 변화로 바꾼 것과 같은 처리다).
+        /// 8각이라 옆면이 각져서, 같은 자리에 있는 바위(둥근 덩어리)와 실루엣이 겹치지 않는다.
+        /// </summary>
+        private static Mesh GetBarrelMesh()
+        {
+            Mesh cached;
+            if (decorationMeshCache.TryGetValue("barrel", out cached) && cached != null)
+                return cached;
+
+            float[] heights = { -0.50f, -0.46f, -0.30f, -0.26f, 0f, 0.26f, 0.30f, 0.46f, 0.50f };
+            float[] radii = { 0.355f, 0.395f, 0.445f, 0.480f, 0.500f, 0.480f, 0.445f, 0.395f, 0.355f };
+
+            var centers = new Vector3[heights.Length];
+            for (int i = 0; i < heights.Length; i++)
+                centers[i] = new Vector3(0f, heights[i], 0f);
+
+            var builder = new WorldMeshBuilder();
+            builder.AddTube(centers, radii, 8, true, true, 1f);
+
+            Mesh mesh = builder.Finish("Deco_Barrel");
+            decorationMeshCache["barrel"] = mesh;
+            return mesh;
+        }
+
+        /// <summary>
+        /// [B29] 밀려온 널판 더미(구 규격 [-0.5,0.5]^3, 호출부가 2.1m × 0.22m × 0.86m로 늘린다).
+        /// 널판 3장을 서로 다른 각도로 겹쳐 한 메시에 구웠다 - 판이 어긋나 쌓인 그림이라야 "쌓아 둔 것"이
+        /// 아니라 "밀려와 걸린 것"으로 읽힌다.
+        /// </summary>
+        private static Mesh GetPlankPileMesh()
+        {
+            Mesh cached;
+            if (decorationMeshCache.TryGetValue("plankPile", out cached) && cached != null)
+                return cached;
+
+            var builder = new WorldMeshBuilder();
+            builder.AddBox(new Vector3(0.02f, -0.33f, -0.22f), new Vector3(0.96f, 0.32f, 0.30f),
+                Quaternion.Euler(0f, 5f, 0f));
+            builder.AddBox(new Vector3(-0.03f, 0f, 0.10f), new Vector3(0.90f, 0.32f, 0.28f),
+                Quaternion.Euler(0f, -8f, 0f));
+            builder.AddBox(new Vector3(0.05f, 0.33f, -0.05f), new Vector3(0.78f, 0.30f, 0.26f),
+                Quaternion.Euler(0f, 13f, 4f));
+
+            Mesh mesh = builder.Finish("Deco_PlankPile");
+            decorationMeshCache["plankPile"] = mesh;
+            return mesh;
+        }
+
+        /// <summary>[B29] 장식물(덤불 포기·바위·표류물) 공유 메시 캐시. 월드 전체가 15장 안팎을 나눠 쓴다.</summary>
+        private static readonly Dictionary<string, Mesh> decorationMeshCache = new Dictionary<string, Mesh>();
 
         /// <summary>
         /// 야자수 줄기 마디용 저폴리 프리즘(8각, 28삼각형). 내장 Cylinder 80삼각형의 35%.
@@ -1171,7 +1496,7 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 풀포기용 저폴리 잎다발 = 부채꼴로 벌린 잎 3장(양면이라 12삼각형). 내장 Sphere의 1/64.
+        /// 풀포기용 저폴리 잎다발 = 부채꼴로 벌린 잎 5장(양면·2마디라 40삼각형). 내장 Sphere(768)의 1/19.
         ///
         /// 풀포기는 이미 "두께를 폭의 30%로 눌러 좌우로 눕힌" 형태라(B8), 눌린 구가 실제로 화면에서
         /// 하던 일은 "위로 솟은 납작한 잎 다발"이었다. 그 실루엣은 평면 조합으로 그대로 재현되고,
@@ -1197,26 +1522,43 @@ namespace MakeGame.Systems
             float[] tipHeights = { 0.50f, 0.34f, 0.44f, 0.30f, 0.40f };   // 끝 높이를 다르게 해 윗변이 평평해지지 않게 한다
             float[] tipOuts = { 0.30f, 0.18f, 0.38f, 0.16f, 0.26f };      // 바깥으로 벌어지는 정도
 
+            // [B29] 잎 하나를 **2마디로 꺾어** 휘게 만들었다. 곧은 사각형 한 장은 어느 각도에서 봐도
+            // 직선 윤곽이라 5장을 부채꼴로 펴도 "삐죽한 판"으로 읽혔다. 중간 마디를 바깥으로 조금만
+            // 내보내면 윤곽선이 곡선이 되고 끝이 아래로 처져 풀로 읽힌다(야자수 잎을 2마디로 꺾은
+            // B8의 처리와 같은 이유다 - 이 프로젝트에서 식물을 식물로 만드는 것은 언제나 꺾임이다).
+            // 규격은 그대로 [-0.5,0.5]^3이라 호출부 스케일 (width, height, width*0.30)의 의미가 안 바뀐다.
             for (int i = 0; i < yaws.Length; i++)
             {
                 float rad = yaws[i] * Mathf.Deg2Rad;
                 Vector3 outward = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
                 Vector3 side = new Vector3(Mathf.Cos(rad), 0f, -Mathf.Sin(rad));
 
-                // 폭: 밑동 0.30 → 0.10, 끝 0.10 → 0.03. 잎이 "칼날"이 아니라 "풀잎"으로 읽히는 최소 비례다
+                // 폭: 밑동 0.10 → 중간 0.06 → 끝 0.03. 잎이 "칼날"이 아니라 "풀잎"으로 읽히는 최소 비례다
                 // (높이 1.0 대비 폭 0.10 = 10:1). 이전 0.30은 3.3:1이라 판때기였다.
+                float midHeight = tipHeights[i] * 0.34f;               // 꺾이는 지점(밑동과 끝 사이)
+                float midOut = tipOuts[i] * 0.30f;                     // 중간은 거의 곧게 선다
                 Vector3 b0 = side * -0.05f + outward * -0.03f + Vector3.down * 0.5f;
                 Vector3 b1 = side * 0.05f + outward * -0.03f + Vector3.down * 0.5f;
-                Vector3 t0 = side * -0.015f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
-                Vector3 t1 = side * 0.015f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
+                Vector3 m0 = side * -0.03f + outward * midOut + Vector3.up * midHeight;
+                Vector3 m1 = side * 0.03f + outward * midOut + Vector3.up * midHeight;
+                Vector3 t0 = side * -0.012f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
+                Vector3 t1 = side * 0.012f + outward * tipOuts[i] + Vector3.up * tipHeights[i];
 
                 int b = points.Count;
-                points.Add(b0); points.Add(b1); points.Add(t1); points.Add(t0);
+                points.Add(b0); points.Add(b1); points.Add(m1); points.Add(m0);
+                points.Add(t1); points.Add(t0);
+
+                // 아래 마디(밑동 → 중간)
                 faces.Add(b); faces.Add(b + 1); faces.Add(b + 2);
                 faces.Add(b); faces.Add(b + 2); faces.Add(b + 3);
+                // 위 마디(중간 → 끝)
+                faces.Add(b + 3); faces.Add(b + 2); faces.Add(b + 4);
+                faces.Add(b + 3); faces.Add(b + 4); faces.Add(b + 5);
                 // 뒷면(감김 반대). 법선도 반대로 나오므로 양쪽에서 정상적으로 조명을 받는다.
                 faces.Add(b); faces.Add(b + 2); faces.Add(b + 1);
                 faces.Add(b); faces.Add(b + 3); faces.Add(b + 2);
+                faces.Add(b + 3); faces.Add(b + 4); faces.Add(b + 2);
+                faces.Add(b + 3); faces.Add(b + 5); faces.Add(b + 4);
             }
 
             // 잎은 닫힌 볼륨이 아니라 중심 기준 바깥 판정(ensureOutward)을 쓸 수 없다 - 감김을 그대로 둔다.
@@ -1270,7 +1612,6 @@ namespace MakeGame.Systems
             return mesh;
         }
 
-        private static Mesh lowPolyLobeMesh;
         private static Mesh grassBladeMesh;
         private static Mesh palmTrunkPrismMesh;
 

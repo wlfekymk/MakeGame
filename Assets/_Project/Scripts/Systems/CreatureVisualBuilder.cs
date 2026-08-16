@@ -1,25 +1,70 @@
+using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
 
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 위험 요소(HazardSource)/사냥감(HuntableCreature)처럼 몸통 프리미티브 하나만으로는 종류를 구분하기
-    /// 어려운 생물형 오브젝트에, 눈/꼬리/집게/다리/귀/창 같은 최소한의 보조 파츠를 절차적으로 붙여주는
-    /// 공용 유틸리티. B2-16(독사/전갈/함정/육상 사냥감)에 이어 B2-17(곰/식인종/상어)까지 더해
-    /// HazardType 7종 중 벌떼(이미 충분하다고 판단해 보강 제외)를 뺀 전부가 이 클래스를 거친다.
-    /// StructureVisualBuilder(구조물 전용)와 완전히 동일한 패턴 - 프리미티브 조합 + CreateColorMaterial +
-    /// 비균일 스케일 보정 - 을 그대로 따른다.
-    /// HazardSpawner.AddDetailParts/CreatureSpawner.AddCompensated에 각각 거의 동일한 형태로 중복
-    /// 정의되어 있던 "부모의 비균일 스케일을 상쇄한 보조 파츠 생성" 헬퍼를 이 한 곳으로 모아, 새 디테일을
-    /// 추가할 때마다 같은 코드를 또 베끼지 않도록 한다.
-    /// 실제 호출 연결은 이 클래스 소유가 아닌 HazardSpawner.cs/CreatureSpawner.cs 쪽 몫이라
-    /// (파일 소유권 규칙) 여기서는 만들기만 하고 붙이지 않는다.
+    /// 위험 요소(HazardSource)/사냥감(HuntableCreature)처럼 "살아 있는 것"으로 읽혀야 하는 오브젝트의
+    /// 외형을 절차적으로 만드는 공용 유틸리티.
+    ///
+    /// ── [B29] 방식 전환: 파츠를 덧붙이지 않고 메시에 구워 넣는다 ─────────────────────────────
+    /// B28에서 자원 노드(대나무·나뭇가지·야자잎·돌조각)에 적용해 검증된 방식을 그대로 가져온다
+    /// (IslandResourceSpawner.ResourceVisualLibrary 주석 참고). 예전 이 클래스는 몸통 프리미티브 하나에
+    /// 구체/박스 파츠를 얹어 귀·주둥이·집게·가시를 흉내 냈는데, 그 방식은 세 가지가 동시에 나빴다:
+    ///   (1) 형태 - 프리미티브 몇 개를 겹친 실루엣은 어느 각도에서 봐도 "덩어리 몇 개"였다.
+    ///       곰은 서 있는 캡슐에 귀 두 개가 붙은 것이라 옆에서 봐도 곰으로 읽히지 않았다.
+    ///   (2) 파츠 수 - 함정은 원판 1 + 가시 8 = 9개, 육상 사냥감은 8개였다. 섬 하나에 위험 요소가
+    ///       최대 16마리 + 사냥감이 10마리 깔리므로 곧바로 드로우콜 수백 개다.
+    ///   (3) 머티리얼 - 파츠 하나당 StructureVisualBuilder.CreateColorMaterial이 new Material을 하나씩
+    ///       만들어서, 특대 섬 한 곳의 위험 요소/사냥감만으로 머티리얼이 약 180개 생겼다
+    ///       (AGENT_BRIEF 4장 "섬당 400개면 SRP 배처가 죽는다").
+    /// 지금은 몸통 자체를 절차 메시로 갈아 끼운다(CreatureMeshLibrary). 곰의 어깨 혹은 파츠가 아니라
+    /// 등줄기 반지름이 부풀어 오른 것이고, 전갈 다리 8개·집게·꼬리는 전부 몸통 메시 안에 있다.
+    /// 메시와 머티리얼은 월드 전체가 공유한다(정적 캐시) - 개체가 몇 마리든 메시는 종류당 1장이다.
+    ///
+    /// ── 좌표계 규칙(이 파일에서 사고가 나는 유일한 지점) ─────────────────────────────────
+    /// 스포너가 만드는 몸통 프리미티브는 **비균일 localScale**을 갖고, 일부는 눕혀져 있다
+    /// (독사/전갈/상어는 rotationEuler(0,0,90) → 로컬 +X = 월드 위, +Y = 몸통 진행 방향, +Z = 좌우).
+    /// 그래서 이 파일의 모든 절차 메시는 **미터로 작성한 뒤 마지막에 NominalScale로 나눈다**
+    /// (Builder.ScaleVertices). 결과적으로 메시 좌표는 프리미티브 로컬 규격 안에 들어가고,
+    /// 월드 크기는 정확히 작성한 미터값 × sizeJitter가 된다.
+    /// 자식 파츠도 같은 규칙이다: localScale = 1/NominalScale 로 두면 그 자식의 로컬 1단위가 1미터가
+    /// 되고(=미터 공간), 개체별 sizeJitter는 그대로 살아 있다. 자식에 회전을 주지 않으므로
+    /// 비균일 부모 × 자식 회전 = 전단(shear) 사고가 구조적으로 발생할 수 없다.
+    ///
+    /// ⚠️ NominalScale 상수는 HazardSpawner.GetVisualConfig / CreatureSpawner.SpawnSingleCreature의
+    /// localScale과 **반드시 같아야 한다**. 한쪽만 바뀌면 형태가 조용히 늘어나거나 눌린다.
+    /// 콜라이더(=전투/접촉 판정)는 어느 경로에서도 건드리지 않는다 - 메시 교체는 MeshFilter만 바꾸고,
+    /// 프리미티브 콜라이더는 파라메트릭이라 메시와 무관하다. 파츠에는 콜라이더가 없다.
     /// </summary>
     public static class CreatureVisualBuilder
     {
+        // ── 스포너가 쓰는 몸통 localScale (jitter 이전 원본값) ────────────────────────────
+        // HazardSpawner.GetVisualConfig / CreatureSpawner.SpawnSingleCreature와 같은 값이어야 한다.
+        private static readonly Vector3 BearScale = new Vector3(0.9f, 1.1f, 0.9f);
+        private static readonly Vector3 CannibalScale = new Vector3(0.55f, 0.9f, 0.55f);
+        private static readonly Vector3 SnakeScale = new Vector3(0.18f, 0.6f, 0.18f);
+        private static readonly Vector3 ScorpionScale = new Vector3(0.16f, 0.3f, 0.16f);
+        private static readonly Vector3 SharkScale = new Vector3(0.45f, 1.4f, 0.45f);
+        private static readonly Vector3 TrapScale = new Vector3(0.6f, 0.04f, 0.6f);
+        private static readonly Vector3 BeeSwarmScale = new Vector3(0.5f, 0.5f, 0.5f);
+        private static readonly Vector3 HuntLandScale = new Vector3(0.45f, 0.6f, 0.45f);
+        private static readonly Vector3 HuntFishScale = new Vector3(0.35f, 0.2f, 0.5f);
+
         /// <summary>
-        /// 부모의 비균일 스케일을 상쇄한 구체 보조 파츠(눈, 벌떼 등)를 만들어 붙인다.
+        /// 이 클래스가 나눠 준 공유 머티리얼 목록. ApplySharedMaterial이 예전 머티리얼을 파괴할 때
+        /// "이건 공유본이라 절대 파괴하면 안 된다"를 판정하는 데 쓴다(공유본을 파괴하면 그 색을 쓰는
+        /// 월드의 모든 오브젝트가 한꺼번에 분홍색이 된다).
+        /// </summary>
+        private static readonly HashSet<Material> sharedMaterials = new HashSet<Material>();
+
+        /// <summary>눈·발톱처럼 어디에나 쓰이는 검정에 가까운 색.</summary>
+        private static readonly Color EyeBlack = new Color(0.05f, 0.05f, 0.05f);
+
+        // ── 공용 유틸 (기존 공개 API - 시그니처를 바꾸지 않는다) ──────────────────────────
+        /// <summary>
+        /// 부모의 비균일 스케일을 상쇄한 구체 보조 파츠를 만들어 붙인다.
         /// worldRadius는 부모가 어떻게 눌리거나 늘어나 있어도 항상 같은 월드 크기의 둥근 구체로
         /// 보이게 하기 위한 목표 반지름(미터)이다.
         /// </summary>
@@ -46,7 +91,7 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 부모의 비균일 스케일을 상쇄한 캡슐 보조 파츠(전갈 꼬리 마디, 다리 등 길쭉한 형태)를 만들어 붙인다.
+        /// 부모의 비균일 스케일을 상쇄한 캡슐 보조 파츠(다리 등 길쭉한 형태)를 만들어 붙인다.
         /// </summary>
         public static GameObject AddCompensatedCapsule(Transform parent, Vector3 localPos, Vector3 worldSize, Vector3 parentScale, Color color, string name, Quaternion? localRotation = null)
         {
@@ -58,22 +103,11 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 눕혀서 배치된 몸통(뱀/전갈처럼 rotationEuler(0,0,90)으로 세팅된 개체)에 붙일, "일어선"
-        /// 좌표계 피벗을 만든다. 이 피벗 아래에서는 로컬 축이 월드 축과 정확히 일치하고(+Y가 위),
-        /// 스케일이 1(=1로컬 단위가 1미터)이 되므로 파츠를 미터 단위로, 회전까지 자유롭게 배치할 수 있다.
-        ///
-        /// 왜 필요한가: 몸통이 Z축 +90도로 눕혀지면 로컬 +X가 월드 위, 로컬 +Y가 몸통 진행 방향,
-        /// 로컬 +Z가 좌우가 된다. 상어 등지느러미가 옆구리에 붙어 있던 사고(B4-3)와 아래에서 고친
-        /// 뱀 혀/전갈 꼬리·집게가 전부 이 축 뒤바뀜을 눈치채지 못해 생긴 같은 원인의 버그였다.
-        /// 매번 축을 손으로 뒤집는 대신 좌표계를 한 번 바로 세워두면 같은 실수가 구조적으로 막힌다.
-        ///
-        /// 계산 근거: 자식의 월드 변환은 (부모회전 R)·(부모스케일 S)·(자식회전 r)·(자식스케일 s) 순이다.
-        /// r = Euler(0,0,-90)을 주면 자식의 +X는 S를 거쳐 부모 Y축으로, +Y는 부모 X축으로 간다.
-        /// 따라서 s = (1/S.y, 1/S.x, 1/S.z)로 두면 세 축의 월드 길이가 정확히 1이 되어
-        /// 피벗 내부가 무회전·단위스케일 좌표계가 된다(90도 회전이라 전단은 발생하지 않는다).
-        /// 부모의 Y축 무작위 회전(yawJitter)은 그대로 상속되므로 개체 방향은 유지된다.
-        /// 피벗 기준 축: +Y = 위, +X = 머리 방향(몸통이 좌우 대칭이라 어느 끝을 머리로 볼지는 임의로
-        /// 정한 값이다), +Z = 좌우.
+        /// 눕혀서 배치된 몸통(rotationEuler(0,0,90))에 붙일 "일어선" 좌표계 피벗을 만든다.
+        /// [B29] 몸통 형태가 전부 절차 메시로 옮겨가면서 이 파일 안에서는 더 이상 쓰이지 않지만,
+        /// 눕힌 몸통에 파츠를 붙여야 하는 다른 작업이 다시 생길 때를 위한 공개 API로 남겨 둔다.
+        /// 계산 근거: 자식의 월드 변환은 (부모회전 R)·(부모스케일 S)·(자식회전 r)·(자식스케일 s) 순이라,
+        /// r = Euler(0,0,-90) · s = (1/S.y, 1/S.x, 1/S.z)로 두면 피벗 내부가 무회전·단위스케일이 된다.
         /// </summary>
         public static Transform CreateUprightPivot(GameObject body, Vector3 appliedScale, string name)
         {
@@ -89,149 +123,183 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// CreateUprightPivot 아래에 미터 단위로 박스 파츠를 붙인다(로컬 스케일 = 실제 크기).
+        /// [B29 이전 방식 - 현재 호출부 없음] 몸통 캡슐 아래에 짧은 다리 4개를 파츠로 붙인다.
+        /// 사족보행 실루엣은 이제 CreatureMeshLibrary.HuntLandBodyUnit이 메시로 굽는다(파츠 4개 절약).
+        /// 공개 API라 남겨 두지만 새 코드에서 쓰지 말 것.
         /// </summary>
-        private static GameObject AddUprightBox(Transform pivot, string name, Vector3 posMeters, Vector3 sizeMeters,
-            Color color, Quaternion? rotation = null)
+        public static void AddQuadrupedLegs(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Cube, posMeters, sizeMeters, color, rotation);
-        }
-
-        /// <summary>
-        /// CreateUprightPivot 아래에 미터 단위로 구체 파츠를 붙인다(지름 = diameterMeters).
-        /// </summary>
-        private static GameObject AddUprightSphere(Transform pivot, string name, Vector3 posMeters, float diameterMeters, Color color)
-        {
-            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Sphere, posMeters,
-                new Vector3(diameterMeters, diameterMeters, diameterMeters), color);
-        }
-
-        /// <summary>
-        /// CreateUprightPivot 아래에 미터 단위로 캡슐/원기둥 파츠를 붙인다.
-        /// 주의: 유니티의 캡슐/원기둥 기본 메시는 높이가 2단위라, 전체 길이를 lengthMeters로 맞추려면
-        /// 로컬 Y 스케일에 그 절반을 넣어야 한다(이 계산을 빠뜨려 기존 파츠들이 의도의 2배로 커져 있었다).
-        /// </summary>
-        private static GameObject AddUprightCapsule(Transform pivot, string name, Vector3 posMeters,
-            float diameterMeters, float lengthMeters, Color color, Quaternion? rotation = null)
-        {
-            return StructureVisualBuilder.CreateVisualPart(pivot, name, PrimitiveType.Capsule, posMeters,
-                new Vector3(diameterMeters, lengthMeters * 0.5f, diameterMeters), color, rotation);
-        }
-
-        /// <summary>
-        /// 독사(HazardType.VenomousSnake) 전용 디테일.
-        ///
-        /// [B4 수정 - 상어 등지느러미와 완전히 같은 축 착각 버그였다] 기존 코드는 혀를 로컬 +Z로 0.95만큼
-        /// 밀었는데, 눕혀진 몸통에서 로컬 +Z는 "좌우"다. 즉 혀가 머리 끝이 아니라 몸통 옆구리에 0.17m
-        /// 튀어나온 돌기였다(몸통 반지름은 0.09m뿐이라 그냥 옆에 붙은 혹으로 보였다). 몸통의 진행
-        /// 방향은 로컬 +Y이고, 그 끝은 로컬 y=±1(월드 0.6m)이다.
-        ///
-        /// 이제 CreateUprightPivot으로 좌표계를 세운 뒤 미터 단위로 배치한다:
-        /// - 살짝 들어올린 머리(구체) — 지면에 붙은 초록 막대기가 20m 밖에서 전혀 식별되지 않던 문제를
-        ///   실루엣으로 보강한다(머리 꼭대기 0.275m vs 몸통 등 0.19m).
-        /// - 붉은 혀(Danger Red) — 머리가 어느 쪽인지, 그리고 이것이 위험 요소라는 신호.
-        /// - 어두운 띠 2개 — 색맹 대응과 야간 가독성을 위한 "무늬" 신호. 색이 아니라 패턴이라
-        ///   초록/갈색 구분이 안 되는 조건에서도 독사임이 읽힌다.
-        /// </summary>
-        public static void AddSnakeDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
-        {
-            Transform pivot = CreateUprightPivot(body, appliedScale, "SnakeParts");
-
-            // 머리: 몸통 앞 끝(0.6m)에서 살짝 들려 올라간다.
-            AddUprightSphere(pivot, "Head", new Vector3(0.56f, 0.09f, 0f), 0.17f, bodyColor * 0.9f);
-
-            // 혀: 머리 앞으로 뻗은 가는 막대.
-            AddUprightBox(pivot, "Tongue", new Vector3(0.70f, 0.09f, 0f), new Vector3(0.10f, 0.015f, 0.015f),
-                StructureVisualBuilder.DangerRed);
-
-            // 몸통 무늬 띠 2개(원기둥을 몸통 축과 나란히 눕혀 감는다). 피벗 안은 단위 스케일이라
-            // 회전을 줘도 전단이 생기지 않는다.
-            Color bandColor = new Color(0.12f, 0.12f, 0.12f);
-            Quaternion aroundBody = Quaternion.Euler(0f, 0f, 90f);
-            StructureVisualBuilder.CreateVisualPart(pivot, "Band0", PrimitiveType.Cylinder,
-                new Vector3(0.10f, 0f, 0f), new Vector3(0.20f, 0.025f, 0.20f), bandColor, aroundBody);
-            StructureVisualBuilder.CreateVisualPart(pivot, "Band1", PrimitiveType.Cylinder,
-                new Vector3(-0.25f, 0f, 0f), new Vector3(0.20f, 0.025f, 0.20f), bandColor, aroundBody);
-        }
-
-        /// <summary>
-        /// 전갈(HazardType.Scorpion) 전용 디테일.
-        ///
-        /// [B4 수정 - 뱀과 동일한 축 착각 버그] 눕혀진 몸통에서 로컬 +X는 "월드 위쪽"인데, 기존 코드는
-        /// 집게를 로컬 x=±0.28에 놓았다. 즉 집게 두 개가 좌우가 아니라 위/아래로 한 개씩 붙어 있었다.
-        /// 꼬리도 마찬가지로 "위로 들린" 방향(로컬 +X)이 아니라 로컬 +Y(몸통 진행 방향)와 -Z(좌우)로
-        /// 밀려 있어서, 들린 꼬리 실루엣이 전혀 만들어지지 않았다. 게다가 캡슐 메시 높이가 2단위라는
-        /// 점을 감안하지 않아 꼬리 마디 길이가 의도(0.32/0.26m)의 2배(0.64/0.52m)로, 0.6m짜리 몸통보다
-        /// 긴 상태였다.
-        ///
-        /// 이제 CreateUprightPivot 좌표계에서 미터 단위로 배치한다 - 뒤쪽 위로 솟았다가 앞으로 휘어
-        /// 내려오는 꼬리 2마디(끝은 Danger Red 독침)와, 앞쪽 좌우로 벌린 집게 2개.
-        /// 전갈은 몸길이 0.6m·굵기 0.16m로 매우 작아, 들린 꼬리가 사실상 유일하게 원거리에서 읽히는
-        /// 실루엣 단서다(꼬리 끝 높이 지면 위 0.43m = 몸통 등의 2.3배).
-        /// </summary>
-        public static void AddScorpionDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
-        {
-            Transform pivot = CreateUprightPivot(body, appliedScale, "ScorpionParts");
-            Color darker = bodyColor * 0.85f;
-
-            // 꼬리 1마디: 몸통 뒤(-X)에서 위로 솟는다. +Z축 기준 +35도 = +Y(위)가 -X(뒤)쪽으로 기운다.
-            AddUprightCapsule(pivot, "TailSegment1", new Vector3(-0.297f, 0.142f, 0f), 0.055f, 0.20f, darker,
-                Quaternion.Euler(0f, 0f, 35f));
-            // 꼬리 2마디(독침): 1마디 끝에서 반대로 휘어 앞쪽 위를 향한다.
-            AddUprightCapsule(pivot, "TailSegment2", new Vector3(-0.295f, 0.284f, 0f), 0.045f, 0.17f,
-                StructureVisualBuilder.DangerRed, Quaternion.Euler(0f, 0f, -45f));
-
-            // 집게: 몸통 앞 끝에서 좌우로. 몸통 반지름이 0.08m이므로 ±0.085m면 실루엣 밖으로 나온다.
-            AddUprightBox(pivot, "PincerL", new Vector3(0.30f, -0.02f, 0.085f), new Vector3(0.14f, 0.035f, 0.05f), darker);
-            AddUprightBox(pivot, "PincerR", new Vector3(0.30f, -0.02f, -0.085f), new Vector3(0.14f, 0.035f, 0.05f), darker);
-        }
-
-        /// <summary>
-        /// 함정(HazardType.Trap) 전용 디테일. 얇은 원판 가장자리를 따라 뾰족한 가시(가는 캡슐)를
-        /// 여러 개 둘러 박아, 밋밋한 원판이 아니라 "밟으면 위험한 것"이라는 실루엣을 만든다.
-        ///
-        /// [B4 수정 - 가시가 길이 3.9m짜리 바늘로 사방에 뻗어 있었다] 실측 계산:
-        /// 함정 몸통은 localScale (0.6, 0.04, 0.6)로 극단적으로 납작한 원판이다. 여기에 가시를
-        /// Euler(90,0,0)으로 눕혀 붙였는데, 90도 회전은 자식의 길이축(로컬 Y)을 부모의 Z축으로 옮긴다.
-        /// 그래서 스케일 보정값 0.13/0.04 = 3.25가 얇은 Y축(0.04) 대신 넓은 Z축(0.6)에 곱해져
-        /// 캡슐 길이가 2 × 3.25 × 0.6 = 3.9m가 됐다(의도는 0.13m). 두께도 반대로 0.0017m까지 눌려,
-        /// 지름 0.6m짜리 함정에서 종잇장 같은 3.9m 바늘 8개가 방사형으로 뻗어 나가는 상태였다.
-        /// 원인은 상어 등지느러미/뱀 혀와 같은 계열의 실수(회전과 비균일 스케일의 상호작용)다.
-        /// 수정: 가시를 회전 없이 위로 세운다(원판 몸통은 rotationEuler가 0이라 로컬 축 = 월드 축이고,
-        /// 회전이 없으면 축이 뒤바뀔 여지 자체가 사라진다). 캡슐 메시 높이가 2단위이므로 worldSize.y에는
-        /// 목표 길이의 절반(0.08 → 실제 0.16m)을 넣는다. 지면 위 0.17m까지 솟은 이빨 8개가 된다.
-        /// </summary>
-        public static void AddTrapDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
-        {
-            Color spikeColor = new Color(0.15f, 0.13f, 0.1f); // 거의 검은 쇠/나무 가시 색
-            const int spikeCount = 8;
-
-            for (int i = 0; i < spikeCount; i++)
+            Color legColor = bodyColor * 0.7f;
+            Vector3[] legLocalPositions =
             {
-                float angle = i * (360f / spikeCount) * Mathf.Deg2Rad;
-                // 로컬 Y 1.25 = 월드 0.05m (원판 몸통의 Y 스케일이 0.04이므로).
-                Vector3 localPos = new Vector3(Mathf.Cos(angle) * 0.42f, 1.25f, Mathf.Sin(angle) * 0.42f);
-                AddCompensatedCapsule(body.transform, localPos, new Vector3(0.03f, 0.08f, 0.03f), appliedScale,
-                    spikeColor, $"Spike{i}");
+                new Vector3(0.356f, -0.65f, 0.356f),
+                new Vector3(-0.356f, -0.65f, 0.356f),
+                new Vector3(0.356f, -0.65f, -0.356f),
+                new Vector3(-0.356f, -0.65f, -0.356f),
+            };
+
+            for (int i = 0; i < legLocalPositions.Length; i++)
+                AddCompensatedCapsule(body.transform, legLocalPositions[i], new Vector3(0.09f, 0.21f, 0.09f), appliedScale, legColor, $"Leg{i}");
+        }
+
+        // ── 공유 머티리얼 / 메시 적용 ────────────────────────────────────────────────────
+        /// <summary>
+        /// (색 + 텍스처)당 하나뿐인 공유 머티리얼을 얻는다. 캐시는 자원 노드와 같은 보관소
+        /// (ResourceVisualLibrary)를 쓴다 - 월드 전체가 한 벌의 머티리얼을 나눠 쓰게 하기 위함이다.
+        /// </summary>
+        private static Material Shared(Color color, string textureName)
+        {
+            Material material = ResourceVisualLibrary.GetMaterial(color, textureName);
+            if (material != null)
+                sharedMaterials.Add(material);
+            return material;
+        }
+
+        /// <summary>
+        /// 오브젝트의 머티리얼을 공유본으로 갈아 끼우고, 스포너가 개체마다 새로 만들었던 1회용
+        /// 머티리얼은 파괴한다. 파괴하지 않으면 참조만 끊긴 채 세션 내내 메모리에 남는다
+        /// (Unity는 런타임 생성 Object를 Resources.UnloadUnusedAssets 전까지 회수하지 않는다).
+        /// 공유본은 절대 파괴하지 않는다(sharedMaterials 주석 참고).
+        /// </summary>
+        private static void ApplySharedMaterial(GameObject go, Color color, string textureName)
+        {
+            if (go == null)
+                return;
+
+            var renderer = go.GetComponent<MeshRenderer>();
+            if (renderer == null)
+                return;
+
+            Material next = Shared(color, textureName);
+            if (next == null || renderer.sharedMaterial == next)
+                return;
+
+            Material previous = renderer.sharedMaterial;
+            renderer.sharedMaterial = next;
+
+            // [B29 감독] 예전 조건은 "공유본이 아니면 파괴"였다. 그런데 프리미티브가 처음 달고 오는
+            // 머티리얼은 **내장 에셋(Default-Material)** 이라 공유본 집합에도 없다 - 그래서 스폰될
+            // 때마다 에셋 파괴를 시도했고, 콘솔에
+            // "Destroying assets is not permitted to avoid data loss"가 54번 찍혔다(실기에서 확인).
+            // 이제 우리가 런타임에 만든 것(StructureVisualBuilder가 이름에 새긴 접두어)만 파괴한다.
+            if (previous != null
+                && !sharedMaterials.Contains(previous)
+                && previous.name != null
+                && previous.name.StartsWith(StructureVisualBuilder.RuntimeMaterialPrefix))
+            {
+                Object.Destroy(previous);
             }
         }
 
         /// <summary>
-        /// 지정한 위험 요소 종류에 맞는 디테일 파츠를 몸통에 붙인다. 이 메서드는
-        /// HazardSpawner.AddDetailParts의 switch 뒤에서 종류 구분 없이 항상 호출되므로(호출부는 이미
-        /// 연결되어 있음 - B2-16), 여기 case를 추가/제거하는 것만으로 새 디테일을 얹거나 뺄 수 있다.
-        /// - 독사/전갈/함정: 그동안 몸통 프리미티브 + 색상뿐이라 실루엣 구분이 약해 이 메서드가
-        ///   유일한 디테일 소스다(B2-16에서 추가).
-        /// - 곰/식인종/상어: HazardSpawner.AddDetailParts가 이미 자체적으로 눈(공통)/등지느러미(상어)를
-        ///   만들고 있는데, 그 위에 이 메서드가 종류별 실루엣 보강을 "추가로" 얹는다(B2-17) - 곰은
-        ///   귀+주둥이로 "동물 머리"임을, 식인종은 옆에 세운 창으로 "무장한 사람"임을 드러내 실루엣만
-        ///   보고도 두 서 있는 캡슐을 구분할 수 있게 하고, 상어는 꼬리지느러미를 더해 몸의 앞/뒤가
-        ///   드러나게 한다. 이름이 겹치지 않아(EarL/Snout/Spear/TailFin) 기존 눈/지느러미와 충돌하지 않는다.
-        /// - 벌떼: 실물 확인 결과 이미 몸통 구체 + 흩어진 작은 구체 5개로 "무리" 느낌이 충분해
-        ///   보강하지 않는다(B2-17에서 판단, 억지로 손대지 않음).
+        /// 몸통 프리미티브의 메시를 절차 메시로 갈아 끼운다. 콜라이더는 건드리지 않는다 -
+        /// 프리미티브 콜라이더(Capsule/Sphere/Box)는 파라메트릭이라 MeshFilter와 완전히 독립이고,
+        /// 그래서 접촉/전투 판정 범위는 1mm도 변하지 않는다.
+        /// </summary>
+        private static void ApplyBodyMesh(GameObject body, Mesh mesh)
+        {
+            if (body == null || mesh == null)
+                return;
+
+            var filter = body.GetComponent<MeshFilter>();
+            if (filter != null)
+                filter.sharedMesh = mesh;
+        }
+
+        /// <summary>
+        /// 이름이 name인 자식을 찾아 **미터 공간**으로 다시 세팅하고(로컬 1단위 = 1미터 × sizeJitter),
+        /// 지정한 절차 메시를 씌운다. 자식이 없으면 새로 만든다(스포너 쪽 파츠 구성이 바뀌어도
+        /// NullReference가 나지 않게 하는 방어).
+        ///
+        /// localScale = 1/nominal 인 이유: 실제 부모 스케일은 nominal × sizeJitter이므로
+        /// 자식의 월드 스케일 = nominal·jitter · (1/nominal) = jitter 가 되어, 미터로 적은 값이
+        /// 그대로 월드 미터가 되면서 개체별 크기 편차(jitter)는 유지된다.
+        /// 회전은 주지 않는다 - 비균일 부모 밑에서 회전한 자식은 전단으로 찌그러진다.
+        /// </summary>
+        private static GameObject MeterSpacePart(Transform parent, string name, Vector3 nominal, Mesh mesh,
+            Color color, string textureName)
+        {
+            Vector3 inverse = new Vector3(1f / nominal.x, 1f / nominal.y, 1f / nominal.z);
+            Transform existing = parent.Find(name);
+            GameObject go;
+
+            if (existing != null)
+            {
+                go = existing.gameObject;
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = inverse;
+            }
+            else
+            {
+                go = StructureVisualBuilder.CreateVisualPart(parent, name, PrimitiveType.Cube,
+                    Vector3.zero, inverse, Shared(color, textureName));
+            }
+
+            ApplySharedMaterial(go, color, textureName);
+            ApplyBodyMesh(go, mesh);
+            return go;
+        }
+
+        /// <summary>
+        /// 이름이 name인 구체 자식(스포너가 이미 만들어 둔 눈 등)을 미터 단위로 다시 배치/크기 조정한다.
+        /// 없으면 새로 만든다. 파츠를 새로 만드는 대신 있는 것을 옮기므로 파츠 수가 늘지 않는다.
+        /// </summary>
+        private static GameObject ReshapeSphere(Transform parent, string name, Vector3 nominal,
+            Vector3 posMeters, float diameterMeters, Color color, string textureName)
+        {
+            Vector3 localPos = new Vector3(posMeters.x / nominal.x, posMeters.y / nominal.y, posMeters.z / nominal.z);
+            Vector3 localScale = new Vector3(diameterMeters / nominal.x, diameterMeters / nominal.y, diameterMeters / nominal.z);
+
+            Transform existing = parent.Find(name);
+            GameObject go;
+            if (existing != null)
+            {
+                go = existing.gameObject;
+                go.transform.localPosition = localPos;
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = localScale;
+            }
+            else
+            {
+                go = StructureVisualBuilder.CreateVisualPart(parent, name, PrimitiveType.Sphere,
+                    localPos, localScale, Shared(color, textureName));
+            }
+
+            ApplySharedMaterial(go, color, textureName);
+            return go;
+        }
+
+        /// <summary>
+        /// 이름이 name인 자식의 크기만 미터 단위로 다시 잡는다(위치는 스포너가 정한 그대로 둔다).
+        /// 벌떼처럼 "스포너가 난수로 흩뿌린 위치"에 의미가 있는 파츠 전용이다.
+        /// </summary>
+        private static void ResizeChild(Transform parent, string name, Vector3 nominal, float diameterMeters,
+            Color color, string textureName)
+        {
+            Transform child = parent.Find(name);
+            if (child == null)
+                return;
+
+            child.localScale = new Vector3(diameterMeters / nominal.x, diameterMeters / nominal.y, diameterMeters / nominal.z);
+            ApplySharedMaterial(child.gameObject, color, textureName);
+        }
+
+        // ── 위험 요소 진입점 ─────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 지정한 위험 요소 종류에 맞는 외형을 완성한다. HazardSpawner.AddDetailParts가 눈/등지느러미/
+        /// 벌 파츠를 만든 **직후** 종류 구분 없이 항상 호출되므로, 이 메서드는 그 파츠들이 이미 존재한다는
+        /// 전제로 동작한다 - 새로 만드는 대신 찾아서 제자리로 옮기고 크기를 다시 잡는다.
+        /// (기존 이름: EyeL / EyeR / Fin / Bee0~Bee4. 이름이 바뀌면 여기서도 함께 고칠 것.)
+        ///
+        /// [B29] 모든 종류가 (a) 몸통 메시 교체 (b) 공유 머티리얼 적용 (c) 남은 파츠 재배치 세 단계를 거친다.
+        /// 벌떼도 더 이상 예외가 아니다(예전에는 "이미 충분하다"고 판단해 건드리지 않았다).
         /// </summary>
         public static void AddHazardDetailsIfMissing(GameObject body, HazardType type, Vector3 appliedScale, Color bodyColor)
         {
+            if (body == null)
+                return;
+
             switch (type)
             {
                 case HazardType.VenomousSnake:
@@ -252,118 +320,1133 @@ namespace MakeGame.Systems
                 case HazardType.Shark:
                     AddSharkTailDetails(body, appliedScale, bodyColor);
                     break;
+                case HazardType.BeeSwarm:
+                    AddBeeSwarmDetails(body, appliedScale, bodyColor);
+                    break;
             }
         }
 
         /// <summary>
-        /// 곰(HazardType.Bear) 전용 보강 디테일(B2-17). 기존에 이미 붙어 있는 눈(공통 케이스)만으로는
-        /// 식인종과 똑같이 "서 있는 캡슐"로 보여 구분이 어려웠다. 회전 없는 구체(귀 2개)와 박스(주둥이)만
-        /// 사용해 - 캡슐 자체나 기존 눈 배치는 건드리지 않고 - 위쪽에 "동물 머리" 실루엣 단서를 더한다.
-        /// 회전이 필요 없는 파츠만 골라 써서(구체는 방향이 없고, 박스는 회전 없이도 로컬 축이 그대로
-        /// 원하는 치수와 일치) 비균일 스케일 보정 계산이 어긋날 여지를 없앴다.
+        /// 곰(HazardType.Bear).
+        ///
+        /// [B29 - 감독이 이름을 콕 집은 항목] 예전에는 세워 놓은 캡슐 + 귀 구체 2개 + 주둥이 박스라
+        /// 옆에서 봐도 식인종과 같은 "서 있는 알약"이었다. 이제 몸통 메시 자체가 네 발로 선 곰이다.
+        /// 실루엣을 만드는 것은 네 가지이고 전부 메시 안에 있다:
+        ///   1. 어깨 혹 - 등줄기 반지름이 앞다리 위에서 0.29 → 0.37m로 부풀었다가 다시 줄어든다.
+        ///      등선 꼭대기 1.12m 대비 혹 꼭대기 1.24m. 곰과 다른 사족보행 동물을 가르는 결정적 신호다.
+        ///   2. 짧고 굵은 다리 - 배 아래 0.50m 공간에 지름 0.24m 다리가 들어간다(길이/굵기 = 2.1).
+        ///   3. 처진 머리 - 목이 어깨(0.83m)에서 머리(0.61m)로 내려간다. 곰은 머리를 어깨보다 낮게 든다.
+        ///   4. 주둥이 - 머리 앞으로 0.2m 뻗은 원뿔형 코. 끝에 어두운 코 파츠 하나만 얹는다.
+        /// 크기: 코끝~엉덩이 1.68m · 혹 높이 1.24m(길이/높이 1.35 = 실제 불곰 비율).
+        ///
+        /// 파츠: 몸통(1) + 눈 2(스포너가 만든 것을 옮겨 씀) + 코(1) = 4개. 예전 6개.
+        /// 판정 불변: 몸통 캡슐 콜라이더(지름 0.9m · 높이 2.2m 수직)는 그대로다. 시각이 콜라이더보다
+        /// 앞뒤로 길어지지만, 조준/접촉이 잡히는 곳은 몸통 한가운데(혹과 가슴)라 실사용에 지장이 없다.
         /// </summary>
         public static void AddBearDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            Color darker = bodyColor * 0.7f;
+            ApplyBodyMesh(body, CreatureMeshLibrary.BearBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "bark");
+            SnapPivotForJitter(body, appliedScale, BearScale, 1.1f);
 
-            // 귀 두 개: 기존 눈(0.18, 0.75, 0.35)보다 위/뒤쪽에 붙인다.
-            AddCompensatedSphere(body.transform, new Vector3(0.22f, 0.98f, 0.12f), 0.11f, appliedScale, darker, "EarL");
-            AddCompensatedSphere(body.transform, new Vector3(-0.22f, 0.98f, 0.12f), 0.11f, appliedScale, darker, "EarR");
+            Color muzzle = ResourceVisualLibrary.Shade(bodyColor, 0.55f);
+            // 눈 위치 검산(머리 단면은 z 0.755에서 가로 반경 0.1175m · 세로 반경 0.1335m의 타원):
+            // (0.088/0.1175)² + (0.0844/0.1335)² = 0.96 < 1 → 중심이 표면 바로 안쪽이고,
+            // 눈 반지름 0.045m가 더해져 확실히 밖으로 드러난다.
+            ReshapeSphere(body.transform, "EyeL", BearScale, new Vector3(0.088f, -0.415f, 0.755f), 0.09f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", BearScale, new Vector3(-0.088f, -0.415f, 0.755f), 0.09f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "Snout", BearScale, new Vector3(0f, -0.525f, 0.875f), 0.13f, muzzle, "noise");
 
-            // 주둥이: 얼굴 앞(+Z)으로 짧게 튀어나온 박스. 곰/식인종은 rotationEuler가 0이라 로컬 축이
-            // 곧 월드 축과 같으므로 회전 없이도 원하는 방향(앞)으로 정확히 튀어나온다.
-            AddCompensatedBox(body.transform, new Vector3(0f, 0.62f, 0.5f), new Vector3(0.16f, 0.13f, 0.22f), appliedScale, darker, "Snout");
+            // 예전 방식의 귀 파츠는 메시에 들어갔다. 남아 있으면 머리 위에 혹 두 개로 겹치므로 지운다.
+            RemoveLegacyPart(body.transform, "EarL");
+            RemoveLegacyPart(body.transform, "EarR");
         }
 
         /// <summary>
-        /// 식인종(HazardType.Cannibal) 전용 보강 디테일(B2-17). 곰과 반대 방향의 구분 신호를 준다 -
-        /// 몸통(사람 실루엣)은 그대로 두고, 옆에 세워 든 창 하나(회전 없는 세로 박스)만 더해
-        /// "무장한 사람"이라는 실루엣을 만든다. 곰(동물 머리 단서)과 나란히 보면 한쪽은 동물,
-        /// 한쪽은 무기를 든 사람으로 멀리서도 구분된다.
-        ///
-        /// [B4 수정 - 창이 몸통 안에 박혀 있어 보이지 않았다] 식인종 몸통은 localScale (0.55, 0.9, 0.55)
-        /// 캡슐이라 월드 반지름이 0.275m다. 그런데 창을 로컬 x=0.42(=월드 0.231m)에 두어, 두께
-        /// 0.05m를 더해도 최대 반경이 0.256m로 몸통 반지름 안이었다 - 즉 1.6m짜리 창이 통째로 몸통
-        /// 안에 묻혀 어느 각도에서도 보이지 않았고, "무장한 사람" 실루엣이라는 이 파츠의 존재 이유가
-        /// 통째로 무효였다(곰과 구분되는 유일한 단서였다). 로컬 x=0.62(=월드 0.341m)로 밀어내
-        /// 몸통 표면(0.275m) 밖으로 완전히 내놓고, 창 끝이 머리(월드 1.8m) 위로 나오도록 살짝 올렸다.
-        /// 돌촉을 하나 더해 멀리서도 막대기가 아니라 무기로 읽히게 한다.
-        /// 회전은 주지 않는다 - 부모 스케일이 비균일(0.55/0.9)이라 회전한 자식은 전단으로 찌그러진다.
+        /// 식인종(HazardType.Cannibal). 몸통 메시가 사람 형태 전체(다리 2 · 발 2 · 허리에 두른 천 ·
+        /// 몸통 · 팔 2 · 목 · 머리)를 담는다. 위협감은 비율에서 나온다: 어깨 폭 0.5m · 키 1.8m ·
+        /// 팔이 무릎 근처(0.96m)까지 내려온다.
+        /// 들고 있는 창은 오른손 위치(x +0.29m)에서 위로 뻗어 머리(1.8m) 위 1.92m까지 올라가고,
+        /// 끝에 돌촉(각진 마름모 날)이 달린다 - 곰(동물)과 나란히 봤을 때 "무장한 사람"으로 갈린다.
+        /// 파츠: 몸통(1) + 눈 2 + 창 + 돌촉 = 5개(예전과 동일하지만 형태가 전부 바뀌었다).
         /// </summary>
         public static void AddCannibalDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            Color woodColor = new Color(0.4f, 0.28f, 0.15f);
-            AddCompensatedBox(body.transform, new Vector3(0.62f, 0.15f, 0.05f), new Vector3(0.07f, 1.6f, 0.07f), appliedScale, woodColor, "Spear");
-            AddCompensatedBox(body.transform, new Vector3(0.62f, 1.06f, 0.05f), new Vector3(0.09f, 0.20f, 0.04f), appliedScale,
-                StructureVisualBuilder.WeatheredStone, "SpearHead");
+            ApplyBodyMesh(body, CreatureMeshLibrary.CannibalBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "noise");
+            SnapPivotForJitter(body, appliedScale, CannibalScale, 0.9f);
+
+            ReshapeSphere(body.transform, "EyeL", CannibalScale, new Vector3(0.042f, 0.80f, 0.078f), 0.05f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", CannibalScale, new Vector3(-0.042f, 0.80f, 0.078f), 0.05f, EyeBlack, "noise");
+
+            MeterSpacePart(body.transform, "Spear", CannibalScale, CreatureMeshLibrary.SpearShaftMeters(),
+                StructureVisualBuilder.Driftwood, "wood");
+            MeterSpacePart(body.transform, "SpearHead", CannibalScale, CreatureMeshLibrary.SpearHeadMeters(),
+                StructureVisualBuilder.WeatheredStone, "stone");
         }
 
         /// <summary>
-        /// 상어(HazardType.Shark) 전용 보강 디테일(B2-17). HazardSpawner.AddDetailParts가 이미 만드는
-        /// 등지느러미(Fin, 로컬 y=0.1 부근)와 짝을 이루는 꼬리지느러미를 몸통 뒤쪽 끝(눈이 있는 +Y
-        /// 반대편, -Y)에 붙여 몸의 앞/뒤가 실루엣만으로 구분되게 한다. 회전 없는 박스라 상어 몸통의
-        /// 기존 회전(Quaternion.Euler(0,0,90))에 대해서도 로컬 축 기준으로 동일하게 동작한다.
-        /// 참고(B4-3 갱신): 상어 전체가 SharkSpawner.depthBelowSeaLevel만큼 해수면 아래에 배치된다.
-        /// 몸통 캡슐의 수직 반경은 0.225m이고, 1.9배로 키운 등지느러미 꼭대기는 몸통 중심 위 0.39m다.
-        /// 따라서 배치 깊이가 0.39m보다 얕아야 지느러미가 수면을 뚫는다. B4-2에서 코드 기본값과 씬
-        /// 직렬화 값을 모두 0.3으로 맞춰(이전: 코드 0.6 / 씬 2) 약 0.09m가 수면 위로 드러난다.
-        /// 지느러미 크기를 다시 조정하려면 SharkSpawner.depthBelowSeaLevel과 반드시 함께 계산할 것.
+        /// 상어(HazardType.Shark). 몸통 메시가 방추형 몸통 + 가슴지느러미 2 + 초승달 꼬리지느러미를
+        /// 한 장에 담고, 물 위로 드러나는 등지느러미만 별도 파츠로 남는다(Danger Red를 유지해야 하므로).
         ///
-        /// [B5 축 정정 - 등지느러미와 같은 버그가 꼬리지느러미에 그대로 남아 있었다]
-        /// 몸통이 Euler(0,0,90)으로 눕혀져 있어 로컬 축의 의미는 "+X = 월드 위쪽, +Y = 몸통 진행 방향,
-        /// +Z = 좌우"다(Z축 +90도 회전: +X→+Y, +Y→-X). 그런데 기존 worldSize는 (0.05, 0.32, 0.16)이라
-        /// 수직 높이(로컬 X)가 5cm뿐이고 좌우 폭(로컬 Z)이 16cm인, 물 위에 뜬 가로 판때기였다 - 꼬리
-        /// 지느러미의 형태 신호(세로로 선 삼각 꼬리)가 전혀 없었다.
-        /// (0.32, 0.32, 0.06)으로 바꿔 수직 32cm / 진행 방향 32cm / 두께 6cm의 "세워진 꼬리"로 만든다.
-        /// localPosition의 z=0.18도 같은 축 혼동의 산물이었다 - 위로 띄우려던 값이 실제로는 옆구리
-        /// 방향(로컬 Z)으로 18cm 밀어낸 것이라 꼬리가 몸통 중심선에서 한쪽으로 어긋나 있었다. 0으로
-        /// 되돌려 중심선에 맞춘다. 몸통 뒤쪽 끝(-Y 0.85)과 몸통 캡슐/콜라이더는 건드리지 않는다.
+        /// ⚠️ 수면 노출 계산은 손대지 않았다. SharkSpawner.depthBelowSeaLevel = 0.3은 "몸통 중심이
+        /// 해수면 아래로 내려가는 깊이"이고, 등지느러미 꼭대기는 예전과 똑같이 몸통 중심 위 **0.39m**다
+        /// → 수면 위 0.09m 노출. 꼬리 위쪽 날개 끝은 0.34m로 일부러 등지느러미보다 **낮게** 잡았다.
+        /// 그래야 물 위로 보이는 것이 등지느러미 하나라는 기존 실루엣이 유지된다.
+        /// 이 값을 바꾸려면 반드시 SharkSpawner.depthBelowSeaLevel과 함께 계산할 것.
         ///
-        /// 판정 불변: 이 파츠는 CreateVisualPart가 콜라이더를 제거한 순수 시각 오브젝트이고, 상어의
-        /// 판정은 몸통 캡슐의 트리거 콜라이더 하나뿐이라 꼬리를 세워도 공격 범위는 변하지 않는다.
-        /// 노출 높이도 변하지 않는다: 꼬리는 몸통 중심 위 0.16m×몸통 스케일 0.45 = 0.072m까지만
-        /// 올라와, 등지느러미 꼭대기(0.39m)보다 훨씬 낮으므로 수면 노출 계산(depthBelowSeaLevel 0.3)에
-        /// 아무 영향을 주지 않는다 - depthBelowSeaLevel은 손대지 않는다.
+        /// 눈 위치도 함께 고쳤다: 예전 값(로컬 y 0.7 → 앞쪽 0.98m 지점, 좌우 ±0.18m)은 새 몸통에서
+        /// 그 지점의 반지름 0.147m보다 밖이라 눈이 몸통에서 떨어져 공중에 떠 있게 된다. ±0.125m로 당겼다.
+        /// 파츠: 몸통(1) + 눈 2 + 등지느러미(1) = 4개. 예전 5개(꼬리지느러미 파츠가 메시로 들어갔다).
         /// </summary>
         public static void AddSharkTailDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            Color finColor = bodyColor * 0.8f;
-            AddCompensatedBox(body.transform, new Vector3(0f, -0.85f, 0f), new Vector3(0.32f, 0.32f, 0.06f), appliedScale, finColor, "TailFin");
+            ApplyBodyMesh(body, CreatureMeshLibrary.SharkBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "noise");
+
+            // 눕힌 몸통이라 (x, y, z) = (월드 위, 진행 방향, 좌우) 미터다.
+            ReshapeSphere(body.transform, "EyeL", SharkScale, new Vector3(0.055f, 0.98f, 0.125f), 0.07f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", SharkScale, new Vector3(0.055f, 0.98f, -0.125f), 0.07f, EyeBlack, "noise");
+
+            MeterSpacePart(body.transform, "Fin", SharkScale, CreatureMeshLibrary.SharkDorsalMeters(),
+                StructureVisualBuilder.DangerRed, "noise");
+            RemoveLegacyPart(body.transform, "TailFin");
         }
 
         /// <summary>
-        /// 사냥감(HuntableCreature, 육상형) 몸통 아래에 짧은 다리 4개를 붙인다. 지금까지는 몸통 캡슐 +
-        /// 눈 2개뿐이라, 사람처럼 서서 배치되는 위험 요소(곰/식인종) 캡슐과 실루엣이 겹쳐 "이게 잡을
-        /// 수 있는 사냥감인지 위험 요소인지" 구분이 잘 안 됐다. 짧은 네 다리를 더하면 사족보행 동물
-        /// 실루엣이 되어 사람 형태(위험 요소)와 한눈에 구분된다. 물고기(preferShoreline)에는 다리가
-        /// 어울리지 않으므로 이 메서드는 육상 동물 쪽에서만 호출해야 한다.
-        ///
-        /// [B4 수정 - 다리가 몸통 안에 숨어 실제로는 하나도 보이지 않았다] 실측:
-        /// 몸통은 localScale (0.45, 0.6, 0.45) 캡슐이고 CreatureSpawner가 position + up*0.6에 놓으므로
-        /// 월드 반지름 0.225m, 몸통 바닥이 정확히 지면(중심 기준 -0.6m)이다. 기존 다리는
-        /// (a) 가로 위치가 로컬 ±0.18/±0.22 = 월드 ±0.081/±0.099로 몸통 반지름 0.225m 안쪽이었고,
-        /// (b) 캡슐 메시 높이가 2단위라는 점을 빠뜨려 worldSize.y=0.35가 실제로는 길이 0.7m가 되는 바람에
-        /// 다리가 아래로는 지면 밑 0.08m까지 파묻혔다. 결과적으로 네 다리 전부가 몸통 옆구리와 땅 사이에
-        /// 완전히 가려져, "다리 유무 = 잡을 수 있는 대상인가"(ArtDirection 2장 3번)라는 이 프로젝트의
-        /// 1차 시각 신호가 사실상 존재하지 않았다.
-        /// 수정: 길이를 0.42m로 정확히 맞춰 지면~몸통 아래를 채우고(월드 -0.6 ~ -0.18m), 네 다리를
-        /// 몸통 실루엣 밖(월드 반경 0.226m + 다리 반지름 0.045m = 0.271m > 0.225m)으로 벌려 어느
-        /// 방향에서 봐도 다리 4개가 보이게 했다. 몸통 위치/스케일/콜라이더는 건드리지 않는다(판정 불변).
+        /// 독사(HazardType.VenomousSnake). 위에서 내려다볼 때 알아볼 수 있어야 한다는 것이 이번 요구라,
+        /// 몸통을 **굽이치는 S자**로 굽는다(좌우 진폭 ±0.15m, 1.5파장). 지면에 놓인 초록 막대기였던
+        /// 예전 형태와 달리 위에서 봐도 뱀으로 읽힌다.
+        /// 비늘 마디는 파츠(어두운 띠 2개)가 아니라 반지름 물결(±7.5%)로 메시에 구웠다 - 대나무 마디를
+        /// 원반 파츠에서 줄기 굵기 변화로 옮긴 B28 기법 그대로다.
+        /// 머리는 몸통 끝에서 두께가 한 번 부풀었다가 주둥이로 좁아지고, 지면 위 0.20m까지 들린다
+        /// (등 높이 0.16m). 붉은 혀만 파츠로 남는다.
+        /// 파츠: 몸통(1) + 혀(1) = 2개. 예전 5개(머리 구체 + 혀 + 띠 2).
         /// </summary>
-        public static void AddQuadrupedLegs(GameObject body, Vector3 appliedScale, Color bodyColor)
+        public static void AddSnakeDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
         {
-            Color legColor = bodyColor * 0.7f; // 몸통보다 확실히 어둡게 - 실루엣 경계가 대비로도 읽히게
-            Vector3[] legLocalPositions =
-            {
-                new Vector3(0.356f, -0.65f, 0.356f),
-                new Vector3(-0.356f, -0.65f, 0.356f),
-                new Vector3(0.356f, -0.65f, -0.356f),
-                new Vector3(-0.356f, -0.65f, -0.356f),
-            };
+            ApplyBodyMesh(body, CreatureMeshLibrary.SnakeBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "noise");
 
-            // worldSize.y는 캡슐 메시(높이 2단위) 특성상 "전체 길이의 절반"으로 들어간다 - 0.21 → 0.42m.
-            for (int i = 0; i < legLocalPositions.Length; i++)
-                AddCompensatedCapsule(body.transform, legLocalPositions[i], new Vector3(0.09f, 0.21f, 0.09f), appliedScale, legColor, $"Leg{i}");
+            MeterSpacePart(body.transform, "Tongue", SnakeScale, CreatureMeshLibrary.SnakeTongueMeters(),
+                StructureVisualBuilder.DangerRed, "noise");
+        }
+
+        /// <summary>
+        /// 전갈(HazardType.Scorpion). 역시 "위에서 내려다볼 때"가 기준이라, 위에서 보이는 것 전부를
+        /// 메시에 넣었다 - 마디진 몸통 + **다리 8개**(좌우 4쌍이 뒤로 벌어진다) + 앞으로 벌린 **집게 2개**.
+        /// 옆에서 보이는 신호는 뒤에서 위로 솟았다가 앞으로 말리는 **꼬리 5마디**이고, 꼬리 끝 높이는
+        /// 예전과 같은 지면 위 0.435m를 유지한다(몸길이 0.6m짜리 개체의 유일한 원거리 단서라 낮추면 안 된다).
+        /// 독침만 Danger Red 파츠로 남는다.
+        /// 파츠: 몸통(1) + 독침(1) = 2개. 예전 5개(꼬리 2마디 + 집게 2).
+        /// </summary>
+        public static void AddScorpionDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            ApplyBodyMesh(body, CreatureMeshLibrary.ScorpionBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "noise");
+
+            MeterSpacePart(body.transform, "Stinger", ScorpionScale, CreatureMeshLibrary.ScorpionStingerMeters(),
+                StructureVisualBuilder.DangerRed, "noise");
+        }
+
+        /// <summary>
+        /// 함정(HazardType.Trap). "사람이 만든 물건으로 읽혀야 한다"는 요구를, 자연물에는 없는 형태
+        /// 언어로 답한다(ArtDirection 2장 4번): 원형 바닥판 + 가운데 압력판 + **좌우로 갈라진 반원 턱 2개** +
+        /// 턱을 따라 안쪽으로 기운 **이빨 10개** + 옆으로 뻗은 고정 말뚝. 전부 메시 한 장이고 metal
+        /// 텍스처를 써서 초목/돌과 표면 질감부터 갈린다.
+        /// 이빨 꼭대기는 예전 가시(지면 위 0.17m)와 같은 높이대(0.185m)라 걸려 넘어지는 체감이 유지된다.
+        /// 파츠: 몸통(1)뿐. 예전 9개(원판 + 가시 8) - 이번 배치에서 파츠 절감이 가장 큰 항목이다.
+        /// </summary>
+        public static void AddTrapDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            ApplyBodyMesh(body, CreatureMeshLibrary.TrapBodyUnit());
+            ApplySharedMaterial(body, ResourceVisualLibrary.Shade(bodyColor, 0.9f), "metal");
+
+            for (int i = 0; i < 8; i++)
+                RemoveLegacyPart(body.transform, $"Spike{i}");
+        }
+
+        /// <summary>
+        /// 벌떼(HazardType.BeeSwarm). 벌떼의 실루엣은 개체가 아니라 **무리**라, 몸통 구체 하나를
+        /// 지름 0.68m 공간에 흩어진 벌 18마리(각각 길이 5.5cm의 작은 몸통)로 갈아 끼운다. 예전에는
+        /// 지름 0.5m 노란 공 하나에 지름 0.18m 구체 5개가 박혀 있어 "덩어리"로 읽혔다.
+        /// 스포너가 난수로 흩뿌린 구체 5개는 위치를 살린 채 지름 0.05m로 줄이고 어둡게 칠해,
+        /// 노란 무리 안에 어두운 개체가 섞이며 밀도가 생기게 한다.
+        /// 무리의 "움직임"은 HazardSource.Update가 몸통을 천천히 돌려 만든다(unscaledDeltaTime 사용).
+        /// 구체 콜라이더는 회전에 불변이라 판정에 영향이 없다.
+        /// 파츠: 몸통(1) + 벌 5 = 6개(예전과 동일).
+        /// </summary>
+        public static void AddBeeSwarmDetails(GameObject body, Vector3 appliedScale, Color bodyColor)
+        {
+            ApplyBodyMesh(body, CreatureMeshLibrary.BeeSwarmUnit());
+            ApplySharedMaterial(body, bodyColor, "noise");
+
+            Color darkBee = new Color(0.20f, 0.15f, 0.05f);
+            for (int i = 0; i < 5; i++)
+                ResizeChild(body.transform, $"Bee{i}", BeeSwarmScale, 0.05f, darkBee, "noise");
+        }
+
+        // ── 사냥감 진입점 ────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 사냥감(HuntableCreature)의 몸통을 완성한다. CreatureSpawner가 프리미티브를 만든 직후 호출한다.
+        ///
+        /// 육상: 사족보행 동물 한 마리를 메시로 굽는다(몸통 + 목 + 머리 + 주둥이 + 귀 2 + 다리 4 + 꼬리).
+        ///   예전에는 캡슐 + 눈 2 + 머리 구체 + 다리 캡슐 4 = 8파츠였는데, 다리가 몸통에 묻히고
+        ///   머리 돌기가 따로 놀아 "알약에 혹이 붙은 것"으로 보였다. 지금은 파츠가 몸통 + 눈 2 = 3개다.
+        /// 물고기: 좌우로 납작하고 위아래로 높은 방추형 몸통 + 등지느러미 + 갈라진 꼬리지느러미를
+        ///   메시 한 장에 굽는다. 파츠는 몸통 + 눈 = 2개(예전 3개).
+        ///
+        /// 콜라이더는 건드리지 않는다 - 사냥 상호작용은 InteractionController의 카메라 레이캐스트가
+        /// 잡는 루트 콜라이더 하나뿐이라, 몸통 중심을 조준하는 기존 조작감이 그대로 유지되도록
+        /// 몸길이를 콜라이더 지름의 2배 안(0.90m)으로 묶었다.
+        /// </summary>
+        public static void BuildHuntableBody(GameObject body, Color bodyColor, bool isFish)
+        {
+            if (body == null)
+                return;
+
+            if (isFish)
+            {
+                ApplyBodyMesh(body, CreatureMeshLibrary.FishBodyUnit());
+                ApplySharedMaterial(body, bodyColor, "noise");
+                // 물고기 단면은 좌우로 눌려 있어(0.62배) 눈을 옆으로 많이 벌리면 몸통에서 떨어진다.
+                // z 0.170 지점의 단면은 가로 반경 0.0259m · 세로 반경 0.0521m다.
+                ReshapeSphere(body.transform, "Eye", HuntFishScale, new Vector3(0.018f, 0.030f, 0.170f), 0.026f, EyeBlack, "noise");
+                return;
+            }
+
+            ApplyBodyMesh(body, CreatureMeshLibrary.HuntLandBodyUnit());
+            ApplySharedMaterial(body, bodyColor, "bark");
+            ReshapeSphere(body.transform, "EyeL", HuntLandScale, new Vector3(0.048f, 0.030f, 0.412f), 0.026f, EyeBlack, "noise");
+            ReshapeSphere(body.transform, "EyeR", HuntLandScale, new Vector3(-0.048f, 0.030f, 0.412f), 0.026f, EyeBlack, "noise");
+        }
+
+        /// <summary>
+        /// [B29 버그 수정 - 개체 크기 편차만큼 발이 뜨거나 파묻혔다]
+        /// HazardSpawner는 몸통 스케일에는 sizeJitter(0.9~1.15배)를 곱하지만 지면에서 띄우는 높이
+        /// (config.groundOffset)에는 곱하지 않는다. 몸통 바닥은 스케일에 비례해 내려가므로,
+        /// 곰(groundOffset 1.1)은 작은 개체가 지면 위 0.11m에 떠 있고 큰 개체는 0.165m 파묻힌다.
+        /// 예전에는 매끈한 캡슐이라 티가 안 났지만, 지금은 발과 발바닥이 있어서 곧바로 보인다.
+        ///
+        /// 보정량 = groundOffset × (jitter − 1). 유도: 몸통 바닥의 로컬 y는 −groundOffset/nominal.y로
+        /// 설계돼 있으므로 월드 바닥 = 피벗 − groundOffset·jitter이고, 피벗이 지면+groundOffset이면
+        /// 오차가 정확히 groundOffset·(jitter−1)이다.
+        /// 콜라이더 **크기**는 건드리지 않는다 - 몸통 전체를 최대 0.165m 수직 이동시킬 뿐이고,
+        /// 이는 원래 지면에 맞아야 했던 위치로 되돌리는 것이다(파묻혀 있던 개체가 오히려 정상화된다).
+        /// 상어는 SharkSpawner가 수심을 직접 계산해 넘기므로(groundOffset 0) 이 보정을 적용하지 않는다.
+        /// </summary>
+        private static void SnapPivotForJitter(GameObject body, Vector3 appliedScale, Vector3 nominal, float groundOffset)
+        {
+            float jitter = appliedScale.y / Mathf.Max(0.0001f, nominal.y);
+            Vector3 position = body.transform.position;
+            position.y += groundOffset * (jitter - 1f);
+            body.transform.position = position;
+        }
+
+        /// <summary>
+        /// 예전 방식으로 만들어져 이제는 메시에 포함된 파츠를 치운다. Destroy는 프레임 끝까지 지연되므로
+        /// 먼저 SetActive(false)로 즉시 화면에서 뺀다(AGENT_BRIEF 4장).
+        /// </summary>
+        private static void RemoveLegacyPart(Transform parent, string name)
+        {
+            Transform child = parent.Find(name);
+            if (child == null)
+                return;
+
+            child.gameObject.SetActive(false);
+            Object.Destroy(child.gameObject);
+        }
+    }
+
+    /// <summary>
+    /// [B29] 생물형 오브젝트가 **공유**하는 절차 메시 보관소.
+    /// 설계 원칙은 자원 노드 쪽(ResourceVisualLibrary)과 같다:
+    ///  1. 전부 정적 캐시다. 개체가 몇 마리든 종류당 메시 1장이고, 머티리얼까지 같아서 GPU 인스턴싱이 걸린다.
+    ///  2. 좌표는 **미터로 작성하고 마지막에 NominalScale로 나눈다**(Builder.ScaleVertices). 그래서
+    ///     아래 표의 숫자는 전부 실제 미터이며, 그대로 읽으면 크기 검산이 된다.
+    ///     기준점은 스포너가 놓는 피벗이고, 지면은 groundOffset만큼 아래에 있다(주석에 종류별로 적었다).
+    ///  3. 감김(winding)을 표로 외우지 않는다. 삼각형마다 기하 법선을 기준 방향과 비교해 뒤집는다
+    ///     (왼손 좌표계에서 표준 인덱스 표를 옮겨 적다가 통째로 안쪽을 향해 컬링된 사고가 반복됐다).
+    ///
+    /// 비균일 스케일과 법선: 메시를 M⁻¹(=1/NominalScale)로 눌러 두면 렌더 시 M이 곱해져 원래 미터
+    /// 형태로 돌아오고, 법선은 Unity가 역전치 행렬로 처리하므로 눌린 상태에서 계산해도 정확히 복원된다.
+    /// </summary>
+    public static class CreatureMeshLibrary
+    {
+        private static readonly Dictionary<string, Mesh> meshCache = new Dictionary<string, Mesh>();
+
+        private static bool TryGetCached(string key, out Mesh mesh)
+        {
+            return meshCache.TryGetValue(key, out mesh) && mesh != null;
+        }
+
+        private static Mesh Store(string key, Mesh mesh)
+        {
+            meshCache[key] = mesh;
+            return mesh;
+        }
+
+        // ── 곰 ────────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 네 발로 선 곰(캡슐 규격, localScale 0.9 × 1.1 × 0.9 · 피벗은 지면 위 1.1m).
+        /// 미터 좌표의 y는 피벗 기준이므로 **지면 = -1.1**이다. +z가 앞(머리 방향).
+        /// 등줄기 표(지면 기준 높이 / 반지름): 엉덩이 0.80/0.30 → 등 0.83/0.29 → **혹 0.87/0.37** →
+        /// 가슴 0.83/0.30 → 목 0.73/0.21 → 머리 0.61/0.155 → 코 0.575/0.075.
+        /// 혹 꼭대기 1.24m · 등선 1.12m · 머리 꼭대기 0.77m → 옆에서 보면 어깨가 가장 높고 머리가 처진다.
+        /// </summary>
+        public static Mesh BearBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("bear", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            Vector3[] spine =
+            {
+                new Vector3(0f, -0.340f, -0.560f),
+                new Vector3(0f, -0.300f, -0.400f),
+                new Vector3(0f, -0.270f, -0.100f),
+                new Vector3(0f, -0.230f,  0.160f),
+                new Vector3(0f, -0.270f,  0.340f),
+                new Vector3(0f, -0.370f,  0.480f),
+                new Vector3(0f, -0.450f,  0.600f),
+                new Vector3(0f, -0.490f,  0.720f),
+                new Vector3(0f, -0.525f,  0.850f),
+            };
+            float[] spineRadii = { 0.19f, 0.30f, 0.29f, 0.37f, 0.30f, 0.21f, 0.19f, 0.155f, 0.075f };
+            builder.AddTube(spine, spineRadii, 8, true, true, 2f, new Vector3(0.88f, 1f, 1f));
+
+            // 다리 4개. 아래 끝 링이 정확히 지면(-1.1)에 닿는 발바닥이 되도록 y를 맞췄다.
+            AddBearLeg(builder, 0.185f, 0.24f);
+            AddBearLeg(builder, -0.185f, 0.24f);
+            AddBearLeg(builder, 0.195f, -0.34f);
+            AddBearLeg(builder, -0.195f, -0.34f);
+
+            // 귀: 머리 위(등선 -0.26)보다 4cm 솟는다.
+            AddBearEar(builder, 0.115f);
+            AddBearEar(builder, -0.115f);
+
+            builder.ScaleVertices(new Vector3(1f / 0.9f, 1f / 1.1f, 1f / 0.9f));
+            return Store("bear", builder.Finish("Cre_BearBody"));
+        }
+
+        /// <summary>곰 다리 하나(기둥 + 앞뒤로 뻗은 발). 발바닥이 지면(y = -1.1)에 정확히 닿는다.</summary>
+        private static void AddBearLeg(Builder builder, float x, float z)
+        {
+            Vector3[] leg =
+            {
+                new Vector3(x, -0.360f, z),
+                new Vector3(x, -0.700f, z + 0.005f),
+                new Vector3(x, -1.020f, z + 0.010f),
+            };
+            builder.AddTube(leg, new[] { 0.125f, 0.115f, 0.100f }, 6, true, true, 1f, Vector3.one);
+
+            Vector3[] paw =
+            {
+                new Vector3(x, -1.025f, z - 0.080f),
+                new Vector3(x, -1.025f, z + 0.080f),
+            };
+            builder.AddTube(paw, new[] { 0.075f, 0.070f }, 6, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>곰 귀 하나(작은 원뿔).</summary>
+        private static void AddBearEar(Builder builder, float x)
+        {
+            Vector3[] ear =
+            {
+                new Vector3(x, -0.330f, 0.585f),
+                new Vector3(x * 1.09f, -0.210f, 0.575f),
+            };
+            builder.AddTube(ear, new[] { 0.055f, 0.030f }, 5, true, true, 1f, Vector3.one);
+        }
+
+        // ── 식인종 ────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 사람 형태(캡슐 규격, localScale 0.55 × 0.9 × 0.55 · 피벗은 지면 위 0.9m → **지면 = -0.9**).
+        /// 키 1.80m · 어깨 폭 0.50m · 손끝 높이 0.96m(무릎 위). 몸통 단면은 앞뒤로 0.8배 눌러
+        /// 원통이 아니라 사람 가슴처럼 보이게 했다.
+        /// </summary>
+        public static Mesh CannibalBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("cannibal", out cached))
+                return cached;
+
+            var builder = new Builder();
+            Vector3 flatten = new Vector3(1f, 1f, 0.80f);
+
+            Vector3[] torso =
+            {
+                new Vector3(0f, -0.10f, 0f),
+                new Vector3(0f,  0.02f, 0f),
+                new Vector3(0f,  0.20f, 0.005f),
+                new Vector3(0f,  0.38f, 0.010f),
+                new Vector3(0f,  0.50f, 0.005f),
+                new Vector3(0f,  0.58f, 0f),
+                new Vector3(0f,  0.66f, 0.005f),
+                new Vector3(0f,  0.74f, 0.012f),
+                new Vector3(0f,  0.86f, 0.010f),
+                new Vector3(0f,  0.90f, 0.005f),
+            };
+            float[] torsoRadii = { 0.155f, 0.142f, 0.160f, 0.175f, 0.165f, 0.075f, 0.055f, 0.105f, 0.095f, 0.050f };
+            builder.AddTube(torso, torsoRadii, 8, true, true, 2f, flatten);
+
+            // 허리에 두른 천 - 자연물에는 없는 "옷" 신호.
+            builder.AddTube(
+                new[] { new Vector3(0f, -0.16f, 0f), new Vector3(0f, -0.02f, 0f) },
+                new[] { 0.185f, 0.168f }, 8, true, true, 1f, flatten);
+
+            AddHumanLeg(builder, 0.11f);
+            AddHumanLeg(builder, -0.11f);
+
+            // 팔. 오른팔(+x)은 창을 쥐도록 손이 바깥(0.285)으로 나간다.
+            builder.AddTube(
+                new[] { new Vector3(0.175f, 0.47f, 0f), new Vector3(0.245f, 0.24f, 0.010f), new Vector3(0.285f, 0.06f, 0.030f) },
+                new[] { 0.058f, 0.048f, 0.042f }, 6, true, true, 1f, Vector3.one);
+            builder.AddTube(
+                new[] { new Vector3(-0.175f, 0.47f, 0f), new Vector3(-0.225f, 0.24f, 0.015f), new Vector3(-0.215f, 0.03f, 0.060f) },
+                new[] { 0.058f, 0.048f, 0.042f }, 6, true, true, 1f, Vector3.one);
+
+            builder.ScaleVertices(new Vector3(1f / 0.55f, 1f / 0.9f, 1f / 0.55f));
+            return Store("cannibal", builder.Finish("Cre_CannibalBody"));
+        }
+
+        /// <summary>사람 다리 하나(허벅지~발목 + 앞으로 뻗은 발). 발바닥이 지면(y = -0.9)에 닿는다.</summary>
+        private static void AddHumanLeg(Builder builder, float x)
+        {
+            builder.AddTube(
+                new[] { new Vector3(x, -0.02f, 0f), new Vector3(x, -0.44f, 0.005f), new Vector3(x, -0.80f, 0.010f) },
+                new[] { 0.080f, 0.068f, 0.052f }, 6, true, true, 1f, Vector3.one);
+            builder.AddTube(
+                new[] { new Vector3(x, -0.855f, -0.020f), new Vector3(x, -0.855f, 0.130f) },
+                new[] { 0.045f, 0.040f }, 5, true, true, 1f, Vector3.one);
+        }
+
+        // ── 상어 ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 상어 몸통(캡슐 규격, localScale 0.45 × 1.4 × 0.45 · rotationEuler(0,0,90)로 눕혀져 있다).
+        /// **눕힌 몸통이라 미터 좌표의 뜻이 바뀐다: x = 월드 위쪽, y = 몸통 진행 방향(+가 머리), z = 좌우.**
+        /// 몸길이 2.56m(코~꼬리자루) · 최대 둘레 반지름 0.222m(캡슐 반지름 0.225m 안).
+        /// 초승달 꼬리는 위쪽 날개 0.34m / 아래쪽 0.22m로 비대칭이고, 위쪽 끝을 등지느러미 꼭대기
+        /// (0.39m)보다 낮게 둬서 수면 위로 나오는 것이 등지느러미 하나로 유지된다.
+        /// </summary>
+        public static Mesh SharkBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("shark", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            Vector3[] body =
+            {
+                new Vector3(-0.020f,  1.360f, 0f),
+                new Vector3( 0.000f,  1.150f, 0f),
+                new Vector3( 0.010f,  0.850f, 0f),
+                new Vector3( 0.000f,  0.400f, 0f),
+                new Vector3( 0.000f,  0.000f, 0f),
+                new Vector3( 0.000f, -0.500f, 0f),
+                new Vector3( 0.010f, -0.950f, 0f),
+                new Vector3( 0.020f, -1.200f, 0f),
+            };
+            float[] radii = { 0.035f, 0.110f, 0.175f, 0.222f, 0.215f, 0.155f, 0.075f, 0.042f };
+            builder.AddTube(body, radii, 8, true, true, 2f, new Vector3(1f, 1f, 0.92f));
+
+            // 초승달 꼬리(진행축-수직 평면의 납작한 날). 두께는 좌우 0.05m.
+            builder.AddBlade(new[]
+            {
+                new Vector3(0.000f, -0.980f, 0f),
+                new Vector3(0.340f, -1.400f, 0f),
+                new Vector3(0.100f, -1.260f, 0f),
+                new Vector3(-0.140f, -1.340f, 0f),
+                new Vector3(-0.220f, -1.140f, 0f),
+            }, Vector3.forward, 0.05f);
+
+            // 가슴지느러미 2개: 앞쪽 아래에서 뒤·바깥·아래로 뻗는다.
+            AddSharkPectoral(builder, 1f);
+            AddSharkPectoral(builder, -1f);
+
+            builder.ScaleVertices(new Vector3(1f / 0.45f, 1f / 1.4f, 1f / 0.45f));
+            return Store("shark", builder.Finish("Cre_SharkBody"));
+        }
+
+        /// <summary>상어 가슴지느러미 하나(side = +1이 왼쪽, -1이 오른쪽).</summary>
+        private static void AddSharkPectoral(Builder builder, float side)
+        {
+            builder.AddBlade(new[]
+            {
+                new Vector3(-0.060f, 0.740f, side * 0.150f),
+                new Vector3(-0.100f, 0.340f, side * 0.150f),
+                new Vector3(-0.220f, 0.260f, side * 0.520f),
+                new Vector3(-0.180f, 0.520f, side * 0.430f),
+            }, Vector3.right, 0.035f);
+        }
+
+        /// <summary>
+        /// 상어 등지느러미(미터 공간 자식 전용, 원점 = 몸통 중심). 꼭짓점 높이 **0.39m**는
+        /// SharkSpawner.depthBelowSeaLevel(0.3)과 짝을 이루는 값이라 임의로 바꾸면 수면 노출이 사라진다.
+        /// </summary>
+        public static Mesh SharkDorsalMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("sharkDorsal", out cached))
+                return cached;
+
+            var builder = new Builder();
+            builder.AddBlade(new[]
+            {
+                new Vector3(0.185f,  0.400f, 0f),
+                new Vector3(0.390f,  0.100f, 0f),
+                new Vector3(0.260f, -0.220f, 0f),
+                new Vector3(0.190f, -0.100f, 0f),
+            }, Vector3.forward, 0.05f);
+
+            return Store("sharkDorsal", builder.Finish("Cre_SharkDorsal"));
+        }
+
+        // ── 독사 ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 굽이치는 뱀 몸통(캡슐 규격, localScale 0.18 × 0.6 × 0.18 · rotationEuler(0,0,90) ·
+        /// 피벗은 지면 위 0.1m). **x = 월드 위쪽, y = 몸통 방향, z = 좌우.**
+        /// 좌우 진폭 ±0.15m로 1.5파장을 그리고, 배가 지면 위 0.018m에 거의 일정하게 붙도록
+        /// 굵기에 맞춰 높이를 함께 낮춘다. 반지름에 ±7.5% 물결을 넣어 마디(비늘)를 표현한다.
+        /// </summary>
+        public static Mesh SnakeBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("snake", out cached))
+                return cached;
+
+            float[] forward = { -0.60f, -0.50f, -0.40f, -0.28f, -0.16f, -0.04f, 0.08f, 0.20f, 0.32f, 0.42f, 0.50f, 0.56f, 0.61f, 0.66f, 0.69f };
+            float[] radii = { 0.010f, 0.026f, 0.040f, 0.055f, 0.066f, 0.072f, 0.073f, 0.070f, 0.064f, 0.056f, 0.048f, 0.046f, 0.058f, 0.038f, 0.014f };
+            float[] up = { -0.072f, -0.056f, -0.042f, -0.027f, -0.016f, -0.010f, -0.009f, -0.012f, -0.018f, -0.010f, 0.010f, 0.030f, 0.045f, 0.046f, 0.044f };
+
+            var centers = new Vector3[forward.Length];
+            var finalRadii = new float[forward.Length];
+            for (int i = 0; i < forward.Length; i++)
+            {
+                float lateral = 0.15f * Mathf.Sin(7f * forward[i]);
+                centers[i] = new Vector3(up[i], forward[i], lateral);
+
+                // 마디: 머리(마지막 세 링)에는 물결을 넣지 않는다 - 머리는 매끈해야 머리로 읽힌다.
+                float band = i < forward.Length - 3 ? 1f + 0.075f * Mathf.Sin(i * 2.2f) : 1f;
+                finalRadii[i] = radii[i] * band;
+            }
+
+            var builder = new Builder();
+            // 단면을 위아래로 0.85배 눌러 뱀처럼 납작하게 만든다(폭 0.146m · 높이 0.124m).
+            builder.AddTube(centers, finalRadii, 6, true, true, 6f, new Vector3(0.85f, 1f, 1f));
+            // 눌린 만큼 배가 떠올라(0.029m) 전체를 내려 지면 위 0.007m에 붙인다.
+            builder.Translate(new Vector3(-0.022f, 0f, 0f));
+            builder.ScaleVertices(new Vector3(1f / 0.18f, 1f / 0.6f, 1f / 0.18f));
+            return Store("snake", builder.Finish("Cre_SnakeBody"));
+        }
+
+        /// <summary>뱀의 갈라진 혀(미터 공간 자식 전용). 머리 끝(y 0.69 · z -0.146) 앞으로 뻗는다.</summary>
+        public static Mesh SnakeTongueMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("snakeTongue", out cached))
+                return cached;
+
+            // 높이는 몸통 메시의 Translate(-0.022)와 같은 만큼 내려 잡았다(머리 중심 up 0.045 → 0.023).
+            var builder = new Builder();
+            Vector3 root = new Vector3(0.022f, 0.700f, -0.150f);
+            Vector3 split = new Vector3(0.022f, 0.760f, -0.162f);
+            builder.AddTube(new[] { root, split }, new[] { 0.008f, 0.006f }, 4, true, true, 1f, Vector3.one);
+            builder.AddTube(new[] { split, new Vector3(0.026f, 0.800f, -0.140f) }, new[] { 0.005f, 0.002f }, 4, false, true, 1f, Vector3.one);
+            builder.AddTube(new[] { split, new Vector3(0.026f, 0.800f, -0.186f) }, new[] { 0.005f, 0.002f }, 4, false, true, 1f, Vector3.one);
+
+            return Store("snakeTongue", builder.Finish("Cre_SnakeTongue"));
+        }
+
+        // ── 전갈 ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 전갈(캡슐 규격, localScale 0.16 × 0.3 × 0.16 · rotationEuler(0,0,90) · 피벗은 지면 위 0.09m).
+        /// **x = 월드 위쪽, y = 몸통 방향(+가 머리), z = 좌우.** 마지막에 전체를 x로 -0.02m 내려
+        /// 배가 지면 위 0.01m에 오게 한다.
+        /// 위에서 본 실루엣 = 마디진 몸통 + 다리 8개 + 집게 2개. 옆에서 본 실루엣 = 들어올린 꼬리 5마디
+        /// (꼭대기가 지면 위 0.435m로 몸통 등 높이의 약 3배).
+        /// </summary>
+        public static Mesh ScorpionBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("scorpion", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            float[] bodyForward = { -0.28f, -0.22f, -0.14f, -0.06f, 0.02f, 0.10f, 0.18f, 0.24f };
+            float[] bodyRadii = { 0.022f, 0.036f, 0.047f, 0.052f, 0.055f, 0.060f, 0.055f, 0.038f };
+            var bodyCenters = new Vector3[bodyForward.Length];
+            var finalRadii = new float[bodyForward.Length];
+            for (int i = 0; i < bodyForward.Length; i++)
+            {
+                bodyCenters[i] = new Vector3(bodyForward[i] > 0.05f ? 0.005f : 0f, bodyForward[i], 0f);
+                finalRadii[i] = bodyRadii[i] * (1f + 0.08f * Mathf.Sin(i * 2.4f));
+            }
+            builder.AddTube(bodyCenters, finalRadii, 6, true, true, 3f, new Vector3(0.72f, 1f, 1.15f));
+
+            // 꼬리: 뒤에서 위로 솟았다가 앞으로 말린다.
+            builder.AddTube(new[]
+            {
+                new Vector3(0.000f, -0.260f, 0f),
+                new Vector3(0.094f, -0.305f, 0f),
+                new Vector3(0.194f, -0.305f, 0f),
+                new Vector3(0.281f, -0.265f, 0f),
+                new Vector3(0.338f, -0.190f, 0f),
+                new Vector3(0.350f, -0.115f, 0f),
+            }, new[] { 0.030f, 0.027f, 0.024f, 0.021f, 0.018f, 0.015f }, 6, true, true, 3f, Vector3.one);
+
+            AddScorpionPincer(builder, 1f);
+            AddScorpionPincer(builder, -1f);
+
+            float[] legForward = { 0.12f, 0.05f, -0.02f, -0.09f };
+            for (int i = 0; i < legForward.Length; i++)
+            {
+                AddScorpionLeg(builder, legForward[i], 1f);
+                AddScorpionLeg(builder, legForward[i], -1f);
+            }
+
+            builder.Translate(new Vector3(-0.02f, 0f, 0f));
+            builder.ScaleVertices(new Vector3(1f / 0.16f, 1f / 0.3f, 1f / 0.16f));
+            return Store("scorpion", builder.Finish("Cre_ScorpionBody"));
+        }
+
+        /// <summary>전갈 집게 하나(팔 + 납작한 집게 날).</summary>
+        private static void AddScorpionPincer(Builder builder, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(-0.010f, 0.200f, side * 0.045f),
+                new Vector3(-0.015f, 0.300f, side * 0.115f),
+            }, new[] { 0.018f, 0.014f }, 5, true, true, 1f, Vector3.one);
+
+            builder.AddBlade(new[]
+            {
+                new Vector3(-0.015f, 0.280f, side * 0.090f),
+                new Vector3(-0.015f, 0.420f, side * 0.100f),
+                new Vector3(-0.015f, 0.500f, side * 0.150f),
+                new Vector3(-0.015f, 0.460f, side * 0.205f),
+                new Vector3(-0.015f, 0.340f, side * 0.175f),
+            }, Vector3.right, 0.024f);
+        }
+
+        /// <summary>전갈 다리 하나(몸통 → 무릎 → 발). 발이 지면 위 0.008m에 닿는다.</summary>
+        private static void AddScorpionLeg(Builder builder, float forward, float side)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(-0.010f, forward, side * 0.045f),
+                new Vector3( 0.020f, forward - 0.030f, side * 0.115f),
+                new Vector3(-0.062f, forward - 0.070f, side * 0.145f),
+            }, new[] { 0.010f, 0.007f, 0.004f }, 4, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>전갈 독침(미터 공간 자식 전용). 꼬리 끝에서 앞·아래를 향한다.</summary>
+        public static Mesh ScorpionStingerMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("scorpionStinger", out cached))
+                return cached;
+
+            var builder = new Builder();
+            builder.AddTube(new[]
+            {
+                new Vector3(0.330f, -0.110f, 0f),
+                new Vector3(0.310f, -0.055f, 0f),
+                new Vector3(0.278f, -0.020f, 0f),
+            }, new[] { 0.017f, 0.012f, 0.002f }, 5, true, true, 1f, Vector3.one);
+
+            return Store("scorpionStinger", builder.Finish("Cre_ScorpionStinger"));
+        }
+
+        // ── 함정 ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 사람이 놓아둔 덫(실린더 규격, localScale 0.6 × 0.04 × 0.6 · 피벗은 지면 위 0.04m
+        /// → **지면 = -0.04**). 몸통 y 스케일이 0.04라 1로컬 단위 = 4cm인 극단적 압축인데,
+        /// 미터로 적고 마지막에 나누므로 아래 숫자는 전부 실제 미터다.
+        /// 바닥판 · 압력판 · 반원 턱 2개 · 안쪽으로 기운 이빨 10개 · 고정 말뚝.
+        /// </summary>
+        public static Mesh TrapBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("trap", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            // 바닥판과 압력판.
+            builder.AddTube(new[] { new Vector3(0f, -0.038f, 0f), new Vector3(0f, -0.004f, 0f) },
+                new[] { 0.255f, 0.250f }, 14, true, true, 2f, Vector3.one);
+            builder.AddTube(new[] { new Vector3(0f, -0.004f, 0f), new Vector3(0f, 0.016f, 0f) },
+                new[] { 0.105f, 0.100f }, 12, true, true, 1f, Vector3.one);
+
+            AddTrapJaw(builder, -75f, 75f);
+            AddTrapJaw(builder, 105f, 255f);
+
+            // 고정 말뚝: 옆으로 뻗은 사슬걸이 + 땅에 박힌 짧은 말뚝.
+            builder.AddTube(new[] { new Vector3(0.240f, -0.020f, 0f), new Vector3(0.420f, -0.020f, 0f) },
+                new[] { 0.016f, 0.014f }, 5, true, true, 1f, Vector3.one);
+            builder.AddTube(new[] { new Vector3(0.420f, -0.040f, 0f), new Vector3(0.420f, 0.070f, 0f) },
+                new[] { 0.020f, 0.016f }, 5, true, true, 1f, Vector3.one);
+
+            builder.ScaleVertices(new Vector3(1f / 0.6f, 1f / 0.04f, 1f / 0.6f));
+            return Store("trap", builder.Finish("Cre_TrapBody"));
+        }
+
+        /// <summary>덫의 반원 턱 하나(호를 따라가는 막대 + 안쪽으로 기운 이빨 5개).</summary>
+        private static void AddTrapJaw(Builder builder, float startDegrees, float endDegrees)
+        {
+            const int arcSamples = 7;
+            const float arcRadius = 0.235f;
+
+            var centers = new Vector3[arcSamples];
+            var radii = new float[arcSamples];
+            for (int i = 0; i < arcSamples; i++)
+            {
+                float angle = Mathf.Deg2Rad * Mathf.Lerp(startDegrees, endDegrees, (float)i / (arcSamples - 1));
+                centers[i] = new Vector3(Mathf.Cos(angle) * arcRadius, 0.018f, Mathf.Sin(angle) * arcRadius);
+                radii[i] = 0.024f;
+            }
+            builder.AddTube(centers, radii, 5, true, true, 2f, Vector3.one);
+
+            for (int i = 0; i < 5; i++)
+            {
+                float angle = Mathf.Deg2Rad * Mathf.Lerp(startDegrees + 10f, endDegrees - 10f, i / 4f);
+                Vector3 outward = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                Vector3 baseCenter = outward * arcRadius + new Vector3(0f, 0.030f, 0f);
+                Vector3 tip = outward * (arcRadius - 0.055f) + new Vector3(0f, 0.145f, 0f);
+                builder.AddTube(new[] { baseCenter, tip }, new[] { 0.030f, 0.004f }, 4, true, true, 1f, Vector3.one);
+            }
+        }
+
+        // ── 벌떼 ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 벌 18마리가 흩어진 무리(구 규격, localScale 0.5 × 0.5 × 0.5). 개체 하나는 길이 5.5cm의
+        /// 작은 방추형이고, 지름 0.68m 공간에 결정적 난수(System.Random - 재현성 규칙)로 흩뿌린다.
+        /// 무리 자체가 실루엣이라 개체를 크게 만들지 않는 것이 핵심이다(예전 지름 0.18m는 "덩어리"였다).
+        /// </summary>
+        public static Mesh BeeSwarmUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("beeSwarm", out cached))
+                return cached;
+
+            var builder = new Builder();
+            var random = new System.Random(4501);
+
+            for (int i = 0; i < 18; i++)
+            {
+                float u = (float)random.NextDouble() * 2f - 1f;
+                float v = (float)random.NextDouble() * 2f - 1f;
+                float w = (float)random.NextDouble() * 2f - 1f;
+                Vector3 center = new Vector3(u * 0.34f, v * 0.26f, w * 0.34f);
+
+                Vector3 heading = new Vector3(
+                    (float)random.NextDouble() * 2f - 1f,
+                    ((float)random.NextDouble() * 2f - 1f) * 0.4f,
+                    (float)random.NextDouble() * 2f - 1f);
+                if (heading.sqrMagnitude < 0.0001f)
+                    heading = Vector3.forward;
+                heading = heading.normalized * 0.0275f;
+
+                builder.AddTube(new[] { center - heading, center, center + heading },
+                    new[] { 0.007f, 0.013f, 0.006f }, 4, true, true, 1f, Vector3.one);
+            }
+
+            builder.ScaleVertices(new Vector3(2f, 2f, 2f)); // 1/0.5
+            return Store("beeSwarm", builder.Finish("Cre_BeeSwarm"));
+        }
+
+        // ── 창 (식인종) ───────────────────────────────────────────────────────────────
+        /// <summary>창 자루(미터 공간 자식 전용). 오른손(x 0.285) 위치에서 머리 위까지 뻗는다.</summary>
+        public static Mesh SpearShaftMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("spearShaft", out cached))
+                return cached;
+
+            var builder = new Builder();
+            builder.AddTube(new[]
+            {
+                new Vector3(0.300f, -0.720f, 0.020f),
+                new Vector3(0.300f,  0.100f, 0.020f),
+                new Vector3(0.300f,  0.860f, 0.020f),
+            }, new[] { 0.026f, 0.023f, 0.020f }, 5, true, true, 4f, Vector3.one);
+
+            return Store("spearShaft", builder.Finish("Cre_SpearShaft"));
+        }
+
+        /// <summary>창 끝의 돌촉(미터 공간 자식 전용). 각진 마름모 날이라 막대기가 아니라 무기로 읽힌다.</summary>
+        public static Mesh SpearHeadMeters()
+        {
+            Mesh cached;
+            if (TryGetCached("spearHead", out cached))
+                return cached;
+
+            var builder = new Builder();
+            builder.AddBlade(new[]
+            {
+                new Vector3(0.300f, 0.840f,  0.020f),
+                new Vector3(0.300f, 0.900f,  0.055f),
+                new Vector3(0.300f, 1.020f,  0.020f),
+                new Vector3(0.300f, 0.900f, -0.015f),
+            }, Vector3.right, 0.022f);
+
+            return Store("spearHead", builder.Finish("Cre_SpearHead"));
+        }
+
+        // ── 사냥감 ───────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 육상 사냥감(캡슐 규격, localScale 0.45 × 0.6 × 0.45 · 피벗은 지면 위 0.6m → **지면 = -0.6**).
+        /// 코끝~꼬리 0.90m · 어깨 높이 0.60m · 머리 꼭대기 0.68m. 몸길이를 콜라이더 지름(0.45m)의
+        /// 2배 안으로 묶어, 몸통 중심을 조준하면 반드시 콜라이더에 맞도록 했다(사냥 상호작용은 레이캐스트).
+        /// </summary>
+        public static Mesh HuntLandBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("huntLand", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            Vector3[] spine =
+            {
+                new Vector3(0f, -0.200f, -0.260f),
+                new Vector3(0f, -0.170f, -0.170f),
+                new Vector3(0f, -0.155f, -0.050f),
+                new Vector3(0f, -0.155f,  0.090f),
+                new Vector3(0f, -0.170f,  0.190f),
+                new Vector3(0f, -0.110f,  0.260f),
+                new Vector3(0f, -0.035f,  0.320f),
+                new Vector3(0f,  0.000f,  0.380f),
+                new Vector3(0f, -0.015f,  0.440f),
+                new Vector3(0f, -0.035f,  0.490f),
+            };
+            float[] radii = { 0.100f, 0.135f, 0.150f, 0.145f, 0.120f, 0.075f, 0.065f, 0.078f, 0.062f, 0.030f };
+            builder.AddTube(spine, radii, 7, true, true, 2f, new Vector3(0.92f, 1f, 1f));
+
+            AddHuntLeg(builder, 0.085f, 0.140f);
+            AddHuntLeg(builder, -0.085f, 0.140f);
+            AddHuntLeg(builder, 0.085f, -0.170f);
+            AddHuntLeg(builder, -0.085f, -0.170f);
+
+            AddHuntEar(builder, 0.045f);
+            AddHuntEar(builder, -0.045f);
+
+            builder.AddTube(new[] { new Vector3(0f, -0.160f, -0.260f), new Vector3(0f, -0.235f, -0.365f) },
+                new[] { 0.028f, 0.010f }, 5, true, true, 1f, Vector3.one);
+
+            builder.ScaleVertices(new Vector3(1f / 0.45f, 1f / 0.6f, 1f / 0.45f));
+            return Store("huntLand", builder.Finish("Cre_HuntLandBody"));
+        }
+
+        /// <summary>육상 사냥감 다리 하나. 발끝이 지면(y = -0.6)에 닿는다.</summary>
+        private static void AddHuntLeg(Builder builder, float x, float z)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(x, -0.200f, z),
+                new Vector3(x, -0.420f, z + 0.005f),
+                new Vector3(x, -0.590f, z + 0.010f),
+            }, new[] { 0.042f, 0.034f, 0.030f }, 5, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>육상 사냥감 귀 하나.</summary>
+        private static void AddHuntEar(Builder builder, float x)
+        {
+            builder.AddTube(new[]
+            {
+                new Vector3(x, 0.035f, 0.365f),
+                new Vector3(x * 1.6f, 0.115f, 0.345f),
+            }, new[] { 0.026f, 0.010f }, 4, true, true, 1f, Vector3.one);
+        }
+
+        /// <summary>
+        /// 물고기(구 규격, localScale 0.35 × 0.2 × 0.5 · 피벗은 지면 위 0.15m).
+        /// 좌우로 눌리고(0.62배) 위아래로 높은(1.25배) 방추형이라, 예전 "납작한 알"과 달리 물고기로 읽힌다.
+        /// 몸길이 0.49m · 높이 0.18m · 폭 0.09m + 등지느러미 + 갈라진 꼬리지느러미.
+        /// </summary>
+        public static Mesh FishBodyUnit()
+        {
+            Mesh cached;
+            if (TryGetCached("fish", out cached))
+                return cached;
+
+            var builder = new Builder();
+
+            Vector3[] body =
+            {
+                new Vector3(0f, 0f, -0.240f),
+                new Vector3(0f, 0f, -0.180f),
+                new Vector3(0f, 0f, -0.100f),
+                new Vector3(0f, 0f, -0.020f),
+                new Vector3(0f, 0f,  0.060f),
+                new Vector3(0f, 0f,  0.140f),
+                new Vector3(0f, 0f,  0.210f),
+                new Vector3(0f, 0f,  0.245f),
+            };
+            float[] radii = { 0.008f, 0.028f, 0.058f, 0.072f, 0.070f, 0.052f, 0.028f, 0.010f };
+            builder.AddTube(body, radii, 7, true, true, 2f, new Vector3(0.62f, 1.25f, 1f));
+
+            // 갈라진 꼬리지느러미(좌우로 얇은 세로 날).
+            builder.AddBlade(new[]
+            {
+                new Vector3(0f,  0.000f, -0.200f),
+                new Vector3(0f,  0.130f, -0.330f),
+                new Vector3(0f,  0.000f, -0.290f),
+                new Vector3(0f, -0.130f, -0.330f),
+            }, Vector3.right, 0.014f);
+
+            // 등지느러미.
+            builder.AddBlade(new[]
+            {
+                new Vector3(0f, 0.075f,  0.080f),
+                new Vector3(0f, 0.155f,  0.000f),
+                new Vector3(0f, 0.070f, -0.100f),
+            }, Vector3.right, 0.012f);
+
+            builder.ScaleVertices(new Vector3(1f / 0.35f, 1f / 0.2f, 1f / 0.5f));
+            return Store("fish", builder.Finish("Cre_FishBody"));
+        }
+
+        // ── 메시 빌더 ────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 정점/UV/삼각형을 모아 메시 하나로 마무리하는 최소 빌더.
+        /// ResourceVisualLibrary.MeshBuilder와 같은 계보지만 두 가지가 다르다:
+        ///  - AddTube가 **링마다 프레임을 새로 계산**한다(전갈 꼬리처럼 90° 넘게 휘는 관을 위해).
+        ///    시작 프레임을 다음 링으로 투영해 이어가므로 관이 꼬이지(twist) 않는다.
+        ///  - AddBlade(납작한 날 = 지느러미/집게/돌촉)와 Translate/ScaleVertices가 추가됐다.
+        /// 삼각형을 넣을 때마다 기하 법선을 기준 방향과 비교해 감김을 바로잡으므로, 좌표계 손잡이
+        /// 방향을 착각해도 안쪽으로 뒤집히지 않는다.
+        /// </summary>
+        private class Builder
+        {
+            private readonly List<Vector3> vertices = new List<Vector3>();
+            private readonly List<Vector2> uvs = new List<Vector2>();
+            private readonly List<int> triangles = new List<int>();
+
+            /// <summary>
+            /// 중심선(centers)과 반지름(radii)을 따라가는 관을 하나 잇는다.
+            /// crossScale은 단면을 축별로 눌러 타원 단면을 만든다(예: 물고기는 좌우 0.62 / 상하 1.25).
+            /// </summary>
+            public void AddTube(Vector3[] centers, float[] radii, int sides, bool capStart, bool capEnd,
+                float uvTile, Vector3 crossScale)
+            {
+                if (centers == null || radii == null || centers.Length < 2 || radii.Length != centers.Length || sides < 3)
+                    return;
+
+                int start = vertices.Count;
+                int stride = sides + 1; // 이음매에서 UV가 끊기도록 정점을 한 개 겹쳐 둔다
+                Vector3 previousRight = Vector3.zero;
+                Vector3 firstTangent = Vector3.up;
+                Vector3 lastTangent = Vector3.up;
+
+                for (int r = 0; r < centers.Length; r++)
+                {
+                    Vector3 tangent;
+                    if (r == 0)
+                        tangent = centers[1] - centers[0];
+                    else if (r == centers.Length - 1)
+                        tangent = centers[r] - centers[r - 1];
+                    else
+                        tangent = centers[r + 1] - centers[r - 1];
+
+                    if (tangent.sqrMagnitude < 0.0000001f)
+                        tangent = Vector3.up;
+                    tangent = tangent.normalized;
+
+                    if (r == 0)
+                        firstTangent = tangent;
+                    if (r == centers.Length - 1)
+                        lastTangent = tangent;
+
+                    Vector3 right;
+                    if (r == 0)
+                    {
+                        Vector3 helper = Mathf.Abs(tangent.y) > 0.9f ? Vector3.forward : Vector3.up;
+                        right = Vector3.Cross(helper, tangent);
+                    }
+                    else
+                    {
+                        // 이전 프레임을 현재 접선에 투영해 이어간다(회전 최소화 프레임).
+                        right = previousRight - tangent * Vector3.Dot(previousRight, tangent);
+                        if (right.sqrMagnitude < 0.000001f)
+                        {
+                            Vector3 helper = Mathf.Abs(tangent.y) > 0.9f ? Vector3.forward : Vector3.up;
+                            right = Vector3.Cross(helper, tangent);
+                        }
+                    }
+
+                    if (right.sqrMagnitude < 0.000001f)
+                        right = Vector3.right;
+                    right = right.normalized;
+                    previousRight = right;
+                    Vector3 forward = Vector3.Cross(tangent, right);
+
+                    for (int s = 0; s <= sides; s++)
+                    {
+                        float angle = (float)s / sides * Mathf.PI * 2f;
+                        Vector3 direction = right * Mathf.Cos(angle) + forward * Mathf.Sin(angle);
+                        Vector3 offset = Vector3.Scale(direction * radii[r], crossScale);
+                        vertices.Add(centers[r] + offset);
+                        uvs.Add(new Vector2((float)s / sides, (float)r / (centers.Length - 1) * uvTile));
+                    }
+                }
+
+                for (int r = 0; r + 1 < centers.Length; r++)
+                {
+                    for (int s = 0; s < sides; s++)
+                    {
+                        int a0 = start + r * stride + s;
+                        int a1 = a0 + 1;
+                        int b0 = a0 + stride;
+                        int b1 = b0 + 1;
+                        // 바깥 방향은 링 중심에서 정점으로 향하는 방향으로 직접 구한다(스케일된 단면에서도 정확하다).
+                        Vector3 outward = (vertices[a0] - centers[r]) + (vertices[b1] - centers[r + 1]);
+                        if (outward.sqrMagnitude < 0.0000001f)
+                            outward = Vector3.up;
+                        AddTriangle(a0, b0, b1, outward);
+                        AddTriangle(a0, b1, a1, outward);
+                    }
+                }
+
+                if (capStart)
+                    AddCap(start, sides, centers[0], -firstTangent);
+                if (capEnd)
+                    AddCap(start + (centers.Length - 1) * stride, sides, centers[centers.Length - 1], lastTangent);
+            }
+
+            /// <summary>
+            /// 다각형 윤곽선을 thicknessAxis 방향으로 얇게 밀어낸 "날"(지느러미/집게/돌촉)을 만든다.
+            /// 윤곽선은 첫 점에서 부채꼴로 삼각분할하므로, 첫 점에서 모든 변이 보이는 모양이어야 한다.
+            /// </summary>
+            public void AddBlade(Vector3[] outline, Vector3 thicknessAxis, float thickness)
+            {
+                if (outline == null || outline.Length < 3 || thicknessAxis.sqrMagnitude < 0.0000001f)
+                    return;
+
+                Vector3 axis = thicknessAxis.normalized;
+                Vector3 half = axis * (thickness * 0.5f);
+
+                Vector3 centroid = Vector3.zero;
+                for (int i = 0; i < outline.Length; i++)
+                    centroid += outline[i];
+                centroid /= outline.Length;
+
+                for (int i = 1; i + 1 < outline.Length; i++)
+                {
+                    AddFace(outline[0] + half, outline[i] + half, outline[i + 1] + half, axis);
+                    AddFace(outline[0] - half, outline[i] - half, outline[i + 1] - half, -axis);
+                }
+
+                for (int i = 0; i < outline.Length; i++)
+                {
+                    Vector3 a = outline[i];
+                    Vector3 b = outline[(i + 1) % outline.Length];
+                    Vector3 edge = b - a;
+                    Vector3 outward = Vector3.Cross(axis, edge);
+                    if (outward.sqrMagnitude < 0.0000001f)
+                        continue;
+
+                    outward = outward.normalized;
+                    if (Vector3.Dot(outward, (a + b) * 0.5f - centroid) < 0f)
+                        outward = -outward;
+
+                    AddQuad(a + half, b + half, b - half, a - half, outward, false);
+                }
+            }
+
+            /// <summary>사각면 하나. doubleSided면 감김을 뒤집은 사본을 함께 넣어 양쪽에서 보이게 한다.</summary>
+            public void AddQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 reference, bool doubleSided)
+            {
+                AddQuadFace(a, b, c, d, reference);
+                if (doubleSided)
+                    AddQuadFace(a, b, c, d, -reference);
+            }
+
+            /// <summary>평면 셰이딩용 삼각면 하나(정점을 공유하지 않아 면마다 각이 선다).</summary>
+            public void AddFace(Vector3 a, Vector3 b, Vector3 c, Vector3 reference)
+            {
+                int index = vertices.Count;
+                vertices.Add(a);
+                vertices.Add(b);
+                vertices.Add(c);
+                uvs.Add(new Vector2(a.x + 0.5f, a.z + 0.5f));
+                uvs.Add(new Vector2(b.x + 0.5f, b.z + 0.5f));
+                uvs.Add(new Vector2(c.x + 0.5f, c.z + 0.5f));
+                AddTriangle(index, index + 1, index + 2, reference);
+            }
+
+            /// <summary>정점 전체를 축별로 눌러/늘려 프리미티브 로컬 규격으로 옮긴다(마지막에 한 번 호출).</summary>
+            public void ScaleVertices(Vector3 scale)
+            {
+                for (int i = 0; i < vertices.Count; i++)
+                    vertices[i] = Vector3.Scale(vertices[i], scale);
+            }
+
+            /// <summary>정점 전체를 평행 이동한다(접지 높이 맞춤용).</summary>
+            public void Translate(Vector3 offset)
+            {
+                for (int i = 0; i < vertices.Count; i++)
+                    vertices[i] = vertices[i] + offset;
+            }
+
+            public Mesh Finish(string name)
+            {
+                var mesh = new Mesh();
+                mesh.name = name;
+                mesh.SetVertices(vertices);
+                mesh.SetUVs(0, uvs);
+                mesh.SetTriangles(triangles, 0);
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                return mesh;
+            }
+
+            private void AddQuadFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 reference)
+            {
+                int index = vertices.Count;
+                vertices.Add(a);
+                vertices.Add(b);
+                vertices.Add(c);
+                vertices.Add(d);
+                uvs.Add(new Vector2(0f, 0f));
+                uvs.Add(new Vector2(0f, 1f));
+                uvs.Add(new Vector2(1f, 1f));
+                uvs.Add(new Vector2(1f, 0f));
+                AddTriangle(index, index + 1, index + 2, reference);
+                AddTriangle(index, index + 2, index + 3, reference);
+            }
+
+            private void AddCap(int ringStart, int sides, Vector3 center, Vector3 reference)
+            {
+                int centerIndex = vertices.Count;
+                vertices.Add(center);
+                uvs.Add(new Vector2(0.5f, 0.5f));
+                for (int s = 0; s < sides; s++)
+                    AddTriangle(centerIndex, ringStart + s, ringStart + s + 1, reference);
+            }
+
+            /// <summary>
+            /// 삼각형 하나를 감김 방향까지 맞춰 넣는다. 기하 법선이 기준과 반대면 두 인덱스를 바꿔 넣는다.
+            /// </summary>
+            private void AddTriangle(int i0, int i1, int i2, Vector3 reference)
+            {
+                Vector3 geometric = Vector3.Cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
+                if (Vector3.Dot(geometric, reference) < 0f)
+                {
+                    int swap = i1;
+                    i1 = i2;
+                    i2 = swap;
+                }
+
+                triangles.Add(i0);
+                triangles.Add(i1);
+                triangles.Add(i2);
+            }
         }
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace MakeGame.Systems
@@ -134,11 +135,23 @@ namespace MakeGame.Systems
         /// textureName을 주면 그 텍스처를(wood/stone/metal/leaf/sand/water 등), 비우면 기존과 동일하게
         /// noise를 쓴다 - 기존 호출부는 인자를 넘기지 않으므로 동작이 100% 그대로 유지된다.
         /// </summary>
+        /// <summary>
+        /// 런타임 생성 머티리얼 이름 접두어. 에셋(내장 Default-Material 등)과 구분하는 유일한 단서다.
+        /// </summary>
+        public const string RuntimeMaterialPrefix = "MG~";
+
         public static Material CreateColorMaterial(Color color, string textureName = null)
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = color;
+
+            // [B29 감독] 런타임에 우리가 만든 머티리얼임을 이름에 새긴다.
+            // 이게 없으면 나중에 이 머티리얼을 교체하는 쪽이 "지워도 되는 인스턴스"와
+            // "지우면 안 되는 내장 에셋"(GameObject.CreatePrimitive가 붙여 주는 Default-Material)을
+            // 구분할 방법이 런타임에 없다 - 실제로 그 구분 실패로 콘솔에
+            // "Destroying assets is not permitted to avoid data loss"가 54번 찍혔다.
+            material.name = RuntimeMaterialPrefix + material.name;
 
             // 무광 처리: 프로퍼티가 없는 셰이더(Standard 폴백 등)에서도 경고 없이 넘어가도록 가드한다.
             if (material.HasProperty("_Smoothness"))
@@ -183,6 +196,328 @@ namespace MakeGame.Systems
                 new Vector3(0f, 0.34f, 0f), new Vector3(1.35f, 0.09f, 1.35f), PalmFiber, null, "leaf");
 
             return post;
+        }
+
+        /// <summary>
+        /// [B29] 절차 메시 하나를 순수 시각 파츠로 붙인다(콜라이더가 한 프레임도 생기지 않는 경로).
+        ///
+        /// CreateVisualPart는 GameObject.CreatePrimitive로 만든 뒤 콜라이더를 Object.Destroy하는데,
+        /// Destroy는 프레임 끝까지 지연되므로 그 사이에 다른 스포너의 SnapToGround 레이가 스칠 수 있다
+        /// (IslandMeshGenerator.CreatePart가 초목에서 같은 이유로 같은 경로를 쓴다). 이 메서드는
+        /// 프리미티브를 거치지 않으므로 그 위험이 원리적으로 없다.
+        ///
+        /// 머티리얼은 **호출자가 공유 캐시에서 받아온 것**을 그대로 쓴다
+        /// (ResourceVisualLibrary.GetMaterial - 색+텍스처 조합당 하나). 여기서 새로 만들지 않는다.
+        /// </summary>
+        public static GameObject CreateMeshPart(Transform parent, string name, Mesh mesh,
+            Vector3 localPosition, Vector3 localScale, Quaternion localRotation, Material sharedMaterial)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPosition;
+            go.transform.localRotation = localRotation;
+            go.transform.localScale = localScale;
+
+            if (mesh != null)
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+
+            var renderer = go.AddComponent<MeshRenderer>();
+            if (sharedMaterial != null)
+                renderer.sharedMaterial = sharedMaterial;
+
+            return go;
+        }
+    }
+
+    /// <summary>
+    /// [B29] 월드 장식물(바위·표류물·덤불·비행기 잔해)이 공유하는 **절차 메시 조립기**.
+    ///
+    /// 왜 이게 필요한가: 이 프로젝트에는 3D 모델 에셋이 0개라 형태를 전부 런타임에 만든다. 디테일을
+    /// 프리미티브 파츠로 덧붙이면 드로우콜이 파츠 수만큼 늘어나므로, 직전 배치(B28, 자원 노드)에서
+    /// 확립한 원칙 - **디테일은 파츠가 아니라 메시 안에 굽는다** - 를 장식물에도 그대로 적용한다.
+    /// 바위의 각진 균열면, 통의 테, 상자의 널판 홈, 덤불의 잎끝은 전부 파츠가 아니라 정점이다.
+    ///
+    /// ResourceVisualLibrary(IslandResourceSpawner.cs)의 private MeshBuilder와 같은 규칙을 따르지만,
+    /// 그쪽은 자원 노드 전용 private 클래스라 밖에서 쓸 수 없어 여기에 공개판을 둔다. 규칙 3가지:
+    ///  1. 감김(winding)을 표로 외우지 않는다. 이 프로젝트는 왼손 좌표계라 표준 인덱스 표를 옮기면
+    ///     통째로 안쪽을 향해 컬링되는 사고가 반복됐다 - 삼각형마다 기하 법선을 기준 방향과 맞춘다.
+    ///  2. 평면 셰이딩(정점 비공유)이 기본이다. 로우폴리에서 각이 서야 "깎인 돌"로 읽힌다.
+    ///  3. 메시 규격은 호출부와 **문서로 합의**한다. 이 클래스가 만드는 덩어리(AddChunk/Chunk)는
+    ///     항상 요청한 size를 정확히 채우므로, 호출부는 "미터"를 그대로 넣으면 된다.
+    ///     (과거 사고: 메시 형태만 바꾸고 호출부 스케일을 그대로 둬서 거대한 판이 된 적이 있다.)
+    /// </summary>
+    public class WorldMeshBuilder
+    {
+        private readonly List<Vector3> vertices = new List<Vector3>();
+        private readonly List<Vector2> uvs = new List<Vector2>();
+        private readonly List<int> triangles = new List<int>();
+
+        /// <summary>정이십면체를 소분할한 방향 벡터 목록(면당 3개). 분할 단계별로 한 번만 계산해 캐시한다.</summary>
+        private static readonly Dictionary<int, Vector3[]> icosphereCache = new Dictionary<int, Vector3[]>();
+
+        /// <summary>
+        /// 각진 덩어리 하나를 메시에 더한다(바위·돌 파편·덤불 로브 공용).
+        ///
+        /// 정이십면체를 subdivisions회 소분할한 뒤, 방향만 보고 결정되는 연속 함수로 각 정점의 반지름을
+        /// 흔든다. 이웃 삼각형이 같은 방향에서 같은 반지름을 받으므로 틈이 절대 생기지 않으면서
+        /// (난수 표집이 아니라 함수라는 것이 핵심이다) 면마다 각이 서서 "쪼개진 바위"로 읽힌다.
+        /// 마지막에 **축마다 따로** 정규화해, 각 축의 최대 반지름이 정확히 size/2가 되게 한다
+        /// (= 덩어리가 size 상자를 절대 넘지 않고, 세 축 모두 한 번씩은 상자 면에 닿는다).
+        /// 균일 배율로 하면 꼭짓점 흔들림 때문에 가로가 세로의 1.9배까지 커져 호출부가 지정한 크기와
+        /// 어긋난다 - 자원 노드 쪽(ResourceVisualLibrary.BuildAngularChunk)이 같은 이유로 같은 처리를 한다.
+        /// 즉 size는 미터 단위의 실제 크기이고, 호출부가 스케일을 따로 곱할 필요가 없다.
+        /// </summary>
+        /// <param name="center">덩어리 중심(메시 로컬).</param>
+        /// <param name="size">덩어리를 가두는 상자의 크기(가로·세로·깊이). 이 상자를 넘지 않는다.</param>
+        /// <param name="seed">모양 시드. 같은 값이면 항상 같은 모양이다(UnityEngine.Random을 쓰지 않는다).</param>
+        /// <param name="jitter">반지름 흔들림 폭(0~0.8). 클수록 울퉁불퉁하다.</param>
+        /// <param name="subdivisions">0이면 20면, 1이면 80면, 2면 320면. 큰 바위일수록 올린다.</param>
+        public void AddChunk(Vector3 center, Vector3 size, int seed, float jitter, int subdivisions)
+        {
+            Vector3[] directions = GetIcosphere(subdivisions);
+            var points = new Vector3[directions.Length];
+
+            float maxX = 0.0001f;
+            float maxY = 0.0001f;
+            float maxZ = 0.0001f;
+            for (int i = 0; i < directions.Length; i++)
+            {
+                points[i] = directions[i] * ChunkRadius(directions[i], seed, jitter);
+                maxX = Mathf.Max(maxX, Mathf.Abs(points[i].x));
+                maxY = Mathf.Max(maxY, Mathf.Abs(points[i].y));
+                maxZ = Mathf.Max(maxZ, Mathf.Abs(points[i].z));
+            }
+
+            var scale = new Vector3(size.x * 0.5f / maxX, size.y * 0.5f / maxY, size.z * 0.5f / maxZ);
+            for (int i = 0; i < points.Length; i++)
+                points[i] = new Vector3(points[i].x * scale.x, points[i].y * scale.y, points[i].z * scale.z);
+
+            for (int f = 0; f + 2 < points.Length; f += 3)
+            {
+                Vector3 a = center + points[f];
+                Vector3 b = center + points[f + 1];
+                Vector3 c = center + points[f + 2];
+                // 반지름이 항상 양수라 덩어리는 center에 대해 별모양(star-shaped)이다
+                // = 무게중심 방향이 곧 바깥 방향이다.
+                AddFace(a, b, c, (a + b + c) / 3f - center);
+            }
+        }
+
+        /// <summary>AddChunk 하나짜리 메시를 바로 만들어 준다(공유 캐시에 넣어 두고 쓸 것).</summary>
+        public static Mesh Chunk(string name, Vector3 size, int seed, float jitter, int subdivisions)
+        {
+            var builder = new WorldMeshBuilder();
+            builder.AddChunk(Vector3.zero, size, seed, jitter, subdivisions);
+            return builder.Finish(name);
+        }
+
+        /// <summary>
+        /// 방향만으로 결정되는 반지름(1 ± jitter). 사인 4개를 겹쳐 저주파 굴곡 + 잔주름을 만든다.
+        /// 난수를 쓰지 않으므로 재현성 규칙(AGENT_BRIEF 2장 6번)에 걸리지 않고, 같은 seed면 어떤
+        /// 분할 단계에서도 같은 실루엣이 나온다.
+        /// </summary>
+        private static float ChunkRadius(Vector3 direction, int seed, float jitter)
+        {
+            float s = seed * 0.6180339f;
+            float n = Mathf.Sin(direction.x * 4.7f + s) * 0.50f
+                + Mathf.Sin(direction.y * 5.9f + s * 1.7f) * 0.34f
+                + Mathf.Sin(direction.z * 6.7f + s * 2.3f) * 0.42f
+                + Mathf.Sin((direction.x + direction.y + direction.z) * 9.1f + s * 3.1f) * 0.20f;
+            // n의 이론 최대는 1.46이라, jitter 0.8에서도 반지름이 0 아래로 내려가지 않는다(별모양 유지).
+            return 1f + Mathf.Clamp(jitter, 0f, 0.8f) * n * 0.68f;
+        }
+
+        /// <summary>정이십면체를 subdivisions회 소분할한 단위구 방향(면당 정점 3개 나열).</summary>
+        private static Vector3[] GetIcosphere(int subdivisions)
+        {
+            int level = Mathf.Clamp(subdivisions, 0, 2);
+            Vector3[] cached;
+            if (icosphereCache.TryGetValue(level, out cached) && cached != null)
+                return cached;
+
+            const float phi = 1.618034f;
+            var basePoints = new[]
+            {
+                new Vector3(-1f, phi, 0f), new Vector3(1f, phi, 0f), new Vector3(-1f, -phi, 0f), new Vector3(1f, -phi, 0f),
+                new Vector3(0f, -1f, phi), new Vector3(0f, 1f, phi), new Vector3(0f, -1f, -phi), new Vector3(0f, 1f, -phi),
+                new Vector3(phi, 0f, -1f), new Vector3(phi, 0f, 1f), new Vector3(-phi, 0f, -1f), new Vector3(-phi, 0f, 1f),
+            };
+            int[] faces =
+            {
+                0, 11, 5,  0, 5, 1,   0, 1, 7,   0, 7, 10,  0, 10, 11,
+                1, 5, 9,   5, 11, 4,  11, 10, 2, 10, 7, 6,  7, 1, 8,
+                3, 9, 4,   3, 4, 2,   3, 2, 6,   3, 6, 8,   3, 8, 9,
+                4, 9, 5,   2, 4, 11,  6, 2, 10,  8, 6, 7,   9, 8, 1,
+            };
+
+            var current = new List<Vector3>(faces.Length);
+            for (int i = 0; i < faces.Length; i++)
+                current.Add(basePoints[faces[i]].normalized);
+
+            for (int s = 0; s < level; s++)
+            {
+                var next = new List<Vector3>(current.Count * 4);
+                for (int f = 0; f + 2 < current.Count; f += 3)
+                {
+                    Vector3 a = current[f];
+                    Vector3 b = current[f + 1];
+                    Vector3 c = current[f + 2];
+                    Vector3 ab = ((a + b) * 0.5f).normalized;
+                    Vector3 bc = ((b + c) * 0.5f).normalized;
+                    Vector3 ca = ((c + a) * 0.5f).normalized;
+
+                    next.Add(a); next.Add(ab); next.Add(ca);
+                    next.Add(ab); next.Add(b); next.Add(bc);
+                    next.Add(ca); next.Add(bc); next.Add(c);
+                    next.Add(ab); next.Add(bc); next.Add(ca);
+                }
+                current = next;
+            }
+
+            Vector3[] result = current.ToArray();
+            icosphereCache[level] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// 회전한 직육면체 하나(6면 12삼각형)를 메시에 더한다. 상자를 파츠로 붙이는 대신 메시에
+        /// 굽기 위한 것이다 - 상자 5개짜리 궤짝도 렌더러는 1개가 된다.
+        /// </summary>
+        public void AddBox(Vector3 center, Vector3 size, Quaternion rotation)
+        {
+            Vector3 hx = rotation * new Vector3(size.x * 0.5f, 0f, 0f);
+            Vector3 hy = rotation * new Vector3(0f, size.y * 0.5f, 0f);
+            Vector3 hz = rotation * new Vector3(0f, 0f, size.z * 0.5f);
+
+            AddQuad(center + hx + hy + hz, center + hx + hy - hz, center + hx - hy - hz, center + hx - hy + hz, hx, false);
+            AddQuad(center - hx + hy + hz, center - hx + hy - hz, center - hx - hy - hz, center - hx - hy + hz, -hx, false);
+            AddQuad(center + hy + hx + hz, center + hy + hx - hz, center + hy - hx - hz, center + hy - hx + hz, hy, false);
+            AddQuad(center - hy + hx + hz, center - hy + hx - hz, center - hy - hx - hz, center - hy - hx + hz, -hy, false);
+            AddQuad(center + hz + hx + hy, center + hz + hx - hy, center + hz - hx - hy, center + hz - hx + hy, hz, false);
+            AddQuad(center - hz + hx + hy, center - hz + hx - hy, center - hz - hx - hy, center - hz - hx + hy, -hz, false);
+        }
+
+        /// <summary>중심선(centers)과 반지름(radii)을 따라가는 관을 하나 잇는다(굵기 변화가 곧 디테일이다).</summary>
+        public void AddTube(Vector3[] centers, float[] radii, int sides, bool capStart, bool capEnd, float uvTile)
+        {
+            if (centers == null || radii == null || centers.Length < 2 || radii.Length != centers.Length || sides < 3)
+                return;
+
+            Vector3 axis = centers[centers.Length - 1] - centers[0];
+            if (axis.sqrMagnitude < 0.0000001f)
+                axis = Vector3.up;
+            axis = axis.normalized;
+
+            Vector3 helper = Mathf.Abs(axis.y) > 0.9f ? Vector3.forward : Vector3.up;
+            Vector3 right = Vector3.Cross(helper, axis).normalized;
+            Vector3 forward = Vector3.Cross(axis, right);
+
+            int start = vertices.Count;
+            int stride = sides + 1; // 이음매에서 UV가 끊기도록 정점을 하나 겹친다
+            for (int r = 0; r < centers.Length; r++)
+            {
+                for (int s = 0; s <= sides; s++)
+                {
+                    float angle = (float)s / sides * Mathf.PI * 2f;
+                    Vector3 direction = right * Mathf.Cos(angle) + forward * Mathf.Sin(angle);
+                    vertices.Add(centers[r] + direction * radii[r]);
+                    uvs.Add(new Vector2((float)s / sides, (float)r / (centers.Length - 1) * uvTile));
+                }
+            }
+
+            for (int r = 0; r + 1 < centers.Length; r++)
+            {
+                for (int s = 0; s < sides; s++)
+                {
+                    int a0 = start + r * stride + s;
+                    int a1 = a0 + 1;
+                    int b0 = a0 + stride;
+                    int b1 = b0 + 1;
+                    float mid = ((float)s + 0.5f) / sides * Mathf.PI * 2f;
+                    Vector3 outward = right * Mathf.Cos(mid) + forward * Mathf.Sin(mid);
+                    AddTriangle(a0, b0, b1, outward);
+                    AddTriangle(a0, b1, a1, outward);
+                }
+            }
+
+            if (capStart)
+                AddCap(start, sides, centers[0], -axis);
+            if (capEnd)
+                AddCap(start + (centers.Length - 1) * stride, sides, centers[centers.Length - 1], axis);
+        }
+
+        /// <summary>사각면 하나. doubleSided면 감김을 뒤집은 사본을 함께 넣어 양쪽에서 보이게 한다(잎처럼 두께가 없는 면).</summary>
+        public void AddQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 reference, bool doubleSided)
+        {
+            AddQuadFace(a, b, c, d, reference);
+            if (doubleSided)
+                AddQuadFace(a, b, c, d, -reference);
+        }
+
+        /// <summary>평면 셰이딩용 삼각면 하나(정점을 공유하지 않아 면마다 각이 선다).</summary>
+        public void AddFace(Vector3 a, Vector3 b, Vector3 c, Vector3 reference)
+        {
+            int index = vertices.Count;
+            vertices.Add(a);
+            vertices.Add(b);
+            vertices.Add(c);
+            uvs.Add(new Vector2(a.x + 0.5f, a.z + 0.5f));
+            uvs.Add(new Vector2(b.x + 0.5f, b.z + 0.5f));
+            uvs.Add(new Vector2(c.x + 0.5f, c.z + 0.5f));
+            AddTriangle(index, index + 1, index + 2, reference);
+        }
+
+        /// <summary>지금까지 넣은 면으로 메시를 마무리한다. 반드시 캐시해 두고 재사용할 것(파츠마다 새로 만들지 마라).</summary>
+        public Mesh Finish(string name)
+        {
+            var mesh = new Mesh();
+            mesh.name = name;
+            mesh.SetVertices(vertices);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private void AddQuadFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 reference)
+        {
+            int index = vertices.Count;
+            vertices.Add(a);
+            vertices.Add(b);
+            vertices.Add(c);
+            vertices.Add(d);
+            uvs.Add(new Vector2(0f, 0f));
+            uvs.Add(new Vector2(0f, 1f));
+            uvs.Add(new Vector2(1f, 1f));
+            uvs.Add(new Vector2(1f, 0f));
+            AddTriangle(index, index + 1, index + 2, reference);
+            AddTriangle(index, index + 2, index + 3, reference);
+        }
+
+        private void AddCap(int ringStart, int sides, Vector3 center, Vector3 reference)
+        {
+            int centerIndex = vertices.Count;
+            vertices.Add(center);
+            uvs.Add(new Vector2(0.5f, 0.5f));
+            for (int s = 0; s < sides; s++)
+                AddTriangle(centerIndex, ringStart + s, ringStart + s + 1, reference);
+        }
+
+        /// <summary>삼각형 하나를 감김 방향까지 맞춰 넣는다. 기하 법선이 기준과 반대면 두 인덱스를 바꾼다.</summary>
+        private void AddTriangle(int i0, int i1, int i2, Vector3 reference)
+        {
+            Vector3 geometric = Vector3.Cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
+            if (Vector3.Dot(geometric, reference) < 0f)
+            {
+                int swap = i1;
+                i1 = i2;
+                i2 = swap;
+            }
+
+            triangles.Add(i0);
+            triangles.Add(i1);
+            triangles.Add(i2);
         }
     }
 }

@@ -239,6 +239,49 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// [B29] 경비행기 잔해에서 아직 올라오는 가느다란 연기(AircraftWreck 전용).
+        ///
+        /// 모닥불 연기와 **반드시 달라 보여야 한다.** 모닥불 연기는 "저기 안전지대가 있다"는 원거리
+        /// 신호라 굵고 높이 오르는데(rate 6 · size 0.25~0.5 · 알파 0.35), 이걸 잔해에 그대로 쓰면
+        /// 플레이어가 잔해를 안전지대로 오독한다. 그래서 양(rate 1.6)·크기(0.16~0.30)·알파(0.16)를
+        /// 전부 낮춰 "타다 남은 흔적"으로만 읽히게 하고, 색도 팔레트의 Neutral Gray를 그대로 쓰되
+        /// 어둡게 눌러 그을음 쪽으로 붙인다(새 색을 만들지 않는다).
+        /// 입자 상한 10개 = 월드에 하나뿐인 오브젝트의 상시 연출로 감당 가능한 최소치다.
+        /// </summary>
+        public static ParticleSystem CreateWreckSmoke(Transform parent, Vector3 localPosition)
+        {
+            ParticleSystem ps = CreateSystem("WreckSmoke", parent, localPosition, true);
+
+            var main = ps.main;
+            main.loop = true;
+            main.duration = 3f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(2.2f, 3.4f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0.25f, 0.5f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.16f, 0.30f);
+            main.startColor = new Color(NeutralGray.r * 0.55f, NeutralGray.g * 0.55f, NeutralGray.b * 0.55f, 0.16f);
+            main.gravityModifier = -0.03f;
+            main.maxParticles = 10;
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+
+            var emission = ps.emission;
+            emission.rateOverTime = 1.6f;
+
+            var shape = ps.shape;
+            shape.enabled = true;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 16f;
+            shape.radius = 0.10f;
+
+            ApplyFadeOut(ps, 1f);
+
+            var sizeOverLifetime = ps.sizeOverLifetime;
+            sizeOverLifetime.enabled = true;
+            sizeOverLifetime.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.EaseInOut(0f, 0.7f, 1f, 2.0f));
+
+            return ps;
+        }
+
+        /// <summary>
         /// 채집 성공 팝(우선순위 2번). 자원 노드의 실제 표면 색을 그대로 뽑아 써서 "무엇을 얻었는지"가
         /// 색으로 읽히게 한다 — 노드 색은 이미 MaterialFamily/팔레트를 거쳐 칠해져 있으므로, 여기서
         /// 색을 새로 정하면 오히려 팔레트를 벗어난다. 색을 못 읽으면 Palm Fiber로 폴백한다.

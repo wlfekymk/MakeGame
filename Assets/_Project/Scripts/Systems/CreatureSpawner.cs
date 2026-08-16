@@ -139,14 +139,16 @@ namespace MakeGame.Systems
             if (entry.preferShoreline)
             {
                 go.transform.localScale = new Vector3(0.35f, 0.2f, 0.5f) * sizeJitter; // 납작하고 길쭉한 물고기 형태
-                go.transform.position = position + Vector3.up * 0.15f;
+                // [B29] 띄우는 높이에도 sizeJitter를 곱한다. 몸통 바닥은 스케일에 비례해 내려가는데
+                // 높이만 고정이면 작은 개체는 뜨고 큰 개체는 파묻힌다(육상 사냥감에서 0.09m까지 벌어졌다).
+                go.transform.position = position + Vector3.up * (0.15f * sizeJitter);
                 go.transform.rotation = facing;
                 go.name = $"Fish_{entry.yieldItem.itemName}";
             }
             else
             {
                 go.transform.localScale = new Vector3(0.45f, 0.6f, 0.45f) * sizeJitter; // 작은 동물 크기의 캡슐
-                go.transform.position = position + Vector3.up * 0.6f;
+                go.transform.position = position + Vector3.up * (0.6f * sizeJitter); // [B29] 위 물고기 주석과 같은 접지 보정
                 go.transform.rotation = facing;
                 go.name = $"Creature_{entry.yieldItem.itemName}";
             }
@@ -155,43 +157,16 @@ namespace MakeGame.Systems
                 ? new Color(0.35f, 0.55f, 0.65f) // 물고기: 청회색
                 : new Color(0.55f, 0.4f, 0.25f); // 육상 동물: 갈색
 
-            var renderer = go.GetComponent<MeshRenderer>();
-            if (renderer != null)
-                renderer.sharedMaterial = StructureVisualBuilder.CreateColorMaterial(bodyColor);
-
-            // 퀄리티 개선: 몸통 프리미티브 하나뿐이라 "어떤 생물인지" 형태로는 전혀 구분되지 않던 문제를
-            // 완화하기 위해 눈/꼬리지느러미 같은 작은 보조 파츠를 붙인다. 부모의 비균일 스케일 때문에
-            // 파츠가 타원으로 찌그러지지 않도록 로컬 스케일을 부모 스케일로 나눠 보정한다.
-            Vector3 s = go.transform.localScale;
-            if (entry.preferShoreline)
-            {
-                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0f, 0.1f, 0.4f), new Vector3(0.12f, 0.12f, 0.12f), s, new Color(0.05f, 0.05f, 0.05f), "Eye");
-                AddCompensated(go, PrimitiveType.Cube, new Vector3(0f, 0f, -0.55f), new Vector3(0.15f, 0.3f, 0.2f), s, bodyColor * 0.8f, "TailFin");
-            }
-            else
-            {
-                // [tech-artist-B 요청 - 눈이 몸통 안에 묻혀 있다] 기존 로컬 (±0.12, 0.6, 0.28)은 몸통 캡슐
-                // 상단 반구 중심(0, 0.5, 0)에서 로컬 거리 0.32였다 - 표면(0.5)보다 안쪽이라 어느 각도에서도
-                // 보이지 않았다(HuntableCreature.BuildHeadSilhouette 주석의 실측과 동일한 값).
-                // 이제 눈은 몸통이 아니라 HuntableCreature가 붙이는 머리 돌기(로컬 (0, 0.72, 0.42),
-                // 월드 반지름 0.14m) 표면에 얹는다. 검산(몸통 스케일 (0.45, 0.6, 0.45) 기준, 월드 단위):
-                //   눈 중심   = (0.11·0.45, 0.81·0.60, 0.68·0.45) = (0.0495, 0.486, 0.306)
-                //   머리 중심 = (0,         0.72·0.60, 0.42·0.45) = (0,      0.432, 0.189)
-                //   두 점 거리 = √(0.0495² + 0.054² + 0.117²) = 0.1380m ≈ 머리 반지름 0.14m
-                // 즉 눈 중심이 머리 표면 바로 위(0.002m 안쪽)에 놓여 눈 구체의 절반이 머리 밖으로 드러난다.
-                // 세 번째 인자는 반지름이 아니라 월드 "지름"이다(AddCompensated는 worldSize를 그대로
-                // localScale로 환산한다 - CreatureVisualBuilder.AddCompensatedSphere의 worldRadius와 다르다).
-                // 0.08 → 0.05로 줄인 이유: 지름 0.28m짜리 머리 위에서 0.08m 눈은 과하게 커 보인다.
-                // 주의: 두 파츠 모두 몸통(go) 로컬 좌표계의 형제이므로, 머리 위치/반지름이 바뀌면 이 값도
-                // 함께 다시 계산해야 한다(HuntableCreature.BuildHeadSilhouette와 짝을 이루는 값이다).
-                AddCompensated(go, PrimitiveType.Sphere, new Vector3(0.11f, 0.81f, 0.68f), new Vector3(0.05f, 0.05f, 0.05f), s, new Color(0.05f, 0.05f, 0.05f), "EyeL");
-                AddCompensated(go, PrimitiveType.Sphere, new Vector3(-0.11f, 0.81f, 0.68f), new Vector3(0.05f, 0.05f, 0.05f), s, new Color(0.05f, 0.05f, 0.05f), "EyeR");
-
-                // 연결(A-2): tech-artist가 만든 CreatureVisualBuilder.AddQuadrupedLegs를 호출해 짧은 다리
-                // 4개를 붙인다. 몸통 캡슐 + 눈뿐이면 사람 형태(곰/식인종 HazardSource 캡슐)와 실루엣이
-                // 겹쳐 구분이 안 되던 문제를 보강한다. 물고기(preferShoreline) 분기에는 넣지 않는다.
-                CreatureVisualBuilder.AddQuadrupedLegs(go, s, bodyColor);
-            }
+            // [B29] 몸통 프리미티브를 절차 메시로 갈아 끼우고(사족보행 동물 / 방추형 물고기), 눈만
+            // 파츠로 남긴다. 예전에는 육상 개체 하나가 캡슐 + 눈 2 + 머리 구체 + 다리 캡슐 4 = 8파츠였고
+            // 파츠마다 머티리얼을 하나씩 새로 만들었다(특대 섬 사냥감만으로 머티리얼 약 80개).
+            // 지금은 파츠 3개 · 새 머티리얼 0개다 - 메시와 머티리얼을 월드 전체가 공유한다.
+            //
+            // 콜라이더 크기/스케일/난수 소비는 건드리지 않는다. 메시 교체는 MeshFilter만 바꾸고,
+            // 프리미티브 콜라이더는 파라메트릭이라 사냥 조준 판정 범위가 1mm도 변하지 않는다.
+            // (배치 높이만 위에서 sizeJitter를 곱하도록 고쳤다 - 접지 오차 최대 0.09m 수정.)
+            // 눈 좌표 검산은 CreatureVisualBuilder.BuildHuntableBody 주석 참고.
+            CreatureVisualBuilder.BuildHuntableBody(go, bodyColor, entry.preferShoreline);
 
             var creature = go.AddComponent<HuntableCreature>();
             creature.yieldItem = entry.yieldItem;

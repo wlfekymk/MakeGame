@@ -51,6 +51,19 @@ namespace MakeGame.Systems
         private float respawnTimer = 0f;
         private float contactCooldownTimer = 0f;
 
+        /// <summary>
+        /// [B29] 벌떼 전용 연출. 벌떼의 실루엣은 개체가 아니라 "무리"이고, 무리를 무리로 보이게 하는
+        /// 마지막 요소가 움직임이다(CreatureVisualBuilder.AddBeeSwarmDetails 주석 참고).
+        /// 몸통 메시(벌 18마리가 흩어진 구름)를 천천히 돌리기만 한다:
+        ///  - **회전만** 준다. 위치를 흔들면 트리거 콜라이더가 함께 움직여 접촉 판정이 바뀐다.
+        ///    벌떼의 콜라이더는 구체(SphereCollider)라 회전에 완전히 불변이므로 판정이 1도 안 바뀐다.
+        ///  - 축을 살짝 기울여(Y가 아니라 (0.15, 1, 0.08)) 위에서 봐도 정면에서 봐도 움직임이 읽히게 한다.
+        ///  - **unscaledDeltaTime**을 쓴다. 엔딩/사망 화면은 Time.timeScale = 0을 걸므로 deltaTime을
+        ///    쓰면 그 화면에서 연출이 첫 프레임에 얼어붙는다(AGENT_BRIEF 4장의 실제 사고 사례).
+        /// </summary>
+        private static readonly Vector3 BeeSwarmSpinAxis = new Vector3(0.15f, 1f, 0.08f);
+        private const float BeeSwarmSpinDegreesPerSecond = 34f;
+
         /// <summary>현재 이 위험 요소가 활성 상태(물리쳐지지 않음)인지 여부.</summary>
         public bool IsActive => !isDefeated;
 
@@ -101,6 +114,10 @@ namespace MakeGame.Systems
         {
             if (contactCooldownTimer > 0f)
                 contactCooldownTimer -= Time.deltaTime;
+
+            // 벌떼가 살아 있는 동안에만 무리가 술렁인다(물리친 뒤에는 보이지도 않는다).
+            if (hazardType == HazardType.BeeSwarm && !isDefeated)
+                transform.Rotate(BeeSwarmSpinAxis, BeeSwarmSpinDegreesPerSecond * Time.unscaledDeltaTime, Space.Self);
 
             if (!isDefeated)
                 return;
@@ -283,12 +300,24 @@ namespace MakeGame.Systems
         /// <summary>
         /// 물리쳐서 비활성화하거나 재등장시킬 때, 시각적으로도 보이지 않도록/보이도록 전환한다.
         /// 콜라이더가 있다면 함께 꺼서 접촉 판정도 멈춘다.
+        ///
+        /// [B29 버그 수정 - 물리친 위험 요소의 파츠가 공중에 그대로 남아 있었다]
+        /// 예전 코드는 `GetComponent<Renderer>()`로 **루트 하나만** 껐다. 그런데 위험 요소는 전부
+        /// 자식 파츠를 갖는다(곰: 눈 2 + 코, 식인종: 눈 2 + 창 + 돌촉, 상어: 눈 2 + 등지느러미,
+        /// 벌떼: 벌 5). 즉 곰을 쓰러뜨리면 몸통만 사라지고 눈 두 개와 코가 허공에 뜬 채로
+        /// respawnSeconds(120초) 동안 남았고, 식인종은 창이 그대로 서 있었다. 세이브에서 처치 상태를
+        /// 복원할 때(RestoreDefeatedState)도 같은 경로라 같은 증상이 나온다.
+        /// 자식 렌더러까지 모두 끈다. 콜라이더는 예전 그대로 루트 것만 다룬다 - 시각 파츠에는
+        /// 콜라이더가 없어야 하고(CreateVisualPart가 즉시 제거한다) 실제로 없기 때문이다.
         /// </summary>
         private void SetVisualActive(bool active)
         {
-            var renderer = GetComponent<Renderer>();
-            if (renderer != null)
-                renderer.enabled = active;
+            var renderers = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null)
+                    renderers[i].enabled = active;
+            }
 
             var collider = GetComponent<Collider>();
             if (collider != null)
