@@ -473,6 +473,7 @@ MonoBehaviour:
   inventory: {fileID: 1925945764}
   toggleKey: 9
   cycleFilterKey: 102
+  dropWholeStackModifier: 304
 --- !u!1 &1886019770
 GameObject:
   m_ObjectHideFlags: 0
@@ -549,6 +550,7 @@ MonoBehaviour:
     - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
       quantity: 6
   collectedMaterialsForCurrentStage: []
+  disableRaftStructure: 0
 --- !u!114 &1886019772
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -616,14 +618,20 @@ MonoBehaviour:
   creatureSpawner: {fileID: 2000000021}
   sharkSpawner: {fileID: 2000000022}
   aircraftRepair: {fileID: 2000000015}
+  aircraftWreckOffset: {x: 6, y: 0, z: -4}
+  playerTransform: {fileID: 1925945766}
+  orientPlayerAwayFromWreck: 1
   boatConstruction: {fileID: 1886019771}
   generateOnStart: 1
   initialIslandCount: 8
   worldSeed: 0
   oceanSize: 40000
   seaLevel: 0
+  oceanScrollSpeed: {x: 0.02, y: 0.013}
+  shorelineBandColor: {r: 0.45, g: 0.72, b: 0.75, a: 1}
+  shorelineBandOuterScale: 1.5
+  shorelineBandHeight: 0.05
   terrainMaxHeight: 8
-  playerTransform: {fileID: 1925945766}
   terrainMaterial: {fileID: 0}
 --- !u!1 &1925945763
 GameObject:
@@ -670,6 +678,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1a4a40095456c6449952232cb9a583d2, type: 2}
   - {fileID: 11400000, guid: 57c8b75b1a78d9b45ae04aaa7355d08a, type: 2}
   items: []
+  slotCapacity: 100
 --- !u!114 &1925945765
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -682,6 +691,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ed19c82bd2466534992c1374491f5df9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Player.SurvivalStats
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
   health: 100
   maxHealth: 100
   hunger: 100
@@ -704,8 +714,9 @@ MonoBehaviour:
   oxygenRecoveryPerSecond: 25
   oxygenDrainPerSecond: 5
   drowningDamagePerSecond: 3
+  coconutOverdoseThreshold: 100
   lastDamageCause: 0
-  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
+  crisisGraceSeconds: 8
 --- !u!4 &1925945766
 Transform:
   m_ObjectHideFlags: 0
@@ -814,6 +825,7 @@ MonoBehaviour:
   diveKey: 306
   lookSensitivity: 2
   cameraTransform: {fileID: 330585546}
+  lookSettleFrames: 2
   survivalStats: {fileID: 1925945765}
 --- !u!114 &2000000003
 MonoBehaviour:
@@ -832,6 +844,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 64
   shadeCheckDistance: 20
+  homeRadiusCountsAsShade: 1
   waterLevel: 0
   headHeightOffset: 1.6
 --- !u!114 &2000000004
@@ -873,6 +886,8 @@ MonoBehaviour:
   inventory: {fileID: 1925945764}
   survivalStats: {fileID: 1925945765}
   rawFoodPoisonChance: 0.15
+  balanceConfig: {fileID: 0}
+  useConfigPoisonChance: 0
 --- !u!114 &2000000006
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -891,11 +906,15 @@ MonoBehaviour:
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
     baseCount: 3
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 3f55ff4a55f7414b891a323c5e7c303a, type: 2}
     baseCount: 3
     minimumIslandSize: 0
@@ -908,55 +927,81 @@ MonoBehaviour:
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: dce46f1400c042da94b13073a17e1b11, type: 2}
     baseCount: 2
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: b86d36da6d5b45bba13e7d0c24e6a66e, type: 2}
     baseCount: 1
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: e6d70fced200407eb31b08731cd6db82, type: 2}
     baseCount: 1
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 08fe47e3a4d3407ba4ea6f1a3a13e6e7, type: 2}
     baseCount: 2
     minimumIslandSize: 2
     requiresTool: 1
     requiredTool: {fileID: 11400000, guid: e78c2cccce274d2fac0d814667672602, type: 2}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 664c5c68df1543368e20c8fd2c52f8b9, type: 2}
     baseCount: 2
     minimumIslandSize: 2
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 77b4c958c2364779bb0e0e1362486b95, type: 2}
     baseCount: 1
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
     baseCount: 1
     minimumIslandSize: 0
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: cc208e17df7a4c4fa1353f74216a27f3, type: 2}
     baseCount: 2
     minimumIslandSize: 3
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   - yieldItem: {fileID: 11400000, guid: 1bc80ca53542bae4ab84ec7762ebb50d, type: 2}
     baseCount: 1
     minimumIslandSize: 1
     requiresTool: 0
     requiredTool: {fileID: 0}
+    bonusTool: {fileID: 0}
+    bonusYieldPerHarvest: 0
   smallMultiplier: 1
   mediumMultiplier: 2
   largeMultiplier: 3
   extraLargeMultiplier: 4
+  smallScatterRadius: 40
+  mediumScatterRadius: 72
+  largeScatterRadius: 112
+  extraLargeScatterRadius: 160
+  spawnLandingCircle: 1
+  landingCircleRadius: 9
 --- !u!114 &2000000007
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -969,28 +1014,46 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b3b6bcfbb8b14998ad38912741123f0b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.HazardSpawner
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
   hazardEntries:
   - type: 1
     baseChance: 0.25
+    minimumIslandSize: 0
+    guaranteedCount: 0
   - type: 2
     baseChance: 0.2
+    minimumIslandSize: 0
+    guaranteedCount: 0
   - type: 3
     baseChance: 0.15
     minimumIslandSize: 1
     guaranteedCount: 1
   - type: 4
     baseChance: 0.2
+    minimumIslandSize: 0
+    guaranteedCount: 0
   - type: 5
     baseChance: 0.2
+    minimumIslandSize: 0
+    guaranteedCount: 0
   - type: 6
     baseChance: 0.1
+    minimumIslandSize: 0
+    guaranteedCount: 0
   - type: 9
     baseChance: 0.12
+    minimumIslandSize: 0
+    guaranteedCount: 0
+  hazardsPerTenThousandSquareMeters: 2
+  maxHazardsPerIsland: 20
   smallMultiplier: 1
   mediumMultiplier: 1.75
   largeMultiplier: 2.5
   extraLargeMultiplier: 3.25
-  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
+  smallScatterRadius: 40
+  mediumScatterRadius: 72
+  largeScatterRadius: 112
+  extraLargeScatterRadius: 160
 --- !u!114 &2000000008
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1020,9 +1083,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e61e1ee594ed4ad5988b0a0db797d759, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.SurvivalClock
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
   secondsPerDay: 600
   elapsedSeconds: 0
-  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
+  sunsetWarningTimeOfDay: 0.65
+  sunsetWarningDay: 0
 --- !u!114 &2000000010
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1035,9 +1100,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d535b7aa56964c3b9a5313a23e64e84b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Systems.EndingChecker
+  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
   boatConstruction: {fileID: 1886019771}
   aircraftRepair: {fileID: 2000000015}
   inventory: {fileID: 1925945764}
+  survivalClock: {fileID: 2000000009}
+  requiredElapsedDays: 15
+  aircraftRequiredElapsedDays: 8
   playerController: {fileID: 2000000002}
   interactionController: {fileID: 2000000004}
   continueKey: 32
@@ -1047,9 +1116,6 @@ MonoBehaviour:
   requiredWaterCount: 12
   fuelItem: {fileID: 11400000, guid: 7fb050de192f45438680c437c1a1e88e, type: 2}
   requiredFuelCount: 1
-  balanceConfig: {fileID: 11400000, guid: 80e0187dae8f4309843ba9454f977b28, type: 2}
-  survivalClock: {fileID: 2000000009}
-  requiredElapsedDays: 15
 --- !u!114 &2000000011
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1069,6 +1135,9 @@ MonoBehaviour:
   inventory: {fileID: 1925945764}
   saveLoadController: {fileID: 2000000013}
   showControlsHelp: 1
+  toggleKey: 284
+  visibleOnStart: 0
+  refreshInterval: 0.25
 --- !u!114 &2000000012
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1085,6 +1154,8 @@ MonoBehaviour:
   largeIslandSpawnChance: 1
   extraLargeIslandSpawnChance: 0.95
   placementOffset: 4
+  largePlacementOffset: 30
+  extraLargePlacementOffset: 45
 --- !u!114 &2000000013
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1185,6 +1256,8 @@ MonoBehaviour:
   toggleKey: 109
   radarWorldRadius: 4000
   radarPanelSize: 160
+  zoomInKey: 61
+  zoomOutKey: 45
 --- !u!114 &2000000018
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1202,6 +1275,7 @@ MonoBehaviour:
   playerController: {fileID: 2000000002}
   interactionController: {fileID: 2000000004}
   settingsMenu: {fileID: 2000000019}
+  saveLoadController: {fileID: 0}
   isMenuOpen: 1
 --- !u!114 &2000000019
 MonoBehaviour:
@@ -1233,6 +1307,10 @@ MonoBehaviour:
   survivalStats: {fileID: 1925945765}
   warningColor: {r: 0.6, g: 0, b: 0, a: 0.75}
   pulseSpeed: 2.5
+  onsetEmphasisSeconds: 1.8
+  survivalClock: {fileID: 0}
+  sunsetNoticeSeconds: 6
+  sunsetFadeSeconds: 1.2
 --- !u!114 &2000000021
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1252,23 +1330,35 @@ MonoBehaviour:
     successChance: 0.7
     respawnSeconds: 90
     preferShoreline: 0
+    nightSuccessBonus: 0.2
+    nightYieldBonus: 1
+    isCrab: 0
   - yieldItem: {fileID: 11400000, guid: 358830a65ae94744b1565a47670653c6, type: 2}
     requiredTool: {fileID: 0}
     baseCount: 2
     successChance: 0.6
     respawnSeconds: 60
     preferShoreline: 1
+    nightSuccessBonus: 0.2
+    nightYieldBonus: 1
+    isCrab: 0
   - yieldItem: {fileID: 11400000, guid: 358830a65ae94744b1565a47670653c6, type: 2}
     requiredTool: {fileID: 0}
     baseCount: 2
     successChance: 0.65
     respawnSeconds: 45
     preferShoreline: 1
+    nightSuccessBonus: 0.2
+    nightYieldBonus: 1
     isCrab: 1
   smallMultiplier: 1
   mediumMultiplier: 1.5
   largeMultiplier: 2
   extraLargeMultiplier: 2.5
+  smallScatterRadius: 40
+  mediumScatterRadius: 72
+  largeScatterRadius: 112
+  extraLargeScatterRadius: 160
 --- !u!114 &2000000022
 MonoBehaviour:
   m_ObjectHideFlags: 0
