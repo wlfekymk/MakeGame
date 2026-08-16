@@ -461,7 +461,14 @@ namespace MakeGame.Systems
                 (centroid, distance, angle) => distance <= GrassEdge(centroid, angle),
                 // 3톤 × 최대 0.50 혼합 = Meadow Green(색상각 80°) → 약 88° 사이의 색조 변주.
                 // 상대휘도는 세 톤 모두 0.609로 동일하다(ToneVariant) → 명도 단차 0%.
-                3, 0.50f, StructureVisualBuilder.FrondGreen);
+                // [B15 디렉터] 톤 변주를 **끈다**(3 → 1).
+                // 실기 증거: 지형 본체를 모래 → 초록으로 뒤집자 지면의 각진 패치가 "황갈색"에서
+                // "연한 초록"으로 **같이 바뀌었다.** 패치 색이 캡 색을 따라간다는 것은 패치가 캡
+                // 안에서 만들어진다는 직접 증거이고, 캡 안의 유일한 색 변화 요인이 톤 변주다.
+                // ToneVariant는 상대휘도를 산술적으로 고정하지만, 실제 화면은 URP 조명(램버트 + SSAO +
+                // 톤매핑)을 거치므로 **입력 휘도가 같아도 출력 밝기가 같다는 보장이 없다.**
+                // 톤 변주는 "있으면 좋은 것"이고 얼룩덜룩한 지면은 명백한 손해다 - 단색을 택한다.
+                1);
 
             // 정상부의 밝은 풀. 반지름이 아니라 고도로 잘라내, 지형 굴곡(펄린 노이즈로 생긴 등성이)이
             // 그대로 색 경계가 된다 - 원형으로 잘라내면 또 하나의 완벽한 동심원이 생겨 인공적으로 보인다.
@@ -483,7 +490,7 @@ namespace MakeGame.Systems
                 (centroid, distance, angle) =>
                     distance > GrassEdge(centroid, angle) && distance < SandEdge(centroid),
                 // 젖은 모래와 같은 규칙의 2톤(채도만 내리는 색조 변주, 명도 단차 0%).
-                2, 0.18f, StructureVisualBuilder.WeatheredStone);
+                1);
 
             // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
             // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
@@ -492,7 +499,7 @@ namespace MakeGame.Systems
             BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.80f),
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) => distance >= SandEdge(centroid),
-                2, 0.22f, StructureVisualBuilder.WeatheredStone);
+                1);
         }
 
         /// <summary>
