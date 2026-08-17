@@ -684,7 +684,7 @@ namespace MakeGame.Systems
             else
             {
                 float radius = GetSizeScale(island.size);
-                placeholder = CreateProceduralIslandTerrain(radius, island.mapPosition);
+                placeholder = CreateProceduralIslandTerrain(radius, island.mapPosition, island.islandId);
             }
 
             placeholder.name = $"Island_{island.islandId}_{island.size}";
@@ -714,8 +714,14 @@ namespace MakeGame.Systems
         /// <summary>
         /// 지정한 반지름/위치에 절차적 섬 지형 메시를 생성한다.
         /// MeshFilter/MeshRenderer/MeshCollider를 직접 붙여 플레이어가 실제로 걸어다닐 수 있게 한다.
+        ///
+        /// [B46] islandId를 함께 받는다. 이 값이 없으면 지형 노이즈가 섬 로컬 좌표에만 의존해서
+        /// **반지름이 같은 섬은 지형 메시가 비트 단위로 동일**했다(정점은 원점 대칭으로 굽고 섬의 월드
+        /// 위치는 오브젝트 트랜스폼에만 들어가므로, 위치가 달라도 메시는 같다). islandId는 지형 노이즈
+        /// **오프셋 유도에만** 쓰이고 난수 스트림을 하나도 만들지 않는다 - 자원/위험요소의 추첨 순서와
+        /// (islandIndex, spawnOrder) 세이브 키는 한 칸도 밀리지 않는다.
         /// </summary>
-        private GameObject CreateProceduralIslandTerrain(float radius, Vector3 position)
+        private GameObject CreateProceduralIslandTerrain(float radius, Vector3 position, int islandId)
         {
             var go = new GameObject("IslandTerrain");
             go.transform.SetParent(transform);
@@ -727,7 +733,13 @@ namespace MakeGame.Systems
             // 않도록 상한선을 둔다.
             int ringCount = Mathf.Clamp(Mathf.RoundToInt(radius / 5f), 6, 40);
             int radialSegments = Mathf.Clamp(Mathf.RoundToInt(radius * 1.5f), 24, 90);
-            var mesh = IslandMeshGenerator.GenerateIslandMesh(radius, terrainMaxHeight, ringCount, radialSegments);
+            // [B46] 노이즈 오프셋 시드. worldSeed와 islandId만 입력으로 받는 순수 해시라
+            // (IslandMeshGenerator.ComputeNoiseSeed) 난수를 한 번도 소비하지 않는다.
+            // noiseScale/noiseAmplitude는 기본값 그대로 둔다 - 이번 배치는 "섬마다 다르다"만 만들고
+            // 형태 언어(옥타브·능선·석호)는 건드리지 않는다.
+            var mesh = IslandMeshGenerator.GenerateIslandMesh(
+                radius, terrainMaxHeight, ringCount, radialSegments,
+                noiseSeed: IslandMeshGenerator.ComputeNoiseSeed(worldSeed, islandId));
 
             var meshFilter = go.AddComponent<MeshFilter>();
             meshFilter.sharedMesh = mesh;

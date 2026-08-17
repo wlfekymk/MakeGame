@@ -40,16 +40,112 @@ namespace MakeGame.Systems
         /// <summary>물가 등고선을 흔드는 진폭(m). 클수록 해안선이 더 들쭉날쭉해진다.</summary>
         private const float ShoreNoiseAmplitude = 1.4f;
 
+        // ── [B46 섬별 시드] 노이즈 오프셋을 섬마다 갈라 놓는 장치 ────────────────────────
+        // 문제: 위 두 펄린은 **섬 로컬 좌표**에 고정 오프셋(+1000 / +517)을 더해 찍는다. 섬 오브젝트의
+        // 월드 위치는 메시에 전혀 들어가지 않으므로(정점은 원점 대칭으로 굽고 오브젝트만 옮긴다 -
+        // CreateProceduralIslandTerrain), **반지름·링·세그먼트가 같은 섬은 지형 메시가 비트 단위로 동일**했다.
+        // 씬의 섬 9개는 규모가 4종뿐이라 실제로 같은 모양이 여러 개 있었다.
+        //
+        // 조치: 오프셋만 섬마다 다르게 준다. **형태 언어(코사인 낙차·1옥타브 펄린·해안 잠수)는 한 줄도
+        // 바꾸지 않는다** - 옥타브/능선/석호는 다음 배치다. 즉 "같은 언어로 쓴 다른 문장"이 된다.
+        //
+        // ★ 난수 소비 0 ★ System.Random을 단 한 번도 건드리지 않는다. 오프셋은 (worldSeed, islandId)만
+        // 입력으로 받는 **순수 해시**다. 스포너가 쓰는 섬별 스트림은 이 파일을 거치지 않고, 지형 생성은
+        // 어떤 rng도 넘겨받지 않으므로 자원·위험요소의 추첨 순서가 한 칸도 밀리지 않는다
+        // (HazardSpawner.IsBearCubIndividual가 같은 제약을 같은 방법으로 지킨다 - 그쪽이 선례다).
+
+        /// <summary>
+        /// noiseSeed 인자를 생략했을 때의 센티널. 이 값이면 오프셋이 예전 상수(1000 / 517)로 고정되어
+        /// **예전과 비트 단위로 동일한 메시**가 나온다(회귀 안전장치). ComputeNoiseSeed는 이 값을 절대 돌려주지 않는다.
+        /// </summary>
+        public const int LegacyNoiseSeed = int.MinValue;
+
+        /// <summary>
+        /// 오프셋이 흩어지는 폭(노이즈 입력 단위). Unity Mathf.PerlinNoise는 순열표가 256 주기라
+        /// 이보다 크게 잡아도 실효 오프셋은 256으로 접힌다 - 그래서 정확히 한 주기를 쓴다.
+        /// noiseScale 0.05 기준 1단위 = 20m이므로, 지형 노이즈에서 256단위는 5,120m다.
+        /// 가장 큰 섬(지름 400m = 20단위)도 서로 겹치지 않을 자리가 넉넉하다.
+        /// </summary>
+        private const float NoiseOffsetSpan = 256f;
+
+        /// <summary>
+        /// (worldSeed, islandId)에서 지형 노이즈 시드를 결정적으로 유도한다. **난수를 소비하지 않는 순수 함수다.**
+        /// 같은 월드를 다시 열면 같은 섬이 항상 같은 지형으로 나온다.
+        ///
+        /// 해시는 두 소수 곱 → xorshift-곱 마무리(FNV/Murmur 계열 finalizer)다. worldSeed와 islandId가
+        /// 둘 다 작은 정수라 단순 덧셈만으로는 상관이 남는다(HazardSpawner.IsBearCubIndividual와 같은 근거).
+        /// SeededRandomExtensions.CreateForSalt와 같은 (worldSeed, salt) 규약을 따르되, 그쪽은 System.Random을
+        /// **만들어** 돌려주므로 여기서는 쓸 수 없다 - 지형은 난수 스트림을 하나도 만들지 않는 것이 요건이다.
+        /// </summary>
+        public static int ComputeNoiseSeed(int worldSeed, int islandId)
+        {
+            unchecked
+            {
+                uint h = (uint)(worldSeed * 73856093) ^ (uint)(islandId * 19349663) ^ 0x9E3779B9u;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                int seed = (int)h;
+                // 센티널과 겹치면 예전 지형으로 조용히 되돌아간다 - 확률은 2^-32이지만 실패 모드가
+                // "이 섬만 다른 섬과 같은 모양"이라 눈으로 못 잡는다. 값 하나를 비켜 준다.
+                return seed == LegacyNoiseSeed ? 0 : seed;
+            }
+        }
+
+        /// <summary>시드와 축별 salt를 섞어 [0, NoiseOffsetSpan) 구간의 오프셋 하나를 만든다(난수 소비 0).</summary>
+        private static float NoiseOffsetFromSeed(int noiseSeed, uint axisSalt)
+        {
+            unchecked
+            {
+                uint h = (uint)noiseSeed ^ axisSalt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                // 정수 오프셋만 쓰면 펄린 격자가 섬마다 똑같이 정렬돼 "격자 위상"까지 같아진다.
+                // 24비트를 실수로 펴서 소수부까지 갈라 놓는다(오프셋일 뿐이라 형태 언어는 그대로다).
+                return (h & 0xFFFFFFu) / (float)0x1000000u * NoiseOffsetSpan;
+            }
+        }
+
         /// <summary>
         /// 지정한 반지름과 최대 높이를 가진 둥근 언덕 모양의 섬 지형 메시를 생성한다.
         /// 중심에서 가장자리로 갈수록 코사인 곡선으로 완만하게 낮아지고,
         /// 펄린 노이즈로 자연스러운 굴곡을 더하되 가장자리에서는 노이즈를 줄여 매끄럽게 물과 맞닿게 한다.
         /// 바깥 ShoreBandFraction 구간은 해수면 아래로 잠기며(위 상수 주석), 그 덕에 물가 경계가 원이 아니다.
+        ///
+        /// [B46] noiseSeed를 넘기면 지형/해안 펄린의 **샘플 위치(오프셋)만** 갈라져 섬마다 다른 지형이 나온다.
+        /// 넘기지 않으면(기본값 LegacyNoiseSeed) 오프셋이 예전 상수 그대로라 **예전과 동일한 메시**가 나온다.
+        /// 정점 수·인덱스·UV·삼각형 감는 방향·XZ 반경은 시드와 무관하게 1mm도 바뀌지 않는다 - 바뀌는 것은 y뿐이다.
         /// </summary>
-        public static Mesh GenerateIslandMesh(float radius, float maxHeight, int ringCount = 6, int radialSegments = 24, float noiseScale = 0.05f, float noiseAmplitude = 2.0f)
+        /// <param name="noiseSeed">
+        /// IslandMeshGenerator.ComputeNoiseSeed(worldSeed, islandId)로 만든 값.
+        /// 생략하면 예전 고정 오프셋(1000 / 517)을 그대로 쓴다.
+        /// </param>
+        public static Mesh GenerateIslandMesh(float radius, float maxHeight, int ringCount = 6, int radialSegments = 24, float noiseScale = 0.05f, float noiseAmplitude = 2.0f, int noiseSeed = LegacyNoiseSeed)
         {
             var mesh = new Mesh();
             mesh.name = "IslandTerrain";
+
+            // 시드가 없으면 예전 상수 그대로다. 아래 두 펄린 호출은 오프셋만 변수로 바뀌었고 식은 동일하므로,
+            // 이 분기에서 예전 값이 들어가면 결과가 예전과 비트 단위로 같다.
+            float noiseOffsetX = 1000f;
+            float noiseOffsetZ = 1000f;
+            float shoreOffsetX = 517f;
+            float shoreOffsetZ = 517f;
+            if (noiseSeed != LegacyNoiseSeed)
+            {
+                // 축마다 다른 salt를 쓴다(x/z에 같은 오프셋을 주면 모든 섬이 대각선 대칭축을 공유한다).
+                // 해안 펄린도 **따로** 갈라야 물가 모양이 섬마다 달라진다 - 지형 오프셋만 바꾸면
+                // 해수면 등고선의 들쭉날쭉한 무늬가 전 섬 동일하게 남는다.
+                noiseOffsetX = 1000f + NoiseOffsetFromSeed(noiseSeed, 0x51ED270Bu);
+                noiseOffsetZ = 1000f + NoiseOffsetFromSeed(noiseSeed, 0x1B873593u);
+                shoreOffsetX = 517f + NoiseOffsetFromSeed(noiseSeed, 0x27D4EB2Fu);
+                shoreOffsetZ = 517f + NoiseOffsetFromSeed(noiseSeed, 0x165667B1u);
+            }
 
             int vertexCount = 1 + ringCount * radialSegments;
             var vertices = new Vector3[vertexCount];
@@ -72,7 +168,7 @@ namespace MakeGame.Systems
                     float x = Mathf.Cos(angle) * r;
                     float z = Mathf.Sin(angle) * r;
 
-                    float noise = (Mathf.PerlinNoise(x * noiseScale + 1000f, z * noiseScale + 1000f) - 0.5f) * noiseAmplitude * (1f - t);
+                    float noise = (Mathf.PerlinNoise(x * noiseScale + noiseOffsetX, z * noiseScale + noiseOffsetZ) - 0.5f) * noiseAmplitude * (1f - t);
 
                     // 바깥 ShoreBandFraction 구간에서만 0 → 1로 자라는 진행도. 안쪽은 정확히 0이라
                     // 이 블록 전체가 무효가 되고, 예전 높이식과 결과가 완전히 같다.
@@ -88,7 +184,7 @@ namespace MakeGame.Systems
                         // 테두리로 갈수록 빠르게 깊어지게 한다.
                         float submerge = ShoreSubmergeDepth * shoreT * shoreT;
                         float shoreNoise =
-                            (Mathf.PerlinNoise(x * ShoreNoiseScale + 517f, z * ShoreNoiseScale + 517f) - 0.5f)
+                            (Mathf.PerlinNoise(x * ShoreNoiseScale + shoreOffsetX, z * ShoreNoiseScale + shoreOffsetZ) - 0.5f)
                             * ShoreNoiseAmplitude * shoreT;
                         y = baseHeight + noise - submerge + shoreNoise;
                     }

@@ -1,0 +1,2 @@
+# 지형 미리보기 렌더는 저장소에 넣지 않는다(Tools/blender/_preview 와 같은 규칙).
+*.png
