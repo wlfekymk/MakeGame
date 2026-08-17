@@ -132,13 +132,17 @@ def make_cell(kind, rng):
         blades(40, dry_ratio=0.55, width=6.6)
     else:  # flower
         blades(16, dry_ratio=0.10, height_lo=0.4, height_hi=0.75, width=6.2)
-        # 분홍 계열 2대 + 연분홍 1대 (레퍼런스의 루핀/분홍바늘꽃 무리)
-        draw_flower_spike(draw, rng, W * rng.uniform(0.30, 0.42), base_y, W * 0.88,
+        # 분홍 주조 + 흰색·연보라 액센트 (레퍼런스: 분홍 무리 속 흰 꽃이 드문드문)
+        draw_flower_spike(draw, rng, W * rng.uniform(0.28, 0.38), base_y, W * 0.90,
                           (214, 96, 168), (240, 150, 205))
-        draw_flower_spike(draw, rng, W * rng.uniform(0.56, 0.70), base_y, W * 0.74,
+        draw_flower_spike(draw, rng, W * rng.uniform(0.58, 0.70), base_y, W * 0.76,
                           (200, 84, 152), (236, 140, 196))
-        draw_flower_spike(draw, rng, W * rng.uniform(0.44, 0.54), base_y, W * 0.60,
-                          (228, 152, 196), (248, 196, 226))
+        draw_flower_spike(draw, rng, W * rng.uniform(0.44, 0.54), base_y, W * 0.62,
+                          (196, 150, 220), (226, 194, 244))   # 연보라
+        draw_flower_spike(draw, rng, W * rng.uniform(0.16, 0.24), base_y, W * 0.52,
+                          (238, 235, 226), (252, 250, 244))   # 흰색(짧은 대)
+        draw_flower_spike(draw, rng, W * rng.uniform(0.76, 0.86), base_y, W * 0.46,
+                          (236, 214, 130), (250, 236, 170))   # 노랑 액센트(더 짧게)
 
     img = img.resize((CELL, CELL), Image.LANCZOS)
     return img
