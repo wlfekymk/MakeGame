@@ -7,7 +7,7 @@ using MakeGame.Player;
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 초지(내륙 풀밭) 잔디 필드. 섬 지형 위에 수만 개의 잔디 blade를 GPU 인스턴싱으로 깐다.
+    /// 초지(내륙 풀밭) 잔디 필드 v2. 섬 지형 위에 수만 개의 잔디 카드를 GPU 인스턴싱으로 깐다.
     ///
     /// ── 구조 (SeabedGenerator의 "생성 훅 + 정적 레지스트리" 패턴을 그대로 따른다) ──
     ///  · 배치: 섬 메시 생성 직후 IslandMeshGenerator.BuildGroundCaps가 Build()를 1회 호출한다
@@ -18,13 +18,29 @@ namespace MakeGame.Systems
     ///    Graphics.RenderMeshInstanced로 그린다. GameObject/MeshRenderer가 인스턴스마다 생기지
     ///    않으므로 씬 오브젝트 수는 드라이버 1개뿐이다.
     ///
+    /// ── v2: 알파 컷아웃 카드 텍스처 + 군락감 + 꽃 무리 ──
+    ///  · 텍스처: Resources.Load&lt;Texture2D&gt;("Textures/grass_card") - 2×2 아틀라스
+    ///    ((0,0) 촘촘한 초록 / (1,0) 성긴+이삭 / (0,1) 마른 풀 / (1,1) 분홍 꽃 스파이크).
+    ///    카드 한 장에 풀잎 수십 가닥이 그려져 있어 같은 인스턴스 수로 밀도감이 크게 오른다.
+    ///  · 머티리얼 2장(같은 MG/Grass 셰이더): 잔디(_CellOverride -1 = 원점 해시로 잔디 3셀 택1,
+    ///    틴트 온) + 꽃(_CellOverride 3 = (1,1) 고정, _TintStrength 0 = 텍스처 원색).
+    ///  · 폴백: 텍스처가 null이면 v1 방식으로 돌아간다 - 좁은 blade 메시 + 틴트 그라데이션만
+    ///    (셰이더 _BaseMap 기본값 white가 곧 v1 렌더), 꽃 배치는 생략. 셰이더 자체가 없으면
+    ///    기존 계약대로 잔디 전체 생략(폴백 렌더 없음 - 조용히 무동작, 행렬 메모리도 안 쓴다).
+    ///  · 군락감(패치니스): 채택 확률에 파장 ~7m 저주파 격자 해시 노이즈(0.35~1.0 배율)를 곱해
+    ///    잔디가 균일 카펫이 아니라 무성한 곳/성긴 곳으로 갈린다. 1차 통과가 배율 합계를 세므로
+    ///    총 개수는 여전히 목표치 근처다.
+    ///  · 꽃 무리: 파장 ~11m의 별도 해시 노이즈가 문턱(상위 ~12%)을 넘는 지대에서만 잔디의
+    ///    8~15%를 꽃 배치로 전환 - 꽃이 드문드문 '무리 지어' 핀다. 꽃 인스턴스는 별도 행렬
+    ///    리스트로 모아 꽃 머티리얼 배치로 렌더한다(LOD A/B 분할은 잔디와 동일 규칙).
+    ///
     /// ── 셰이더 계약 (같은 웨이브의 MG/Grass, Resources/Shaders/MGGrass) ──
-    ///  · Resources.Load&lt;Shader&gt;("Shaders/MGGrass") 실패 시 잔디 전체 생략(폴백 렌더 없음 -
-    ///    조용히 무동작). 배치 자체를 건너뛰므로 행렬 메모리도 쓰지 않는다.
-    ///  · _MG_WindTime(Time.time) / _MG_PlayerPos(플레이어 월드 위치)를 매 프레임 주입한다.
-    ///    바람/밟힘 애니메이션은 전부 셰이더 정점 단계 - C#은 행렬을 다시 만지지 않는다.
-    ///  · blade 메시는 계약 규격(교차 쿼드 2장, 폭 0.14m·높이 1m·피벗 밑동·UV.y 0뿌리~1끝)대로
-    ///    이 클래스가 코드로 생성한다. Cull Off 셰이더라 단면 지오메트리면 충분하다.
+    ///  · _MG_WindTime(Time.time) / _MG_PlayerPos(플레이어 월드 위치)를 매 프레임 주입한다
+    ///    (잔디 머티리얼 - 꽃 머티리얼에도 같이 넣는다). 바람/밟힘 애니메이션은 전부 셰이더
+    ///    정점 단계 - C#은 행렬을 다시 만지지 않는다.
+    ///  · 카드 메시는 계약 규격(교차 쿼드 2장, 폭 0.55m·높이 0.65m·피벗 밑동·UV.y 0뿌리~1끝)대로
+    ///    이 클래스가 코드로 생성한다(텍스처 폴백 시에는 v1 blade 규격 0.14m×1m).
+    ///    Cull Off 셰이더라 단면 지오메트리면 충분하다.
     ///
     /// ── 초지 판정 (IslandMeshGenerator의 실제 색 경계 규칙 재사용) ──
     /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(≈1.30m + BandWobble(angle)
@@ -42,16 +58,16 @@ namespace MakeGame.Systems
     /// 애초에 성립하지 않는 비용이고, 정점 보간은 곱셈 몇 번이다.
     ///
     /// ── rng 불변 (SeabedGenerator와 같은 근거) ──
-    /// System.Random/UnityEngine.Random을 만들지도 소비하지도 않는다. 지터·선별·회전·스케일 변주는
-    /// 전부 (격자 정수 좌표, 섬 월드 위치 유래 salt)만 입력으로 받는 순수 해시다
-    /// (IslandMeshGenerator.ComputeNoiseSeed / SeabedGenerator.LatticeHash01과 같은 finalizer 계열).
-    /// 따라서 자원/위험요소/초목의 추첨 순서는 한 칸도 밀리지 않는다.
+    /// System.Random/UnityEngine.Random을 만들지도 소비하지도 않는다. 지터·선별·회전·스케일 변주·
+    /// 패치 노이즈·꽃 전환까지 전부 (격자 정수 좌표, 섬 월드 위치 유래 salt)만 입력으로 받는 순수
+    /// 해시다(IslandMeshGenerator.ComputeNoiseSeed / SeabedGenerator.LatticeHash01과 같은 finalizer
+    /// 계열). 따라서 자원/위험요소/초목의 추첨 순서는 한 칸도 밀리지 않는다.
     ///
     /// ── 성능 가드 ──
     ///  · 행렬 배열은 섬당 1회 생성 후 재사용(프레임당 할당 0). RenderParams는 스택 구조체다.
     ///  · 간이 LOD: 배치 시 위치 해시로 A/B 두 그룹(각 절반)으로 미리 갈라 두고, 카메라-섬 테두리
-    ///    거리 60m 이내면 A+B(전체), 60~300m면 A만(절반 밀도), 300m 밖이면 스킵한다.
-    ///    프레임당 인스턴스 단위 재계산은 없다 - 거리 비교는 섬당 1회다.
+    ///    거리 60m 이내면 A+B(전체), 60~300m면 A만(절반 밀도), 300m 밖이면 스킵한다. 꽃도 같은
+    ///    규칙으로 A/B를 가른다. 프레임당 인스턴스 단위 재계산은 없다 - 거리 비교는 섬당 1회다.
     ///  · 비활성 섬(RegenerateWorld의 SetActive(false) → Destroy 흐름)은 그리지 않고, 파괴된 섬의
     ///    레코드는 조회 시 걸러 제거한다(SeabedGenerator.TrySampleSeabed와 같은 정리 규칙).
     /// </summary>
@@ -77,8 +93,29 @@ namespace MakeGame.Systems
         /// <summary>경사 측정용 유한 차분 간격(m). 메시 삼각형(2~5m)보다 작아 국소 경사를 잡는다.</summary>
         private const float SlopeProbeStep = 0.6f;
 
-        /// <summary>blade 밑동을 지면에 살짝 심는 깊이(m). 경사면에서 밑동이 뜨는 것을 가린다.</summary>
+        /// <summary>카드 밑동을 지면에 살짝 심는 깊이(m). 경사면에서 밑동이 뜨는 것을 가린다.</summary>
         private const float RootSinkDepth = 0.04f;
+
+        // ── 군락(패치니스)/꽃 무리 상수 (전부 순수 해시 노이즈 - rng 소비 0) ────────────
+
+        /// <summary>패치 노이즈 파장(m). 이 스케일로 무성한 곳/성긴 곳이 갈린다.</summary>
+        private const float PatchWavelength = 7f;
+
+        /// <summary>패치 노이즈 최저 배율. 성긴 곳도 완전히 비지는 않는다(0.35~1.0).</summary>
+        private const float PatchFloor = 0.35f;
+
+        /// <summary>꽃 무리 노이즈 파장(m). 패치보다 넓어 꽃밭이 더 큰 덩어리로 뭉친다.</summary>
+        private const float FlowerWavelength = 11f;
+
+        /// <summary>
+        /// 꽃 지대 문턱. 보간된 격자 해시 노이즈는 0.5 근처로 몰리므로 0.76 초과는 면적 기준
+        /// 상위 ~12% - 레퍼런스처럼 꽃이 드문드문 무리 지어 핀다.
+        /// </summary>
+        private const float FlowerZoneThreshold = 0.76f;
+
+        /// <summary>꽃 지대 안에서 잔디→꽃 전환 비율의 하한/상한(문턱 초과 정도로 보간).</summary>
+        private const float FlowerRatioMin = 0.08f;
+        private const float FlowerRatioMax = 0.15f;
 
         // ── 렌더/LOD 상수 ──────────────────────────────────────────────────────────
 
@@ -95,19 +132,23 @@ namespace MakeGame.Systems
 
         private sealed class GrassRecord
         {
-            public Transform root;        // 섬 지형 오브젝트. 파괴(RegenerateWorld) 감지용.
-            public Vector3 center;        // 섬 중심(월드)
-            public float radius;          // 섬 지형 반지름 R
-            public Matrix4x4[] groupA;    // LOD 그룹 A(약 절반). 원거리에서는 이것만 그린다.
-            public Matrix4x4[] groupB;    // LOD 그룹 B(나머지 절반). 근거리에서만 추가로 그린다.
-            public Bounds bounds;         // RenderParams.worldBounds(섬 단위)
+            public Transform root;         // 섬 지형 오브젝트. 파괴(RegenerateWorld) 감지용.
+            public Vector3 center;         // 섬 중심(월드)
+            public float radius;           // 섬 지형 반지름 R
+            public Matrix4x4[] groupA;     // 잔디 LOD 그룹 A(약 절반). 원거리에서는 이것만 그린다.
+            public Matrix4x4[] groupB;     // 잔디 LOD 그룹 B(나머지 절반). 근거리에서만 추가.
+            public Matrix4x4[] flowerA;    // 꽃 LOD 그룹 A(꽃 머티리얼로 렌더. 폴백 시 null).
+            public Matrix4x4[] flowerB;    // 꽃 LOD 그룹 B.
+            public Bounds bounds;          // RenderParams.worldBounds(섬 단위)
         }
 
         private static readonly List<GrassRecord> registry = new List<GrassRecord>();
 
         private static Mesh bladeMesh;
         private static Material grassMaterial;
-        private static bool shaderMissing;      // 한 번 실패하면 이후 전부 조용히 무동작(계약)
+        private static Material flowerMaterial;  // 카드 텍스처 폴백 시 null - 꽃 배치 자체가 없다.
+        private static bool shaderMissing;       // 한 번 실패하면 이후 전부 조용히 무동작(계약)
+        private static bool hasCardTexture;      // grass_card 로드 성공 여부(꽃/카드 규격 스위치)
         private static int windTimeId;
         private static int playerPosId;
 
@@ -116,7 +157,7 @@ namespace MakeGame.Systems
         // ═══════════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// 섬 하나의 잔디 인스턴스 배열을 굽는다. IslandMeshGenerator.BuildGroundCaps에서
+        /// 섬 하나의 잔디/꽃 인스턴스 배열을 굽는다. IslandMeshGenerator.BuildGroundCaps에서
         /// 섬 메시 확보 직후 같은 동기 흐름으로 호출된다(SeabedGenerator.Build와 같은 훅 지점).
         /// </summary>
         /// <param name="islandObject">섬 지형 오브젝트("Island_{id}_{size}").</param>
@@ -181,10 +222,11 @@ namespace MakeGame.Systems
             int cellRange = Mathf.CeilToInt(radius / CellSpacing);
             float maxPlaceRadiusSq = radius * 0.98f * radius * 0.98f;
 
-            // ── 1차 통과: 초지 조건을 만족하는 후보 셀 수만 센다(저장 없음) ─────────────
-            // 목표 개수 대비 채택 확률을 정확히 잡기 위한 사전 계수다. 경사 검사는 여기서 하지
+            // ── 1차 통과: 초지 조건을 만족하는 후보 셀의 패치 배율 합을 구한다(저장 없음) ──
+            // v1은 개수만 셌지만 v2는 채택 확률에 패치 노이즈 배율(0.35~1.0)이 곱해지므로,
+            // 배율 합계로 나눠야 총 개수가 목표치 근처에 남는다. 경사 검사는 여기서 하지
             // 않는다(비싼 검사라 채택된 소수에만 건다 - 목표는 "~" 근사치라 몇 % 미달은 허용).
-            int eligible = 0;
+            float eligibleWeight = 0f;
             for (int iz = -cellRange; iz <= cellRange; iz++)
             {
                 for (int ix = -cellRange; ix <= cellRange; ix++)
@@ -192,18 +234,28 @@ namespace MakeGame.Systems
                     float x, z, y;
                     if (TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
                             maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
-                        eligible++;
+                        eligibleWeight += PatchDensity(x, z, islandSalt);
                 }
             }
-            if (eligible == 0)
+            if (eligibleWeight <= 0f)
                 return;
 
-            float keepProbability = Mathf.Min(1f, targetCount / eligible);
+            // 패치 배율이 곱해진 채택 판정에서 총 기대 개수 = keepProbability × 배율 합.
+            // 1을 넘으면(작은 초지) 무성한 셀이 전부 채택될 뿐이라 클램프가 필요 없다.
+            float keepProbability = targetCount / eligibleWeight;
 
-            // ── 2차 통과: 해시 선별 + 경사 검사 + 행렬 생성 ─────────────────────────────
+            // ── 2차 통과: 해시 선별(×패치 배율) + 경사 검사 + 행렬 생성 + 꽃 전환 ──────────
             int expected = Mathf.CeilToInt(targetCount * 0.55f) + 16;
             var listA = new List<Matrix4x4>(expected);
             var listB = new List<Matrix4x4>(expected);
+            List<Matrix4x4> flowerListA = null;
+            List<Matrix4x4> flowerListB = null;
+            if (flowerMaterial != null)
+            {
+                // 꽃은 전체의 최대 ~2%(면적 12% × 전환 15%) 수준 - 소용량으로 시작해도 충분하다.
+                flowerListA = new List<Matrix4x4>(256);
+                flowerListB = new List<Matrix4x4>(256);
+            }
             float minY = float.MaxValue;
             float maxY = float.MinValue;
 
@@ -216,7 +268,11 @@ namespace MakeGame.Systems
                             maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
                         continue;
 
-                    if (Hash01(ix, iz, islandSalt ^ 0x9E3779B9u) > keepProbability)
+                    // 군락감: 채택 확률에 파장 ~7m 저주파 노이즈 배율(0.35~1.0)을 곱한다 -
+                    // 균일 카펫이 아니라 무성한 곳/성긴 곳으로 갈린다. 1차 통과와 같은 식이라
+                    // 총 개수는 목표치 근처를 유지한다.
+                    float patch = PatchDensity(x, z, islandSalt);
+                    if (Hash01(ix, iz, islandSalt ^ 0x9E3779B9u) > keepProbability * patch)
                         continue;
 
                     // 경사 30도 초과 제외(유한 차분). 절벽(P7 메사)·수로 둑 상단 급경사를 걸러낸다.
@@ -238,21 +294,39 @@ namespace MakeGame.Systems
                     var matrix = Matrix4x4.TRS(worldPos, Quaternion.Euler(0f, yaw, 0f),
                         new Vector3(scaleXZ, scaleY, scaleXZ));
 
-                    // LOD 그룹 배정도 위치 해시(프레임에서 절대 재계산하지 않는다).
-                    if (Hash01(ix, iz, islandSalt ^ 0x165667B1u) < 0.5f)
-                        listA.Add(matrix);
+                    // 꽃 무리: 파장 ~11m 노이즈가 문턱(상위 ~12%)을 넘는 지대에서만, 채택된 잔디의
+                    // 8~15%(문턱 초과 정도로 보간)를 꽃 배치로 전환한다. 텍스처 폴백 시에는
+                    // flowerList가 null이라 이 분기 전체가 죽는다(v1과 같은 잔디-only).
+                    bool isFlower = false;
+                    if (flowerListA != null)
+                    {
+                        float zone = LatticeNoise(x, z, FlowerWavelength, islandSalt ^ 0x68E31DA4u);
+                        if (zone > FlowerZoneThreshold)
+                        {
+                            float ratio = Mathf.Lerp(FlowerRatioMin, FlowerRatioMax,
+                                (zone - FlowerZoneThreshold) / (1f - FlowerZoneThreshold));
+                            isFlower = Hash01(ix, iz, islandSalt ^ 0xB5297A4Du) < ratio;
+                        }
+                    }
+
+                    // LOD 그룹 배정도 위치 해시(프레임에서 절대 재계산하지 않는다). 꽃도 같은 규칙.
+                    bool inGroupA = Hash01(ix, iz, islandSalt ^ 0x165667B1u) < 0.5f;
+                    if (isFlower)
+                        (inGroupA ? flowerListA : flowerListB).Add(matrix);
                     else
-                        listB.Add(matrix);
+                        (inGroupA ? listA : listB).Add(matrix);
 
                     if (y < minY) minY = y;
                     if (y > maxY) maxY = y;
                 }
             }
 
-            if (listA.Count + listB.Count == 0)
+            int total = listA.Count + listB.Count
+                + (flowerListA != null ? flowerListA.Count + flowerListB.Count : 0);
+            if (total == 0)
                 return;
 
-            // worldBounds는 섬 단위 하나. 높이는 blade 최대 신장(스케일 1.15) + 바람 진폭 여유.
+            // worldBounds는 섬 단위 하나. 높이는 카드 최대 신장(스케일 1.15) + 바람 진폭 여유.
             float boundsMinY = center.y + minY - RootSinkDepth - 0.2f;
             float boundsMaxY = center.y + maxY + 1.35f;
             var bounds = new Bounds(
@@ -266,6 +340,8 @@ namespace MakeGame.Systems
                 radius = radius,
                 groupA = listA.ToArray(),
                 groupB = listB.ToArray(),
+                flowerA = flowerListA != null && flowerListA.Count > 0 ? flowerListA.ToArray() : null,
+                flowerB = flowerListB != null && flowerListB.Count > 0 ? flowerListB.ToArray() : null,
                 bounds = bounds,
             });
         }
@@ -295,6 +371,36 @@ namespace MakeGame.Systems
                 + 0.22f * Mathf.Sin(angle * 2f + phaseA)
                 + 0.12f * Mathf.Sin(angle * 3f + phaseB);
             return y >= minHeight;
+        }
+
+        // ── 저주파 격자 해시 노이즈 (군락/꽃 무리 - rng 소비 0) ────────────────────────
+
+        /// <summary>패치 밀도 배율 0.35~1.0. 파장 ~7m 노이즈로 무성한 곳/성긴 곳을 가른다.</summary>
+        private static float PatchDensity(float x, float z, uint islandSalt)
+        {
+            return Mathf.Lerp(PatchFloor, 1f,
+                LatticeNoise(x, z, PatchWavelength, islandSalt ^ 0x7F4A7C15u));
+        }
+
+        /// <summary>
+        /// 파장 wavelength의 값 노이즈 [0,1]: 격자점 해시(Hash01)를 smoothstep 이중 선형 보간.
+        /// 입력이 (섬 로컬 좌표, salt)뿐인 순수 함수라 1차/2차 통과가 항상 같은 값을 본다.
+        /// </summary>
+        private static float LatticeNoise(float x, float z, float wavelength, uint salt)
+        {
+            float fx = x / wavelength;
+            float fz = z / wavelength;
+            int x0 = Mathf.FloorToInt(fx);
+            int z0 = Mathf.FloorToInt(fz);
+            float tx = fx - x0;
+            float tz = fz - z0;
+            tx = tx * tx * (3f - 2f * tx);
+            tz = tz * tz * (3f - 2f * tz);
+            float h00 = Hash01(x0, z0, salt);
+            float h10 = Hash01(x0 + 1, z0, salt);
+            float h01 = Hash01(x0, z0 + 1, salt);
+            float h11 = Hash01(x0 + 1, z0 + 1, salt);
+            return Mathf.Lerp(Mathf.Lerp(h00, h10, tx), Mathf.Lerp(h01, h11, tx), tz);
         }
 
         // ── 메시 정점 격자 높이 샘플러 ────────────────────────────────────────────────
@@ -371,11 +477,12 @@ namespace MakeGame.Systems
             }
         }
 
-        // ── 공유 에셋 (blade 메시 1개 + 머티리얼 1장, 월드 전체 공유) ─────────────────────
+        // ── 공유 에셋 (카드 메시 1개 + 머티리얼 2장, 월드 전체 공유) ─────────────────────
 
         /// <summary>
-        /// 셰이더 로드/머티리얼/blade 메시를 준비한다. 셰이더가 없으면 false를 래치하고 이후
-        /// 모든 경로가 조용히 무동작한다(계약: 폴백 렌더 없음). 필드 초기화식이 아니라 호출 시
+        /// 셰이더/텍스처 로드와 머티리얼/카드 메시를 준비한다. 셰이더가 없으면 false를 래치하고
+        /// 이후 모든 경로가 조용히 무동작한다(계약: 폴백 렌더 없음). 텍스처(grass_card)가 없으면
+        /// v1 방식(좁은 blade + 틴트만, 꽃 없음)으로 폴백한다. 필드 초기화식이 아니라 호출 시
         /// 로드한다(Unity 6.5: 필드 초기화식에서 Resources.Load 금지).
         /// </summary>
         private static bool EnsureGrassAssets()
@@ -394,40 +501,81 @@ namespace MakeGame.Systems
                     return false;
                 }
 
+                // 카드 텍스처(2×2 아틀라스). null이어도 계속 간다 - 셰이더 _BaseMap 기본값
+                // white가 곧 v1 틴트 그라데이션 렌더라 잔디는 그대로 나온다(꽃만 생략).
+                Texture2D cardTexture = Resources.Load<Texture2D>("Textures/grass_card");
+                hasCardTexture = cardTexture != null;
+
+                // 잔디 머티리얼: 해시 셀 선택(_CellOverride 기본 -1), 틴트 온(톤 조절용 완화 승수).
                 grassMaterial = new Material(shader) { name = "MGGrassFieldMaterial" };
                 grassMaterial.enableInstancing = true;
-                // 색 기본값(계약): 뿌리/끝/마른 풀. 나머지(_WindStrength/_TrampleRadius)는 셰이더
+                // 틴트 기본값(계약): 뿌리/끝/마른 풀. 나머지(_WindStrength/_TrampleRadius)는 셰이더
                 // Properties 기본값을 그대로 쓴다.
                 grassMaterial.SetColor("_RootColor", new Color(0.16f, 0.30f, 0.14f, 1f));
                 grassMaterial.SetColor("_TipColor", new Color(0.45f, 0.62f, 0.28f, 1f));
                 grassMaterial.SetColor("_DryTint", new Color(0.55f, 0.52f, 0.30f, 1f));
+                if (hasCardTexture)
+                {
+                    grassMaterial.SetTexture("_BaseMap", cardTexture);
+                    grassMaterial.SetFloat("_TintStrength", 0.65f); // 텍스처가 이미 뿌리→끝 색을 가진다
+                }
+                else
+                {
+                    grassMaterial.SetFloat("_TintStrength", 1f);    // v1 방식: 틴트가 곧 알베도
+                }
+
+                // 꽃 머티리얼: (1,1) 분홍 꽃 스파이크 셀 고정 + 틴트 오프(텍스처 원색).
+                // 텍스처 폴백 시에는 만들지 않는다 - 꽃 배치 분기 자체가 죽는다.
+                if (hasCardTexture)
+                {
+                    flowerMaterial = new Material(shader) { name = "MGGrassFlowerMaterial" };
+                    flowerMaterial.enableInstancing = true;
+                    flowerMaterial.SetTexture("_BaseMap", cardTexture);
+                    flowerMaterial.SetFloat("_CellOverride", 3f);
+                    flowerMaterial.SetFloat("_TintStrength", 0f);
+                }
+
                 windTimeId = Shader.PropertyToID("_MG_WindTime");
                 playerPosId = Shader.PropertyToID("_MG_PlayerPos");
             }
 
             if (bladeMesh == null)
-                bladeMesh = CreateBladeMesh();
+                bladeMesh = hasCardTexture ? CreateCardMesh() : CreateBladeMesh();
             return true;
         }
 
         /// <summary>
-        /// blade 메시(계약 규격): 교차 쿼드 2장 = 정점 8개·삼각형 4개. 폭 0.14m·높이 1m·피벗 밑동,
-        /// UV.y 0(뿌리)~1(끝). Cull Off 셰이더라 단면이면 충분하다. 높이 변주는 인스턴스 행렬
-        /// 스케일 몫이므로 메시는 항상 1m 기준이다.
+        /// 카드 메시(v2 계약 규격): 교차 쿼드 2장 = 정점 8개·삼각형 4개. 폭 0.55m·높이 0.65m·
+        /// 피벗 밑동, UV.y 0(뿌리)~1(끝). 카드 한 장에 텍스처 풀잎 수십 가닥이 실리므로 v1 blade보다
+        /// 넓고 낮다. Cull Off 셰이더라 단면이면 충분하고, 높이 변주는 인스턴스 행렬 스케일 몫이다.
+        /// </summary>
+        private static Mesh CreateCardMesh()
+        {
+            return CreateCrossQuadMesh("GrassCard", 0.275f, 0.65f);
+        }
+
+        /// <summary>
+        /// v1 blade 메시(텍스처 폴백 규격): 폭 0.14m·높이 1m. grass_card가 없을 때 틴트
+        /// 그라데이션만으로 그리던 v1 모양을 그대로 유지한다.
         /// </summary>
         private static Mesh CreateBladeMesh()
         {
-            const float halfWidth = 0.07f;
-            var mesh = new Mesh { name = "GrassBlade" };
+            return CreateCrossQuadMesh("GrassBlade", 0.07f, 1f);
+        }
+
+        /// <summary>교차 쿼드 2장 메시 공용 생성기. 피벗 밑동, UV.y 0(뿌리)~1(끝).</summary>
+        private static Mesh CreateCrossQuadMesh(string name, float halfWidth, float height)
+        {
+            var mesh = new Mesh { name = name };
 
             mesh.vertices = new[]
             {
                 // 쿼드 1: XY 평면(법선 +Z)
                 new Vector3(-halfWidth, 0f, 0f), new Vector3(halfWidth, 0f, 0f),
-                new Vector3(-halfWidth, 1f, 0f), new Vector3(halfWidth, 1f, 0f),
+                new Vector3(-halfWidth, height, 0f), new Vector3(halfWidth, height, 0f),
                 // 쿼드 2: ZY 평면(법선 +X) - 90도 교차
                 new Vector3(0f, 0f, -halfWidth), new Vector3(0f, 0f, halfWidth),
-                new Vector3(0f, 1f, -halfWidth), new Vector3(0f, 1f, halfWidth),
+                new Vector3(0f, height, -halfWidth), new Vector3(0f, height, halfWidth),
             };
             mesh.uv = new[]
             {
@@ -446,7 +594,8 @@ namespace MakeGame.Systems
             };
             // 바람 진폭(0.12m)·스케일 상한(1.15)을 덮는 여유 바운즈. 컬링은 어차피
             // RenderParams.worldBounds(섬 단위)가 담당하므로 넉넉해도 비용이 없다.
-            mesh.bounds = new Bounds(new Vector3(0f, 0.6f, 0f), new Vector3(0.6f, 1.5f, 0.6f));
+            mesh.bounds = new Bounds(new Vector3(0f, height * 0.6f, 0f),
+                new Vector3(halfWidth * 2f + 0.5f, height * 1.5f, halfWidth * 2f + 0.5f));
             return mesh;
         }
 
@@ -501,13 +650,20 @@ namespace MakeGame.Systems
                 if (player == null && Time.frameCount % 60 == 0)
                     player = FindAnyObjectByType<PlayerController>();
 
-                // 매 프레임 주입(계약). 플레이어를 아직 못 찾았으면 _MG_PlayerPos는 셰이더 기본값
-                // (지하 -10000)에 남아 밟힘이 없다 - 올바른 무동작이다.
-                grassMaterial.SetFloat(windTimeId, Time.time);
+                // 매 프레임 주입(계약). 잔디/꽃 머티리얼 둘 다 - 꽃도 같은 바람/밟힘을 받는다.
+                // 플레이어를 아직 못 찾았으면 _MG_PlayerPos는 셰이더 기본값(지하 -10000)에 남아
+                // 밟힘이 없다 - 올바른 무동작이다.
+                float now = Time.time;
+                grassMaterial.SetFloat(windTimeId, now);
+                if (flowerMaterial != null)
+                    flowerMaterial.SetFloat(windTimeId, now);
                 if (player != null)
                 {
                     Vector3 p = player.transform.position;
-                    grassMaterial.SetVector(playerPosId, new Vector4(p.x, p.y, p.z, 0f));
+                    var packed = new Vector4(p.x, p.y, p.z, 0f);
+                    grassMaterial.SetVector(playerPosId, packed);
+                    if (flowerMaterial != null)
+                        flowerMaterial.SetVector(playerPosId, packed);
                 }
 
                 Vector3 camPos = targetCamera.transform.position;
@@ -534,6 +690,8 @@ namespace MakeGame.Systems
                     if (edgeDistance > MaxRenderDistance)
                         continue;
 
+                    bool fullDetail = edgeDistance <= FullDetailDistance;
+
                     var rparams = new RenderParams(grassMaterial)
                     {
                         worldBounds = record.bounds,
@@ -543,8 +701,22 @@ namespace MakeGame.Systems
 
                     // 간이 LOD: 미리 갈라 둔 그룹을 거리로 선택만 한다(인스턴스 단위 재계산 없음).
                     RenderGroup(rparams, record.groupA);
-                    if (edgeDistance <= FullDetailDistance)
+                    if (fullDetail)
                         RenderGroup(rparams, record.groupB);
+
+                    // 꽃 배치: 별도 머티리얼((1,1) 셀 고정·틴트 오프), LOD 분할은 잔디와 동일 규칙.
+                    if (flowerMaterial != null && (record.flowerA != null || record.flowerB != null))
+                    {
+                        var flowerParams = new RenderParams(flowerMaterial)
+                        {
+                            worldBounds = record.bounds,
+                            shadowCastingMode = ShadowCastingMode.Off,
+                            receiveShadows = true,
+                        };
+                        RenderGroup(flowerParams, record.flowerA);
+                        if (fullDetail)
+                            RenderGroup(flowerParams, record.flowerB);
+                    }
                 }
             }
 
