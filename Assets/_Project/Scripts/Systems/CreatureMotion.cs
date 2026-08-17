@@ -720,5 +720,143 @@ namespace MakeGame.Systems
         {
             StopAndReset();
         }
+
+        // ── [B52] 이동 생물 공용 장애물 검사(정적 · 순수 질의) ─────────────────────────────
+        //  루트를 실제로 옮기는 쪽(곰 AI의 DriveBear 등)이 이번 프레임 이동분을 적용하기 **전에**
+        //  부르는 유틸. 배경: 바위 큰 덩어리/거암/절벽에 convex MeshCollider가 생겼는데
+        //  (IslandMeshGenerator.Vegetation) 곰은 transform 직접 이동이라 물리 충돌을 받지 않아
+        //  바위를 그대로 뚫고 걸었다.
+        //
+        //  ★ 이 파일의 계약(클래스 주석 (1) "루트를 절대 건드리지 않는다")은 그대로다 ★
+        //  아래 메서드들은 static이고 어떤 Transform에도 쓰기를 하지 않는다 - "얼마나 갈 수 있는지"만
+        //  계산해 돌려주고, 루트를 옮기는 것은 여전히 콜라이더를 소유한 쪽(HazardSource)이다.
+        //  공용으로 여기에 둔 이유: 이동 코드가 생기는 다른 생물도 같은 검사를 그대로 쓰기 위해서다
+        //  (사냥감 HuntableCreature는 현재 제자리 고정이라 호출부가 없다).
+        //
+        //  걸러내는 것(막지 않는 것):
+        //   · 지형 "Island_" 콜라이더 - TerrainSampler와 같은 명명 규칙. 접지는 호출자의 지형 프로브가
+        //     따로 담당하므로 여기서 지형에 걸리면 오르막마다 헛발이 난다.
+        //   · Water 레이어 - 마스크(Default만)에서 이미 빠진다. 물가 진입 금지도 호출자 몫이다.
+        //   · 트리거(QueryTriggerInteraction.Ignore) - 곰/벌떼 등 위험 요소의 접촉 판정 콜라이더.
+        //   · 자기 자신(루트/자식) · 플레이어(CharacterController) · 리지드바디가 달린 동체 ·
+        //     다른 생물(HazardSource/HuntableCreature) - 생물끼리는 서로 길을 막지 않는다.
+        //  남는 것 = 기본 레이어의 정적 장애물: 바위 convex 헐/절벽 박스, 야자수 줄기, 건축물 등.
+
+        /// <summary>스피어캐스트 히트 재사용 버퍼. 메인 스레드 전용(이 프로젝트의 물리 질의는 전부 메인 스레드다).</summary>
+        private static readonly RaycastHit[] obstacleCastHits = new RaycastHit[16];
+
+        /// <summary>Default 레이어만 캐스트한다. 지형도 Default지만 이름("Island_")으로 거르고, 물은 Water 레이어라 여기서 이미 빠진다.</summary>
+        private const int ObstacleCastLayerMask = 1 << 0;
+
+        /// <summary>이동분보다 이만큼(m) 더 내다본다 - 다음 프레임에 파고들기 직전에 미리 미끄러지기 시작한다.</summary>
+        private const float ObstacleCastSkin = 0.05f;
+
+        /// <summary>지형 콜라이더 이름 접두사(TerrainSampler.TerrainNamePrefix와 같은 규칙 - 그쪽은 private라 여기 다시 적는다).</summary>
+        private const string TerrainObstaclePrefix = "Island_";
+
+        /// <summary>
+        /// 이번 프레임의 수평 이동분(motion)을 몸통 반경의 스피어로 캐스트해서, 실제로 갈 수 있는
+        /// 이동분을 돌려준다. (a) 장애물에 막히면 표면 접선으로 투영해 미끄러지고(ProjectOnPlane),
+        /// (b) 미끄러질 곳조차 막혀 있으면 Vector3.zero + blocked=true를 돌려준다 - 호출자는 이동을
+        /// 취소하고(배회라면) 목적지를 무효화하면 된다. 어떤 Transform에도 쓰기를 하지 않는다.
+        /// </summary>
+        /// <param name="mover">이동 주체의 루트. 자기 콜라이더(루트/자식) 히트를 거르는 데만 쓴다.</param>
+        /// <param name="castCenter">스피어 중심(월드). 보통 루트 중심 - 몸통 높이의 장애물만 본다.</param>
+        /// <param name="motion">이번 프레임 수평 이동분(월드, y는 무시된다).</param>
+        /// <param name="bodyRadius">몸통 반경(m). 스피어 반경으로 그대로 쓴다.</param>
+        /// <param name="blocked">미끄러질 곳도 없이 완전히 막혔으면 true.</param>
+        public static Vector3 ResolveObstacleMotion(Transform mover, Vector3 castCenter, Vector3 motion,
+            float bodyRadius, out bool blocked)
+        {
+            blocked = false;
+            motion.y = 0f;
+
+            float distance = motion.magnitude;
+            if (mover == null || distance <= 0.0001f || bodyRadius <= 0.01f)
+                return motion;   // 서 있으면 캐스트하지 않는다(성능 규칙: 캐스트는 이동 중일 때만)
+
+            RaycastHit obstacle;
+            if (!FindBlockingObstacle(mover, castCenter, motion / distance, distance, bodyRadius, out obstacle))
+                return motion;
+
+            // (a) 표면을 따라 미끄러진다. 헐/박스 면이 기울어 있어도 수평 이동만 하므로 법선의
+            //     수평 성분에 대해서만 투영한다(수직 성분을 남기면 이동에 y가 새어 들어 접지가 흔들린다).
+            Vector3 wallNormal = obstacle.normal;
+            wallNormal.y = 0f;
+            if (wallNormal.sqrMagnitude > 0.0001f)
+            {
+                wallNormal.Normalize();
+                Vector3 slide = Vector3.ProjectOnPlane(motion, wallNormal);
+                slide.y = 0f;
+
+                float slideDistance = slide.magnitude;
+                if (slideDistance > 0.0001f
+                    && !FindBlockingObstacle(mover, castCenter, slide / slideDistance, slideDistance, bodyRadius, out _))
+                    return slide;   // 프레임당 캐스트 최대 2회(원래 방향 + 미끄러질 방향)
+            }
+
+            // (b) 미끄러질 방향까지 막혔다(모서리에 정면으로 박힘). 이동 취소.
+            blocked = true;
+            return Vector3.zero;
+        }
+
+        /// <summary>
+        /// 지정 방향으로 스피어캐스트해서 "정말로 길을 막는" 가장 가까운 히트를 찾는다. 없으면 false.
+        /// 시작 시점에 이미 겹쳐 있는 콜라이더(distance 0 반환)는 막지 않는다 - 스폰/복원으로 바위 속에
+        /// 박힌 개체가 영원히 못 빠져나오는 것을 막는 표준 처리다(걸어 나가는 것은 허용).
+        /// </summary>
+        private static bool FindBlockingObstacle(Transform mover, Vector3 castCenter, Vector3 direction,
+            float distance, float bodyRadius, out RaycastHit closest)
+        {
+            closest = default(RaycastHit);
+
+            int count = Physics.SphereCastNonAlloc(castCenter, bodyRadius, direction,
+                obstacleCastHits, distance + ObstacleCastSkin, ObstacleCastLayerMask,
+                QueryTriggerInteraction.Ignore);
+
+            bool found = false;
+            for (int i = 0; i < count; i++)
+            {
+                RaycastHit hit = obstacleCastHits[i];
+                if (hit.collider == null || hit.distance <= 0f)
+                    continue;   // 시작 겹침(위 주석) 또는 무효 항목
+
+                if (IsObstacleIgnored(mover, hit.collider))
+                    continue;
+
+                if (!found || hit.distance < closest.distance)
+                {
+                    closest = hit;
+                    found = true;
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>이 콜라이더는 이동을 막는 장애물로 치지 않는다(클래스 하단 [B52] 구획 주석의 목록).</summary>
+        private static bool IsObstacleIgnored(Transform mover, Collider hitCollider)
+        {
+            Transform hitTransform = hitCollider.transform;
+            if (hitTransform == mover || hitTransform.IsChildOf(mover))
+                return true;   // 자기 몸
+
+            if (hitCollider.gameObject.name.StartsWith(TerrainObstaclePrefix))
+                return true;   // 지형 - 접지/경사는 호출자의 지형 프로브 몫
+
+            if (hitCollider is CharacterController)
+                return true;   // 플레이어 - 접촉 판정은 트리거 콜라이더가 담당한다
+
+            if (hitCollider.attachedRigidbody != null)
+                return true;   // 움직이는 물리 동체 - 정적 장애물이 아니다
+
+            // 다른 생물. 위험 요소는 대부분 트리거라 위에서 이미 걸러지지만, 종류가 늘어도 안전하게.
+            if (hitCollider.GetComponentInParent<HazardSource>() != null)
+                return true;
+            if (hitCollider.GetComponentInParent<HuntableCreature>() != null)
+                return true;
+
+            return false;
+        }
     }
 }

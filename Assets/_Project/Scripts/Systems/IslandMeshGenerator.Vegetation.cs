@@ -381,6 +381,15 @@ namespace MakeGame.Systems
             if (sourceMesh == null)
                 return;
 
+            // [B52] cliff_b(凹 굽은 단애)만 convex 헐을 쓰지 않는다. convex는 정의상 오목부를 채우므로
+            // 굽은 벽이 만드는 공터(명세 "凹면이 공터를 만든다")가 보이지 않는 벽으로 불룩하게 막혔다
+            // (배치부의 "convex 헐이 메워지지만" 주석으로 보고돼 있던 한계). 박스 2개 조합으로 교체.
+            if (sourceMesh.name.StartsWith("rock_cliff_b"))
+            {
+                AddCliffBWingColliders(part);
+                return;
+            }
+
             // [B51] 콜라이더 전용 헐이 있으면 그것을 쓴다. PhysX convex cook은 256폴리곤이
             // 상한이라 렌더 메시(3,000면대)를 그대로 물리면 부분 헐로 잘린다(스모크 테스트 검출).
             Mesh hull = GetCollisionHull(sourceMesh);
@@ -388,6 +397,47 @@ namespace MakeGame.Systems
             var collider = part.AddComponent<MeshCollider>();
             collider.sharedMesh = hull != null ? hull : sourceMesh;
             collider.convex = true;
+        }
+
+        /// <summary>
+        /// [B52] cliff_b 전용: 凹 굽은 단애의 **두 날개를 박스 하나씩**으로 근사한다(박스 2개 조합).
+        ///
+        /// 치수 근거 - rockforms.py 주석(W 9.5 / H 6.7(y −0.5~6.2 · CLIFF_SINK 0.5) / D 4.6, 凹 굽음
+        /// curve_amp = 앞면 기준면의 0.55)과 디스크 OBJ 정점 실측(메시 로컬: x ±4.75 · y −0.5~6.2 ·
+        /// z ±2.3). 지면 대역(y ≤ 2.5)의 앞면(+Z) 프로파일은 중앙 x=0에서 z≈1.91로 물러나고 날개 끝
+        /// |x|≈4.3에서 z≈2.2로 감싸 나온다 - 한쪽 날개 안에서는 거의 선형이라, 날개마다 현(chord)을
+        /// 앞면으로 삼은 yaw 박스가 실제 곡면과 6cm 이내로 맞는다(가운데 오목부는 그대로 열린다).
+        ///
+        /// 좌우를 **대칭**으로 근사한 이유: 실측 좌우 기울기 차이(0.077 vs 0.042)는 날개 끝에서 15cm
+        /// 이하인 반면, 대칭이면 OBJ 임포터의 축 반전 규약과 무관하게 같은 결과가 나온다.
+        ///
+        /// 배치부(PlaceLargeStones)의 전제는 전부 유지된다: 파츠 스케일이 균등(0.9~1.15)이라 자식
+        /// 박스가 그대로 비례하고 전단도 없다 · 이름이 "Island_"로 시작하지 않아 지형으로 오인되지
+        /// 않는다 · 기본 레이어/비트리거라 곰 장애물 캐스트(CreatureMotion)와 플레이어 충돌 모두
+        /// 예전 헐과 같은 대상이 된다 · rng를 소비하지 않는다(배치 재현성 불변).
+        /// 다른 바위(a~e/mega/stack/rubble/cliff_a)는 위 convex 경로 그대로다.
+        /// </summary>
+        private static void AddCliffBWingColliders(GameObject part)
+        {
+            // 날개 박스(메시 로컬 미터): 길이 5.0(현 방향 - 중앙 0.3m 겹침, |x|≈4.6까지) ×
+            // 높이 6.7(y −0.5~6.2) × 깊이 4.3(현 앞면에서 뒷비탈 −2.3까지). yaw ±3.4° = 현 기울기
+            // atan(0.06). 중심 = 현 중점(x ∓2.15, z 2.04)에서 법선 반대로 깊이 절반만큼.
+            Vector3 size = new Vector3(5.0f, 6.7f, 4.3f);
+            CreateCliffBWingBox(part.transform, "CliffB_ColWingL", new Vector3(-2.28f, 2.85f, -0.11f), 3.4f, size);
+            CreateCliffBWingBox(part.transform, "CliffB_ColWingR", new Vector3(2.28f, 2.85f, -0.11f), -3.4f, size);
+        }
+
+        /// <summary>날개 박스 하나. 자식 GameObject에 localRotation yaw만 준다(부모 스케일이 균등이라 전단 없음).</summary>
+        private static void CreateCliffBWingBox(Transform parent, string name, Vector3 localCenter,
+            float yawDegrees, Vector3 size)
+        {
+            var box = new GameObject(name);
+            box.transform.SetParent(parent, false);
+            box.transform.localPosition = localCenter;
+            box.transform.localRotation = Quaternion.Euler(0f, yawDegrees, 0f);
+
+            var collider = box.AddComponent<BoxCollider>();
+            collider.size = size;
         }
 
         /// <summary>
@@ -763,7 +813,7 @@ namespace MakeGame.Systems
                     Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f),
                     materials[i % materials.Length]);
                 part.transform.position = spot;
-                AddRockCollider(part, mesh); // 凹면(cliff_b)은 convex 헐이 메워지지만 명세가 convex다 - 보고됨
+                AddRockCollider(part, mesh); // [B52] 凹면(cliff_b)만 convex 헐 대신 날개 박스 2개(AddCliffBWingColliders) - cliff_a는 convex 그대로
 
                 placedLarge.Add(spot);
                 placedSpacing.Add(StoneCliffSpacing);

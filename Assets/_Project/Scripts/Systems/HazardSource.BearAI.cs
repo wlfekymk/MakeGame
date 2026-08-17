@@ -585,6 +585,34 @@ namespace MakeGame.Systems
             if (targetSpeed > 0.01f && step > 0.0001f && toTarget.magnitude < step)
                 nextXZ = new Vector3(targetPoint.x, self.y, targetPoint.z);
 
+            // ── [B52] 장애물 통과 방지: 바위 convex 헐·절벽 박스·야자수 줄기·건축물 등 기본 레이어의
+            // 정적 콜라이더를 곰이 그냥 뚫고 걷던 문제. 이동분을 몸통 반경 스피어로 캐스트해서
+            // 막히면 표면 접선으로 미끄러지고, 그마저 막히면 이동을 취소한다(물가 방어와 같은 처리 -
+            // false를 돌려주면 배회 중에는 기존 경로 그대로 Idle로 빠져 목적지가 무효화된다).
+            // 검사는 CreatureMotion의 공용 정적 유틸이 한다 - **순수 질의**라 그 파일의 "루트를
+            // 건드리지 않는다" 계약은 그대로고, 이동 코드가 생기는 다른 생물도 같은 검사를 쓸 수 있다.
+            // 캐스트는 실제로 움직일 때만 프레임당 1~2회이고, 여기서는 bearRng를 한 번도 뽑지 않는다
+            // (추첨 횟수 불변 - 도메인 리로드 재구축 계약(BearRng 주석)이 깨지지 않는다).
+            Vector3 horizontalMove = nextXZ - self;
+            horizontalMove.y = 0f;
+            if (horizontalMove.sqrMagnitude > 0.00000001f)
+            {
+                // 몸통 반경: 루트 localScale.x가 곧 몸 폭(m)이다(BearBodyScale.x 0.86 × sizeJitter,
+                // 새끼는 그 0.58배) - 성체 약 0.43m / 새끼 약 0.25m. 캐스트 중심은 루트 중심
+                // (지면 위 bearHoverOffset)이라 몸통 높이의 장애물만 보고, 발밑 지형은 걸리지 않는다.
+                float bodyRadius = Mathf.Clamp(transform.localScale.x * 0.5f, 0.15f, 0.6f);
+                bool obstacleBlocked;
+                Vector3 allowedMove = CreatureMotion.ResolveObstacleMotion(
+                    transform, self, horizontalMove, bodyRadius, out obstacleBlocked);
+                if (obstacleBlocked)
+                {
+                    bearSpeed = 0f;
+                    return false;
+                }
+
+                nextXZ = self + allowedMove;
+            }
+
             // 지난 프레임에 지면을 못 찾았다면(월드 재생성 등) 마지막 지면 높이 자체를 믿을 수 없으므로
             // 프로브 범위를 크게 벌려 다시 잡는다. 좁은 범위(±8/12)로만 계속 찾으면 지형이 다른 높이로
             // 다시 생성됐을 때 곰이 영원히 얼어붙는다.

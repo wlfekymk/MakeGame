@@ -144,8 +144,8 @@ namespace MakeGame.Systems
         };
 
         /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.
-        /// d~f도 OBJ 정점의 maxY를 실측한 값이다(d 2.044 / e 5.070 / f 4.252).</summary>
-        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f, 2.044f, 5.070f, 4.252f };
+        /// d~f도 OBJ 정점의 maxY를 실측한 값이다(d 4.113(v2 재제작) / e 5.070 / f 4.252).</summary>
+        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f, 4.113f, 5.070f, 4.252f };
 
         // 배열 크기는 경로 배열 길이에서 온다(모델을 더 붙일 때 세 곳을 같이 고치는 실수 방지).
         // 필드 초기자는 선언 순서대로 실행되므로 BambooModelResourcePaths(위)가 먼저 채워진다.
