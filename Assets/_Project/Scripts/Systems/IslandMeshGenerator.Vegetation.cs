@@ -286,17 +286,21 @@ namespace MakeGame.Systems
                 spot = ClampToIslandRing(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f);
                 // 머티리얼 선택은 인덱스로만 한다 - rng를 한 번이라도 더 소비하면 같은 worldSeed에서
                 // 숲 배치가 통째로 밀려 재현성이 깨진다(파일 상단 [결정성] 주석).
-                CreatePalm(root.transform,
-                    SnapToLand(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f, VegetationMinGroundY),
-                    rng, trunkMaterial, frondMaterials[i % frondMaterials.Length]);
+                // [B53 침수 가드] SnapToLand는 같은 방위선에서 육지를 못 찾으면 **원래 스냅(물속)을
+                // 그대로 돌려준다** - 마스크형 섬(초승달/깊은 만)에서 그 방위 전체가 물이면 야자수가
+                // 수면 아래에 서던 실제 침수 경로다. 재추첨은 금지(rng 스트림 불변)이므로 그 자리는
+                // 버리되, Create*가 소비할 draw는 그대로 소비시킨다(skipSubmerged 인자).
+                Vector3 palmSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f, VegetationMinGroundY);
+                CreatePalm(root.transform, palmSpot, rng, trunkMaterial, frondMaterials[i % frondMaterials.Length],
+                    ShouldSkipSubmergedSpot(palmSpot, VegetationMinGroundY));
             }
 
             for (int i = 0; i < bushCount; i++)
             {
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.8f, radius * 0.50f);
-                CreateBush(root.transform,
-                    SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.8f, radius * 0.50f, VegetationMinGroundY),
-                    rng, bushMaterials[i % bushMaterials.Length]);
+                Vector3 bushSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.8f, radius * 0.50f, VegetationMinGroundY);
+                CreateBush(root.transform, bushSpot, rng, bushMaterials[i % bushMaterials.Length],
+                    ShouldSkipSubmergedSpot(bushSpot, VegetationMinGroundY));
             }
 
             for (int i = 0; i < tuftCount; i++)
@@ -304,9 +308,9 @@ namespace MakeGame.Systems
                 // 풀포기만 풀밭 경계 밖(모래)까지 나갈 수 있게 둔다 - 해안가에 듬성듬성 난 풀처럼 보여
                 // 풀밭과 모래의 경계선이 자로 그은 원처럼 보이지 않게 하는 역할이다.
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.5f, radius * 0.70f);
-                CreateGrassTuft(root.transform,
-                    SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.5f, radius * 0.70f, VegetationMinGroundY),
-                    rng, tuftMaterials[i % tuftMaterials.Length]);
+                Vector3 tuftSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.5f, radius * 0.70f, VegetationMinGroundY);
+                CreateGrassTuft(root.transform, tuftSpot, rng, tuftMaterials[i % tuftMaterials.Length],
+                    ShouldSkipSubmergedSpot(tuftSpot, VegetationMinGroundY));
             }
 
             // ── [B29] 여기서부터 바위·표류물. 난수 소비를 **초목 루프 뒤에** 두는 것이 중요하다 ──
@@ -325,9 +329,9 @@ namespace MakeGame.Systems
                 // 시작 섬의 경비행기 잔해(중심에서 7.2m, 반경 3m)나 배 작업대(6.7m)와 겹치면
                 // 상호작용 대상이 돌덩이에 파묻힌다 - 덤불(폭 2.2m, 0.8×innerClear)보다 위험이 크다.
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius + 4f, radius * 0.78f);
-                CreateRockCluster(root.transform,
-                    SnapToLand(spot, islandObject.transform.position, innerClearRadius + 4f, radius * 0.78f, VegetationMinGroundY),
-                    rng, rockMaterials, i);
+                Vector3 rockSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius + 4f, radius * 0.78f, VegetationMinGroundY);
+                CreateRockCluster(root.transform, rockSpot, rng, rockMaterials, i,
+                    ShouldSkipSubmergedSpot(rockSpot, VegetationMinGroundY));
             }
 
             // (4) 표류물. 파도선 근처에만 놓는다. 개수는 소형 2 / 중형 4 / 대형 7 / 특대 9.
@@ -341,10 +345,12 @@ namespace MakeGame.Systems
             for (int i = 0; i < driftCount; i++)
             {
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, radius * 0.845f, radius * 0.925f);
-                CreateDriftItem(root.transform,
-                    SnapToLand(spot, islandObject.transform.position, radius * 0.55f, radius * 0.99f,
-                        DriftMinGroundY, DriftMaxGroundY),
-                    rng, driftMaterials[i % driftMaterials.Length], i);
+                // [B53 침수 가드] 하한이 DriftMinGroundY(-0.3)인 것은 그대로다 - 파도선에 반쯤 잠긴
+                // 것은 의도된 자세라 가드도 그 하한까지는 통과시킨다(ShouldSkipSubmergedSpot 주석).
+                Vector3 driftSpot = SnapToLand(spot, islandObject.transform.position, radius * 0.55f, radius * 0.99f,
+                    DriftMinGroundY, DriftMaxGroundY);
+                CreateDriftItem(root.transform, driftSpot, rng, driftMaterials[i % driftMaterials.Length], i,
+                    ShouldSkipSubmergedSpot(driftSpot, DriftMinGroundY));
             }
 
             // ── [B51] 대형 석재(거암/잔해/겹바위/절벽). 반드시 기존 draw가 **전부 끝난 뒤**에 온다 ──
@@ -467,8 +473,11 @@ namespace MakeGame.Systems
         /// 자원 노드 "돌조각"(0.43~0.59m, IslandResourceSpawner)과는 아무 관계가 없다 - 그쪽은 채집
         /// 조준·콜라이더가 걸려 있는 완전히 다른 오브젝트이고 이 변경이 한 줄도 닿지 않는다.
         /// </summary>
+        /// <param name="skipSubmerged">[B53] true면 물속 자리라 무리 전체(뿌리 GameObject 포함)를 만들지
+        /// 않는다. rng draw는 본 경로와 비트 단위로 같게 소비한다 - 이 함수의 draw는 전부 지역 변수로
+        /// 선추첨돼 있어(B45 규칙의 확장) 생성만 건너뛰면 된다.</param>
         private static void CreateRockCluster(Transform parent, Vector3 groundPosition, System.Random rng,
-            Material[] materials, int index)
+            Material[] materials, int index, bool skipSubmerged = false)
         {
             float mainWidth = rng.NextFloat(1.7f, 3.6f);
             float mainHeight = mainWidth * rng.NextFloat(0.50f, 0.84f);
@@ -476,11 +485,17 @@ namespace MakeGame.Systems
             float yaw = rng.NextFloat(0f, 360f);
             int satelliteCount = rng.NextInt(2, 4); // 2 또는 3
 
-            var cluster = new GameObject("Deco_RockCluster");
-            cluster.transform.SetParent(parent, false);
-            cluster.transform.position = groundPosition;
-            // 뿌리는 yaw만 + 스케일 1(균등). 자식이 비균일 스케일이라도 전단이 생기지 않는다.
-            cluster.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            // [B53] 뿌리 GameObject는 물속 스킵이 아닐 때만 만든다(GameObject 생성은 rng를 안 쓴다).
+            Transform clusterTransform = null;
+            if (!skipSubmerged)
+            {
+                var cluster = new GameObject("Deco_RockCluster");
+                cluster.transform.SetParent(parent, false);
+                cluster.transform.position = groundPosition;
+                // 뿌리는 yaw만 + 스케일 1(균등). 자식이 비균일 스케일이라도 전단이 생기지 않는다.
+                cluster.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+                clusterTransform = cluster.transform;
+            }
 
             // [B45] 큰 덩어리의 난수는 **경로와 무관하게 여기서 전부 뽑는다.** 모델 경로가 회전 3회 중
             // yaw 하나만 쓰더라도 소비 횟수는 폴백과 비트 단위로 같아야 한다 - 한 번이라도 덜 뽑으면
@@ -500,9 +515,10 @@ namespace MakeGame.Systems
             //    바위가 2~3배로 부푼다. 그래서 모델 경로는 **폭을 모델 실측 폭으로 나눈 균등 배율**만 쓴다.
             //  · 균등 배율이므로 자식 회전과 곱해져도 전단이 생기지 않는다. 그래도 회전은 yaw만 준다 -
             //    모델 밑면이 평면이라 x/z로 기울이면 한쪽 모서리가 지면에서 뜬다.
+            // [B53] 물속 스킵이면 두 생성 분기 모두 건너뛴다(TryGetRockModel·CreatePart는 rng 미소비).
             Mesh mainModelMesh;
             Vector3 mainModelSize;
-            if (TryGetRockModel(mainWidth, groundPosition, out mainModelMesh, out mainModelSize))
+            if (!skipSubmerged && TryGetRockModel(mainWidth, groundPosition, out mainModelMesh, out mainModelSize))
             {
                 // 뽑아 둔 mainWidth를 그대로 목표 폭으로 쓰므로 폭 분포(1.7~3.6m)가 1mm도 바뀌지 않는다.
                 // [B50] 변종은 5종(a~e)이고 선택은 "목표 폭 ±35% 후보 → 위치 해시" 2단계다
@@ -515,18 +531,18 @@ namespace MakeGame.Systems
                 // ★ 매립은 폭이 아니라 **선택된 모델의 실측 높이**(mainModelSize.y × fit) 기준이다 -
                 //   판석 rock_d(높이 0.95m)가 폭 기준 매립이었다면 통째로 잠겼을 것이다(B50 검증).
                 float modelSink = Mathf.Max(0.2f, modelHeight * mainSinkFraction);
-                var mainPart = CreatePart(cluster.transform, "Deco_RockMain", mainModelMesh,
+                var mainPart = CreatePart(clusterTransform, "Deco_RockMain", mainModelMesh,
                     new Vector3(0f, -modelSink, 0f),
                     new Vector3(fit, fit, fit),
                     Quaternion.Euler(0f, mainSpin, 0f),
                     materials[index % materials.Length]);
                 AddRockCollider(mainPart, mainModelMesh);
             }
-            else
+            else if (!skipSubmerged)
             {
                 // 모델이 없으면(임포트 전·프로브 실패) 예전 절차 메시 그대로다. 이 경로는 지우지 않는다.
                 float mainSink = Mathf.Max(0.2f, mainHeight * mainSinkFraction);
-                var mainPart = CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
+                var mainPart = CreatePart(clusterTransform, "Deco_RockMain", GetBoulderMesh(index, true),
                     new Vector3(0f, mainHeight * 0.5f - mainSink, 0f),
                     new Vector3(mainWidth, mainHeight, mainDepth),
                     Quaternion.Euler(mainTiltX, mainSpin, mainTiltZ),
@@ -545,14 +561,22 @@ namespace MakeGame.Systems
                 float distance = mainWidth * 0.42f + width * 0.32f;
                 float sink = Mathf.Max(0.12f, height * rng.NextFloat(0.20f, 0.36f));
 
+                // [B53] 이 두 draw는 원래 tilt 식과 CreatePart 인자 안에서 뽑던 것을 **같은 순서로**
+                // 지역 변수로 끌어올렸다(스킵 경로에서도 똑같이 소비하기 위해 - 순서·횟수 불변).
+                float satelliteSpin = rng.NextFloat(0f, 360f);
+                float satelliteDepthScale = rng.NextFloat(0.72f, 1.05f);
+
+                if (skipSubmerged)
+                    continue;   // draw는 전부 끝났다 - 곁돌도 만들지 않는다
+
                 // Cross(direction, up)을 축으로 +lean만큼 돌리면 위쪽이 -direction, 즉 큰 바위 쪽으로 넘어간다.
                 Quaternion tilt = Quaternion.AngleAxis(lean, Vector3.Cross(direction, Vector3.up))
-                    * Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
+                    * Quaternion.Euler(0f, satelliteSpin, 0f);
 
-                CreatePart(cluster.transform, $"Deco_RockChip{i}",
+                CreatePart(clusterTransform, $"Deco_RockChip{i}",
                     GetBoulderMesh(index * 3 + i + 1, false),
                     direction * distance + new Vector3(0f, height * 0.5f - sink, 0f),
-                    new Vector3(width, height, width * rng.NextFloat(0.72f, 1.05f)),
+                    new Vector3(width, height, width * satelliteDepthScale),
                     tilt, materials[(index + i + 1) % materials.Length]);
             }
         }
@@ -568,13 +592,19 @@ namespace MakeGame.Systems
         /// 회전과 비균일 스케일이 같은 오브젝트에 걸리지만 부모(IslandSurface)는 스케일 1이라
         /// 전단이 생기지 않는다(T·R·S 순서상 스케일이 먼저 자기 로컬에서 적용된다).
         /// </summary>
+        /// <param name="skipSubmerged">[B53] true면 깊은 물 자리라 배치하지 않는다(rng draw 4회는 그대로
+        /// 소비 - 이 함수의 draw는 아래 4회가 전부고 switch/모델 분기는 rng를 안 쓴다).</param>
         private static void CreateDriftItem(Transform parent, Vector3 groundPosition, System.Random rng,
-            Material material, int index)
+            Material material, int index, bool skipSubmerged = false)
         {
             float yaw = rng.NextFloat(0f, 360f);
             float leanRoll = rng.NextFloat(0f, 1f);
             float leanAxis = rng.NextFloat(0f, 360f);
             float scale = rng.NextFloat(0.85f, 1.25f);
+
+            // [B53] 물속 스킵: draw는 위에서 전부 끝났다.
+            if (skipSubmerged)
+                return;
 
             // 이 switch는 (a) 두 경로 공용의 자세(lean)와 (b) 폴백 경로의 메시·크기를 정한다.
             // 폴백 메시 규격은 셋 다 [-0.5,0.5]^3 단위 상자다 → 아래 size는 **미터** 그대로이고, 호출부가
@@ -905,6 +935,56 @@ namespace MakeGame.Systems
         /// <summary>초목·바위가 서 있어도 되는 최소 지면 높이(m). 이보다 낮으면 물에 잠긴 자리로 본다.</summary>
         private const float VegetationMinGroundY = 0.25f;
 
+        /// <summary>
+        /// [B53] 해수면의 절대 y(m). WorldMapManager.seaLevel의 씬 값 0과 같은 전제이며, 이 파일의
+        /// 기존 높이 상수(VegetationMinGroundY 0.25 / DriftMinGroundY -0.3)가 전부 이 절대 y 규약
+        /// 위에 서 있으므로 여기서도 상수로 둔다(FindAnyObjectByType 조회를 배치 루프에 넣지 않는다).
+        /// </summary>
+        private const float VegetationSeaLevelY = 0f;
+
+        /// <summary>[B53] 낮은 확률로 초목이 서 있어도 봐줄 수 있는 최대 수심(m). 그보다 깊으면 무조건 스킵.</summary>
+        private const float ShallowWaterMaxDepth = 0.6f;
+
+        /// <summary>[B53] 얕은 물 배치를 허용하는 비율(위치 해시 기준 8%). "물가에 반쯤 잠긴 나무" 정도만 남긴다.</summary>
+        private const float ShallowWaterAllowance = 0.08f;
+
+        /// <summary>[B53] 얕은 물 허용 판정용 위치 해시 salt. MeshLibrary의 변종/스트레치 salt 대역(0x51A7B001~014)과 겹치지 않게 띄웠다.</summary>
+        private const uint ShallowWaterAllowSalt = 0x51A7B020u;
+
+        /// <summary>
+        /// [B53 공용 침수 가드] SnapToLand까지 거친 **확정 배치 좌표**가 "그래도 물속"이면 그 개체를
+        /// 배치하지 말아야 하는지 판정한다. 이 파일의 모든 배치 경로(야자수/덤불/풀포기/바위 무리/
+        /// 표류물 - 대형 석재는 TryFindStoneSpot·rubble 가드가 같은 스킵을 이미 한다)가 이 함수 하나를 쓴다.
+        ///
+        /// 실제 침수 원인: 섬이 각도별 반지름 마스크(0.70~1.00R, 초승달/석호/만)라 SampleOnIsland가
+        /// 마스크 밖 물 위를 뽑을 수 있고, SnapToLand는 **같은 방위선의 반경만** 훑기 때문에 그 방위
+        /// 전체가 물이면 실패한 뒤 원래 스냅(수면 아래 지면)을 그대로 돌려준다 - 호출부는 그걸 그대로
+        /// 심어서 나무·바위가 물에 잠겼다.
+        ///
+        /// 판정 규칙(전부 순수 계산 - ★ rng 소비 0 ★):
+        ///  · 지면이 해수면(0) 이상이거나, 호출부의 자체 하한(표류물 -0.3처럼 의도된 반침수) 이상이면
+        ///    통과(기존 배치와 1cm도 다르지 않다).
+        ///  · 해수면 아래면: 수심 0.6m 이하 + 위치 해시 8%에 든 개체만 통과(맹그로브처럼 물가에 잠긴
+        ///    소수만 남긴다), 나머지는 스킵.
+        /// 스킵이어도 호출부는 Create*를 skipSubmerged=true로 **반드시 호출**한다 - 그 안의 rng draw를
+        /// 본 경로와 비트 단위로 똑같이 소비해야 같은 worldSeed의 다른 초목이 1cm도 밀리지 않는다.
+        /// (이 스트림은 세이브 키와 무관한 장식 전용이라 스킵 자체는 세이브에 아무 영향이 없다.)
+        /// </summary>
+        private static bool ShouldSkipSubmergedSpot(Vector3 snappedSpot, float minGroundY)
+        {
+            // 표류물처럼 하한이 음수인 경로는 그 하한까지 "물이지만 의도된 자리"로 본다.
+            float allowedFloor = Mathf.Min(minGroundY, VegetationSeaLevelY);
+            if (snappedSpot.y >= allowedFloor)
+                return false;
+
+            float depth = VegetationSeaLevelY - snappedSpot.y;
+            if (depth > ShallowWaterMaxDepth)
+                return true;   // 깊은 물 - 무조건 스킵
+
+            // 얕은 물: 위치 해시 8%만 허용. 해시 입력은 이미 확정된 좌표뿐이라 결정적이다.
+            return DecorationPositionHash01(snappedSpot, ShallowWaterAllowSalt) >= ShallowWaterAllowance;
+        }
+
         /// <summary>표류물의 최소 지면 높이(m). 파도선에 반쯤 잠긴 것이 정상이라 음수까지 허용한다.</summary>
         private const float DriftMinGroundY = -0.3f;
 
@@ -1026,8 +1106,11 @@ namespace MakeGame.Systems
         /// 회전한 자식을 두면 전단(shear)으로 찌그러진다(CreatureVisualBuilder/StructureVisualBuilder
         /// 주석에 반복해서 나오는 이 프로젝트의 기존 함정).
         /// </summary>
+        /// <param name="skipSubmerged">[B53] true면 이 자리는 물속이라 **아무 것도 만들지 않는다.**
+        /// 단, 본 경로가 소비하는 rng draw(상단 7회 + 잎 루프 3회×5)는 비트 단위로 똑같이 소비한다 -
+        /// 한 번이라도 덜 뽑으면 같은 worldSeed에서 뒤따르는 덤불·풀·바위·표류물이 통째로 밀린다.</param>
         private static void CreatePalm(Transform parent, Vector3 groundPosition, System.Random rng,
-            Material trunkMaterial, Material frondMaterial)
+            Material trunkMaterial, Material frondMaterial, bool skipSubmerged = false)
         {
             // 굵기: 예전 0.16~0.26m는 5~7m 높이에 대해 너무 가늘어 장대로 보였다. 밑동을 0.26~0.38m로
             // 올리고 위로 갈수록 62%까지 가늘어지게 해서 "굵은 밑동 → 가는 목"의 야자수 비례를 만든다.
@@ -1048,6 +1131,21 @@ namespace MakeGame.Systems
             float leanStep = rng.NextFloat(4f, 9f);          // 마디마다 더해지는 기울기
             float frondLength = rng.NextFloat(2.2f, 3.4f);
             float baseYaw = rng.NextFloat(0f, 360f);
+
+            // [B53] 물속 스킵: 위 7 draw는 이미 소비했다. 남은 것은 잎 루프의 3 draw × PalmFrondCount
+            // 뿐이므로(줄기 루프는 rng를 안 쓴다 - 아래 주석) 그것만 똑같이 태우고 나간다.
+            // 모델 경로가 파츠만 건너뛰며 draw를 전부 뽑는 것과 같은 규칙이다(아래 ★ 난수 소비 불변 ★).
+            // ⚠️ 잎 루프의 draw 구성(-14~14 / -16~4 / 40~68)을 바꾸면 이 블록도 함께 바꿀 것.
+            if (skipSubmerged)
+            {
+                for (int i = 0; i < PalmFrondCount; i++)
+                {
+                    rng.NextFloat(-14f, 14f);   // yaw 지터
+                    rng.NextFloat(-16f, 4f);    // innerPitch
+                    rng.NextFloat(40f, 68f);    // outerPitch
+                }
+                return;
+            }
 
             var palm = new GameObject("Veg_Palm");
             palm.transform.SetParent(parent, false);
@@ -1192,7 +1290,11 @@ namespace MakeGame.Systems
         /// 규칙 - 기울인 로브 3개 · 폭 &gt;&gt; 높이 - 은 하나도 바꾸지 않는다(스케일·회전·오프셋 그대로).
         /// 오히려 각진 면이 생겨 "매끈한 돌덩이"와의 구분이 강해진다. 난수 소비 순서·횟수도 그대로다.
         /// </summary>
-        private static void CreateBush(Transform parent, Vector3 groundPosition, System.Random rng, Material material)
+        /// <param name="skipSubmerged">[B53] true면 물속 자리라 배치하지 않는다. 이 함수의 rng draw는
+        /// 전부 아래 선추첨 블록에 모여 있으므로, 그 블록이 끝난 뒤에 조용히 나가기만 하면 소비량이
+        /// 본 경로와 정확히 같다(CreatePalm의 같은 이름 인자와 동일한 규칙).</param>
+        private static void CreateBush(Transform parent, Vector3 groundPosition, System.Random rng, Material material,
+            bool skipSubmerged = false)
         {
             float width = rng.NextFloat(1.3f, 2.2f);
             float height = rng.NextFloat(0.6f, 1.0f); // 폭 대비 확실히 낮게 - 납작한 비례가 돌과의 1차 구분
@@ -1212,6 +1314,10 @@ namespace MakeGame.Systems
             rng.NextFloat(0.55f, 0.80f);               // 예전 로브1 높이
             rng.NextFloat(-22f, 22f);                  // 예전 로브1 X기울기
             rng.NextFloat(-22f, 22f);                  // 예전 로브1 Z기울기
+
+            // [B53] 물속 스킵: 이 함수의 draw는 위에서 전부 끝났다(모델/폴백 분기는 rng를 안 쓴다).
+            if (skipSubmerged)
+                return;
 
             // ── [B50] 실물 덤불 모델(bush_a/b) ──
             //  위 draw들은 모델 경로에서도 **전부 그대로 뽑았다**(바위·야자수와 같은 선추첨 패턴 -
@@ -1256,7 +1362,9 @@ namespace MakeGame.Systems
         /// 화면에서 실제로 하던 일이 "위로 솟은 납작한 잎 다발"이라 실루엣은 사실상 동일하고, 끝이
         /// 뾰족해져 오히려 풀로 더 잘 읽힌다. 스케일·회전·위치 계산과 난수 소비는 한 줄도 바뀌지 않았다.
         /// </summary>
-        private static void CreateGrassTuft(Transform parent, Vector3 groundPosition, System.Random rng, Material material)
+        /// <param name="skipSubmerged">[B53] true면 물속 자리라 배치하지 않는다(rng draw 4회는 그대로 소비).</param>
+        private static void CreateGrassTuft(Transform parent, Vector3 groundPosition, System.Random rng, Material material,
+            bool skipSubmerged = false)
         {
             // [B9 디렉터 수정] 폭 0.7~1.5m 는 풀포기가 아니라 관목 크기였다(플레이어 몸통보다 넓다).
             // 이 값은 이전에 "눌린 구"였을 때 잡은 것인데, 잎 판으로 바뀌면서 그 크기가 그대로 벽이 됐다.
@@ -1265,6 +1373,10 @@ namespace MakeGame.Systems
             float height = rng.NextFloat(0.26f, 0.46f);
             float yaw = rng.NextFloat(0f, 360f);
             float lean = rng.NextFloat(-14f, 14f);
+
+            // [B53] 물속 스킵: 이 함수의 draw는 위 4회가 전부다(모델/폴백 분기는 rng를 안 쓴다).
+            if (skipSubmerged)
+                return;
 
             // ── [B50] 실물 풀 모델(grass_a/b) ──
             //  draw 4개는 모델 경로에서도 위에서 전부 뽑았다(선추첨 - 소비 순서·횟수 불변).

@@ -113,6 +113,30 @@ namespace MakeGame.Systems
         /// <summary>카드 밑동을 지면에 살짝 심는 깊이(m). 경사면에서 밑동이 뜨는 것을 가린다.</summary>
         private const float RootSinkDepth = 0.04f;
 
+        // ── [v3] 이봉(bimodal) 스케일 변주 상수 (다발 tuft - 순수 위치 해시, rng 소비 0) ──
+        // 실제 초지는 낮은 하층 풀 사이로 솟은 다발이 드문드문 섞인다. 위치 해시로 80%는
+        // 짧은 하층(0.5~0.9), 20%는 솟은 다발(1.0~1.5, xz도 1.0~1.25로 살짝 넓게)로 가른다.
+        // 배치 개수·판정·LOD 로직은 불변 - 행렬 스케일 계산만 이 상수를 쓴다.
+
+        /// <summary>솟은 다발(tuft)로 뽑히는 비율.</summary>
+        private const float TuftFraction = 0.2f;
+
+        /// <summary>하층 짧은 풀의 높이 스케일 범위.</summary>
+        private const float UnderScaleYMin = 0.5f;
+        private const float UnderScaleYMax = 0.9f;
+
+        /// <summary>하층 짧은 풀의 폭(xz) 스케일 범위(v2와 동일).</summary>
+        private const float UnderScaleXZMin = 0.8f;
+        private const float UnderScaleXZMax = 1.1f;
+
+        /// <summary>솟은 다발의 높이 스케일 범위.</summary>
+        private const float TuftScaleYMin = 1.0f;
+        private const float TuftScaleYMax = 1.5f;
+
+        /// <summary>솟은 다발의 폭(xz) 스케일 범위 - 키만 크면 빗자루 같아서 살짝 넓게.</summary>
+        private const float TuftScaleXZMin = 1.0f;
+        private const float TuftScaleXZMax = 1.25f;
+
         // ── 군락(패치니스)/꽃 무리 상수 (전부 순수 해시 노이즈 - rng 소비 0) ────────────
 
         /// <summary>패치 노이즈 파장(m). 이 스케일로 무성한 곳/성긴 곳이 갈린다.</summary>
@@ -313,10 +337,19 @@ namespace MakeGame.Systems
                     if (gx * gx + gz * gz > MaxSlopeTan * MaxSlopeTan)
                         continue;
 
-                    // 인스턴스 변주(전부 위치 해시): yaw 0~360°, 높이 y 0.55~1.15, 폭 xz 0.8~1.1.
+                    // 인스턴스 변주(전부 위치 해시): yaw 0~360° + [v3] 이봉 스케일 -
+                    // 80%는 하층 짧은 풀(y 0.5~0.9), 20%는 솟은 다발(y 1.0~1.5, xz 1.0~1.25).
+                    // 균일 단봉 분포의 "고른 카펫"이 하층+다발 두 층으로 갈라진다.
                     float yaw = Hash01(ix, iz, islandSalt ^ 0x85EBCA6Bu) * 360f;
-                    float scaleY = Mathf.Lerp(0.55f, 1.15f, Hash01(ix, iz, islandSalt ^ 0xC2B2AE35u));
-                    float scaleXZ = Mathf.Lerp(0.8f, 1.1f, Hash01(ix, iz, islandSalt ^ 0x27D4EB2Fu));
+                    bool isTuft = Hash01(ix, iz, islandSalt ^ 0x94D049BBu) < TuftFraction;
+                    float hY = Hash01(ix, iz, islandSalt ^ 0xC2B2AE35u);
+                    float hXZ = Hash01(ix, iz, islandSalt ^ 0x27D4EB2Fu);
+                    float scaleY = isTuft
+                        ? Mathf.Lerp(TuftScaleYMin, TuftScaleYMax, hY)
+                        : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY);
+                    float scaleXZ = isTuft
+                        ? Mathf.Lerp(TuftScaleXZMin, TuftScaleXZMax, hXZ)
+                        : Mathf.Lerp(UnderScaleXZMin, UnderScaleXZMax, hXZ);
 
                     var worldPos = new Vector3(center.x + x, center.y + y - RootSinkDepth, center.z + z);
                     var matrix = Matrix4x4.TRS(worldPos, Quaternion.Euler(0f, yaw, 0f),
@@ -354,9 +387,11 @@ namespace MakeGame.Systems
             if (total == 0)
                 return;
 
-            // worldBounds는 섬 단위 하나. 높이는 카드 최대 신장(스케일 1.15) + 바람 진폭 여유.
+            // worldBounds는 섬 단위 하나. 높이는 최대 신장 + 바람 진폭 여유 - [v3] 다발 스케일
+            // 상한 1.5 × 폴백 blade 높이 1m = 1.5m까지 덮도록 여유를 1.65로 올렸다(카드 0.65m는
+            // 0.975m라 원래도 여유. 컬링 바운즈만 커질 뿐 배치·판정은 불변).
             float boundsMinY = center.y + minY - RootSinkDepth - 0.2f;
-            float boundsMaxY = center.y + maxY + 1.35f;
+            float boundsMaxY = center.y + maxY + 1.65f;
             var bounds = new Bounds(
                 new Vector3(center.x, (boundsMinY + boundsMaxY) * 0.5f, center.z),
                 new Vector3(radius * 2f + 2f, boundsMaxY - boundsMinY, radius * 2f + 2f));
@@ -545,6 +580,9 @@ namespace MakeGame.Systems
                 grassMaterial.SetColor("_RootColor", new Color(0.16f, 0.30f, 0.14f, 1f));
                 grassMaterial.SetColor("_TipColor", new Color(0.45f, 0.62f, 0.28f, 1f));
                 grassMaterial.SetColor("_DryTint", new Color(0.55f, 0.52f, 0.30f, 1f));
+                // [v3] 음영: 풀끝 스페큘러 시트 + 역광 투과(셰이더 기본값과 같지만 명시 세팅이 계약).
+                grassMaterial.SetFloat("_SheenStrength", 0.35f);
+                grassMaterial.SetFloat("_TranslucencyStrength", 0.4f);
                 if (hasCardTexture)
                 {
                     grassMaterial.SetTexture("_BaseMap", cardTexture);
@@ -564,6 +602,10 @@ namespace MakeGame.Systems
                     flowerMaterial.SetTexture("_BaseMap", cardTexture);
                     flowerMaterial.SetFloat("_CellOverride", 3f);
                     flowerMaterial.SetFloat("_TintStrength", 0f);
+                    // [v3] 꽃은 시트를 약하게(꽃잎이 번들거리면 플라스틱 느낌), 투과는 더 세게
+                    // (얇은 꽃잎이 역광에서 더 잘 비친다).
+                    flowerMaterial.SetFloat("_SheenStrength", 0.2f);
+                    flowerMaterial.SetFloat("_TranslucencyStrength", 0.5f);
                 }
 
                 windTimeId = Shader.PropertyToID("_MG_WindTime");

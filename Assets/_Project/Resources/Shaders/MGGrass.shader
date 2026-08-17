@@ -17,6 +17,16 @@
 //  * 원거리 밉에서 알파가 뭉개져 컷아웃이 사라지는 문제 완화: 카메라 거리로 clip 문턱을
 //    0.5(40m 이내)→0.3(150m 밖)으로 보간한다(정점 1회 계산, 프래그먼트는 clip 한 번).
 //
+// v3 추가(음영 - 아틀라스 v3 텍스처와 한 쌍):
+//  * 스페큘러 시트: 메인 라이트 블린-퐁 pow(N·H, 24) × UV.y 가중 × _SheenStrength(0.35) -
+//    풀끝이 햇빛 각도에서 띠 모양으로 반짝인다.
+//  * 투과(백라이트): saturate(-V·L)² × UV.y 가중 × _TranslucencyStrength(0.4) × 알베도 ×
+//    라이트 색 가산 - 역광에서 풀끝이 비쳐 보인다.
+//  * 인스턴스 색상(hue) 변주: 원점 해시 h(±6%)로 R×(1+h)·B×(1-h) 채널 승수(노랑↔청록 근사
+//    회전, G 고정) - 기존 명도 지터에 더해 균일한 초록 카펫 느낌을 부순다.
+//  * 원거리 페이드: clip 문턱을 150→300m에서 +1.0까지 올려 알파 높은 텍셀부터 차례로
+//    사라진다 - GrassFieldSystem의 300m 하드 컷과 이어져 팝이 없다.
+//
 // 유지되는 설계 계약(GrassFieldSystem 쪽과 맞물린다):
 //  * 카드 메시: 교차 쿼드 2장(피벗 밑동, UV.y = 0(뿌리)~1(끝)). 높이 변주는 인스턴스 행렬
 //    스케일로 들어온다 - 셰이더는 UV.y 가중만 쓰므로 스케일과 무관하게 "뿌리 고정, 끝이 크게"
@@ -47,6 +57,8 @@ Shader "MG/Grass"
         _TipColor("끝 틴트(밝은 초록)", Color) = (0.38, 0.62, 0.18, 1)
         _DryTint("마른 풀 틴트(지터 혼합 목표)", Color) = (0.55, 0.52, 0.26, 1)
         _TintStrength("틴트 세기(0 = 텍스처 원색, 1 = 풀 틴트)", Range(0.0, 1.0)) = 0.65
+        _SheenStrength("스페큘러 시트 세기(풀끝 블린-퐁 하이라이트)", Range(0.0, 1.0)) = 0.35
+        _TranslucencyStrength("투과(백라이트) 세기(역광 비침)", Range(0.0, 1.0)) = 0.4
         _CellOverride("아틀라스 셀(-1 = 원점 해시로 잔디 3셀 택1, 0~3 = 고정)", Float) = -1.0
         _WindStrength("바람 세기(1 = 끝 진폭 0.12m)", Range(0.0, 2.0)) = 1.0
         _TrampleRadius("밟힘 반경(m)", Float) = 1.2
@@ -87,6 +99,8 @@ Shader "MG/Grass"
                 half4 _TipColor;
                 half4 _DryTint;
                 half _TintStrength;
+                half _SheenStrength;
+                half _TranslucencyStrength;
                 float _CellOverride;
                 half _WindStrength;
                 float _TrampleRadius;
@@ -141,6 +155,8 @@ Shader "MG/Grass"
                 half3 rootCol     : TEXCOORD2;
                 half3 tipCol      : TEXCOORD3;
                 float fogFactor   : TEXCOORD4;
+                // 스페큘러 시트/투과의 시선 벡터 계산용 - 프래그먼트에서 카메라와 뺄셈 1회.
+                float3 positionWS : TEXCOORD5;
             };
 
             Varyings vert(Attributes IN)
@@ -182,6 +198,7 @@ Shader "MG/Grass"
                 positionWS.y -= max(positionWS.y - originWS.y, 0.0) * (press * tipW * 0.65);
 
                 OUT.positionCS = TransformWorldToHClip(positionWS);
+                OUT.positionWS = positionWS;
 
                 // ---- 아틀라스 셀 선택: _CellOverride < 0이면 원점 해시로 잔디 3셀 중 택1. ----
                 // 0=(0,0) 촘촘한 초록 / 1=(1,0) 성긴+이삭 / 2=(0,1) 마른 풀 / 3=(1,1) 분홍 꽃 -
@@ -195,20 +212,29 @@ Shader "MG/Grass"
 
                 // 원거리 밉에서 알파가 뭉개져 잔디가 "녹아 사라지는" 컷아웃 고질병 완화:
                 // clip 문턱을 카메라 거리 40m(0.5) → 150m(0.3)으로 완화한다. 정점 1회 계산.
+                // 여기에 원거리 페이드: 150→300m에서 문턱을 다시 +1.0까지 올려(최종 1.3 > 알파 최대)
+                // 알파 높은 텍셀부터 차례로 사라지며 잔디가 녹듯 빠진다 - C# 쪽 300m 하드 컷과
+                // 정확히 이어져 "섬 단위로 잔디가 툭 꺼지는" 팝이 없어진다.
                 float camDist = distance(originWS, GetCameraPositionWS());
-                OUT.uvData.w = lerp(0.5, 0.3, saturate((camDist - 40.0) / 110.0));
+                OUT.uvData.w = lerp(0.5, 0.3, saturate((camDist - 40.0) / 110.0))
+                    + saturate((camDist - 150.0) / 150.0);
 
                 // 변위가 0.12m 수준이라 노멀 재계산은 생략(MGKelpSway와 같은 판단). 프래그먼트에서
                 // 위로 절반 굽히므로 카드 노멀의 정밀도는 어차피 지배적이지 않다.
                 OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS);
 
-                // ---- 원점 해시 틴트 지터: _DryTint 0~35% 혼합 + 명도 ±8%. ----
-                // 해시 소금을 다르게 두 번 - 마른 정도와 명도가 서로 독립으로 흩어진다.
+                // ---- 원점 해시 틴트 지터: _DryTint 0~35% 혼합 + 명도 ±8% + 색상(hue) ±6%. ----
+                // 해시 소금을 다르게 세 번 - 마른 정도/명도/색상이 서로 독립으로 흩어진다.
                 // v2에서는 이 색이 알베도가 아니라 텍스처에 곱하는 "틴트 승수"다(_TintStrength로 완화).
+                // 색상 변주는 정확한 HSV 회전 대신 RGB 채널 가중 승수로 근사: R×(1+h)·B×(1-h)는
+                // h > 0에서 노랑 쪽, h < 0에서 청록 쪽으로 기운다(G 고정이라 초록 기조는 유지) -
+                // 균일한 초록 카펫이 포기마다 미묘하게 다른 색으로 갈라진다.
                 half dry = (half)(MGHash(originWS.xz) * 0.35);
                 half bright = (half)(1.0 + (MGHash(originWS.xz + 41.7) * 2.0 - 1.0) * 0.08);
-                OUT.rootCol = lerp(_RootColor.rgb, _DryTint.rgb, dry) * bright;
-                OUT.tipCol = lerp(_TipColor.rgb, _DryTint.rgb, dry) * bright;
+                half hue = (half)((MGHash(originWS.xz + 23.77) * 2.0 - 1.0) * 0.06);
+                half3 jitterMul = bright * half3(1.0 + hue, 1.0, 1.0 - hue);
+                OUT.rootCol = lerp(_RootColor.rgb, _DryTint.rgb, dry) * jitterMul;
+                OUT.tipCol = lerp(_TipColor.rgb, _DryTint.rgb, dry) * jitterMul;
 
                 OUT.fogFactor = ComputeFogFactor(OUT.positionCS.z);
                 return OUT;
@@ -234,11 +260,29 @@ Shader "MG/Grass"
                     lerp(IN.rootCol, IN.tipCol, saturate(IN.uvData.z)), _TintStrength);
                 half3 albedo = tex.rgb * tint;
 
-                // 라이팅: 메인 라이트 램버트 + SH 앰비언트(URP Lit 간이형 - 잔디는 그림자
-                // 수신/스페큘러 없이도 충분하고, 수만 포기라 프래그먼트는 최대한 싸야 한다).
+                // 라이팅: 메인 라이트 램버트 + SH 앰비언트(URP Lit 간이형 - 수만 포기라
+                // 프래그먼트는 최대한 싸야 한다). 여기에 v3 음영 2종을 가산한다:
+                //  * 스페큘러 시트: 블린-퐁 pow(N·H, 24)를 UV.y(끝 쪽) 가중으로 - 풀끝이 햇빛
+                //    각도에서 띠 모양으로 반짝인다(아틀라스 v3의 잎맥 하이라이트와 합쳐진다).
+                //  * 투과(백라이트): 시선이 라이트를 마주볼 때(-V·L > 0, 제곱으로 좁힘) UV.y 가중
+                //    투과광을 알베도×라이트 색으로 가산 - 역광에서 풀끝이 비쳐 보인다.
+                // 둘 다 UV.y 가중이라 뿌리 쪽(어두운 AO 지대)은 건드리지 않는다.
                 Light mainLight = GetMainLight();
                 half ndotl = saturate(dot(normalWS, mainLight.direction));
-                half3 color = albedo * (SampleSH(normalWS) + mainLight.color * ndotl);
+
+                float3 viewDir = normalize(GetCameraPositionWS() - IN.positionWS);
+                half tipY = saturate(IN.uvData.z);
+
+                float3 halfDir = normalize(viewDir + mainLight.direction);
+                half sheen = (half)pow(saturate(dot(normalWS, halfDir)), 24.0)
+                    * _SheenStrength * tipY;
+
+                half backLit = saturate(dot(-viewDir, mainLight.direction));
+                half transl = backLit * backLit * _TranslucencyStrength * tipY;
+
+                half3 color = albedo * (SampleSH(normalWS) + mainLight.color * ndotl)
+                    + mainLight.color * sheen
+                    + albedo * mainLight.color * transl;
 
                 color = MixFog(color, IN.fogFactor);
                 return half4(color, 1.0);

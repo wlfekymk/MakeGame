@@ -246,6 +246,9 @@ namespace MakeGame.Systems
             float radius = GetScatterRadius(island.size);
             int hazardCount = ComputeHazardCount(island.size);
 
+            // [B53 물 스폰 가드] 해수면. 자원/사냥감 스포너와 같은 공유 유틸로 1회만 읽는다(못 찾으면 0).
+            float seaLevel = SpawnLandPlacement.ResolveSeaLevel();
+
             // [B34] 보장 배치 목록. 규모 조건을 만족하는 엔트리의 guaranteedCount만큼 앞자리를 채운다.
             // 섬 전체 마릿수(hazardCount)는 늘리지 않는다 - 마릿수는 면적이 정하는 값이고 여기서
             // 건드리면 밀도 설계가 깨진다. 보장 수가 마릿수를 넘으면 넘는 만큼은 버린다.
@@ -271,7 +274,34 @@ namespace MakeGame.Systems
 
                 Vector2 offset = GetScatterOffset(rng, entry.type, radius);
                 Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
-                position = TerrainSampler.SnapToGround(position);
+                // [B53] SnapToGround 대신 실패 감지가 있는 공유 유틸을 쓴다. 성공 시 결과는 기존
+                // SnapToGround(position)와 1mm도 다르지 않고, 실패 시에도 똑같이 입력을 그대로 돌려준다
+                // (SpawnLandPlacement.SnapToGroundWithHit 주석) - 즉 배치 자체는 예전과 완전히 같다.
+                position = SpawnLandPlacement.SnapToGroundWithHit(position, out bool hitTerrain);
+
+                // ── [B53 물 스폰 가드] 실제 침수 원인: 섬 지형이 각도별 반지름 마스크(반달/굴곡)라
+                // 원판 산포(GetScatterOffset)가 마스크 밖 물 위를 뽑을 수 있고, 스냅 결과가 수면 아래
+                // 지면(만·석호 바닥)이어도 그대로 스폰해 곰/뱀이 물속에 서 있었다. 육상 종류가 물에
+                // 떨어지면 그 개체를 **스킵**한다(재추첨 금지 - RequiresLandSpawn의 분류표 참고).
+                //  · ★ rng 스트림 불변 ★ SpawnSingleHazard가 소비했을 draw를 비트 단위로 똑같이
+                //    태운다(BurnSkippedHazardDraws) - 뒤따르는 개체의 종류·위치·지터가 이전 버전과
+                //    완전히 동일하게 유지된다(스킵된 개체만 사라진다).
+                //  · ★ 세이브 안전 ★ perTypeCounts와 spawnOrder도 스킵 개체 몫만큼 전진시킨다 -
+                //    살아남은 개체의 stableKey(종류 내 순번)·곰 개체성 해시(spawnOrder)가 밀리지
+                //    않아 기존 세이브의 처치 상태가 정확히 같은 개체에 붙는다. 스킵된 개체의 키로
+                //    남은 옛 세이브 엔트리는 고아가 될 뿐이다 - RestoreHazardsAndCreatures는
+                //    TryGetValue로 대조하므로(SaveLoadController.cs:1005) 매치 실패는 조용히 무시되고
+                //    크래시가 없음을 확인했다.
+                //  · 보장 배치(guaranteedCount) 구간도 예외가 아니다 - "곰 1마리 보장"보다 "물속 곰
+                //    금지"가 우선한다(마스크 만 위에 떨어진 보장 곰은 그 섬에서 빠질 수 있다).
+                if (RequiresLandSpawn(entry.type) && !SpawnLandPlacement.IsAboveWater(position, hitTerrain, seaLevel))
+                {
+                    BurnSkippedHazardDraws(rng, entry.type);
+                    perTypeCounts.TryGetValue(entry.type, out int skippedTypeIndex);
+                    perTypeCounts[entry.type] = skippedTypeIndex + 1;
+                    spawnOrder++;
+                    continue;
+                }
 
                 // [B37] 이 곰이 성체냐 새끼냐. **rng를 한 번도 쓰지 않고** 이미 존재하는 값
                 // (islandIndex, spawnOrder)만 섞어 정한다 - 자세한 근거는 IsBearCubIndividual 주석.
@@ -366,6 +396,55 @@ namespace MakeGame.Systems
 
         /// <summary>해안 선호 배치의 최소 거리 비율(산포 반경 대비). CreatureSpawner의 물고기 배치와 같은 0.8이다.</summary>
         private const float ShorelineRadiusFraction = 0.8f;
+
+        /// <summary>
+        /// [B53] 이 종류가 **육상 전용**인가(스폰 지면이 수면 아래면 스킵).
+        ///
+        /// ── 육상/수생 분류표(종을 추가하면 반드시 이 표와 switch에 함께 등록할 것) ──
+        ///   육상(물이면 스킵)      : Bear(+새끼 - 같은 HazardType.Bear), Cannibal, VenomousSnake,
+        ///                            Scorpion, BeeSwarm(공중이지만 물 위 벌떼는 부자연), Trap
+        ///   수생/조간대(물 허용)   : Shark(SharkSpawner가 해수면 아래에 직접 놓는다),
+        ///                            GiantCrab(조간대 - 파도선 물속까지가 서식지)
+        ///   스포너 비대상(개념적)  : FoodShortage, Dehydration(hazardEntries에 넣지 말 것 - HazardType.cs)
+        /// 미분류 신종의 기본값은 **육상(true)** 이다 - 잘못돼도 "물속에 뜬 신종"이 아니라 "물가 스폰
+        /// 누락"이라 눈에 덜 띄고 세이브도 안전하다(스킵은 고아 엔트리만 만든다).
+        /// </summary>
+        private static bool RequiresLandSpawn(HazardType type)
+        {
+            switch (type)
+            {
+                case HazardType.Shark:
+                case HazardType.GiantCrab:
+                    return false;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// [B53] 물속이라 스킵한 개체가 스폰됐다면 소비했을 rng draw를 똑같이 태운다.
+        /// ★ SpawnSingleHazard(+AddDetailParts)의 draw 구성과 **비트 단위로 같아야 한다** ★
+        ///   · sizeJitter NextFloat(0.9, 1.15) 1회 + yawJitter NextFloat(0, 360) 1회 (모든 종류)
+        ///   · BeeSwarm만 AddDetailParts의 벌 5마리 × NextFloat(-0.8, 0.8) 3회 = 15회 추가
+        ///   (그 외 경로 - ConfigureForType/CreatureVisualBuilder.* - 는 rng를 받지 않아 소비 0.)
+        /// 저쪽의 rng 소비를 바꾸는 사람은 이 함수도 함께 바꿔야 한다(양쪽에 교차 주석).
+        /// 이걸 태우지 않으면 스킵 이후 PickWeightedEntry의 roll이 밀려 **종류 시퀀스 자체가 바뀌고**,
+        /// 그러면 stableKey(종류 내 순번)가 통째로 어긋나 기존 세이브의 처치 상태가 엉뚱한 개체에 붙는다.
+        /// </summary>
+        private static void BurnSkippedHazardDraws(System.Random rng, HazardType type)
+        {
+            rng.NextFloat(0.9f, 1.15f);   // = SpawnSingleHazard sizeJitter
+            rng.NextFloat(0f, 360f);      // = SpawnSingleHazard yawJitter
+            if (type == HazardType.BeeSwarm)
+            {
+                for (int i = 0; i < 5; i++)
+                {
+                    rng.NextFloat(-0.8f, 0.8f);
+                    rng.NextFloat(-0.8f, 0.8f);
+                    rng.NextFloat(-0.8f, 0.8f);
+                }
+            }
+        }
 
         /// <summary>
         /// [B8] 이 섬 규모에 배치할 위험 요소 총 마릿수를 산포 면적에 비례해 계산한다.
@@ -480,6 +559,7 @@ namespace MakeGame.Systems
             // 세워진 축(Y) 기준 방향을 추가로 준다. Trap처럼 대칭적인 원판은 시각적으로 티가 안 나지만
             // 해를 끼치지도 않으므로 모든 타입에 공통 적용해 코드를 단순하게 유지한다.
             // B3-3: 시드 없는 UnityEngine.Random 대신 호출자가 넘긴 결정적 rng를 쓴다.
+            // [B53] ⚠️ 이 두 draw의 소비량을 바꾸면 BurnSkippedHazardDraws도 함께 바꿀 것(교차 주석).
             float sizeJitter = rng.NextFloat(0.9f, 1.15f);
             Quaternion yawJitter = Quaternion.Euler(0f, rng.NextFloat(0f, 360f), 0f);
 
@@ -589,6 +669,7 @@ namespace MakeGame.Systems
                     // 0.8 안에서 서로 파고들면 "무리"가 아니라 울퉁불퉁한 덩어리 하나로 읽힌다.
                     // 0.22 → 0.09(몸통의 약 1/3)로 줄여 개별 개체가 몸통과 분리돼 보이게 한다.
                     // 개수(5)와 산포 범위(±0.8)는 그대로 둔다 - rng 소비량이 바뀌지 않아 재현성도 유지된다.
+                    // [B53] ⚠️ 이 루프의 draw 소비량(5×3회)을 바꾸면 BurnSkippedHazardDraws도 함께 바꿀 것.
                     for (int i = 0; i < 5; i++)
                     {
                         Vector3 offset = new Vector3(

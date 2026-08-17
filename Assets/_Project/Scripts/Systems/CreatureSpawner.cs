@@ -267,6 +267,14 @@ namespace MakeGame.Systems
         /// 처럼 이름 표가 아닌 배치 속성으로 판정하는 이유: 이 스포너는 "육상 동물이냐"를 이미
         /// 프리미티브/외형 분기(isCrab/preferShoreline)로 갖고 있어 같은 판정을 재사용하면
         /// 이름 표와 씬이 어긋날 일이 없다.
+        ///
+        /// ── [B53] 육상/수생 분류표(엔트리 종류를 늘릴 때 이 표에 함께 등록할 것) ──
+        ///   육상(물이면 0.2.11 재추첨 규칙 - PickCreaturePosition): 뭍 사냥감(생고기 등 -
+        ///     isCrab·preferShoreline 둘 다 false인 모든 항목)
+        ///   수생/조간대(물 허용 - 기존 경로 그대로): 물고기(preferShoreline), 게(isCrab)
+        /// 이 스포너의 뭍 생물은 스킵이 아니라 **재추첨**이다(0.2.11에서 이미 확립) - 사냥감은
+        /// baseCount×배율의 개체 수 계약이 있고 stableKey(종류 내 순번)가 개체 수와 함께 돌아가므로,
+        /// 스킵으로 바꾸면 안 된다. 위험 요소(HazardSpawner)의 스킵 가드와 규칙이 다른 이유가 이것이다.
         /// </summary>
         private static bool IsLandCreature(CreatureEntry entry)
         {

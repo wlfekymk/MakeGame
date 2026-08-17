@@ -27,7 +27,7 @@ import random
 from PIL import Image, ImageDraw, ImageFilter
 
 SEED = 90210
-CELL = 512
+CELL = 1024
 SS = 2  # 슈퍼샘플링 배율
 
 
@@ -49,16 +49,40 @@ def draw_blade(draw, rng, base_x, base_y, height, width, lean, curve, root_c, ti
         y = lerp(lerp(base_y, cy, t), lerp(cy, ty, t), t)
         w = max(0.8, width * (1.0 - t) ** 0.85)
         pts.append((x, y, w, t))
-    for i in range(steps):
-        x0, y0, w0, t0 = pts[i]
-        x1, y1, w1, _ = pts[i + 1]
-        # 세그먼트 방향의 수직 벡터로 좌우 가장자리를 만든다.
-        dx, dy = x1 - x0, y1 - y0
-        ln = math.hypot(dx, dy) or 1.0
-        nx, ny = -dy / ln, dx / ln
-        c = tuple(int(lerp(root_c[k], tip_c[k], t0 ** 1.1)) for k in range(3)) + (255,)
-        draw.polygon([(x0 + nx * w0, y0 + ny * w0), (x0 - nx * w0, y0 - ny * w0),
-                      (x1 - nx * w1, y1 - ny * w1), (x1 + nx * w1, y1 + ny * w1)], fill=c)
+    def stroke(width_mul, color_fn, t_lo=0.0, t_hi=1.0):
+        for i in range(steps):
+            x0, y0, w0, t0 = pts[i]
+            x1, y1, w1, t1 = pts[i + 1]
+            if t1 < t_lo or t0 > t_hi:
+                continue
+            dx, dy = x1 - x0, y1 - y0
+            ln = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / ln, dx / ln
+            w0m, w1m = w0 * width_mul, w1 * width_mul
+            draw.polygon([(x0 + nx * w0m, y0 + ny * w0m), (x0 - nx * w0m, y0 - ny * w0m),
+                          (x1 - nx * w1m, y1 - ny * w1m), (x1 + nx * w1m, y1 + ny * w1m)],
+                         fill=color_fn(t0))
+
+    def ao(t):
+        # 뿌리 AO: 아래 18% 구간을 어둡게 - 지면 접점의 접촉 음영.
+        k = min(1.0, t / 0.18)
+        return 0.58 + 0.42 * (k * k * (3 - 2 * k))
+
+    def body_color(t):
+        base = [lerp(root_c[k], tip_c[k], t ** 1.1) * ao(t) for k in range(3)]
+        return tuple(int(min(255, v)) for v in base) + (255,)
+
+    def shadow_color(t):
+        base = [lerp(root_c[k], tip_c[k], t ** 1.1) * ao(t) * 0.62 for k in range(3)]
+        return tuple(int(v) for v in base) + (255,)
+
+    def vein_color(t):
+        base = [min(255, lerp(root_c[k], tip_c[k], t ** 1.1) * ao(t) * 1.38 + 18) for k in range(3)]
+        return tuple(int(v) for v in base) + (255,)
+
+    stroke(1.22, shadow_color)            # 윤곽 그림자(깊이감)
+    stroke(1.0, body_color)               # 본체
+    stroke(0.34, vein_color, 0.08, 0.9)   # 중심 잎맥 하이라이트
 
 
 def draw_seed_head(draw, rng, x, y):
@@ -84,11 +108,11 @@ def draw_flower_spike(draw, rng, base_x, base_y, height, color_a, color_b):
         x = base_x + lean * height * t
         y = base_y - height * t
         r = lerp(10.5, 3.0, (t - 0.38) / 0.62) * rng.uniform(0.8, 1.15)
-        for _ in range(3):
+        for _ in range(5):
             px = x + rng.uniform(-r, r) * 0.9
             py = y + rng.uniform(-r * 0.5, r * 0.5)
             c = tuple(int(lerp(color_a[k], color_b[k], rng.random())) for k in range(3)) + (255,)
-            pr = r * rng.uniform(0.30, 0.5)
+            pr = r * rng.uniform(0.42, 0.68)
             draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=c)
 
 
@@ -118,7 +142,7 @@ def make_cell(kind, rng):
                        rng.uniform(-0.55, 0.55), rng.uniform(-0.85, 0.85), rc, tc)
 
     if kind == "dense":
-        blades(55, dry_ratio=0.08, width=7.2)
+        blades(64, dry_ratio=0.08, width=7.8)
     elif kind == "thin":
         blades(30, dry_ratio=0.12, height_lo=0.6, height_hi=1.0, width=5.0)
         for _ in range(3):
@@ -129,7 +153,7 @@ def make_cell(kind, rng):
                        lean, rng.uniform(-0.3, 0.3), (110, 116, 66), (172, 168, 108))
             draw_seed_head(draw, rng, bx + lean * h, base_y - h)
     elif kind == "dry":
-        blades(40, dry_ratio=0.55, width=6.6)
+        blades(48, dry_ratio=0.55, width=7.0)
     else:  # flower
         blades(16, dry_ratio=0.10, height_lo=0.4, height_hi=0.75, width=6.2)
         # 분홍 주조 + 흰색·연보라 액센트 (레퍼런스: 분홍 무리 속 흰 꽃이 드문드문)
