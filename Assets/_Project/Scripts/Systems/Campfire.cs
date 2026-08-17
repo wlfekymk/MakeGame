@@ -97,6 +97,9 @@ namespace MakeGame.Systems
             // 시각 전용 컴포넌트라 연료/조리 로직에는 아무 영향이 없다(이 한 줄을 지우면 이펙트만
             // 사라지고 게임플레이는 그대로다).
             CampfireEffect.EnsureAttached(gameObject);
+
+            // 실물 모델(Models/campfire_a) 시각 교체 - CampfireEffect와 같은 시각 전용 훅.
+            if (GetComponent<CampfireVisual>() == null) gameObject.AddComponent<CampfireVisual>();
         }
 
         /// <summary>
