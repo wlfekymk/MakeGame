@@ -433,7 +433,8 @@ def _align_offset(objs, align, band=None):
 
 
 def enforce_contract(obj, tri_budget, expect_size=None, size_tol=0.005,
-                     tri_floor=None, name=None, align="bbox", ground_band=None):
+                     tri_floor=None, name=None, align="bbox", ground_band=None,
+                     sink=0.0):
     """계약을 **적용하고 검증한다**. 하나라도 어기면 ContractError.
 
     적용:
@@ -458,6 +459,12 @@ def enforce_contract(obj, tri_budget, expect_size=None, size_tol=0.005,
       기본값이 "bbox" 인 이유는 하나뿐이다 - 이미 배포된 rock_a/b/c 의 바이트가 바뀌면 안 된다.
       새 에셋은 대칭이 확실한 경우가 아니면 "ground" 를 쓴다.
 
+    sink (2026-08-17 절벽 배치용 확장 - 기본 0.0 이면 기존 동작과 바이트 단위로 같다):
+      메시 밑면을 y = -sink 까지 **의도적으로** 내려 보낸다. 원점(y=0)은 여전히 **접지 기준**이고,
+      밑면만 지면 아래 여유분이다 - 경사면에 얹어도 앞모서리가 뜨지 않게 하는 소품(절벽)용.
+      검사도 같이 옮겨 간다: 밑면 == -sink, -sink 아래로 새어 나간 정점 금지.
+      expect_size 의 H 는 **bbox 전체 높이**(지상 높이 + sink)다.
+
     반환: 보고·검증에 쓰는 dict(name/tris/verts/size/…).
     """
     label = name or obj.name
@@ -477,13 +484,15 @@ def enforce_contract(obj, tri_budget, expect_size=None, size_tol=0.005,
     if tri_floor is not None and tris < tri_floor:
         raise ContractError(f"{label}: 삼각형 {tris} < 하한 {tri_floor} — 너무 성기다")
 
-    # (a)(b) 원점 정렬.
-    mesh.transform(Matrix.Translation(_align_offset(obj, align, ground_band)))
+    # (a)(b) 원점 정렬. sink 만큼 통째로 내린다(0 이면 기존 경로 그대로).
+    off = _align_offset(obj, align, ground_band)
+    off.y -= sink
+    mesh.transform(Matrix.Translation(off))
 
     lo, hi = bbox(obj)
     size = hi - lo
-    if abs(lo.y) > EPS:
-        raise ContractError(f"{label}: 밑면 y={lo.y:.6f} != 0 (계약 1장)")
+    if abs(lo.y + sink) > EPS:
+        raise ContractError(f"{label}: 밑면 y={lo.y:.6f} != {-sink:.3f} (계약 1장/sink)")
     if align == "ground":
         c = ground_center(obj, ground_band)
         if abs(c.x) > EPS or abs(c.z) > EPS:
@@ -494,8 +503,9 @@ def enforce_contract(obj, tri_budget, expect_size=None, size_tol=0.005,
             f"{label}: X/Z 중심이 어긋났다 (x중심 {(lo.x + hi.x) * 0.5:.6f}, "
             f"z중심 {(lo.z + hi.z) * 0.5:.6f})")
     below = min((v.co.y for v in mesh.vertices), default=0.0)
-    if below < -EPS:
-        raise ContractError(f"{label}: y=0 아래로 새어 나간 정점이 있다(min y={below:.6f})")
+    if below < -sink - EPS:
+        raise ContractError(
+            f"{label}: 허용 밑면(y={-sink:.3f}) 아래로 새어 나간 정점이 있다(min y={below:.6f})")
     if min(size.x, size.y, size.z) <= EPS:
         raise ContractError(f"{label}: 두께가 0 인 축이 있다 {tuple(round(v, 4) for v in size)}")
 
@@ -523,6 +533,7 @@ def enforce_contract(obj, tri_budget, expect_size=None, size_tol=0.005,
         "budget": tri_budget,
         "align": align,
         "ground_band": ground_band,
+        "sink": sink,
     }
 
 
@@ -707,8 +718,9 @@ def verify_obj_file(path, stats, size_tol=0.005):
             raise ContractError(
                 f"{path}: 파일의 {axis} 크기 {got:.4f}m 가 메시 {want:.4f}m 와 다르다 "
                 f"(내보내기 축 변환/배율 사고)")
-    if abs(min(ys)) > 1e-3:
-        raise ContractError(f"{path}: 파일 밑면 y={min(ys):.5f} != 0")
+    sink = stats.get("sink", 0.0) or 0.0
+    if abs(min(ys) + sink) > 1e-3:
+        raise ContractError(f"{path}: 파일 밑면 y={min(ys):.5f} != {-sink:.3f}")
 
     # 원점 규약을 **파일에서 다시 계산해** 대조한다. ground 모드는 bbox 중심이 0 이 아닌 것이
     # 정상이므로(비대칭 크라운) 접지부 중심을 같은 방식으로 다시 구해 검사한다.

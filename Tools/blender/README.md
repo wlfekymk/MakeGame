@@ -6,6 +6,7 @@
 
 ```bash
 cd /path/to/MakeGame && python3 Tools/blender/units/rock.py       # rock_a~e
+cd /path/to/MakeGame && python3 Tools/blender/units/rockforms.py  # rock_mega/rubble/stack/cliff 7종
 cd /path/to/MakeGame && python3 Tools/blender/units/palm.py       # palm_a~f
 cd /path/to/MakeGame && python3 Tools/blender/units/bamboo.py     # bamboo_a~f
 cd /path/to/MakeGame && python3 Tools/blender/units/bush.py       # bush_a/b
@@ -49,6 +50,10 @@ Unity 임포트 설정(디렉터): **Scale Factor 1 / Convert Units 꺼짐 / Gen
 - `ground_center(objs, band)` — **접지 중심**(밑동의 XZ 중심). 아래 원점 규약 참고
 - **`enforce_contract(obj, tri_budget, expect_size=..., align=...)`** — 밑면 y=0 / X·Z 정렬을 **적용하고**,
   삼각형화·예산·접지·크기·퇴화면·잔여 변환을 **검사한다. 어기면 `ContractError` 로 죽는다.**
+  - `sink=0.5` (2026-08-17 확장): 밑면을 y=−sink 까지 **의도적으로** 내린다. 원점은 여전히
+    접지 기준 y=0 이고, 지면 아래 여유분은 경사면에 얹는 소품(절벽)이 뜨지 않게 하는 것이다.
+    `verify_obj_file` 도 `stats["sink"]` 를 따라 밑면을 대조한다. 기본 0.0 = 기존 동작 그대로
+    (기존 에셋 md5 불변 확인함).
 - `export_obj(obj, path)` — 삼각형 + `vn` + `vt`, 머티리얼 없음
 - **`verify_obj_file(path, stats)`** — 내보낸 파일을 **다시 읽어** 삼각형 수·크기·접지·중심을 대조
 - `turntable(obj, png, ...)` — 정면/측면/후면/3-4 네 컷 + 1m 격자 + y=0 기준선 + 2m 플레이어 막대를
@@ -113,6 +118,13 @@ md5 대조함) - 새 변종은 별도 빌더(rock) 또는 기본값이 기존 �
 | | `rock_c` | 3,366 | 3.20 × 2.35 × 2.60 | 〃 |
 | | `rock_d` 판석 | 3,366 | 2.95 × 0.95 × 2.45 | 〃 |
 | | `rock_e` 첨탑 | 3,366 | 2.15 × 3.20 × 1.90 | 〃 |
+| `units/rockforms.py` | `rock_mega_a` 둥근 거암 | 5,246 | 3.60 × 4.10 × 3.30 | 〃 |
+| | `rock_mega_b` 모난 거석 | 2,970 | 3.20 × 5.20 × 2.90 | 〃 |
+| | `rock_rubble_a` 잔해(흩어진 판형) | 2,226 | 2.80 × 0.45 × 2.40 | 〃 |
+| | `rock_rubble_b` 잔해(무더기) | 2,226 | 2.20 × 0.75 × 1.95 | 〃 |
+| | `rock_stack_a` 겹바위 3덩이 | 4,454 | 2.60 × 3.30 × 2.35 | 〃 |
+| | `rock_cliff_a` 절벽(일자) | 7,028 | 8.50 × 5.90 × 4.20 (**y −0.5 부터**) | 〃 |
+| | `rock_cliff_b` 절벽(凹 굽음) | 7,028 | 9.50 × 6.70 × 4.60 (**y −0.5 부터**) | 〃 |
 | `units/palm.py` | `palm_a` | 1,388 | 3.52 × 5.30 × 3.82 | 줄기 cylinder `bark.png` 0.55m · 잎 planar `frond.png` |
 | | `palm_b` | 1,652 | 4.39 × 6.79 × 4.75 | 〃 |
 | | `palm_c` | 1,784 | 5.55 × 7.95 × 5.30 | 〃 |
@@ -133,8 +145,12 @@ md5 대조함) - 새 변종은 별도 빌더(rock) 또는 기본값이 기존 �
 | | `barrel_a` | 380 | 0.60 × 0.86 × 0.60 | cylinder 0.55m ×2 `driftwood.png` |
 | | `plankpile_a` | 84 | 2.10 × 0.22 × 0.86 | box 0.55m `driftwood.png` |
 
-신규/확장 에셋의 원점은 **전부 접지 중심**(`align="ground"`)이다. 예외는 rock 5종
-(`"bbox"` - 대칭이라 두 기준이 같고, a/b/c 의 바이트 보존이 우선이다).
+신규/확장 에셋의 원점은 **전부 접지 중심**(`align="ground"`)이다. 예외는 rock 5종과
+rockforms 의 mega/cliff(`"bbox"` - 대칭이라 두 기준이 같고, a/b/c 의 바이트 보존이 우선이다).
+**절벽 2종만 밑면이 y=−0.5** 다(`sink=0.5`) - 원점은 접지 기준 그대로이고, 경사면에 얹었을 때
+앞모서리가 뜨지 않게 하는 지면 아래 여유분이다. 배치 코드는 지표면 높이에 그대로 놓으면 된다.
+rockforms 7종은 기존 rock 5종의 TryGetRockModel 목록에 **넣지 마라** - 목표 폭 매칭에 4m 거석이
+끼어들면 일반 바위 자리에 거석이 꽂힌다. 별도 배치 경로로 연결한다(배치 규칙은 배치 보고 명세표).
 bush / grass / driftwood 는 `o` 오브젝트 1개(단색 - 런타임 틴트 1장)이고,
 palm / bamboo 는 기존처럼 `o` 2개(줄기/잎)다.
 

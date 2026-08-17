@@ -148,13 +148,14 @@ namespace MakeGame.Systems
         }
 
         // ─────────────────────────────────────────────────────────────────────────
-        //  [B45] 실물 바위 모델 (rock_a / rock_b / rock_c)
+        //  [B45] 실물 바위 모델 (rock_a~c · [B50] rock_d/e 추가)
         // ─────────────────────────────────────────────────────────────────────────
         //
         // ── 좌표 계약(에셋이 이렇게 구워져 있다. 여기서 축·원점을 다시 만지지 않는다) ──────────
         //   단위 = 미터 · +Y 위 · +Z 정면 · **밑면이 정확히 y = 0** · X/Z 중심 정렬 · UV 있음.
-        //   실측: rock_a 1.85×1.20×1.60 · rock_b 2.60×1.55×2.30 · rock_c 3.20×2.35×2.60 (W×H×D),
-        //   각각 3,366 / 3,364 / 3,366삼각형(AssetPipeline 2장 "중형 소품 4,000" 이내).
+        //   실측: rock_a 1.85×1.20×1.60 · rock_b 2.60×1.55×2.30 · rock_c 3.20×2.35×2.60 ·
+        //   rock_d 2.95×0.95×2.45(판석) · rock_e 2.15×3.20×1.90(첨탑) (W×H×D),
+        //   3,364~3,366삼각형(AssetPipeline 2장 "중형 소품 4,000" 이내).
         //
         // ── 절차 메시와 규약이 반대다 ─────────────────────────────────────────────────
         //   GetBoulderMesh는 [-0.5,0.5]^3 단위 규격이라 호출부가 (폭,높이,깊이)를 미터로 곱했다.
@@ -174,10 +175,12 @@ namespace MakeGame.Systems
         //   새로 만들지 않는다. BuildIslandSurface가 만든 rockMaterials(WeatheredStone × "rock" 텍스처,
         //   ResourceVisualLibrary.GetMaterial 공유 캐시 = "MG~" 접두사 · enableInstancing)를 그대로 받는다.
 
-        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).</summary>
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).
+        /// [B50] rock_d(판석 - 낮고 넓다)·rock_e(첨탑 - 3.2m로 높다) 2종 추가. 실측은 디스크 OBJ에서
+        /// 확인했다(전부 밑면 y=0 · X/Z 중심 · 미터).</summary>
         private static readonly string[] RockModelResourcePaths =
         {
-            "Models/rock_a", "Models/rock_b", "Models/rock_c"
+            "Models/rock_a", "Models/rock_b", "Models/rock_c", "Models/rock_d", "Models/rock_e"
         };
 
         /// <summary>각 모델의 실측 크기(m, W×H×D). 위 경로와 인덱스가 일대일로 대응한다.</summary>
@@ -186,73 +189,238 @@ namespace MakeGame.Systems
             new Vector3(1.85f, 1.20f, 1.60f),
             new Vector3(2.60f, 1.55f, 2.30f),
             new Vector3(3.20f, 2.35f, 2.60f),
+            new Vector3(2.95f, 0.95f, 2.45f), // rock_d 판석: 매립 계산이 이 실측 높이(0.95)를 쓰므로 통째로 잠기지 않는다
+            new Vector3(2.15f, 3.20f, 1.90f), // rock_e 첨탑: convex 헐 옆면이 가팔라 자연히 못 올라간다
         };
 
-        private static readonly Mesh[] rockModelMeshes = new Mesh[3];
+        private static readonly Mesh[] rockModelMeshes = new Mesh[5];
         private static int rockModelProbeFrame = -1;
 
         /// <summary>
-        /// 목표 폭에 가장 가까운 바위 모델의 **공유 메시**를 돌려준다. 하나도 못 찾으면 false다.
+        /// 목표 폭에 맞는 바위 모델의 **공유 메시**를 돌려준다. 하나도 못 찾으면 false다.
         ///
         /// [로드 규칙] Resources.Load는 정적 필드 초기자에서 부르지 않는다 - 초기자는 생성자 시점에
         /// 돌 수 있고 Unity가 그 시점의 Load를 막아 null을 준다. 그리고 **실패를 영구히 캐시하지 않는다.**
         /// 그 null을 "에셋 없음"으로 굳히면 세션 내내 절차 바위만 나온다(곰 모델이 실제로 그렇게 죽었다,
         /// AGENT_BRIEF 4장 3번). 성공할 때까지 프레임당 한 번만 다시 살핀다 -
         /// CreatureVisualBuilder.BearModelPrefab과 같은 패턴이고, 섬 하나가 바위를 최대 12개 만들므로
-        /// 프레임 가드가 없으면 한 프레임에 Load가 36번 불린다.
+        /// 프레임 가드가 없으면 한 프레임에 Load가 60번(12무리 × 5경로) 불린다.
+        ///
+        /// [B50 변종 선택 - 2단계] 예전 "최근접 폭 1개"는 5종을 넣어도 목표 폭 구간마다 같은 변종만
+        /// 나오게 한다(1.7~3.6m 구간이 변종 5개의 보로노이 구간으로 갈려 이웃 바위가 전부 같은 모델).
+        /// 그래서 (1) 목표 폭 ±35% 안의 변종을 전부 후보로 모으고(없으면 최근접 1개),
+        /// (2) **배치 위치 해시**(DecorationPositionHash - HazardSpawner.IsBearCubIndividual 계열)로
+        /// 후보 중 하나를 결정론적으로 고른다. rng는 여기서도 0회 소비다(배치 재현성 불변) -
+        /// 입력이 (이미 뽑힌 목표 폭, 이미 확정된 위치)뿐인 순수 함수라 같은 worldSeed면 같은 변종이다.
+        /// 균등 배율은 ±35% 밴드 정의상 0.74~1.54 안이고 실제 폭 분포(1.7~3.6m)에서는 0.79~1.39다.
         /// </summary>
-        private static bool TryGetRockModel(float targetWidth, out Mesh mesh, out Vector3 size)
+        private static bool TryGetRockModel(float targetWidth, Vector3 worldPosition, out Mesh mesh, out Vector3 size)
         {
             mesh = null;
             size = Vector3.one;
 
-            bool anyMissing = false;
-            for (int i = 0; i < rockModelMeshes.Length; i++)
+            ProbeSingleMeshModels(RockModelResourcePaths, rockModelMeshes, ref rockModelProbeFrame);
+
+            int pick = PickVariantByPosition(RockModelSizes, rockModelMeshes, targetWidth,
+                worldPosition, RockVariantSalt);
+            if (pick < 0)
+                return false;
+
+            mesh = rockModelMeshes[pick];
+            size = RockModelSizes[pick];
+            return true;
+        }
+
+        // ── [B50] 변종 다양성 공용 도구 ─────────────────────────────────────────────
+        //   신규 모델(바위 5종·야자수 6종·덤불/풀 2종)을 넣어도 "최근접 크기" 선택으로는 다양성이
+        //   생기지 않아(위 TryGetRockModel 주석), 선택을 2단계(±35% 후보 → 위치 해시)로 바꿨다.
+        //   ★ 새 rng 추첨 금지 ★ 여기 있는 어떤 함수도 System.Random을 받지 않는다. 이미 뽑힌 값과
+        //   이미 확정된 배치 위치만 입력으로 쓴다 - 월드 배치 재현성(같은 worldSeed = 같은 월드)의 전제다.
+
+        /// <summary>1단계 후보 밴드: 목표 크기의 ±35%. 이 밖의 변종은 배율이 1.54를 넘어 늘어나 보인다.</summary>
+        private const float VariantSizeBand = 0.35f;
+
+        // 해시 salt. 같은 위치라도 용도(변종 선택 / 스케일 보강)마다 독립인 값이 나오게 가른다.
+        private const uint RockVariantSalt = 0x51A7B001u;
+        private const uint PalmVariantSalt = 0x51A7B002u;
+        private const uint BushVariantSalt = 0x51A7B003u;
+        private const uint GrassVariantSalt = 0x51A7B004u;
+        private const uint BushStretchSalt = 0x51A7B013u;
+        private const uint GrassStretchSalt = 0x51A7B014u;
+
+        /// <summary>
+        /// [B50] 배치 위치 → 결정적 해시. HazardSpawner.IsBearCubIndividual과 같은 계열이다:
+        /// 좌표를 정수화(0.1m 양자화 - 배치 좌표는 시드가 정하는 결정적 값이라 양자화가 흔들리지 않는다)
+        /// 한 뒤 소수 곱으로 섞고 xorshift-곱 마무리(FNV/Murmur 계열 finalizer)로 상관을 없앤다.
+        /// x·z가 작은 정수라 단순 덧셈만으로는 이웃 위치의 해시가 이어져 버리기 때문이다.
+        /// rng 소비 0 - 순수 함수다.
+        /// </summary>
+        private static uint DecorationPositionHash(Vector3 worldPosition, uint salt)
+        {
+            unchecked
             {
-                if (rockModelMeshes[i] == null)
+                int qx = Mathf.RoundToInt(worldPosition.x * 10f);
+                int qz = Mathf.RoundToInt(worldPosition.z * 10f);
+                uint h = (uint)(qx * 73856093) ^ (uint)(qz * 19349663) ^ salt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return h;
+            }
+        }
+
+        /// <summary>[B50] 위 해시를 [0,1) 실수로. 다양성 보강 축(스케일 지터 등)에 쓴다.</summary>
+        private static float DecorationPositionHash01(Vector3 worldPosition, uint salt)
+        {
+            return (DecorationPositionHash(worldPosition, salt) & 0xFFFFFFu) / (float)0x1000000;
+        }
+
+        /// <summary>2단계 선택의 후보 버퍼. 메인 스레드 전용이라 재사용해도 안전하다(할당 방지).</summary>
+        private static readonly List<int> variantCandidateBuffer = new List<int>(8);
+
+        /// <summary>
+        /// [B50] 변종 선택 2단계: (1) 로드된 변종 중 |기본크기 − 목표| ≤ 목표×35%를 후보로 모으고
+        /// (없으면 최근접 1개), (2) 위치 해시로 후보 중 하나를 고른다. 로드된 변종이 없으면 -1이다.
+        /// </summary>
+        private static int PickVariantByPosition(float[] baseSizes, Mesh[] loadedMeshes, float targetSize,
+            Vector3 worldPosition, uint salt)
+        {
+            var candidates = variantCandidateBuffer;
+            candidates.Clear();
+
+            int nearest = -1;
+            float nearestDelta = float.MaxValue;
+            float band = targetSize * VariantSizeBand;
+            for (int i = 0; i < loadedMeshes.Length; i++)
+            {
+                if (loadedMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(baseSizes[i] - targetSize);
+                if (delta < nearestDelta)
+                {
+                    nearestDelta = delta;
+                    nearest = i;
+                }
+                if (delta <= band)
+                    candidates.Add(i);
+            }
+
+            if (candidates.Count == 0)
+                return nearest;
+            if (candidates.Count == 1)
+                return candidates[0];
+            return candidates[(int)(DecorationPositionHash(worldPosition, salt) % (uint)candidates.Count)];
+        }
+
+        /// <summary>위와 같지만 기본 크기가 W×H×D 벡터인 테이블용(폭 = x로 비교한다).</summary>
+        private static int PickVariantByPosition(Vector3[] baseSizes, Mesh[] loadedMeshes, float targetSize,
+            Vector3 worldPosition, uint salt)
+        {
+            var candidates = variantCandidateBuffer;
+            candidates.Clear();
+
+            int nearest = -1;
+            float nearestDelta = float.MaxValue;
+            float band = targetSize * VariantSizeBand;
+            for (int i = 0; i < loadedMeshes.Length; i++)
+            {
+                if (loadedMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(baseSizes[i].x - targetSize);
+                if (delta < nearestDelta)
+                {
+                    nearestDelta = delta;
+                    nearest = i;
+                }
+                if (delta <= band)
+                    candidates.Add(i);
+            }
+
+            if (candidates.Count == 0)
+                return nearest;
+            if (candidates.Count == 1)
+                return candidates[0];
+            return candidates[(int)(DecorationPositionHash(worldPosition, salt) % (uint)candidates.Count)];
+        }
+
+        /// <summary>
+        /// [B50] `o` 1개짜리 OBJ 모델들의 공용 프로브(바위/덤불/풀/표류물이 같은 규칙을 나눠 쓴다).
+        /// 규칙은 TryGetRockModel 주석의 [로드 규칙] 그대로다: 필드 초기자에서 부르지 않고,
+        /// 실패를 영구 캐시하지 않으며(다음 프레임에 다시 살핀다), 프레임당 1회만 Load를 시도한다.
+        /// 프리팹은 Instantiate하지 않고 MeshFilter.sharedMesh만 꺼낸다 - 임포터가 붙였을 콜라이더가
+        /// 씬에 구조적으로 들어올 수 없다.
+        /// </summary>
+        private static void ProbeSingleMeshModels(string[] resourcePaths, Mesh[] meshes, ref int probeFrame)
+        {
+            bool anyMissing = false;
+            for (int i = 0; i < meshes.Length; i++)
+            {
+                if (meshes[i] == null)
                     anyMissing = true;
             }
 
-            if (anyMissing && rockModelProbeFrame != Time.frameCount)
+            if (!anyMissing || probeFrame == Time.frameCount)
+                return;
+
+            probeFrame = Time.frameCount;
+            for (int i = 0; i < meshes.Length; i++)
             {
-                rockModelProbeFrame = Time.frameCount;
-                for (int i = 0; i < rockModelMeshes.Length; i++)
+                if (meshes[i] != null)
+                    continue;
+
+                // OBJ는 GameObject로 온다. 메시는 루트 또는 그 자식의 MeshFilter.sharedMesh다
+                // (Unity의 OBJ 임포터는 `o` 그룹을 자식으로 만들 수도, 루트에 얹을 수도 있다).
+                var prefab = Resources.Load<GameObject>(resourcePaths[i]);
+                if (prefab == null)
+                    continue;
+
+                var filter = prefab.GetComponent<MeshFilter>();
+                if (filter == null || filter.sharedMesh == null)
+                    filter = prefab.GetComponentInChildren<MeshFilter>(true);
+                if (filter != null)
                 {
-                    if (rockModelMeshes[i] != null)
-                        continue;
-
-                    // OBJ는 GameObject로 온다. 메시는 루트 또는 그 자식의 MeshFilter.sharedMesh다
-                    // (Unity의 OBJ 임포터는 `o` 그룹을 자식으로 만들 수도, 루트에 얹을 수도 있다).
-                    var prefab = Resources.Load<GameObject>(RockModelResourcePaths[i]);
-                    if (prefab == null)
-                        continue;
-
-                    var filter = prefab.GetComponent<MeshFilter>();
-                    if (filter == null || filter.sharedMesh == null)
-                        filter = prefab.GetComponentInChildren<MeshFilter>(true);
-                    if (filter != null)
-                        rockModelMeshes[i] = filter.sharedMesh;
+                    meshes[i] = filter.sharedMesh;
+                    RegisterCollisionHull(resourcePaths[i], filter.sharedMesh);
                 }
             }
+        }
 
-            // 변종 선택에 난수를 쓰지 않는다. 이미 뽑아 둔 목표 폭에 **가장 가까운 기본 폭**을 고르므로
-            // 결정적이고(같은 worldSeed면 같은 변종), 배율이 항상 1 근처(0.86~1.21)라 모델이 늘어나 보이지 않는다.
-            float bestDelta = float.MaxValue;
-            for (int i = 0; i < rockModelMeshes.Length; i++)
-            {
-                if (rockModelMeshes[i] == null)
-                    continue;
+        // ── [B51] 콜라이더 전용 저폴리 헐 ──────────────────────────────────────────
+        //   PhysX의 convex cook은 256폴리곤이 상한이라, 3,000면대 렌더 메시를 그대로 물리면
+        //   "Couldn't create a Convex Mesh ... The partial hull will be used" 경고와 함께
+        //   **부분 헐**로 잘린다(스모크 테스트가 잡았다 - 경고 6건). 그래서 바위·대형 석재는
+        //   <모델명>_col.obj(볼록 헐, 220면 이하)를 따로 두고 콜라이더는 그것만 쓴다.
+        //   _col이 없으면 예전처럼 렌더 메시를 그대로 쓴다(폴백 - 작은 모델은 문제없다).
+        //   매핑은 도메인 리로드로 비워져도 프로브가 다시 채운다(실패 비영구 규칙과 동일).
+        private static readonly Dictionary<Mesh, Mesh> collisionHullByRenderMesh = new Dictionary<Mesh, Mesh>();
 
-                float delta = Mathf.Abs(RockModelSizes[i].x - targetWidth);
-                if (delta >= bestDelta)
-                    continue;
+        private static void RegisterCollisionHull(string renderPath, Mesh renderMesh)
+        {
+            if (renderMesh == null || collisionHullByRenderMesh.ContainsKey(renderMesh))
+                return;
 
-                bestDelta = delta;
-                mesh = rockModelMeshes[i];
-                size = RockModelSizes[i];
-            }
+            var hullPrefab = Resources.Load<GameObject>(renderPath + "_col");
+            if (hullPrefab == null)
+                return; // 헐이 없는 모델(덤불·풀·표류물 등)은 렌더 메시 폴백
 
-            return mesh != null;
+            var hullFilter = hullPrefab.GetComponent<MeshFilter>();
+            if (hullFilter == null || hullFilter.sharedMesh == null)
+                hullFilter = hullPrefab.GetComponentInChildren<MeshFilter>(true);
+            if (hullFilter != null && hullFilter.sharedMesh != null)
+                collisionHullByRenderMesh[renderMesh] = hullFilter.sharedMesh;
+        }
+
+        /// <summary>렌더 메시에 대응하는 콜라이더 전용 헐(없으면 null). AddRockCollider가 쓴다.</summary>
+        internal static Mesh GetCollisionHull(Mesh renderMesh)
+        {
+            if (renderMesh == null)
+                return null;
+            Mesh hull;
+            return collisionHullByRenderMesh.TryGetValue(renderMesh, out hull) ? hull : null;
         }
 
         // ── [B48] 야자수 실물 모델 ──────────────────────────────────────────────────
@@ -261,33 +429,40 @@ namespace MakeGame.Systems
         //   다른 점은 하나뿐이다: 야자수 OBJ는 `o` 오브젝트가 **2개**(줄기 + 크라운)라 머티리얼이
         //   둘(갈색 껍질 / 초록 잎)이고, 메시도 두 장을 꺼내야 한다.
 
-        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).</summary>
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).
+        /// [B50] palm_d(어린 3.29m)·palm_e(노목 잎13장 7.41m)·palm_f(V왕관 잎8장 6.52m) 3종 추가.
+        /// 전부 `o` 2개(palm?_trunk / palm?_crown)라 TryLoadTwoPartModel의 이름 규칙에 그대로 걸린다.</summary>
         private static readonly string[] PalmModelResourcePaths =
         {
-            "Models/palm_a", "Models/palm_b", "Models/palm_c"
+            "Models/palm_a", "Models/palm_b", "Models/palm_c",
+            "Models/palm_d", "Models/palm_e", "Models/palm_f"
         };
 
         /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.</summary>
-        private static readonly float[] PalmModelHeights = { 5.295f, 6.789f, 7.954f };
+        private static readonly float[] PalmModelHeights = { 5.295f, 6.789f, 7.954f, 3.291f, 7.406f, 6.521f };
 
-        private static readonly Mesh[] palmTrunkMeshes = new Mesh[3];
-        private static readonly Mesh[] palmCrownMeshes = new Mesh[3];
+        private static readonly Mesh[] palmTrunkMeshes = new Mesh[6];
+        private static readonly Mesh[] palmCrownMeshes = new Mesh[6];
         private static int palmModelProbeFrame = -1;
 
         /// <summary>
-        /// 목표 높이에 가장 가까운 야자수 모델의 **공유 메시 두 장**(줄기 / 크라운)을 돌려준다.
+        /// 목표 높이에 맞는 야자수 모델의 **공유 메시 두 장**(줄기 / 크라운)을 돌려준다.
         /// 하나도 못 찾으면 false이고, 그때 호출부는 예전 절차 메시로 돌아간다.
         ///
         /// [로드 규칙] TryGetRockModel과 동일하다 - Resources.Load를 정적/필드 초기자에서 부르지 않고,
         /// 실패를 영구히 캐시하지 않는다(그 null을 굳히면 세션 내내 절차 야자수만 나온다,
         /// AGENT_BRIEF 4장 3번). 성공할 때까지 **프레임당 한 번만** 다시 살핀다 - 섬 하나가 야자수를
-        /// 최대 16그루 만들므로 프레임 가드가 없으면 한 프레임에 Load가 48번 불린다.
+        /// 최대 80그루 만들므로 프레임 가드가 없으면 한 프레임에 Load가 수백 번 불린다.
         ///
-        /// [변종 선택] 난수를 쓰지 않는다. 이미 뽑아 둔 목표 높이(4.6~7.6m)에 **가장 가까운 기본 높이**를
-        /// 고르므로 결정적이고(같은 worldSeed면 같은 변종), 균등 배율이 0.87~1.14에 머물러 모델이
-        /// 늘어나 보이지 않는다.
+        /// [B50 변종 선택 - 2단계] 난수는 여전히 0회다. 예전 "최근접 높이 1개"는 6종을 넣어도 높이
+        /// 구간마다 같은 변종만 나오게 하므로, 목표 높이(4.6~7.6m) ±35% 후보 → 위치 해시 선택으로
+        /// 바꿨다(근거·해시는 TryGetRockModel / DecorationPositionHash 주석). 균등 배율은 밴드 정의상
+        /// 0.74~1.54 안이다(최악은 어린 palm_d 3.29m가 4.6m 목표에 뽑히는 1.40배 - 균등 배율이라
+        /// 비례는 유지된다). 같은 높이 목표라도 위치가 다르면 다른 변종이 나와, 노목(잎 13장)과
+        /// V왕관(잎 8장)이 실제로 숲에 섞인다.
         /// </summary>
-        private static bool TryGetPalmModel(float targetHeight, out Mesh trunk, out Mesh crown, out float modelHeight)
+        private static bool TryGetPalmModel(float targetHeight, Vector3 worldPosition,
+            out Mesh trunk, out Mesh crown, out float modelHeight)
         {
             trunk = null;
             crown = null;
@@ -318,23 +493,194 @@ namespace MakeGame.Systems
                 }
             }
 
-            float bestDelta = float.MaxValue;
-            for (int i = 0; i < palmTrunkMeshes.Length; i++)
-            {
-                if (palmTrunkMeshes[i] == null)
-                    continue;
+            int pick = PickVariantByPosition(PalmModelHeights, palmTrunkMeshes, targetHeight,
+                worldPosition, PalmVariantSalt);
+            if (pick < 0)
+                return false;
 
-                float delta = Mathf.Abs(PalmModelHeights[i] - targetHeight);
-                if (delta >= bestDelta)
-                    continue;
-
-                bestDelta = delta;
-                trunk = palmTrunkMeshes[i];
-                crown = palmCrownMeshes[i];
-                modelHeight = PalmModelHeights[i];
-            }
-
+            trunk = palmTrunkMeshes[pick];
+            crown = palmCrownMeshes[pick];
+            modelHeight = PalmModelHeights[pick];
             return trunk != null;
+        }
+
+        // ── [B50] 덤불 / 풀 / 표류물 실물 모델 ──────────────────────────────────────
+        //   바위 로더와 같은 패턴(공용 ProbeSingleMeshModels: 프레임당 1회 프로브 · 실패 비영구 ·
+        //   sharedMesh만 · Instantiate 없음)이고, 변종 선택도 같은 2단계 규칙이다. 폴백(절차 메시)은
+        //   전부 유지한다 - 임포트 전·프로브 실패에서 장식이 사라지면 안 된다.
+        //   ★ 좌표 규약 주의 ★ 셋 다 접지 중심 원점(밑면 y=0 · X/Z 중심 · 미터)이다. 구 규격
+        //   [-0.5,0.5]^3이던 절차 메시와 달리 "중심을 반높이만큼 올리는" 보정을 하면 공중에 뜬다 -
+        //   특히 풀은 호출부의 groundPosition + up*(height*0.35) 보정을 모델 경로에서 빼야 한다
+        //   (CreateGrassTuft 주석).
+
+        /// <summary>덤불 모델 경로. `o` 1개 / 텍스처는 기존 런타임 "leaf"를 그대로 쓴다(머티리얼 신규 0).</summary>
+        private static readonly string[] BushModelResourcePaths =
+        {
+            "Models/bush_a", "Models/bush_b"
+        };
+
+        /// <summary>덤불 실측 크기(m, W×H×D). 게임 목표 폭 1.3~2.2m를 폭 기준으로 fit한다.</summary>
+        private static readonly Vector3[] BushModelSizes =
+        {
+            new Vector3(1.60f, 0.75f, 1.45f),
+            new Vector3(2.10f, 0.95f, 1.90f),
+        };
+
+        private static readonly Mesh[] bushModelMeshes = new Mesh[2];
+        private static int bushModelProbeFrame = -1;
+
+        /// <summary>[B50] 목표 폭 ±35% 후보 → 위치 해시로 덤불 모델을 고른다. 없으면 false(폴백 경로).</summary>
+        private static bool TryGetBushModel(float targetWidth, Vector3 worldPosition, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            ProbeSingleMeshModels(BushModelResourcePaths, bushModelMeshes, ref bushModelProbeFrame);
+
+            int pick = PickVariantByPosition(BushModelSizes, bushModelMeshes, targetWidth,
+                worldPosition, BushVariantSalt);
+            if (pick < 0)
+                return false;
+
+            mesh = bushModelMeshes[pick];
+            size = BushModelSizes[pick];
+            return true;
+        }
+
+        /// <summary>풀포기 모델 경로. `o` 1개 / 텍스처는 기존 런타임 "leaf" 그대로다.</summary>
+        private static readonly string[] GrassModelResourcePaths =
+        {
+            "Models/grass_a", "Models/grass_b"
+        };
+
+        /// <summary>풀포기 실측 크기(m, W×H×D). 게임 목표 폭 0.32~0.62m를 폭 기준으로 fit한다.</summary>
+        private static readonly Vector3[] GrassModelSizes =
+        {
+            new Vector3(0.46f, 0.34f, 0.42f),
+            new Vector3(0.62f, 0.45f, 0.56f),
+        };
+
+        private static readonly Mesh[] grassModelMeshes = new Mesh[2];
+        private static int grassModelProbeFrame = -1;
+
+        /// <summary>[B50] 목표 폭 ±35% 후보 → 위치 해시로 풀 모델을 고른다. 없으면 false(폴백 경로).</summary>
+        private static bool TryGetGrassModel(float targetWidth, Vector3 worldPosition, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            ProbeSingleMeshModels(GrassModelResourcePaths, grassModelMeshes, ref grassModelProbeFrame);
+
+            int pick = PickVariantByPosition(GrassModelSizes, grassModelMeshes, targetWidth,
+                worldPosition, GrassVariantSalt);
+            if (pick < 0)
+                return false;
+
+            mesh = grassModelMeshes[pick];
+            size = GrassModelSizes[pick];
+            return true;
+        }
+
+        /// <summary>표류물 모델 경로. 인덱스는 CreateDriftItem의 종류(index%3: 궤짝/통/널판)와 일대일이다.</summary>
+        private static readonly string[] DriftModelResourcePaths =
+        {
+            "Models/crate_a", "Models/barrel_a", "Models/plankpile_a"
+        };
+
+        /// <summary>표류물 실측 크기(m, W×H×D). 절차 메시 시절의 미터 크기와 **정확히 같게** 구워져 있어
+        /// (0.82×0.66×0.74 / 0.60×0.86×0.60 / 2.10×0.22×0.86), 명세대로 fit 없이 배율 지터
+        /// 0.85~1.25만 곱한다(지터는 기존 rng draw - 새 추첨 없음).</summary>
+        private static readonly Vector3[] DriftModelSizes =
+        {
+            new Vector3(0.82f, 0.66f, 0.74f),
+            new Vector3(0.60f, 0.86f, 0.60f),
+            new Vector3(2.10f, 0.22f, 0.86f),
+        };
+
+        private static readonly Mesh[] driftModelMeshes = new Mesh[3];
+        private static int driftModelProbeFrame = -1;
+
+        /// <summary>[B50] 종류(궤짝/통/널판)당 모델이 1개라 크기 선택·해시가 없다. 없으면 false(폴백 경로).</summary>
+        private static bool TryGetDriftModel(int kind, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            ProbeSingleMeshModels(DriftModelResourcePaths, driftModelMeshes, ref driftModelProbeFrame);
+
+            int i = Mathf.Abs(kind) % DriftModelResourcePaths.Length;
+            if (driftModelMeshes[i] == null)
+                return false;
+
+            mesh = driftModelMeshes[i];
+            size = DriftModelSizes[i];
+            return true;
+        }
+
+        // ── [B51] 대형 석재 7종 (rock_mega / rock_rubble / rock_stack / rock_cliff) ──
+        //   바위 로더와 같은 패턴(공용 ProbeSingleMeshModels: 프레임당 1회 프로브 · 실패 비영구 ·
+        //   sharedMesh만 · Instantiate 없음)이다. 좌표 계약도 같다: 미터 · 밑면 y=0(단, 절벽 2종만
+        //   y=-0.5까지 내려간다 - 경사지에 얹을 때 모서리가 뜨지 않게 하는 여유분이라, 호출부는
+        //   지표 높이에 그대로 놓으면 된다) · X/Z 중심 · rock.png 박스 UV.
+        //
+        //   ★ 기존 바위(rock_a~e)와 달리 **절차 폴백이 없다** ★ rock_a~e는 "임포트 전/프로브 실패에서
+        //   바위가 사라지면 안 되는" 기존 장식의 교체라 폴백을 유지했지만, 이 7종은 0.2.08 신규
+        //   장식이다 - 모델이 없으면 그 개체를 **아예 배치하지 않는 것**이 올바른 폴백이다
+        //   (절차 근사를 새로 만들면 "모델이 로드됐는지"를 화면만 보고 판별할 수 없게 된다).
+        //   프로브 실패는 여전히 비영구다(다음 프레임에 다시 살핀다 - AGENT_BRIEF 4장 3번).
+
+        /// <summary>대형 석재 모델 경로(Resources 기준, 확장자 없음). 인덱스는 아래 StoneModel* 상수와 일대일.</summary>
+        private static readonly string[] StoneModelResourcePaths =
+        {
+            "Models/rock_mega_a", "Models/rock_mega_b",
+            "Models/rock_rubble_a", "Models/rock_rubble_b",
+            "Models/rock_stack_a",
+            "Models/rock_cliff_a", "Models/rock_cliff_b",
+        };
+
+        // StoneModelResourcePaths의 이름 붙은 인덱스. 호출부(PlaceLargeStones)가 종류별 교대 선택에 쓴다.
+        private const int StoneMegaA = 0;
+        private const int StoneMegaB = 1;
+        private const int StoneRubbleA = 2;
+        private const int StoneRubbleB = 3;
+        private const int StoneStackA = 4;
+        private const int StoneCliffA = 5;
+        private const int StoneCliffB = 6;
+
+        /// <summary>각 모델의 실측 크기(m, W×H×D - 디스크 OBJ 정점에서 검산했다. 절벽 2종의 H는
+        /// y=-0.5 여유분을 포함한 전고이고, 지상 노출 높이는 5.40/6.20이다).</summary>
+        private static readonly Vector3[] StoneModelSizes =
+        {
+            new Vector3(3.60f, 4.10f, 3.30f), // mega_a 둥근 거암(꼭대기 평탄면 - 올라서기)
+            new Vector3(3.20f, 5.20f, 2.90f), // mega_b 모난 거석
+            new Vector3(2.80f, 0.45f, 2.40f), // rubble_a 흩어진 판형(밟고 지나감 - 콜라이더 없음)
+            new Vector3(2.20f, 0.75f, 1.95f), // rubble_b 무더기형(〃)
+            new Vector3(2.60f, 3.30f, 2.35f), // stack_a 겹바위(랜드마크)
+            new Vector3(8.50f, 5.90f, 4.20f), // cliff_a 일자 단애(+Z가 수직면 - 내리막/해안 쪽)
+            new Vector3(9.50f, 6.70f, 4.60f), // cliff_b 굽은 단애(凹면이 공터를 만든다)
+        };
+
+        private static readonly Mesh[] stoneModelMeshes = new Mesh[7];
+        private static int stoneModelProbeFrame = -1;
+
+        /// <summary>
+        /// [B51] 지정한 인덱스(StoneMegaA 등)의 대형 석재 공유 메시를 돌려준다. 그 모델이 아직 로드되지
+        /// 않았으면 false - 호출부는 그 개체를 건너뛴다(위 주석: 신규 장식이라 절차 폴백이 없다).
+        /// 종류·교대가 호출부에서 확정되므로 크기 후보·위치 해시 선택은 여기 없다(표류물 로더와 같은 꼴).
+        /// </summary>
+        private static bool TryGetStoneModel(int index, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            ProbeSingleMeshModels(StoneModelResourcePaths, stoneModelMeshes, ref stoneModelProbeFrame);
+
+            if (index < 0 || index >= stoneModelMeshes.Length || stoneModelMeshes[index] == null)
+                return false;
+
+            mesh = stoneModelMeshes[index];
+            size = StoneModelSizes[index];
+            return true;
         }
 
         /// <summary>

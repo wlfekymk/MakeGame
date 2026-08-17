@@ -82,6 +82,18 @@ namespace MakeGame.Systems
         public const int MaxDriftItemsPerIsland = 9;
 
         /// <summary>
+        /// [B51] 섬 하나에 놓는 대형 석재(거암/잔해/겹바위/절벽)의 절대 상한. 하나당 렌더러 1개다.
+        /// 초목·바위무리 상한과 분리하는 이유는 MaxRockClustersPerIsland 주석 그대로다 - 합산 상한에
+        /// 넣으면 트림이 기존 장식을 대신 깎는 조용한 회귀가 된다. 예산은 따로 세우고 따로 갚는다.
+        /// 값 33 = 특대 섬 규모별 상한의 합(거암 8 + 잔해 16 + 겹바위 4 + 절벽 5) - B9 정정의 규칙대로
+        /// "합과 상한을 정확히 일치"시켜, 누군가 규모표를 올리는 순간 아래 트림 가드가 실제로 발동한다.
+        /// 삼각형 최악(특대, 전부 로드): 거암 8×5,246 + 잔해 16×2,226 + 겹바위 4×4,454 + 절벽 5×7,028
+        /// = 130,540(교대 정상 동작 시 mega_b가 섞여 121,436). B49의 야자수 총량(약 137,300)과 같은
+        /// 자릿수이고, 콜라이더는 전부 convex(PhysX 255면 헐 자동 단순화)라 물리 비용은 면수와 무관하다.
+        /// </summary>
+        public const int MaxLargeStonesPerIsland = 33;
+
+        /// <summary>
         /// 섬 지형 오브젝트 위에 (1) 내륙 풀밭 캡 메시와 (2) 초목(야자수/덤불/풀포기)을 배치한다.
         ///
         /// 왜 필요했나: 지형은 단색(당시 모래 #C2B280, B11부터 Meadow Green)으로 칠한 메시 하나뿐이고 초목을 만드는 코드는 프로젝트
@@ -335,6 +347,13 @@ namespace MakeGame.Systems
                     rng, driftMaterials[i % driftMaterials.Length], i);
             }
 
+            // ── [B51] 대형 석재(거암/잔해/겹바위/절벽). 반드시 기존 draw가 **전부 끝난 뒤**에 온다 ──
+            // 대나무 증량(IslandResourceSpawner.SpawnExtraBambooNodes)과 같은 "뒤에 덧붙이기" 선례다:
+            // 이 스트림은 세이브와 무관한 장식 전용이고, 추가 draw가 전부 꼬리에 붙는 한 같은 worldSeed에서
+            // 위 초목·바위·표류물의 위치는 1cm도 밀리지 않으며 재현성(같은 시드 = 같은 월드)도 유지된다.
+            // 새 콜라이더(거암/겹바위/절벽 convex)는 아래 Physics.SyncTransforms() 앞에서 생긴다.
+            PlaceLargeStones(root.transform, islandObject, radius, rng, innerClearRadius, rockMaterials);
+
             // 위 루프들이 바위 큰 덩어리·야자수 줄기에 차단 콜라이더를 새로 달았다.
             // Physics.autoSyncTransforms는 기본 false라(AGENT_BRIEF 4장 — 초목이 전부 해수면에 깔렸던
             // 함정) 같은 프레임의 후속 레이캐스트는 이 콜라이더들을 아직 못 본다. 지형을 찾는 프로브는
@@ -362,8 +381,12 @@ namespace MakeGame.Systems
             if (sourceMesh == null)
                 return;
 
+            // [B51] 콜라이더 전용 헐이 있으면 그것을 쓴다. PhysX convex cook은 256폴리곤이
+            // 상한이라 렌더 메시(3,000면대)를 그대로 물리면 부분 헐로 잘린다(스모크 테스트 검출).
+            Mesh hull = GetCollisionHull(sourceMesh);
+
             var collider = part.AddComponent<MeshCollider>();
-            collider.sharedMesh = sourceMesh;
+            collider.sharedMesh = hull != null ? hull : sourceMesh;
             collider.convex = true;
         }
 
@@ -429,14 +452,18 @@ namespace MakeGame.Systems
             //    모델 밑면이 평면이라 x/z로 기울이면 한쪽 모서리가 지면에서 뜬다.
             Mesh mainModelMesh;
             Vector3 mainModelSize;
-            if (TryGetRockModel(mainWidth, out mainModelMesh, out mainModelSize))
+            if (TryGetRockModel(mainWidth, groundPosition, out mainModelMesh, out mainModelSize))
             {
                 // 뽑아 둔 mainWidth를 그대로 목표 폭으로 쓰므로 폭 분포(1.7~3.6m)가 1mm도 바뀌지 않는다.
-                // 세 모델의 기본 폭이 1.85 / 2.60 / 3.20이고 가장 가까운 것을 고르므로 배율은 0.86~1.21이다.
+                // [B50] 변종은 5종(a~e)이고 선택은 "목표 폭 ±35% 후보 → 위치 해시" 2단계다
+                //  (TryGetRockModel 주석 - rng 소비 0, 배율 0.79~1.39). groundPosition은 이미 확정된
+                //  배치 좌표라 해시 입력으로 써도 재현성이 깨지지 않는다.
                 float fit = mainWidth / Mathf.Max(0.01f, mainModelSize.x);
                 float modelHeight = mainModelSize.y * fit;
                 // 매립 비율(높이의 22~34%, 최소 0.2m)은 그대로다. 모델 원점이 밑면이라 파묻는 깊이가
                 // 곧 -y이고, 절차 메시처럼 높이의 절반을 더할 필요가 없다.
+                // ★ 매립은 폭이 아니라 **선택된 모델의 실측 높이**(mainModelSize.y × fit) 기준이다 -
+                //   판석 rock_d(높이 0.95m)가 폭 기준 매립이었다면 통째로 잠겼을 것이다(B50 검증).
                 float modelSink = Mathf.Max(0.2f, modelHeight * mainSinkFraction);
                 var mainPart = CreatePart(cluster.transform, "Deco_RockMain", mainModelMesh,
                     new Vector3(0f, -modelSink, 0f),
@@ -499,7 +526,8 @@ namespace MakeGame.Systems
             float leanAxis = rng.NextFloat(0f, 360f);
             float scale = rng.NextFloat(0.85f, 1.25f);
 
-            // 메시 규격은 셋 다 [-0.5,0.5]^3 단위 상자다 → 아래 size는 **미터** 그대로이고, 호출부가
+            // 이 switch는 (a) 두 경로 공용의 자세(lean)와 (b) 폴백 경로의 메시·크기를 정한다.
+            // 폴백 메시 규격은 셋 다 [-0.5,0.5]^3 단위 상자다 → 아래 size는 **미터** 그대로이고, 호출부가
             // 스케일을 따로 곱하지 않는다(과거 "메시만 바꾸고 호출부 스케일을 그대로 둔" 사고 방지).
             Vector3 size;
             Mesh mesh;
@@ -526,6 +554,35 @@ namespace MakeGame.Systems
             Quaternion rotation = Quaternion.Euler(0f, yaw, 0f)
                 * Quaternion.AngleAxis(lean, Quaternion.Euler(0f, leanAxis, 0f) * Vector3.forward);
 
+            // ── [B50] 실물 표류물 모델(crate_a / barrel_a / plankpile_a) ──
+            //  draw 4개(yaw/leanRoll/leanAxis/scale)는 위에서 전부 뽑았고 종류는 index%3 그대로라
+            //  rng 소비가 폴백과 비트 단위로 같다. 모델 실측이 절차 메시의 미터 크기와 정확히 같게
+            //  구워져 있어(DriftModelSizes 주석) 명세대로 fit 없이 **배율 지터 0.85~1.25(기존 scale
+            //  draw)만** 균등 스케일로 곱한다. 자세(yaw+lean)도 폴백과 같은 값이다.
+            //  다른 점은 원점뿐이다: 모델은 접지 중심(밑면 y=0)이라 "중심을 verticalHalf만큼 올리는"
+            //  폴백 식을 쓰면 통째로 떠오른다. 대신 기울일 때 밑면 가장자리가 원점보다 내려가는 깊이
+            //  (수평 반폭 × sin(lean))만 들어 올린 뒤 같은 sink만큼 파묻는다.
+            Mesh driftModelMesh;
+            Vector3 driftModelSize;
+            if (TryGetDriftModel(index % 3, out driftModelMesh, out driftModelSize))
+            {
+                Vector3 worldSize = driftModelSize * scale;
+                float modelRadians = lean * Mathf.Deg2Rad;
+                float horizontalHalf = 0.5f * Mathf.Max(worldSize.x, worldSize.z);
+                // 폴백의 verticalHalf와 같은 값이다(0.5·(h·cos + maxWD·sin)) - sink 규칙을 공유해
+                // 모델/폴백의 파묻힌 깊이가 같게 유지된다.
+                float modelVerticalHalf = 0.5f * worldSize.y * Mathf.Abs(Mathf.Cos(modelRadians))
+                    + horizontalHalf * Mathf.Abs(Mathf.Sin(modelRadians));
+                float modelSink = Mathf.Min(0.16f, modelVerticalHalf * 0.34f);
+
+                var modelPart = CreatePart(parent, "Deco_Drift" + (index % 3), driftModelMesh,
+                    Vector3.zero, Vector3.one * scale, rotation, material);
+                modelPart.transform.position = groundPosition
+                    + Vector3.up * (horizontalHalf * Mathf.Abs(Mathf.Sin(modelRadians)) - modelSink);
+                return;
+            }
+
+            // 폴백(절차 메시 - 지우지 않는다). 구 규격 [-0.5,0.5]^3이라 중심을 반높이만큼 올린다.
             // 파묻힘: 기울인 상태의 세로 반높이를 실제로 계산한 뒤 그 일부만 지면 아래로 넣는다.
             // 상수 비율(예: "세로 크기의 22%")로 하면 길게 누운 널판 더미가 통째로 땅에 잠긴다 -
             // 회전을 무시한 값을 쓰는 것이 이 프로젝트가 반복해서 낸 사고 유형이라 여기서 계산한다.
@@ -537,6 +594,262 @@ namespace MakeGame.Systems
             var part = CreatePart(parent, "Deco_Drift" + (index % 3), mesh,
                 Vector3.zero, size, rotation, material);
             part.transform.position = groundPosition + Vector3.up * (verticalHalf - sink);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        //  [B51] 대형 석재 - "사람보다 큰 바위·깨진 잔해·겹바위·절벽을 랜덤으로"(디렉터/사용자 요청)
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>규모별(소/중/대/특대) 개수 하한. 열 순서: 거암 합산 / 잔해 합산 / 겹바위 / 절벽 합산.
+        /// 제작 담당 명세표의 검증값 그대로다. 규모 판정은 반지름(50/90/140/200)의 중간값 경계로 한다.</summary>
+        private static readonly int[] StoneMegaMin = { 1, 2, 4, 6 };
+        private static readonly int[] StoneMegaMax = { 2, 4, 6, 8 };
+        private static readonly int[] StoneRubbleMin = { 2, 4, 8, 12 };
+        private static readonly int[] StoneRubbleMax = { 4, 8, 12, 16 };
+        private static readonly int[] StoneStackMin = { 0, 1, 2, 3 };
+        private static readonly int[] StoneStackMax = { 1, 2, 3, 4 };
+        private static readonly int[] StoneCliffMin = { 0, 1, 2, 3 };
+        private static readonly int[] StoneCliffMax = { 1, 2, 4, 5 };
+
+        /// <summary>이번 배치 안의 상호 최소 간격(m). 큰 것끼리 겹치면 흉하다(명세). 절벽↔거암처럼
+        /// 종류가 다르면 **둘 중 큰 값**을 적용한다(TryFindStoneSpot).</summary>
+        private const float StoneMegaSpacing = 8f;
+        private const float StoneCliffSpacing = 12f;
+
+        /// <summary>
+        /// 시작 섬 고정물(경비행기 잔해 +6,-4 · 배 작업대 -6,-3 · 착륙 원)의 섬 중심 기준 최대 도달
+        /// 반경(m). 잔해 7.2 / 작업대 6.7 / 착륙 원 상한 12(IslandResourceSpawner.LandingCircleMaxRadius)
+        /// 중 최댓값이다. 셋 다 중심 근처 고정이라, 명세의 회피 반경에 이 값을 더한 **중심 이격**으로
+        /// 세 점 회피를 한 번에 근사한다 - CreatePalm 주변의 innerClearRadius(중심 비우기) 선례와 같은
+        /// 방식이고, 점별 거리 검사보다 보수적이라 항상 안전한 쪽으로 어긋난다.
+        /// </summary>
+        private const float StartIslandFixturesReach = 12f;
+
+        /// <summary>거암/겹바위를 경사지에서 모서리가 뜨지 않게 파묻는 고정 깊이(m). 모델 밑면이 평평한
+        /// 접지 원점(y=0)이라 비율 매립(기존 바위 22~34%)이 필요 없고, rng도 소비하지 않는다.</summary>
+        private const float StoneMegaSink = 0.15f;
+
+        /// <summary>잔해(판형/무더기)의 매립 깊이(m). 높이가 0.45~0.75m뿐이라 얕게만 묻는다.</summary>
+        private const float StoneRubbleSink = 0.04f;
+
+        /// <summary>
+        /// [B51] 대형 석재 4계열(거암 mega_a/b · 잔해 rubble_a/b · 겹바위 stack_a · 절벽 cliff_a/b)을
+        /// 배치한다. BuildIslandSurface **맨 끝**에서만 불린다 - 모든 draw가 기존 초목·바위·표류물의
+        /// draw 뒤에 오므로 기존 배치는 밀리지 않는다(호출부 주석).
+        ///
+        /// [모델 필수] TryGetStoneModel이 false면 그 개체는 **아예 배치하지 않는다.** 기존 장식과 달리
+        /// 절차 폴백을 만들지 않는다(MeshLibrary [B51] 주석 - 신규 장식이라 "없으면 없는 것"이 폴백이다).
+        ///
+        /// [난수] 이 함수 안의 draw 수는 재시도(최대 6회)에 따라 변하지만, 스트림의 꼬리라 뒤따르는
+        /// 소비자가 없고 System.Random은 시드 결정적이라 같은 worldSeed면 같은 배치가 나온다.
+        ///
+        /// [콜라이더] 거암/겹바위/절벽은 AddRockCollider(convex MeshCollider - 기존 경로 재사용).
+        /// 잔해는 "밟고 지나감"이 명세라 콜라이더 없음. 전부 호출부(BuildIslandSurface)의
+        /// Physics.SyncTransforms() 앞에서 생긴다.
+        /// </summary>
+        private static void PlaceLargeStones(Transform parent, GameObject islandObject, float radius,
+            System.Random rng, float innerClearRadius, Material[] materials)
+        {
+            Vector3 center = islandObject.transform.position;
+
+            // 시작 섬 판정: 이름 규약 "Island_{id}_{size}"(WorldMapManager.SpawnPlaceholder가
+            // BuildIslandSurface 호출 **전에** 붙인다). islandId 0이 항상 시작 섬이다
+            // (WorldMapManager.GenerateStartingIsland). 고정물은 시작 섬에만 있으므로 다른 섬에서는
+            // 이격을 더하지 않는다 - 큰 섬의 내륙 배치 다양성을 공짜로 깎을 이유가 없다.
+            bool startIsland = islandObject.name.StartsWith("Island_0_");
+
+            // 규모 판정: 반지름 50/90/140/200(IslandSizeMetrics)의 중간값 경계. 반지름 공식이 바뀌어도
+            // 가장 가까운 규모로 떨어지게 하는 방어이지, 현재 값에서는 정확히 4단으로 갈린다.
+            int bracket = radius <= 70f ? 0 : radius <= 115f ? 1 : radius <= 170f ? 2 : 3;
+
+            int megaCount = rng.NextInt(StoneMegaMin[bracket], StoneMegaMax[bracket] + 1);
+            int rubbleCount = rng.NextInt(StoneRubbleMin[bracket], StoneRubbleMax[bracket] + 1);
+            int stackCount = rng.NextInt(StoneStackMin[bracket], StoneStackMax[bracket] + 1);
+            int cliffCount = rng.NextInt(StoneCliffMin[bracket], StoneCliffMax[bracket] + 1);
+
+            // 살아 있는 가드(B9 정정의 규칙): 현재 규모표로는 최대 33 = 상한과 정확히 같아 발동하지
+            // 않지만, 규모표를 올리는 순간 잔해부터 깎는다(콜라이더 없는 계열이라 잃는 것이 가장 적다).
+            int requested = megaCount + rubbleCount + stackCount + cliffCount;
+            if (requested > MaxLargeStonesPerIsland)
+                rubbleCount = Mathf.Max(0, rubbleCount - (requested - MaxLargeStonesPerIsland));
+
+            // 이번 배치에서 이미 놓인 큰 석재(거암/겹바위/절벽). 상호 간격 검사와 잔해의 "깨져 나온"
+            // 연출(60% 확률로 큰 석재 주변 3~6m) 앵커로 쓴다.
+            var placedLarge = new List<Vector3>();
+            var placedSpacing = new List<float>();
+
+            // ── (1) 거암 mega_a/b - 내륙, 회피 15m, 상호 8m, convex ──
+            // 안쪽 한계: 기존 바위 무리와 같은 innerClearRadius+4를 기본으로 하되, 시작 섬은 고정물
+            // 도달 반경(12) + 명세 회피 15 = 27m를 강제한다(위 StartIslandFixturesReach 주석).
+            float megaMinR = Mathf.Max(innerClearRadius + 4f, startIsland ? StartIslandFixturesReach + 15f : 0f);
+            float megaMaxR = Mathf.Max(megaMinR + 4f, radius * 0.55f);
+            for (int i = 0; i < megaCount; i++)
+            {
+                // 교대(명세 "mega_a와 교대"): 짝수 a / 홀수 b. 한쪽만 로드돼 있으면 그쪽으로 대신한다.
+                Mesh mesh; Vector3 size;
+                if (!TryGetStoneModel(i % 2 == 0 ? StoneMegaA : StoneMegaB, out mesh, out size)
+                    && !TryGetStoneModel(i % 2 == 0 ? StoneMegaB : StoneMegaA, out mesh, out size))
+                    continue; // 모델 없음 - 배치하지 않는다(rng 미소비라 이후 개체에도 영향 없음)
+
+                Vector3 spot;
+                if (!TryFindStoneSpot(center, rng, megaMinR, megaMaxR, StoneMegaSpacing,
+                        placedLarge, placedSpacing, out spot))
+                    continue; // 6회 안에 자리 못 찾음 - 건너뛴다(PickBearWanderTarget 선례)
+
+                float scale = rng.NextFloat(0.85f, 1.25f);
+                float yaw = rng.NextFloat(0f, 360f);
+                var part = CreatePart(parent, "Deco_StoneMega", mesh,
+                    Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f),
+                    materials[i % materials.Length]);
+                part.transform.position = spot + Vector3.down * StoneMegaSink;
+                AddRockCollider(part, mesh); // 꼭대기 평탄면에 올라서기(명세) - convex 헐이 그 면을 보존한다
+
+                placedLarge.Add(spot);
+                placedSpacing.Add(StoneMegaSpacing);
+            }
+
+            // ── (2) 겹바위 stack_a - 내륙 랜드마크. 거암과 같은 규칙(회피 15m·상호 8m·convex) ──
+            float stackMaxR = Mathf.Max(megaMinR + 4f, radius * 0.50f);
+            for (int i = 0; i < stackCount; i++)
+            {
+                Mesh mesh; Vector3 size;
+                if (!TryGetStoneModel(StoneStackA, out mesh, out size))
+                    break; // 단일 모델이라 한 번 없으면 전부 없다
+
+                Vector3 spot;
+                if (!TryFindStoneSpot(center, rng, megaMinR, stackMaxR, StoneMegaSpacing,
+                        placedLarge, placedSpacing, out spot))
+                    continue;
+
+                float scale = rng.NextFloat(0.9f, 1.2f);
+                float yaw = rng.NextFloat(0f, 360f);
+                var part = CreatePart(parent, "Deco_StoneStack", mesh,
+                    Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f),
+                    materials[(i + 1) % materials.Length]);
+                part.transform.position = spot + Vector3.down * StoneMegaSink;
+                AddRockCollider(part, mesh);
+
+                placedLarge.Add(spot);
+                placedSpacing.Add(StoneMegaSpacing);
+            }
+
+            // ── (3) 절벽 cliff_a/b - 내륙 경사지, 회피 20m, 상호 12m, convex ──
+            // 지형은 정상부에서 해안으로 내려가는 대체 단조 경사라(WorldMeshBuilder 지형 마스크),
+            // 0.40R~0.70R 고리가 곧 "내륙 경사지" 근사다. 방향은 지형 경사 샘플링 대신 **섬 중심에서
+            // 바깥을 향하는 방위각**으로 잡는다(명세: 수직면 +Z가 내리막/해안 쪽 - 경사 샘플링은 과하다).
+            float cliffMinR = Mathf.Max(radius * 0.40f, innerClearRadius + 6f,
+                startIsland ? StartIslandFixturesReach + 20f : 0f);
+            float cliffMaxR = Mathf.Max(cliffMinR + 6f, radius * 0.70f);
+            for (int i = 0; i < cliffCount; i++)
+            {
+                Mesh mesh; Vector3 size;
+                if (!TryGetStoneModel(i % 2 == 0 ? StoneCliffA : StoneCliffB, out mesh, out size)
+                    && !TryGetStoneModel(i % 2 == 0 ? StoneCliffB : StoneCliffA, out mesh, out size))
+                    continue;
+
+                Vector3 spot;
+                if (!TryFindStoneSpot(center, rng, cliffMinR, cliffMaxR, StoneCliffSpacing,
+                        placedLarge, placedSpacing, out spot))
+                    continue;
+
+                // +Z(수직면)를 섬 바깥으로: Euler(0,yaw,0)는 +Z를 (sin yaw, 0, cos yaw)로 돌리므로
+                // yaw = Atan2(바깥.x, 바깥.z)다. ±20° 지터로 여러 절벽이 기계적 방사형이 되는 것을 막는다.
+                Vector3 outward = spot - center;
+                float yaw = Mathf.Atan2(outward.x, outward.z) * Mathf.Rad2Deg + rng.NextFloat(-20f, 20f);
+                float scale = rng.NextFloat(0.9f, 1.15f);
+
+                // 메시가 y=-0.5까지 내려가 있어(경사 얹힘 여유 - 명세) 지표 높이에 그대로 놓는다.
+                var part = CreatePart(parent, "Deco_StoneCliff", mesh,
+                    Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f),
+                    materials[i % materials.Length]);
+                part.transform.position = spot;
+                AddRockCollider(part, mesh); // 凹면(cliff_b)은 convex 헐이 메워지지만 명세가 convex다 - 보고됨
+
+                placedLarge.Add(spot);
+                placedSpacing.Add(StoneCliffSpacing);
+            }
+
+            // ── (4) 잔해 rubble_a/b - 배치 무관, 회피 12m, 콜라이더 없음 ──
+            // 60%는 이번에 놓인 큰 석재 주변 3~6m("깨져 나온" 연출 - 명세), 40%는 자유 산포.
+            // 낮고(0.45~0.75m) 밟고 지나가는 장식이라 상호 간격 검사와 재시도가 필요 없다.
+            float rubbleMinR = Mathf.Max(innerClearRadius * 0.8f, startIsland ? StartIslandFixturesReach + 12f : 0f);
+            float rubbleMaxR = Mathf.Max(rubbleMinR + 4f, radius * 0.78f);
+            for (int i = 0; i < rubbleCount; i++)
+            {
+                Mesh mesh; Vector3 size;
+                if (!TryGetStoneModel(i % 2 == 0 ? StoneRubbleA : StoneRubbleB, out mesh, out size)
+                    && !TryGetStoneModel(i % 2 == 0 ? StoneRubbleB : StoneRubbleA, out mesh, out size))
+                    continue;
+
+                Vector3 spot;
+                if (placedLarge.Count > 0 && rng.NextValue01() < 0.6f)
+                {
+                    Vector3 anchor = placedLarge[rng.NextInt(0, placedLarge.Count)];
+                    float angle = rng.NextFloat(0f, Mathf.PI * 2f);
+                    float dist = rng.NextFloat(3f, 6f);
+                    spot = anchor + new Vector3(Mathf.Cos(angle) * dist, 0f, Mathf.Sin(angle) * dist);
+                    // 앵커에서 6m 밀리면 시작 섬 고정물 이격(회피 12m)이 살짝 깨질 수 있어 고리로 되민다.
+                    spot = ClampToIslandRing(spot, center, rubbleMinR, rubbleMaxR);
+                }
+                else
+                {
+                    // 앵커가 없거나(모델 미로드·전부 건너뜀) 40% 자유 산포. 앵커 유무로 분기하므로
+                    // draw 수가 경우에 따라 다르지만, 스트림 꼬리라 문제없다(함수 상단 [난수] 주석).
+                    spot = SampleOnIsland(center, rng, rubbleMinR, rubbleMaxR);
+                }
+
+                spot = SnapToLand(spot, center, rubbleMinR, rubbleMaxR, VegetationMinGroundY);
+                if (spot.y <= VegetationMinGroundY)
+                    continue; // 육지를 못 찾음(물속) - 배치하지 않는다
+
+                float scale = rng.NextFloat(0.8f, 1.3f);
+                float yaw = rng.NextFloat(0f, 360f);
+                var part = CreatePart(parent, "Deco_StoneRubble", mesh,
+                    Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f),
+                    materials[(i + 2) % materials.Length]);
+                part.transform.position = spot + Vector3.down * StoneRubbleSink;
+                // 콜라이더 없음(명세 "밟고 지나감") - CreatePart는 콜라이더가 애초에 안 생기는 경로다.
+            }
+        }
+
+        /// <summary>
+        /// [B51] 대형 석재 자리 찾기: 고리 안에서 뽑아 물속을 피하고(SnapToLand), 이번 배치의 다른 큰
+        /// 석재와의 상호 간격(서로 다른 종류면 둘 중 큰 값)을 지키는 자리를 **최대 6회** 시도한다.
+        /// 못 찾으면 false - 호출부는 그 개체를 건너뛴다(HazardSource.PickBearWanderTarget의 6회
+        /// 상한 선례: 억지로 놓는 것보다 빠뜨리는 쪽이 항상 안전하다).
+        /// </summary>
+        private static bool TryFindStoneSpot(Vector3 center, System.Random rng, float minRadius, float maxRadius,
+            float ownSpacing, List<Vector3> placed, List<float> placedSpacing, out Vector3 spot)
+        {
+            for (int attempt = 0; attempt < 6; attempt++)
+            {
+                Vector3 candidate = SnapToLand(SampleOnIsland(center, rng, minRadius, maxRadius),
+                    center, minRadius, maxRadius, VegetationMinGroundY);
+                if (candidate.y <= VegetationMinGroundY)
+                    continue; // SnapToLand가 육지를 못 찾고 원래 스냅을 돌려준 경우(물속)
+
+                bool blocked = false;
+                for (int i = 0; i < placed.Count; i++)
+                {
+                    float need = Mathf.Max(ownSpacing, placedSpacing[i]);
+                    float dx = candidate.x - placed[i].x;
+                    float dz = candidate.z - placed[i].z;
+                    if (dx * dx + dz * dz < need * need)
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+
+                if (!blocked)
+                {
+                    spot = candidate;
+                    return true;
+                }
+            }
+
+            spot = Vector3.zero;
+            return false;
         }
 
         /// <summary>초목·바위가 서 있어도 되는 최소 지면 높이(m). 이보다 낮으면 물에 잠긴 자리로 본다.</summary>
@@ -717,11 +1030,12 @@ namespace MakeGame.Systems
             //  · 콜라이더는 여기서 **자동으로 생기지 않는다** - CreatePart는 프리미티브를 거치지 않고,
             //    모델도 프리팹을 Instantiate하지 않고 sharedMesh만 꺼내 쓰므로 임포터가 붙였을 콜라이더가
             //    씬에 안 들어온다. 물리 차단은 위에서 뿌리에 명시적으로 단 줄기 캡슐 하나뿐이다.
-            //  · ★ 난수 ★ 변종 선택에 rng를 쓰지 않는다. 위에서 이미 뽑아 둔 height로 고른다. 그리고
+            //  · ★ 난수 ★ 변종 선택에 rng를 쓰지 않는다. 위에서 이미 뽑아 둔 height와 이미 확정된
+            //    groundPosition(위치 해시 - [B50] 2단계 선택, TryGetPalmModel 주석)으로 고른다. 그리고
             //    아래 잎 루프의 draw는 **모델 경로에서도 전부 그대로 뽑는다**(파일 상단 [결정성] 주석).
             Mesh palmTrunkMesh, palmCrownMesh;
             float palmModelHeight;
-            bool useModel = TryGetPalmModel(height, out palmTrunkMesh, out palmCrownMesh, out palmModelHeight);
+            bool useModel = TryGetPalmModel(height, groundPosition, out palmTrunkMesh, out palmCrownMesh, out palmModelHeight);
             if (useModel)
             {
                 float fit = height / Mathf.Max(0.01f, palmModelHeight);
@@ -813,7 +1127,8 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 덤불 한 개(포기 전체가 메시 한 장, 렌더러 1개 · 92삼각형). 야자수보다 낮아 시야를 막지 않는다.
+        /// 덤불 한 개(포기 전체가 메시 한 장, 렌더러 1개). [B50] 실물 모델(bush_a 470 / bush_b 566삼각형)이
+        /// 있으면 모델을, 없으면 절차 메시(92삼각형)를 쓴다. 야자수보다 낮아 시야를 막지 않는다.
         /// [B29] 로브 3개를 별도 파츠로 붙이던 것을 메시에 구워 렌더러를 3 → 1로 줄이고, 남은 예산으로
         /// 잎끝 8장을 넣었다(GetBushClumpMesh). 폭·높이 범위와 난수 소비는 예전과 완전히 동일하다.
         ///
@@ -848,9 +1163,33 @@ namespace MakeGame.Systems
             rng.NextFloat(-22f, 22f);                  // 예전 로브1 X기울기
             rng.NextFloat(-22f, 22f);                  // 예전 로브1 Z기울기
 
-            // 메시 규격: x·z ∈ [-0.5, 0.5], **y ∈ [0, 1]이고 원점이 밑동**이다(구 규격이 아니다).
-            // 그래서 위치는 지면 그대로, 스케일은 (폭, 높이, 깊이)를 미터로 넣으면 된다.
-            // 예전 3파츠 구성과 화면상 크기가 같도록 폭·높이 범위는 한 글자도 바꾸지 않았다.
+            // ── [B50] 실물 덤불 모델(bush_a/b) ──
+            //  위 draw들은 모델 경로에서도 **전부 그대로 뽑았다**(바위·야자수와 같은 선추첨 패턴 -
+            //  여기서 덜 뽑으면 같은 worldSeed에서 뒤따르는 풀포기 배치가 통째로 밀린다).
+            //  · 변종 선택: 목표 폭 ±35% 후보 → 위치 해시(TryGetBushModel). rng 소비 0.
+            //  · 크기: 모델이 미터 규격(밑면 y=0 · X/Z 중심)이라 **균등 배율 fit = width / 실측 폭**만
+            //    쓴다(바위·야자수와 같은 규약 - 절차 메시처럼 (폭,높이,깊이)를 곱하면 2배로 부푼다).
+            //  · 회전: yaw만. 절차 경로의 tiltX/tiltZ는 주지 않는다 - 모델 밑면이 평평해서 기울이면
+            //    한쪽 가장자리가 지면에서 뜬다(바위 모델이 yaw만 받는 것과 같은 이유).
+            //  · 다양성 보강: fit이 균등이라 높이가 폭에 묶인다(절차 경로는 높이를 따로 뽑았다).
+            //    잃어버린 그 축을 위치 해시의 **다른 salt**(BushStretchSalt)로 세로만 0.92~1.12배
+            //    지터해 되살린다 - 새 rng 추첨 없음, yaw 회전+세로 스케일은 축이 일치해 전단 없음.
+            Mesh bushModelMesh;
+            Vector3 bushModelSize;
+            if (TryGetBushModel(width, groundPosition, out bushModelMesh, out bushModelSize))
+            {
+                float fit = width / Mathf.Max(0.01f, bushModelSize.x);
+                float stretch = Mathf.Lerp(0.92f, 1.12f, DecorationPositionHash01(groundPosition, BushStretchSalt));
+                var modelBush = CreatePart(parent, "Veg_Bush", bushModelMesh,
+                    Vector3.zero, new Vector3(fit, fit * stretch, fit),
+                    Quaternion.Euler(0f, yaw, 0f), material);
+                modelBush.transform.position = groundPosition; // 접지 원점 - 중심 보정 없음
+                return;
+            }
+
+            // 폴백(절차 메시 - 지우지 않는다). 메시 규격: x·z ∈ [-0.5, 0.5], **y ∈ [0, 1]이고 원점이
+            // 밑동**이다(구 규격이 아니다). 그래서 위치는 지면 그대로, 스케일은 (폭, 높이, 깊이)를
+            // 미터로 넣으면 된다. 예전 3파츠 구성과 화면상 크기가 같도록 폭·높이 범위는 그대로다.
             int variant = Mathf.Clamp(Mathf.FloorToInt((variantRoll - 0.50f) / 0.26f * 3f), 0, 2);
             var bush = CreatePart(parent, "Veg_Bush", GetBushClumpMesh(variant),
                 Vector3.zero, new Vector3(width, height, width * 0.9f),
@@ -859,7 +1198,8 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 풀포기 한 개(잎 5장 부채꼴, 양면·2마디라 40삼각형). 개수가 제일 많아 렌더러 1개를 유지한다.
+        /// 풀포기 한 개(렌더러 1개). [B50] 실물 모델(grass_a 84 / grass_b 120삼각형)이 있으면 모델을,
+        /// 없으면 절차 메시(잎 5장 부채꼴, 양면·2마디 40삼각형)를 쓴다. 개수가 제일 많아 렌더러 1개 유지.
         /// [B8] 두께를 폭의 80% → 30%로 줄이고 좌우로 살짝 눕혀, 위에서 봐도 "납작한 덩어리"가 아니라
         /// 풀잎 다발이 서 있는 것처럼 보이게 한다.
         /// [B9] 그 "눌린 구"(768삼각형)를 같은 규격의 잎 부채꼴 메시(12삼각형)로 교체했다. 눌린 구가
@@ -876,10 +1216,37 @@ namespace MakeGame.Systems
             float yaw = rng.NextFloat(0f, 360f);
             float lean = rng.NextFloat(-14f, 14f);
 
-            var tuft = CreatePart(parent, "Veg_GrassTuft", GetGrassBladeMesh(),
-                Vector3.zero, new Vector3(width, height, width * 0.30f),
-                Quaternion.Euler(0f, yaw, lean), material);
-            tuft.transform.position = groundPosition + Vector3.up * (height * 0.35f);
+            // ── [B50] 실물 풀 모델(grass_a/b) ──
+            //  draw 4개는 모델 경로에서도 위에서 전부 뽑았다(선추첨 - 소비 순서·횟수 불변).
+            //  · 변종 선택: 목표 폭 ±35% 후보 → 위치 해시(TryGetGrassModel). rng 소비 0.
+            //  · ★ 원점 함정 ★ 신규 풀 모델은 **접지 중심 원점**(밑면 y=0)이다. 아래 폴백의
+            //    groundPosition + up*(height*0.35) 중심 보정은 구 규격([-0.5,0.5]^3) 메시를 지면에
+            //    걸치게 하는 값이라, 모델에 그대로 쓰면 풀이 공중에 뜬다. 모델 경로는 보정 없이
+            //    지면 좌표를 그대로 쓴다(폴백 경로의 보정은 유지).
+            //  · 회전: yaw만. lean(±14°)은 주지 않는다 - 밑면이 지면과 맞닿는 모델을 기울이면
+            //    잎다발 전체가 한쪽으로 떠서, 가느다란 풀은 덤불보다 부양이 더 잘 보인다.
+            //  · 다양성 보강: 균등 fit으로 잃은 높이 축을 위치 해시의 다른 salt(GrassStretchSalt)로
+            //    세로 0.90~1.15배 지터해 되살린다(새 rng 추첨 없음, yaw+세로 스케일이라 전단 없음).
+            Mesh grassModelMesh;
+            Vector3 grassModelSize;
+            GameObject tuft;
+            if (TryGetGrassModel(width, groundPosition, out grassModelMesh, out grassModelSize))
+            {
+                float fit = width / Mathf.Max(0.01f, grassModelSize.x);
+                float stretch = Mathf.Lerp(0.90f, 1.15f, DecorationPositionHash01(groundPosition, GrassStretchSalt));
+                tuft = CreatePart(parent, "Veg_GrassTuft", grassModelMesh,
+                    Vector3.zero, new Vector3(fit, fit * stretch, fit),
+                    Quaternion.Euler(0f, yaw, 0f), material);
+                tuft.transform.position = groundPosition; // 접지 원점 - 중심 보정 없음
+            }
+            else
+            {
+                // 폴백(절차 메시 - 지우지 않는다). 구 규격이라 중심 보정(height*0.35)이 필요하다.
+                tuft = CreatePart(parent, "Veg_GrassTuft", GetGrassBladeMesh(),
+                    Vector3.zero, new Vector3(width, height, width * 0.30f),
+                    Quaternion.Euler(0f, yaw, lean), material);
+                tuft.transform.position = groundPosition + Vector3.up * (height * 0.35f);
+            }
 
             // 풀포기는 5m 밖에서 그림자가 보이지 않는데 개수만 많아, 그림자 드리우기를 끈다
             // (ArtDirection 2장 "폴리곤을 아낄 곳은 5m 밖에서 안 보이는 디테일").
