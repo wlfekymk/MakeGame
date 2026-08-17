@@ -221,7 +221,70 @@ namespace MakeGame.Systems
             if (spawnLandingCircle && island.isStartingIsland)
                 SpawnLandingCircleNodes(island, parent, rng, spawned, ref spawnOrder);
 
+            // [B49 디렉터 지시 "대나무를 5배로"] 증량분은 **모든 기존 노드(착륙 원 포함) 뒤**에 붙인다.
+            // 위 (1)(2)와 정확히 같은 이유이고, 대나무는 resourceEntries 5번째 항목이라 그 자리에서
+            // count를 늘리면 뒤따르는 8종(천조각/부싯돌/금속조각/부력통/비상식량/연료/엔진부품/생수) +
+            // 착륙 원 3개의 spawnOrder가 통째로 밀려 기존 세이브의 채집 상태가 엉뚱한 노드에 복원된다.
+            // 이 호출은 위 루프와 착륙 원이 draw를 전부 끝낸 **뒤에** 시작하므로, 기존 노드의
+            // 위치·모양·개수·번호가 하나도 바뀌지 않는다.
+            SpawnExtraBambooNodes(island, parent, rng, spawned, ref spawnOrder);
+
             return spawned;
+        }
+
+        /// <summary>이 이름의 자원을 증량 대상으로 삼는다. 씬 엔트리를 이름으로 찾는다(착륙 원과 같은 방식).</summary>
+        private const string BambooItemName = "대나무";
+
+        /// <summary>
+        /// [B49] 대나무 **추가** 배치 배수. 기존 배치분(baseCount × 규모 배율)의 이 배수만큼을 뒤에 덧붙여
+        /// 합계가 (1 + 이 값)배가 된다. 사용자 요청이 "5배"이므로 4다.
+        /// 씬 `resourceEntries`의 `baseCount`를 고치는 방식은 쓸 수 없다 - 그 방식은 대나무가 목록
+        /// 중간(5번째)에 있어서 뒤따르는 모든 노드의 spawnOrder를 밀어버리고, 그 값이 곧 세이브 키다.
+        /// </summary>
+        private const int BambooExtraSpawnMultiplier = 4;
+
+        /// <summary>
+        /// [B49] 대나무 노드를 기존 배치분의 <see cref="BambooExtraSpawnMultiplier"/>배만큼 **추가로** 배치한다.
+        ///
+        /// ★ 이 함수가 지키는 계약 ★
+        ///  · 반드시 SpawnResourcesForIsland의 무작위 루프와 착륙 원이 **모두 끝난 뒤**에 호출된다.
+        ///    그래야 (a) 기존 노드의 spawnOrder 0..N-1이 예전과 같은 노드에 그대로 붙고(세이브 안전),
+        ///    (b) 여기서 소비하는 rng draw가 전부 기존 draw **뒤**에 와서 기존 노드의 위치·스케일·회전
+        ///    지터가 1mm도 바뀌지 않는다. 추가분은 N 이후 번호를 받아 미채집 상태로 시작한다(정상).
+        ///  · 배치 규칙을 **새로 만들지 않는다.** 위 무작위 루프와 완전히 같은 식을 쓴다 -
+        ///    같은 산포 반경(GetScatterRadius), 같은 균등 원판 표집(NextInsideUnitCircle),
+        ///    같은 TerrainSampler.SnapToGround, 같은 SpawnSingleNode 경로.
+        ///    따라서 콜라이더(루트 캡슐)·모델(bamboo_a/b/c)·머티리얼·채집 규칙이 기존 대나무와 동일하다.
+        ///  · 씬 엔트리를 이름으로 찾아 **그대로 재사용**한다(FindEntryByItemName). 코드에서 새
+        ///    ResourceEntry를 만들면 씬에 직렬화된 설정(도구 요구/최소 섬 규모/보너스 도구)과 어긋난다.
+        ///  · 최소 섬 규모 판정도 위 루프와 같은 조건을 그대로 쓴다. 대나무는 현재 minimumIslandSize가
+        ///    Small이라 전 섬에 나오지만, 디렉터가 씬에서 이 값을 올리면 증량분도 함께 사라져야 한다.
+        /// </summary>
+        private void SpawnExtraBambooNodes(IslandInstance island, Transform parent, System.Random rng,
+            List<ResourceNode> spawned, ref int spawnOrder)
+        {
+            ResourceEntry entry = FindEntryByItemName(BambooItemName);
+            if (entry == null || entry.yieldItem == null)
+                return; // 씬에 대나무 항목이 없으면 조용히 아무것도 하지 않는다(설정 누락에 NRE로 죽지 않게).
+
+            if (island.size < entry.minimumIslandSize)
+                return;
+
+            // 위 무작위 루프가 이 섬에 실제로 배치한 대나무 개수와 **같은 식**으로 다시 계산한다.
+            int baseSpawnedCount = Mathf.RoundToInt(entry.baseCount * GetMultiplier(island.size));
+            int extraCount = baseSpawnedCount * BambooExtraSpawnMultiplier;
+            if (extraCount <= 0)
+                return;
+
+            float radius = GetScatterRadius(island.size);
+            for (int i = 0; i < extraCount; i++)
+            {
+                Vector2 offset = rng.NextInsideUnitCircle() * radius;
+                Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
+                position = TerrainSampler.SnapToGround(position);
+                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                spawnOrder++;
+            }
         }
 
         /// <summary>
