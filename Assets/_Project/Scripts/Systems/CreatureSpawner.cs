@@ -120,6 +120,8 @@ namespace MakeGame.Systems
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
+            // [육상 필수 재배치] 해수면. IslandResourceSpawner와 같은 공유 유틸로 읽는다(못 찾으면 0).
+            float seaLevel = SpawnLandPlacement.ResolveSeaLevel();
 
             foreach (var entry in creatureEntries)
             {
@@ -129,15 +131,12 @@ namespace MakeGame.Systems
                 int count = Mathf.RoundToInt(entry.baseCount * multiplier);
                 for (int i = 0; i < count; i++)
                 {
-                    // preferShoreline이면 반경의 바깥쪽 80~100% 지점에 배치해 해안에 가깝게 흉내낸다.
-                    // [B30] 게는 조간대 생물이라 항상 이 해안 경로를 탄다(PrefersShoreline 참고). 기존 항목은
-                    // isCrab가 false라 판정 결과가 예전과 같고, 두 분기 모두 rng draw를 정확히 1회 소비하므로
-                    // (NextFloat/NextValue01 둘 다 NextDouble 1회 - SeededRandomExtensions.cs:55·67)
-                    // 난수 시퀀스도 1칸도 밀리지 않는다.
-                    float radiusScale = PrefersShoreline(entry) ? rng.NextFloat(0.8f, 1f) : rng.NextValue01();
-                    Vector2 offset = rng.NextInsideUnitCircle().normalized * radius * radiusScale;
-                    Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
-                    position = TerrainSampler.SnapToGround(position);
+                    // [육상 필수 재배치] 뭍 생물(현재 씬 기준 생고기 사냥감 1종 - 게도 물고기도 아닌
+                    // 항목)이 수면 아래에 떨어지면 위치만 재추첨한다. 게·물고기는 해안/물이 자연스러워
+                    // 예전 경로 그대로다(draw 수도 예전과 동일). 어떤 경우에도 개체를 건너뛰지 않으므로
+                    // count와 perTypeIndex(stableKey v2)는 불변 - 세이브 대조는 안전하다. 단, 재추첨이
+                    // draw를 추가 소비하면 같은 worldSeed의 배치가 이전 버전과 달라진다(1회성 변화).
+                    Vector3 position = PickCreaturePosition(island, entry, radius, rng, seaLevel);
 
                     // [세이브 키 v2] 같은 종류 안에서의 생성 순번. 종류 이름은 GetStableTypeName 참고
                     // (게는 물고기와 yieldItem이 같아도 다른 종류로 센다).
@@ -259,6 +258,81 @@ namespace MakeGame.Systems
         {
             string itemName = entry.yieldItem != null ? entry.yieldItem.itemName : "";
             return entry.isCrab ? itemName + "#crab" : itemName;
+        }
+
+        /// <summary>
+        /// [육상 필수 재배치] 이 항목이 물속 배치가 부자연스러운 "뭍 생물"인가.
+        /// 게(isCrab)와 물고기(preferShoreline)는 해안/물이 서식지라 제외 - 현재 씬 creatureEntries
+        /// 3항목 기준으로는 생고기 사냥감(육상 동물 캡슐) 하나만 해당한다. 자원 쪽(IslandResourceSpawner)
+        /// 처럼 이름 표가 아닌 배치 속성으로 판정하는 이유: 이 스포너는 "육상 동물이냐"를 이미
+        /// 프리미티브/외형 분기(isCrab/preferShoreline)로 갖고 있어 같은 판정을 재사용하면
+        /// 이름 표와 씬이 어긋날 일이 없다.
+        /// </summary>
+        private static bool IsLandCreature(CreatureEntry entry)
+        {
+            return !entry.isCrab && !entry.preferShoreline;
+        }
+
+        /// <summary>육상 생물이 물에 빠졌을 때 같은 반경으로 다시 뽑는 최대 횟수(PickBearWanderTarget의 6회 상한 선례).</summary>
+        private const int LandRedrawAttempts = 6;
+
+        /// <summary>재추첨까지 실패했을 때, 마지막 오프셋을 섬 중심 방향으로 절반씩 줄여 추가로 시도하는 횟수(rng 미소비).</summary>
+        private const int LandShrinkAttempts = 2;
+
+        /// <summary>
+        /// 개체 하나의 배치 위치를 뽑는다. IslandResourceSpawner.PickScatterPosition과 같은 규칙이되,
+        /// 위치 표집식은 이 스포너의 기존 식(방향 벡터 정규화 × 반경 스케일 - 해안 선호 분기 포함)을
+        /// 그대로 쓴다(배치 분포를 새로 만들지 않는다).
+        ///  · 뭍 생물이 수면 아래(해수면 + SpawnLandPlacement.LandMinHeightAboveSea 미만)로 떨어지면
+        ///    같은 rng 스트림으로 최대 LandRedrawAttempts회 재추첨(시도당 draw 3회 = 기존 1회 표집과 동일).
+        ///  · 그래도 실패하면 마지막 오프셋을 섬 중심 방향으로 절반씩 줄이며 LandShrinkAttempts회 더
+        ///    시도(rng 미소비), 최종 실패 시 마지막 후보에 그대로 둔다(개체 수 불변이 위치보다 우선 -
+        ///    stableKey 순번 보호).
+        ///  · 게·물고기(뭍 생물이 아님)와 지형 미히트(판정 불가) 경우는 첫 표집을 그대로 쓴다(기존 동작).
+        /// </summary>
+        private Vector3 PickCreaturePosition(IslandInstance island, CreatureEntry entry, float radius,
+            System.Random rng, float seaLevel)
+        {
+            bool landRequired = IsLandCreature(entry);
+
+            Vector2 offset = SampleCreatureOffset(entry, radius, rng);
+            Vector3 snapped = SpawnLandPlacement.SnapToGroundWithHit(
+                island.mapPosition + new Vector3(offset.x, 0f, offset.y), out bool hitTerrain);
+            if (!landRequired || SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                return snapped;
+
+            for (int attempt = 0; attempt < LandRedrawAttempts; attempt++)
+            {
+                offset = SampleCreatureOffset(entry, radius, rng);
+                snapped = SpawnLandPlacement.SnapToGroundWithHit(
+                    island.mapPosition + new Vector3(offset.x, 0f, offset.y), out hitTerrain);
+                if (SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                    return snapped;
+            }
+
+            for (int attempt = 0; attempt < LandShrinkAttempts; attempt++)
+            {
+                offset *= 0.5f;
+                snapped = SpawnLandPlacement.SnapToGroundWithHit(
+                    island.mapPosition + new Vector3(offset.x, 0f, offset.y), out hitTerrain);
+                if (SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                    return snapped;
+            }
+
+            return snapped; // 최종 실패 - 가장 안쪽 후보에 그대로 둔다(개체 수 불변).
+        }
+
+        /// <summary>
+        /// 기존 배치식 그대로의 XZ 오프셋 표집. preferShoreline이면 반경의 바깥쪽 80~100% 지점에 배치해
+        /// 해안에 가깝게 흉내낸다. [B30] 게는 조간대 생물이라 항상 이 해안 경로를 탄다(PrefersShoreline
+        /// 참고). 두 분기 모두 rng draw를 정확히 1회 소비하고(NextFloat/NextValue01 둘 다 NextDouble
+        /// 1회 - SeededRandomExtensions.cs:55·67) NextInsideUnitCircle이 2회를 더해, 호출 1회당 정확히
+        /// 3 draw다.
+        /// </summary>
+        private static Vector2 SampleCreatureOffset(CreatureEntry entry, float radius, System.Random rng)
+        {
+            float radiusScale = PrefersShoreline(entry) ? rng.NextFloat(0.8f, 1f) : rng.NextValue01();
+            return rng.NextInsideUnitCircle().normalized * radius * radiusScale;
         }
 
         /// <summary>

@@ -157,10 +157,12 @@ namespace MakeGame.Systems
             if (!generateOnStart)
                 return;
 
+            // [B52] 섬 수는 데이터가 결정한다(실측 50섬 = 시작 섬 + 49). initialIslandCount는 폴백 전용.
+            int additionalIslandCount = ResolveAdditionalIslandCount();
             GenerateStartingIsland();
-            for (int i = 0; i < initialIslandCount; i++)
+            for (int i = 0; i < additionalIslandCount; i++)
             {
-                GenerateNextIsland(i, initialIslandCount);
+                GenerateNextIsland(i, additionalIslandCount);
             }
 
             sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
@@ -205,10 +207,12 @@ namespace MakeGame.Systems
             SeedIslandLayoutRng();
 
             CreateOcean();
+            // [B52] 섬 수는 데이터가 결정한다(실측 50섬 = 시작 섬 + 49). initialIslandCount는 폴백 전용.
+            int additionalIslandCount = ResolveAdditionalIslandCount();
             GenerateStartingIsland();
-            for (int i = 0; i < initialIslandCount; i++)
+            for (int i = 0; i < additionalIslandCount; i++)
             {
-                GenerateNextIsland(i, initialIslandCount);
+                GenerateNextIsland(i, additionalIslandCount);
             }
 
             sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
@@ -428,6 +432,10 @@ namespace MakeGame.Systems
             var startIsland = new IslandInstance
             {
                 islandId = 0,
+                // [B50→B52] Small 고정은 실측 데이터와도 정합한다 - MaldivesLayout.Islands[0](50섬
+                // 데이터에서는 Z28-017, gameIndex 0)이 Small이다. 위치도 GetMaldivesPosition이 0번을
+                // 원점으로 평행이동하므로 Vector3.zero 그대로가 곧 실측 배치다(플레이어 시작 위치/
+                // 착륙 원/잔해 전제 유지).
                 size = IslandSize.Small,
                 mapPosition = Vector3.zero,
                 isDiscovered = true,
@@ -589,15 +597,34 @@ namespace MakeGame.Systems
         /// <param name="totalIslandCount">이번 초기 생성에서 만들 전체 섬 개수.</param>
         public IslandInstance GenerateNextIsland(int islandIndex = 0, int totalIslandCount = 1)
         {
-            IslandSize size = islandGenerator != null
-                ? islandGenerator.GenerateNextIslandSize(islandIndex, totalIslandCount, islandLayoutRng)
-                : IslandSize.Small;
+            // [B50] 시작 섬 포함 순번 = MaldivesLayout의 gameIndex. 실측 배치가 켜져 있고 데이터 범위
+            // 안이면 크기 등급(실측 면적 순위)과 위치(실측 상대 배치 x 배율)를 데이터에서 읽는다.
+            // 이 경로는 islandLayoutRng를 소비하지 않는다 - 전용 격리 스트림이라 안전(위 [B50] 블록 주석).
+            // 폴백(데이터 없음/개수 불일치/범위 밖)은 기존 랜덤 경로 그대로다.
+            int gameIndex = islands.Count;
+            bool useMaldives = IsMaldivesLayoutActive()
+                && gameIndex > 0 && gameIndex < MaldivesLayout.Islands.Length;
+
+            IslandSize size;
+            Vector3 position;
+            if (useMaldives)
+            {
+                size = MaldivesLayout.Islands[gameIndex].size;
+                position = GetMaldivesPosition(gameIndex);
+            }
+            else
+            {
+                size = islandGenerator != null
+                    ? islandGenerator.GenerateNextIslandSize(islandIndex, totalIslandCount, islandLayoutRng)
+                    : IslandSize.Small;
+                position = FindValidPosition(islandLayoutRng);
+            }
 
             var newIsland = new IslandInstance
             {
-                islandId = islands.Count,
+                islandId = gameIndex,
                 size = size,
-                mapPosition = FindValidPosition(islandLayoutRng),
+                mapPosition = position,
                 isDiscovered = false,
                 isStartingIsland = false,
             };
@@ -662,6 +689,119 @@ namespace MakeGame.Systems
             return true;
         }
 
+        // ─────────────────────────────────────────────────────────────────────────
+        // [B50 몰디브 실측 배치] MaldivesLayout(몰디브 Z28 환초 상위 9섬, Tools/terrain/maldives_extract가
+        // 재생성하는 데이터)을 소비해 9섬의 위치·크기 등급·윤곽(radialMask)을 실측값으로 바꾼다.
+        //
+        // 폴백 규약([B52] 개정): 데이터가 없거나 항목이 2개 미만이면 **기존 랜덤 배치(IslandGenerator
+        // 롤 + FindValidPosition, 섬 수는 씬의 initialIslandCount)로 통째로 되돌아간다.** 데이터가
+        // 있으면 데이터 길이가 곧 섬 수다(9섬 시절의 "씬 개수와 일치해야 활성" 조건은 폐기). 이 프로젝트의
+        // 관례다(spawnConfig 누락 폴백, LegacyNoiseSeed 회귀 경로와 같은 계열). 마스크 주입도 같은
+        // 조건으로 함께 꺼져서 "배치는 랜덤인데 윤곽만 실측"인 반쪽 상태가 생기지 않는다.
+        //
+        // 난수: 실측 경로는 islandLayoutRng를 한 번도 소비하지 않는다. 안전한 이유 - 이 rng는 섬 크기
+        // 롤 + FindValidPosition **전용 격리 스트림**이다(salt -2000000, SeedIslandLayoutRng 주석 참고).
+        // 초목(3000000+)·상어(-1000000)·스포너(islandId별 CreateForIsland)는 전부 별도 스트림이라
+        // 소비량이 줄어도 다른 시스템의 배치가 한 칸도 밀리지 않는다.
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 실측 좌표에 곱하는 전체 균등 배율.
+        /// [B52] 4 → **1**. 9섬 시절의 x4는 "실측 x0.06998 축소 좌표(span 1.6×2.6km, 최근접 89m)"를
+        /// 게임 스케일로 되살리는 배율이었다. 50섬 재생성 데이터는 **이미 게임 미터**다(파일 머리 주석과
+        /// 실측 검증: 최근접 340m, span 10.2×10.5km, 시작 섬 기준 최원거리 11.1km). 여기 x4를 그대로
+        /// 두면: 최원거리 44km로 **oceanSize 40000의 반폭 20km 밖**(바다 평면 밖 허공에 섬이 뜬다),
+        /// span 41×42km로 항해 거리도 4배 붕괴한다. x1 검증 수치:
+        ///   · 최근접 340m ≥ 최악 지형 반지름 합 230m(Large 140 + Medium 90) - 메시 겹침 없음.
+        ///     (얕은 물 띠 1.5R 최악 345m는 5m 겹칠 수 있으나 콜라이더 없는 반투명 시각 요소다.)
+        ///   · 시작 섬 기준 최원거리 11.1km < 20km(바다 안), 기존 랜덤 최대 9.6km와 같은 자릿수.
+        /// </summary>
+        private const float MaldivesLayoutScale = 1f;
+
+        /// <summary>
+        /// 시작 섬(0번) 실측 윤곽의 마스크 조회를 앞당기는 샘플 수(64샘플 기준 16 = 90도. 윤곽이
+        /// 시계 방향으로 90도 돈 것과 같다). **모양은 그대로고 방향만 돈다.**
+        /// 왜 필요한가 - 시작 섬에는 방위가 코드에 고정된 콘텐츠가 있다:
+        /// 경비행기 잔해(+6,-4 = 326도), 착륙 원(잔해 반대 = 146도, 반지름 최대 9m), 배 작업대(-6,-3 = 207도).
+        /// 9섬 시절 마스크(Z28-056)는 착륙 원 방향 해안이 0.15R = 7.5m라 첫 자원 노드(5.6~9m)가
+        /// 물에 잠겨 이 회전이 필수였다.
+        /// [B52] 50섬 데이터의 시작 섬은 Z28-017로 바뀌었다. 새 마스크 검산: 회전 16 기준 해안 거리
+        /// 착륙 원 34m / 작업대 44m / 잔해 30m(회전 0이어도 46m 이상)로 세 방향 모두 육지다.
+        /// 회전을 유지하는 이유: 값을 0으로 바꾸면 이미 검증된 경로를 이유 없이 흔드는 것뿐이고,
+        /// 어느 값이든 안전이 수치로 확인됐다.
+        /// </summary>
+        private const int StartingIslandMaskRotationSamples = 16;
+
+        /// <summary>
+        /// 실측 배치를 쓸 수 있는 상태인지. 데이터가 없거나 항목이 2개 미만(시작 섬 + 최소 1섬)이면
+        /// false(랜덤 배치 폴백).
+        /// [B52] 예전에는 `Length == initialIslandCount + 1`(씬 값 8 → 9섬)이었는데, 데이터가 50섬으로
+        /// 재생성되면서 **데이터 길이가 곧 섬 수**가 되도록 뒤집었다 - 씬의 initialIslandCount(8)는
+        /// 이제 폴백(랜덤 배치) 전용이다(ResolveAdditionalIslandCount 참고). 씬을 고칠 수 없는
+        /// 환경이므로 개수 결정권을 코드(데이터)로 옮기는 것이 유일한 경로다.
+        /// </summary>
+        private bool IsMaldivesLayoutActive()
+        {
+            var data = MaldivesLayout.Islands;
+            return data != null && data.Length >= 2;
+        }
+
+        /// <summary>
+        /// [B52] 시작 섬 **외에** 추가로 생성할 섬 개수. 실측 배치가 켜져 있으면 데이터 길이 - 1
+        /// (시작 섬은 데이터 0번이 GenerateStartingIsland에서 따로 만들어진다), 폴백이면 씬의
+        /// initialIslandCount다. Start()와 RegenerateWorld()가 반드시 같은 값을 쓰도록 한 곳에 모았다 -
+        /// 두 경로의 섬 수가 다르면 세이브의 discoveredIslandIds/currentIslandId가 존재하지 않는 섬을
+        /// 가리키게 된다.
+        /// </summary>
+        private int ResolveAdditionalIslandCount()
+        {
+            return IsMaldivesLayoutActive() ? MaldivesLayout.Islands.Length - 1 : initialIslandCount;
+        }
+
+        /// <summary>
+        /// gameIndex(=islandId)번 섬의 실측 배치 위치. 데이터 좌표계를 **0번 섬(시작 섬)이 원점에 오도록
+        /// 평행이동**한 뒤 MaldivesLayoutScale을 곱한다 - 플레이어 시작 위치(씬 (0,14,0))와 착륙 원·잔해
+        /// 배치가 전부 "시작 섬 중심 = 월드 원점"을 전제하므로 상대 배치만 실측을 따르고 원점은 유지한다.
+        /// </summary>
+        private Vector3 GetMaldivesPosition(int gameIndex)
+        {
+            var data = MaldivesLayout.Islands;
+            MaldivesLayout.Entry origin = data[0];
+            MaldivesLayout.Entry entry = data[gameIndex];
+            return new Vector3(
+                (entry.posX - origin.posX) * MaldivesLayoutScale,
+                0f,
+                (entry.posZ - origin.posZ) * MaldivesLayoutScale);
+        }
+
+        /// <summary>
+        /// islandId번 섬에 주입할 실측 radialMask. 실측 배치가 꺼져 있으면 null(하모닉 마스크 경로).
+        /// 규약(IslandShapeProfile.radialMask): 0번 = +X축, 반시계 등간격, 하한 0.15 클램프와 64샘플
+        /// 선형 보간은 소비 측(IslandMeshGenerator.MaskAt)이 처리한다.
+        /// 시작 섬(0번)만 StartingIslandMaskRotationSamples만큼 돌린 사본을 준다(위 상수 주석 참고).
+        /// </summary>
+        private float[] GetMaldivesRadialMask(int islandId)
+        {
+            if (!IsMaldivesLayoutActive())
+                return null;
+
+            var data = MaldivesLayout.Islands;
+            if (islandId < 0 || islandId >= data.Length)
+                return null;
+
+            float[] mask = data[islandId].mask;
+            if (mask == null || mask.Length < 3)
+                return null;
+
+            if (islandId != 0)
+                return mask;
+
+            var rotated = new float[mask.Length];
+            for (int i = 0; i < mask.Length; i++)
+                rotated[i] = mask[(i + StartingIslandMaskRotationSamples) % mask.Length];
+            return rotated;
+        }
+
         [Header("섬 지형 생성")]
         [Tooltip("절차적 섬 지형(언덕 메시)의 중심부 최대 높이. 걸어서 오르기 편하도록 섬 규모와 무관하게 완만한 값으로 고정한다.")]
         public float terrainMaxHeight = 2.5f;
@@ -699,7 +839,9 @@ namespace MakeGame.Systems
             // Physics.autoSyncTransforms는 기본 false다. 방금 만들어 위치를 잡은 MeshCollider는
             // 아직 물리 씬에 반영되지 않았을 수 있고, 그 상태로 TerrainSampler.SnapToGround가 레이를
             // 쏘면 지형을 못 맞혀 초목이 전부 y=0(해수면)에 깔린다. 명시적으로 한 번 동기화한다.
-            // 섬 생성은 월드당 9회뿐이라 이 호출의 비용은 무시할 수 있다.
+            // [B52] 월드당 50회로 늘었지만 여전히 시작/불러오기 1프레임 안의 일회성 비용이다(호출당
+            // 수 ms 미만, 총 수십 ms 수준). 이 호출을 루프 밖으로 빼면 안 된다 - 각 섬의 초목 배치
+            // 레이가 "방금 만든 그 섬"의 콜라이더를 맞혀야 하기 때문이다.
             Physics.SyncTransforms();
 
             IslandMeshGenerator.BuildIslandSurface(
@@ -746,10 +888,14 @@ namespace MakeGame.Systems
             //    사용자가 여기서 처음 집을 짓는다.
             //  · terrainMaxHeight(씬 직렬화 값 8)는 그대로 넘긴다. 섬별 높이 차이는 프로파일의
             //    heightScale(0.16~0.36)이 이 값에 곱해져 만들어진다 - 씬을 고치지 않고 높이를 가르는 경로다.
+            // [B50] 실측 윤곽 주입. null이면(실측 배치 꺼짐) 기존 하모닉 마스크 경로 그대로다.
+            // 시작 섬(0번)도 실측 윤곽을 쓰되, SelectShapeProfile이 id 0 → 0번(완만한 초원)을 고정
+            // 반환하므로 높이 특성(heightScale 0.30, plateauPow 0.40 등)은 그대로 유지된다 - 윤곽만 실측.
             var mesh = IslandMeshGenerator.GenerateIslandMesh(
                 radius, terrainMaxHeight, ringCount, radialSegments,
                 noiseSeed: IslandMeshGenerator.ComputeNoiseSeed(worldSeed, islandId),
-                shapeProfile: IslandMeshGenerator.SelectShapeProfile(worldSeed, islandId));
+                shapeProfile: IslandMeshGenerator.SelectShapeProfile(worldSeed, islandId),
+                radialMask: GetMaldivesRadialMask(islandId));
 
             var meshFilter = go.AddComponent<MeshFilter>();
             meshFilter.sharedMesh = mesh;

@@ -121,6 +121,39 @@ namespace MakeGame.Systems
                  "game-designer 요청 상한이 12m라 그보다 크게 설정해도 12m로 잘린다.")]
         public float landingCircleRadius = 9f;
 
+        // ═════════════════════════════════════════════════════════════════════════════
+        // [육상 필수 분류] 사용자 지적 "석재류나 바다 전용 자원인데 목재까지 바다에 들어갔어".
+        // 섬 윤곽이 실측 몰디브 마스크로 바뀌며 산포원(0.8R) 안 육지 비율이 30~58%로 떨어져,
+        // 지형을 안 보고 뿌리는 이 스포너의 노드 절반 가까이가 물속에 생길 수 있게 됐다.
+        //
+        // 분류 기준(아이템 이름 상수 표 - 씬은 이 작업 범위에서 못 고치므로 코드에 둔다):
+        //  · 육상 필수(이 표): 유기물 전부. 나뭇가지/대나무/야자잎/코코넛(식물), 천조각/비상식량
+        //    (잔해라도 물에 뜨거나 젖어 못 쓰는 것) - 물속에 서 있으면 부자연스럽다.
+        //  · 수중 허용(표에 없는 나머지): 돌조각/부싯돌/금속조각(석재·광물 - 사용자가 "바다 OK"라 한
+        //    부류), 부력통/연료/엔진부품/생수(표류물 - 물에 있는 것이 오히려 자연스럽다).
+        // 목록에 없는 이름은 전부 수중 허용으로 처리되므로, 새 유기물 자원을 씬에 추가하면
+        // 이 표에도 이름을 추가해야 한다.
+        // ═════════════════════════════════════════════════════════════════════════════
+        private static readonly string[] LandRequiredItemNames =
+            { "나뭇가지", "대나무", "야자잎", "코코넛", "천조각", "비상식량" };
+
+        /// <summary>이 아이템이 물속 배치가 부자연스러운 "육상 필수" 자원인가.</summary>
+        private static bool IsLandRequiredItem(string itemName)
+        {
+            for (int i = 0; i < LandRequiredItemNames.Length; i++)
+            {
+                if (LandRequiredItemNames[i] == itemName)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>육상 필수 자원이 물에 빠졌을 때 같은 반경으로 다시 뽑는 최대 횟수(PickBearWanderTarget의 6회 상한 선례).</summary>
+        private const int LandRedrawAttempts = 6;
+
+        /// <summary>재추첨까지 실패했을 때, 마지막 오프셋을 섬 중심 방향으로 절반씩 줄여 추가로 시도하는 횟수(rng 미소비).</summary>
+        private const int LandShrinkAttempts = 2;
+
         /// <summary>착륙 원에 확정 배치할 자원 3종. resourceEntries에서 이름으로 찾아 그 항목의 설정(도구 요구 등)을 그대로 재사용한다.</summary>
         private static readonly string[] LandingCircleItemNames = { "코코넛", "나뭇가지", "돌조각" };
 
@@ -187,6 +220,8 @@ namespace MakeGame.Systems
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
+            // 해수면. BearAI(InitBearAI)와 같은 방식으로 WorldMapManager에서 읽고, 못 찾으면 기본값 0.
+            float seaLevel = SpawnLandPlacement.ResolveSeaLevel();
 
             foreach (var entry in resourceEntries)
             {
@@ -197,12 +232,16 @@ namespace MakeGame.Systems
                 if (island.size < entry.minimumIslandSize)
                     continue;
 
+                bool landRequired = IsLandRequiredItem(entry.yieldItem.itemName);
                 int count = Mathf.RoundToInt(entry.baseCount * multiplier);
                 for (int i = 0; i < count; i++)
                 {
-                    Vector2 offset = rng.NextInsideUnitCircle() * radius;
-                    Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
-                    position = TerrainSampler.SnapToGround(position);
+                    // [육상 필수] 물에 빠지면 위치만 다시 뽑는다(PickScatterPosition). 어떤 경우에도
+                    // 노드를 건너뛰지 않으므로 count(생성 개수)와 perTypeIndex(stableKey v2의 종류 내
+                    // 순번)는 예전과 완전히 같다 - 세이브 대조는 안전하다. 단, 재추첨은 같은 rng
+                    // 스트림에서 draw를 추가 소비하므로 **같은 worldSeed의 배치가 이전 버전과 달라진다**
+                    // (버전 교체 시 1회성 변화 - 세이브가 깨지는 것이 아니라 월드 모습만 바뀐다).
+                    Vector3 position = PickScatterPosition(island, radius, rng, landRequired, seaLevel);
                     spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                     spawnOrder++;
                 }
@@ -276,14 +315,68 @@ namespace MakeGame.Systems
                 return;
 
             float radius = GetScatterRadius(island.size);
+            float seaLevel = SpawnLandPlacement.ResolveSeaLevel();
+            // 대나무는 육상 필수 표에 있으므로 증량분도 무작위 루프와 완전히 같은 물빠짐 재추첨 규칙을
+            // 탄다(위 PickScatterPosition 주석 참고 - extraCount 자체는 절대 줄지 않는다).
+            bool landRequired = IsLandRequiredItem(entry.yieldItem.itemName);
             for (int i = 0; i < extraCount; i++)
             {
-                Vector2 offset = rng.NextInsideUnitCircle() * radius;
-                Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
-                position = TerrainSampler.SnapToGround(position);
+                Vector3 position = PickScatterPosition(island, radius, rng, landRequired, seaLevel);
                 spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                 spawnOrder++;
             }
+        }
+
+        /// <summary>
+        /// 산포원 안에서 자원 노드 하나의 위치를 뽑는다. 육상 필수 자원(<see cref="LandRequiredItemNames"/>)이
+        /// 수면 아래(해수면 + <see cref="SpawnLandPlacement.LandMinHeightAboveSea"/> 미만)에 떨어지면:
+        ///  1) 같은 반경으로 최대 <see cref="LandRedrawAttempts"/>회 재추첨한다. 같은 rng 스트림을 그대로
+        ///     이어 쓴다(PickBearWanderTarget 선례 - 별도 스트림을 만들면 시드 관리가 이중화된다).
+        ///  2) 그래도 실패하면 마지막 오프셋을 섬 중심 방향으로 절반씩 줄이며 <see cref="LandShrinkAttempts"/>회
+        ///     더 시도한다(마스크 섬이라도 중심부는 육지일 확률이 가장 높다). 이 단계는 rng를 소비하지 않는다.
+        ///  3) 최종 실패 시 마지막(가장 안쪽) 후보를 그대로 반환한다 - 노드를 없애면 생성 개수가 줄어
+        ///     stableKey(v2)의 perTypeIndex 순번이 세이브와 어긋나므로, 위치가 어색하더라도 개수는 지킨다.
+        /// 수중 허용 자원(landRequired=false)은 예전과 정확히 같은 draw 수(NextInsideUnitCircle 1회 = 2 draw)로
+        /// 한 번에 확정된다.
+        /// 지형 레이캐스트가 아예 실패한 경우(hitTerrain=false - 지형 미생성 등)는 물/뭍을 판정할 수 없으므로
+        /// 기존 동작(입력 위치 유지)을 그대로 따르고 재추첨하지 않는다 - SnapToGround가 실패 시 입력을
+        /// 그대로 돌려주는 것을 "y가 안 변했다"로 오판하지 않도록 센티넬 판정(SnapToGroundWithHit)을 쓴다.
+        /// </summary>
+        private Vector3 PickScatterPosition(IslandInstance island, float radius, System.Random rng,
+            bool landRequired, float seaLevel)
+        {
+            Vector2 offset = rng.NextInsideUnitCircle() * radius;
+            Vector3 snapped = SnapOffsetToGround(island, offset, out bool hitTerrain);
+            if (!landRequired || SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                return snapped;
+
+            // (1) 같은 반경 재추첨 - 시도마다 NextInsideUnitCircle 1회(2 draw)만 추가 소비한다.
+            for (int attempt = 0; attempt < LandRedrawAttempts; attempt++)
+            {
+                offset = rng.NextInsideUnitCircle() * radius;
+                snapped = SnapOffsetToGround(island, offset, out hitTerrain);
+                if (SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                    return snapped;
+            }
+
+            // (2) 섬 중심 방향으로 반경 절반씩 축소(rng 미소비 - 마지막 오프셋의 방향을 유지한 채 당긴다).
+            for (int attempt = 0; attempt < LandShrinkAttempts; attempt++)
+            {
+                offset *= 0.5f;
+                snapped = SnapOffsetToGround(island, offset, out hitTerrain);
+                if (SpawnLandPlacement.IsAboveWater(snapped, hitTerrain, seaLevel))
+                    return snapped;
+            }
+
+            // (3) 최종 실패 - 가장 안쪽 후보에 그대로 둔다(개수 불변이 위치보다 우선).
+            return snapped;
+        }
+
+        /// <summary>섬 중심 + XZ 오프셋을 지형 위로 스냅한다(센티넬 실패 판정 포함).</summary>
+        private static Vector3 SnapOffsetToGround(IslandInstance island, Vector2 offset, out bool hitTerrain)
+        {
+            Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
+            return SpawnLandPlacement.SnapToGroundWithHit(position, out hitTerrain);
         }
 
         /// <summary>
@@ -321,6 +414,10 @@ namespace MakeGame.Systems
                 float angle = (baseAngle + offset + rng.NextFloat(-12f, 12f)) * Mathf.Deg2Rad;
                 float distance = radius * rng.NextFloat(0.62f, 1f); // 너무 발밑에 붙지 않게 최소 62%는 띄운다.
                 Vector3 position = island.mapPosition + new Vector3(Mathf.Cos(angle) * distance, 0f, Mathf.Sin(angle) * distance);
+                // [육상 필수 재배치] 착륙 원은 물빠짐 재추첨을 태우지 않는다(확인 결과 불필요):
+                // 배치 반경이 섬 중심에서 최대 12m인데, 시작 섬은 소형(지형 반지름 50)이고 중심이
+                // 플레이어 불시착 지점(씬 Player y=14 - 해수면 0보다 한참 위)이라 이 원은 항상 육지다.
+                // 재추첨을 넣으면 정면/좌/우 각도 설계(Design_Onboarding 2장)가 깨질 수 있어 오히려 손해다.
                 position = TerrainSampler.SnapToGround(position);
 
                 spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
@@ -500,6 +597,62 @@ namespace MakeGame.Systems
                 case IslandSize.ExtraLarge: return extraLargeScatterRadius > 0f ? extraLargeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
                 default: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
             }
+        }
+    }
+
+    /// <summary>
+    /// [육상 필수 재배치] IslandResourceSpawner와 CreatureSpawner가 공유하는 "물속인가?" 판정 유틸.
+    /// 두 스포너의 소유 파일이 이 둘뿐이라(다른 파일 수정 금지) 별도 파일 대신 여기에 둔다.
+    /// </summary>
+    internal static class SpawnLandPlacement
+    {
+        /// <summary>
+        /// 육상 필수 배치물이 서 있어도 되는 해수면 위 최소 높이(m).
+        /// IslandMeshGenerator.Vegetation의 VegetationMinGroundY(0.25)와 같은 기준을 쓴다 -
+        /// 초목이 서는 자리 = 유기물 자원이 서도 자연스러운 자리. (곰 이동의 BearShoreMarginY 0.55는
+        /// 움직이는 개체의 파도선 여유라 더 크다.)
+        /// </summary>
+        internal const float LandMinHeightAboveSea = 0.25f;
+
+        /// <summary>센티넬 낙차(m). HazardSource.SampleGroundY와 같은 방식(실제 지형이 못 내려가는 깊이).</summary>
+        private const float SentinelDrop = 100f;
+
+        /// <summary>
+        /// 해수면을 WorldMapManager.seaLevel에서 읽는다(씬 값 0). 못 찾으면 0
+        /// (WorldMapManager.seaLevel 기본값과 같은 값 - HazardSource.InitBearAI와 동일한 폴백).
+        /// </summary>
+        internal static float ResolveSeaLevel()
+        {
+            WorldMapManager world = Object.FindAnyObjectByType<WorldMapManager>();
+            return world != null ? world.seaLevel : 0f;
+        }
+
+        /// <summary>
+        /// TerrainSampler.SnapToGround로 지형에 스냅하되, 실패(지형 미히트)를 out으로 알려준다.
+        /// SnapToGround는 실패해도 입력 좌표를 그대로 돌려줘 호출자가 실패를 알 수 없으므로,
+        /// 절대 나올 수 없는 y(입력 y - 100)를 센티넬로 넣고 "돌아온 y가 센티넬 그대로면 실패"로
+        /// 판정한다(HazardSource.SampleGroundY의 검증된 관례). 레이 구간은 기존 스포너 호출의
+        /// 기본값(입력 y+60에서 아래로 120m = y-60까지)과 정확히 같게 잡아, 스냅 성공 시 결과가
+        /// 예전 SnapToGround(position) 호출과 1mm도 다르지 않다.
+        /// </summary>
+        internal static Vector3 SnapToGroundWithHit(Vector3 position, out bool hitTerrain)
+        {
+            Vector3 sentinelPos = new Vector3(position.x, position.y - SentinelDrop, position.z);
+            Vector3 result = TerrainSampler.SnapToGround(sentinelPos, SentinelDrop + 60f, 120f);
+            hitTerrain = result.y > sentinelPos.y + 1f;
+            return hitTerrain ? result : position;
+        }
+
+        /// <summary>
+        /// 스냅 결과가 "물 밖"인가. 지형을 못 맞힌 경우(hitTerrain=false)는 판정 자체가 불가능하므로
+        /// true를 돌려 기존 동작(그 자리 유지)을 따르게 한다 - 지형이 아직 없는 상황에서 재추첨을
+        /// 반복해 봐야 전부 실패라 rng만 낭비하고, 배치 높이는 어차피 SnapToGround 실패 경로와 같다.
+        /// </summary>
+        internal static bool IsAboveWater(Vector3 snapped, bool hitTerrain, float seaLevel)
+        {
+            if (!hitTerrain)
+                return true;
+            return snapped.y >= seaLevel + LandMinHeightAboveSea;
         }
     }
 }

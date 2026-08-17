@@ -657,6 +657,20 @@ namespace MakeGame.Systems
                 }
                 profile = BuildProfile(chosen, noiseSeed);
                 profile.radialMask = radialMask;
+
+                // [B50] 실측 윤곽이 주입되면 윤곽을 왜곡하는 세 장치를 끈다. 규약("0번 = +X축, 반시계
+                // 등간격")은 회전·이방성이 없는 좌표계 기준인데, MaskAt은 spin/stretch를 거친 각도로
+                // 마스크를 조회하므로 셋을 그대로 두면 측정한 해안선이 임의 각도로 돌고(spin),
+                // 축 방향으로 늘어나고(stretch), 만이 이중으로 파인다(bite) - 실측이 실측이 아니게 된다.
+                // 높이 장치(heightScale/plateauPow/돔/능선/수로/석호/메사/노이즈)는 전부 그대로 둔다 -
+                // "윤곽만 실측, 높이 특성은 프로파일 유지"가 요건이다. 마스크가 null이면(하모닉 경로)
+                // 이 블록 전체가 건너뛰어져 기존 결과와 비트 단위로 같다(회귀 안전장치).
+                if (radialMask != null && radialMask.Length >= 3)
+                {
+                    profile.spin = 0f;
+                    profile.stretch = 1f;
+                    profile.biteStrength = 0f;
+                }
             }
 
             int vertexCount = 1 + ringCount * radialSegments;

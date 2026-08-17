@@ -29,6 +29,28 @@ namespace MakeGame.Systems
         [Tooltip("이 단계까지 배(뗏목)를 완성하면 고무보트의 해류 제약(특대 섬 접근 불가)을 무시하고 갈 수 있다.")]
         public int stageRequiredToBypassCurrent = 1;
 
+        // ── 디버그 전체 지도 / 자유 이동 ─────────────────────────────────────────────────
+        // 감독 요청: "디버그 모드에서는 전체 지도가 다 보이고, 세계지도에서 모두 갈 수 있게".
+        // 격리 방식은 DebugHud의 결말 미리보기(F6~F8)/재료 지급(F4)과 동일한 이중 가드다:
+        //   1) 플래그·판정·우회 분기가 전부 #if UNITY_EDITOR || DEVELOPMENT_BUILD 안 - 출시 빌드에는
+        //      컴파일조차 되지 않고, 소비처(MinimapUI.IsRevealed / 아래 TryTravelTo)의 참조도 같은
+        //      #if 안에 있어 함께 빠진다.
+        //   2) 그 안에서도 Debug.isDebugBuild를 한 번 더 확인한다(DebugRevealAllActive).
+        // 플래그를 UI(DebugHud)가 아니라 여기(Systems)에 두는 이유: 소비자가 MinimapUI(UI)와
+        // IslandTravel(Systems) 둘인데, Systems→UI 방향 참조를 만들지 않으려면 Systems 쪽이 들고
+        // 있어야 한다(DebugHud는 이미 MakeGame.Systems를 참조한다).
+        // **static이라 씬/세이브 어디에도 직렬화되지 않는다** - 세이브에 새어들 경로가 없다.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// 디버그 전체 지도 + 자유 이동 토글의 원본 값. DebugHud가 F10으로 뒤집는다.
+        /// 기본 ON(디버그 빌드에서 켜진 채 시작) - 끄면 일반 모드 규칙 그대로를 테스트할 수 있다.
+        /// </summary>
+        public static bool debugRevealAllIslands = true;
+
+        /// <summary>디버그 우회가 실제로 발동 중인지. 토글 값에 Debug.isDebugBuild를 한 번 더 곱한다.</summary>
+        public static bool DebugRevealAllActive => Debug.isDebugBuild && debugRevealAllIslands;
+#endif
+
         /// <summary>
         /// 지정한 섬으로 이동을 시도한다.
         /// 목적지가 존재하고, 플레이어가 고무보트를 보유하고 있어야 한다.
@@ -44,6 +66,21 @@ namespace MakeGame.Systems
             var destination = worldMapManager.GetIsland(destinationIslandId);
             if (destination == null)
                 return false;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [디버그 자유 이동] 항해 요건(고무보트 보유·해류 제약)만 건너뛰고, 성공 시 처리(발견 표시·
+            // 현재 위치 갱신·텔레포트)는 일반 성공 경로와 **똑같이** 수행한다. DiscoverIsland 호출은
+            // 디버그 상태 누출이 아니다 - 플레이어가 실제로 그 섬에 도착했으므로, 일반 모드로 항해해
+            // 도착한 것과 동일한 "진짜 발견"이다(표시만 밝히는 MinimapUI 쪽 우회와는 성격이 다르다).
+            // 아래의 일반 모드 경로는 한 글자도 바뀌지 않았다 - 이 분기는 위에서 return으로 빠질 뿐이다.
+            if (DebugRevealAllActive)
+            {
+                worldMapManager.DiscoverIsland(destinationIslandId);
+                currentIslandId = destinationIslandId;
+                TeleportPlayerToIsland(inventory.transform, destination);
+                return true;
+            }
+#endif
 
             if (rubberBoatItem != null)
             {

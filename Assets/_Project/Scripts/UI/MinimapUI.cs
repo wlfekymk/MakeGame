@@ -523,6 +523,16 @@ namespace MakeGame.UI
         /// <summary>시작 섬은 도착 판정 없이도 아는 섬이다. isDiscovered와 반드시 OR로 묶는다.</summary>
         private static bool IsRevealed(IslandInstance island)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [디버그 전체 지도] 미니맵/전체 지도/섬 목록/체크리스트의 발견 표시는 전부 이 메서드
+            // 하나를 지나므로, 여기 한 곳만 우회하면 "모든 섬이 발견된 것처럼" 보인다.
+            // **표시 계층 우회일 뿐 island.isDiscovered에는 아무것도 쓰지 않는다** - 세이브는
+            // isDiscovered만 기록하므로(SaveLoadController), 토글을 껐다 켜도 실제 발견 상태가
+            // 오염되지 않는다(목록의 "발견함/미발견" 상태 문구는 일부러 실제 값을 그대로 보여준다).
+            // 가드는 DebugHud의 관례와 동일: #if + Debug.isDebugBuild(DebugRevealAllActive 내부).
+            if (island != null && IslandTravel.DebugRevealAllActive)
+                return true;
+#endif
             return island != null && (island.isDiscovered || island.isStartingIsland);
         }
 
@@ -851,14 +861,35 @@ namespace MakeGame.UI
             header.rectTransform.anchoredPosition = new Vector2(columnX, -MapViewTop);
             header.rectTransform.sizeDelta = new Vector2(ListColumnWidth, ListHeaderHeight);
 
+            // [B52] 50섬 대응: 행이 50개면 목록 전체 높이가 약 1,500px(행 26 + 간격 4)로 열 높이
+            // (약 446px)의 3배가 넘는다. 예전처럼 컨테이너를 창에 직접 붙이면 마스크가 없어 행들이
+            // 창 아래 체크리스트/상태 줄을 덮고 화면 밖까지 그대로 그려진다. InventorySlotView와 같은
+            // 조립(ScrollRect + RectMask2D 뷰포트 + ContentSizeFitter 콘텐츠)으로 세로 스크롤을 붙인다.
+            var scrollGo = new GameObject("IslandListScroll", typeof(RectTransform), typeof(ScrollRect));
+            scrollGo.transform.SetParent(mapWindowRt, false);
+            var scrollRt = scrollGo.GetComponent<RectTransform>();
+            scrollRt.anchorMin = new Vector2(0f, 1f);
+            scrollRt.anchorMax = new Vector2(0f, 1f);
+            scrollRt.pivot = new Vector2(0f, 1f);
+            scrollRt.anchoredPosition = new Vector2(columnX, -(MapViewTop + ListHeaderHeight + 4f));
+            scrollRt.sizeDelta = new Vector2(ListColumnWidth, MapViewSize - ListHeaderHeight - 4f);
+
+            // 뷰포트. 아주 옅은 배경을 까는 이유는 InventorySlotView와 같다 - (1) 목록 영역 경계가
+            // 보이고, (2) raycastTarget이 켜져 있어야 행 사이 빈 자리에서 끌어 스크롤하는 조작이 먹는다.
+            var viewport = UIBuilder.CreatePanel(scrollRt, "Viewport",
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: new Color(1f, 1f, 1f, 0.02f));
+            viewport.gameObject.AddComponent<RectMask2D>();
+
             var listGo = new GameObject("IslandList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-            listGo.transform.SetParent(mapWindowRt, false);
+            listGo.transform.SetParent(viewport, false);
             listContainer = listGo.GetComponent<RectTransform>();
             listContainer.anchorMin = new Vector2(0f, 1f);
-            listContainer.anchorMax = new Vector2(0f, 1f);
-            listContainer.pivot = new Vector2(0f, 1f);
-            listContainer.anchoredPosition = new Vector2(columnX, -(MapViewTop + ListHeaderHeight + 4f));
-            listContainer.sizeDelta = new Vector2(ListColumnWidth, MapViewSize - ListHeaderHeight - 4f);
+            listContainer.anchorMax = new Vector2(1f, 1f);
+            listContainer.pivot = new Vector2(0.5f, 1f);
+            listContainer.anchoredPosition = Vector2.zero;
+            listContainer.sizeDelta = new Vector2(0f, 0f);
 
             var vlg = listGo.GetComponent<VerticalLayoutGroup>();
             vlg.childForceExpandWidth = true;
@@ -868,6 +899,14 @@ namespace MakeGame.UI
 
             var fitter = listGo.GetComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var scroll = scrollGo.GetComponent<ScrollRect>();
+            scroll.viewport = viewport;
+            scroll.content = listContainer;
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+            scroll.scrollSensitivity = 30f; // 휠 한 칸 = 한 행(26px + 간격 4px)
         }
 
         /// <summary>창 아래쪽 두 줄: 출발 전 준비 체크리스트와 이동 결과 문구.</summary>
@@ -1090,9 +1129,13 @@ namespace MakeGame.UI
                 if (marker.label != null)
                 {
                     bool isCurrent = islandTravel != null && island.islandId == islandTravel.currentIslandId;
+                    // [B52] 미탐사 이름표는 그리지 않는다(예전에는 "?"). 50섬 실측 배치는 환초라 섬이
+                    // 340m 간격 무리를 이루는데, 지도 축척(약 0.02px/m)에서 표식이 7px 간격이 되므로
+                    // 무리마다 "?" 수십 장이 같은 자리에 겹쳐 잉크 얼룩이 된다. 미탐사 섬의 존재는
+                    // 검은 원 표식이 이미 알리고 있어 정보 손실이 없다.
                     marker.label.text = revealed
                         ? $"섬 {island.islandId} · {GetSizeKoreanName(island.size)}{(isCurrent ? " (현재 위치)" : "")}"
-                        : "?";
+                        : "";
                 }
             }
 
@@ -1136,10 +1179,10 @@ namespace MakeGame.UI
                     : island.isStartingIsland;
                 row.travelButton.interactable = !isCurrent;
 
-                int islandId = island.islandId; // 클로저 캡처용 로컬 변수
-                row.islandId = islandId;
-                row.travelButton.onClick.RemoveAllListeners();
-                row.travelButton.onClick.AddListener(() => TryTravel(islandId));
+                // [B52] 콜백은 CreateIslandRow에서 한 번만 등록한다(row.islandId를 이벤트 시점에
+                // 읽는다 - 호버 콜백과 같은 방식). 예전처럼 여기서 RemoveAll/Add를 반복하면 50행 ×
+                // 0.2초 주기 = 초당 클로저 250개 할당이라 지도를 열어두는 내내 GC를 데운다.
+                row.islandId = island.islandId;
             }
 
             for (int i = islands.Count; i < islandRows.Count; i++)
@@ -1178,6 +1221,10 @@ namespace MakeGame.UI
             travelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 70f;
 
             var row = new IslandRow { rowGo = rowGo, infoLabel = infoLabel, travelButton = travelButton };
+
+            // [B52] 이동 콜백도 행을 만들 때 한 번만 등록한다. row.islandId는 RefreshList가 매 갱신
+            // 최신으로 채워 두므로, 클릭 시점에 읽으면 항상 그 행이 지금 표시 중인 섬이다.
+            row.travelButton.onClick.AddListener(() => TryTravel(row.islandId));
 
             // "목적지 선택" = 이동 버튼에 포인터를 올리는 것. 이 프로젝트는 커서를 잠그지 않으므로
             // 마우스 오버가 그대로 동작한다. 콜백은 행을 만들 때 한 번만 등록하고 row.islandId를

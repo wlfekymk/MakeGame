@@ -80,6 +80,12 @@ namespace MakeGame.UI
         // #if UNITY_EDITOR || DEVELOPMENT_BUILD + Debug.isDebugBuild 이중 가드 안에서만 산다.
         private const KeyCode GrantMaterialsKey = KeyCode.F4;
 
+        // 디버그 전체 지도 + 자유 이동 토글 키. 감독은 "F6 같은 빈 키"라 했지만 F6은 이미 배 엔딩
+        // 미리보기다 - F3~F9가 전부 사용 중(F3 이 패널, F4 재료, F5 저장, F6/F7/F8 미리보기, F9
+        // 불러오기)이라 비어 있는 F10을 쓴다. 플래그 자체는 IslandTravel.debugRevealAllIslands가
+        // 들고 있다(소비자가 Systems/UI 양쪽이라 Systems 쪽 소유 - 해당 필드 주석 참고). 기본 ON.
+        private const KeyCode ToggleFullMapKey = KeyCode.F10;
+
         /// <summary>
         /// F4로 한 번에 지급할 개발용 재료표. 이름은 ScriptableObjects/Item_*.asset의 itemName과
         /// 정확히 같아야 한다(문자열 대조다 - 오타는 조용히 무시된다).
@@ -227,6 +233,8 @@ namespace MakeGame.UI
                     .Append('[').Append(PreviewAircraftEndingKey.ToString()).Append("] 비행기 엔딩   ")
                     .Append('[').Append(PreviewGameOverKey.ToString()).Append("] 사망 화면\n");
                 builder.Append("같은 키를 다시 누르면 닫힘\n");
+                builder.Append('[').Append(ToggleFullMapKey.ToString()).Append("] 전체 지도 표시+자유 이동 (지금 ")
+                    .Append(IslandTravel.DebugRevealAllActive ? "ON" : "OFF").Append(")\n");
             }
 #endif
 
@@ -254,6 +262,11 @@ namespace MakeGame.UI
                 ToggleGameOverPreview();
             else if (Input.GetKeyDown(GrantMaterialsKey))
                 GrantDevelopmentMaterials();
+            else if (Input.GetKeyDown(ToggleFullMapKey))
+            {
+                IslandTravel.debugRevealAllIslands = !IslandTravel.debugRevealAllIslands;
+                refreshTimer = 0f; // 도움말의 ON/OFF 표기를 다음 주기(최대 0.25초)까지 기다리지 않고 즉시 갱신
+            }
 #endif
         }
 
