@@ -239,6 +239,81 @@ namespace MakeGame.Systems
             }
         }
 
+        // ── [B52 섬별 잔디 경계선] "섬마다 백사장:잔디 비율이 랜덤하게" ────────────────────
+        // 문제: 지면 캡의 풀/모래 경계 기준(DryTop)이 전 섬 공통 1.30m라, 모든 섬이 "해변 한 줄 +
+        // 내륙 전부 초지"라는 같은 비율이었고 실기에서 "잔디가 너무 많다"는 신고가 왔다.
+        // 조치: 경계 기준 높이를 섬별 결정적 해시 t(0~1)로 밀어 올린다:
+        //   grassLine = 1.30 + lerp(-0.15, +2.4, t^1.3)
+        // t가 큰 섬은 경계선이 지형 대부분보다 높아져 **거의 전체가 백사장인 섬**이 되고,
+        // t가 작은 섬은 지금처럼 초지가 넓다 - 섬마다 모래:잔디 비율 스펙트럼이 생긴다.
+        //
+        // ★ 단일 소스 ★ 이 값은 정확히 두 곳에서 쓰이고 반드시 같아야 한다:
+        //   (1) BuildGroundCaps의 DryTop(DrySandCap 상한 = 초원 시작 높이)
+        //   (2) GrassFieldSystem.Build의 잔디 채택 하한(+ 디더 반폭 0.18)
+        // 한쪽만 바뀌면 "모래 캡 위에 잔디" 또는 "잔디 없는 맨땅 초지"가 생긴다(B11 계열 사고의
+        // 재발 경로). 그래서 두 곳 모두 아래 함수만 쓴다 - 상수를 다시 쓰지 마라.
+        //
+        // ★ 난수 소비 0 (B46/B47과 같은 제약, 같은 방법) ★ 입력은 섬 월드 위치(worldSeed에
+        // 결정적)와 시작 섬 여부뿐인 순수 해시다. GrassFieldSystem.islandSalt와 같은 양자화
+        // (0.25m 격자)·같은 finalizer 계열이라, 같은 월드를 다시 열어도(세이브 로드 후에도)
+        // 같은 섬은 항상 같은 비율이 나온다.
+        //
+        // ★ 구조 불변 ★ DryTop의 BandWobble·삼각형 디더 항은 한 글자도 바뀌지 않는다 -
+        // 움직이는 것은 기준 상수(1.30) 하나뿐이다. grassLine의 최저값 1.15m는 DampTop 0.75m보다
+        // 항상 위라 어떤 t에서도 모래 3단 띠가 뒤집히지 않는다.
+
+        /// <summary>풀/모래 경계의 전 섬 공통 기준 높이(m). B47의 DryTop 상수 1.30이 이 값이다.</summary>
+        public const float GrassLineBaseHeight = 1.30f;
+
+        /// <summary>
+        /// 섬별 잔디 스펙트럼 파라미터 t(0~1). t가 클수록 잔디 경계선이 높고(= 모래 섬) 잔디 밀도도
+        /// 낮다(GrassFieldSystem이 같은 t를 밀도 계수 1.0→0.45에 재사용한다).
+        /// 시작 섬(0번)은 0.35~0.5로 클램프해 첫인상이 극단(전부 모래/전부 풀)이 되지 않게 한다.
+        /// **난수를 소비하지 않는 순수 함수다** - 섬 월드 위치만 입력으로 받는다.
+        /// </summary>
+        public static float ComputeGrassLineT(Vector3 islandWorldPosition, bool isStartIsland)
+        {
+            float t;
+            unchecked
+            {
+                uint h = (uint)(Mathf.RoundToInt(islandWorldPosition.x * 4f) * 73856093)
+                    ^ (uint)(Mathf.RoundToInt(islandWorldPosition.z * 4f) * 19349663)
+                    ^ 0x4F1BBCDCu;
+                h = Mix32(h);
+                t = (h & 0xFFFFFFu) / (float)0x1000000u;
+            }
+            return isStartIsland ? Mathf.Clamp(t, 0.35f, 0.5f) : t;
+        }
+
+        /// <summary>시작 섬 판정 포함 편의 오버로드(이름 규약 "Island_{id}_{size}" - Vegetation의 선례).</summary>
+        public static float ComputeGrassLineT(GameObject islandObject)
+        {
+            return ComputeGrassLineT(islandObject.transform.position, IsStartIslandObject(islandObject));
+        }
+
+        /// <summary>
+        /// t → 풀/모래 경계 기준 높이(m) = 1.30 + lerp(-0.15, +2.4, t^1.3).
+        /// BandWobble·디더가 더해지기 **전**의 기준값이다(그 두 항은 호출부 구조 그대로 유지된다).
+        /// </summary>
+        public static float GrassLineHeightFromT(float t)
+        {
+            return GrassLineBaseHeight + Mathf.Lerp(-0.15f, 2.4f, Mathf.Pow(Mathf.Clamp01(t), 1.3f));
+        }
+
+        /// <summary>섬 오브젝트 → 그 섬의 풀/모래 경계 기준 높이(m). 두 적용 지점이 반드시 이것(또는
+        /// ComputeGrassLineT + GrassLineHeightFromT 조합)만 쓴다 - 단일 소스 규약.</summary>
+        public static float GrassLineHeight(GameObject islandObject)
+        {
+            return GrassLineHeightFromT(ComputeGrassLineT(islandObject));
+        }
+
+        /// <summary>시작 섬(0번) 판정. 이름 규약 "Island_{id}_{size}"는 WorldMapManager.SpawnPlaceholder가
+        /// BuildIslandSurface 호출 **전에** 붙인다(IslandMeshGenerator.Vegetation.cs의 같은 판정이 선례).</summary>
+        private static bool IsStartIslandObject(GameObject islandObject)
+        {
+            return islandObject != null && islandObject.name.StartsWith("Island_0_");
+        }
+
         /// <summary>
         /// 지형 조각에 쓰는 파라미터 묶음. 좌표/반경/폭은 **반지름 R 대비 비율**, 높이/깊이는
         /// **maxHeight 대비 비율**이다(그래서 섬 규모가 달라도 형태가 그대로 확대·축소된다).
@@ -947,7 +1022,8 @@ namespace MakeGame.Systems
             // 조치: 세 캡의 경계를 **해수면 기준 높이**로 잡는다. 해변의 높이(수십 cm)는 섬 규모와
             // 무관한 물리량이라 반지름 비례로 잡을 이유가 애초에 없었고, 높이 기준이면 물가가 어디에
             // 있든(바깥이든 수로 안쪽이든) 저절로 따라간다.
-            //   마른 모래  : DampTop  ~ DryTop     (약 0.75 ~ 1.30m)
+            //   마른 모래  : DampTop  ~ DryTop     (약 0.75 ~ 1.30m; [B52]부터 상한은 섬별 grassLine
+            //                1.15~3.70m - 아래 GrassLineHeight 호출 주석)
             //   축축한 모래: WetTop   ~ DampTop
             //   젖은 모래  : WetTop 아래 전부      (해수면 아래 포함 - 어차피 바다 평면에 가려진다)
             //   DryTop 위  : 지형 본체 = Meadow Green 초원(B11 구조 그대로, 덮개 없음)
@@ -964,8 +1040,14 @@ namespace MakeGame.Systems
             float heightDither = 0.36f;
             float BandWobble(float angle) =>
                 0.22f * Mathf.Sin(angle * 2f + phaseA) + 0.12f * Mathf.Sin(angle * 3f + phaseB);
+            // [B52] DryTop의 기준 상수(1.30)만 섬별 값으로 바뀐다(위 GrassLineHeight 주석 - 단일 소스).
+            // BandWobble·디더 항은 B47 그대로다. DampTop/WetTop(모래 3단 내부 경계)은 해변의 물리량이라
+            // 섬별로 움직일 이유가 없고 그대로 둔다 - grassLine 최저 1.15m > DampTop 0.75m라 어떤
+            // t에서도 띠가 뒤집히거나 틈이 생기지 않는다(디더는 세 경계가 같은 값을 공유하므로 불변).
+            // GrassFieldSystem.Build도 같은 함수로 같은 값을 읽는다 - 여기만 고치면 모래 위 잔디가 생긴다.
+            float grassLine = GrassLineHeight(islandObject);
             float DryTop(Vector3 centroid, float angle) =>
-                1.30f + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
+                grassLine + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
             float DampTop(Vector3 centroid, float angle) =>
                 0.75f + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
             float WetTop(Vector3 centroid, float angle) =>

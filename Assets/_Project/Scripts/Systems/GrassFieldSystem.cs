@@ -43,12 +43,21 @@ namespace MakeGame.Systems
     ///    Cull Off 셰이더라 단면 지오메트리면 충분하다.
     ///
     /// ── 초지 판정 (IslandMeshGenerator의 실제 색 경계 규칙 재사용) ──
-    /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(≈1.30m + BandWobble(angle)
+    /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(기준 높이 + BandWobble(angle)
     /// ± 디더 0.18m) 위가 지형 본체 = Meadow Green 초원, 아래는 모래 캡 3단이다(BuildGroundCaps).
-    /// 잔디는 y ≥ 1.30 + BandWobble(angle) + 0.18(디더 반폭)만 채택해 **어떤 디더 값에서도 모래
+    /// [B52] 그 기준 높이는 전 섬 공통 1.30m가 아니라 **섬별 grassLine**(1.15~3.70m,
+    /// IslandMeshGenerator.GrassLineHeight - 캡의 DryTop과 단일 소스)이다. 잔디는
+    /// y ≥ grassLine + BandWobble(angle) + 0.18(디더 반폭)만 채택해 **어떤 디더 값에서도 모래
     /// 삼각형 위에 서지 않는다.** BandWobble의 phaseA/phaseB는 훅에서 그대로 넘겨받으므로 경계가
     /// 실제 모래 경계와 정확히 같은 위상으로 출렁인다. 수면 근처는 이 높이 조건이 자동으로 배제하고
-    /// (해수면 0m ≪ 1.48m), 바위 절벽 지대(P7 메사 등)는 경사 30도 초과 제외가 걸러낸다.
+    /// (해수면 0m ≪ 1.33m+), 바위 절벽 지대(P7 메사 등)는 경사 30도 초과 제외가 걸러낸다.
+    ///
+    /// ── [B52] 섬별 잔디량 스펙트럼 ("잔디가 너무 많다" 대응) ──
+    /// 목표 개수 = 기존 목표 × 전역 0.65 × 섬별 lerp(1.0, 0.45, t). t는 grassLine과 **같은**
+    /// 섬 해시(IslandMeshGenerator.ComputeGrassLineT)라, 경계선이 높은 모래 섬일수록 남은 초지의
+    /// 잔디도 성기다. t가 균등 분포이므로 섬 평균 밀도 계수는 0.65 × 0.725 ≈ 0.47 - 경계 상승으로
+    /// 초지 면적 자체도 줄어 체감 잔디량은 현재 대비 약 45~50% 이하다. 꽃 무리·패치니스·LOD
+    /// 로직은 전부 불변이고 모수(목표 개수)만 줄어든다.
     ///
     /// ── 높이 샘플: 레이캐스트 0회 ──
     /// 섬 메시는 런타임 생성이라 readable이고, 정점 배열이 결정적 극좌표 격자다
@@ -82,10 +91,18 @@ namespace MakeGame.Systems
         private const float CellSpacing = 0.55f;
 
         /// <summary>
-        /// 초지 최저 높이(m) = DryTop 기준 1.30 + 삼각형 디더 반폭 0.18(heightDither 0.36의 절반).
-        /// 여기에 BandWobble(angle)이 더해져 실제 모래 경계와 같은 위상으로 출렁인다.
+        /// 초지 경계 디더 반폭(m) = BuildGroundCaps heightDither 0.36의 절반. [B52] 기준 높이 자체는
+        /// 상수 1.30이 아니라 섬별 grassLine(IslandMeshGenerator.GrassLineHeight - 캡과 단일 소스)이고,
+        /// Build가 "grassLine + 이 반폭"을 계산해 후보 판정에 넘긴다. 여기에 BandWobble(angle)이
+        /// 더해져 실제 모래 경계와 같은 위상으로 출렁이는 것은 B47 그대로다.
         /// </summary>
-        private const float GrassMinHeightBase = 1.30f + 0.18f;
+        private const float GrassBoundaryDitherHalf = 0.18f;
+
+        /// <summary>[B52] 전역 잔디 감소 계수. 전 섬 공통으로 목표 개수에 곱한다.</summary>
+        private const float GlobalDensityScale = 0.65f;
+
+        /// <summary>[B52] 섬별 밀도 계수 하한. t=0 섬은 1.0, t=1 섬(모래 섬)은 이 값까지 성기다.</summary>
+        private const float IslandDensityMin = 0.45f;
 
         /// <summary>경사 상한 tan(30°). 정점 격자 기울기가 이보다 크면 바위 절벽 지대로 보고 제외한다.</summary>
         private const float MaxSlopeTan = 0.57735f;
@@ -212,9 +229,20 @@ namespace MakeGame.Systems
                     ^ (uint)(Mathf.RoundToInt(center.z * 4f) * 19349663) ^ 0x3D4A2C15u);
             }
 
+            // [B52] 섬별 잔디 경계선(단일 소스: IslandMeshGenerator - 캡의 DrySandCap 상한(DryTop)과
+            // 정확히 같은 값이다. 어긋나면 모래 위 잔디/잔디 없는 초원이 생긴다). t는 밀도에도 재사용한다.
+            // ComputeGrassLineT는 섬 월드 위치만 입력인 순수 해시라 rng 소비 0, 세이브 로드 후에도 동일하다.
+            float grassLineT = IslandMeshGenerator.ComputeGrassLineT(islandObject);
+            float grassMinHeightBase =
+                IslandMeshGenerator.GrassLineHeightFromT(grassLineT) + GrassBoundaryDitherHalf;
+
             // 섬 크기별 목표 개수: Small(R50) ~12k / Medium(R90) ~20k / Large(R140) ~30k / XL(R200) ~40k.
             // 반지름 선형 보간이 위 네 점을 ±4% 안으로 지나므로 별도 테이블이 필요 없다.
+            // [B52] 여기에 전역 0.65 × 섬별 lerp(1.0, 0.45, t)를 곱한다 - 경계선이 높은 모래 섬(t 큼)
+            // 일수록 남은 초지의 잔디도 성기다. 목표 개수만 줄고 이후 로직(패치·꽃·LOD)은 불변이다.
             float targetCount = DensityMultiplier
+                * GlobalDensityScale
+                * Mathf.Lerp(1f, IslandDensityMin, grassLineT)
                 * Mathf.Lerp(12000f, 40000f, Mathf.InverseLerp(50f, 200f, radius));
             if (targetCount < 1f)
                 return;
@@ -233,7 +261,7 @@ namespace MakeGame.Systems
                 {
                     float x, z, y;
                     if (TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
-                            maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
+                            maxPlaceRadiusSq, phaseA, phaseB, grassMinHeightBase, out x, out z, out y))
                         eligibleWeight += PatchDensity(x, z, islandSalt);
                 }
             }
@@ -265,7 +293,7 @@ namespace MakeGame.Systems
                 {
                     float x, z, y;
                     if (!TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
-                            maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
+                            maxPlaceRadiusSq, phaseA, phaseB, grassMinHeightBase, out x, out z, out y))
                         continue;
 
                     // 군락감: 채택 확률에 파장 ~7m 저주파 노이즈 배율(0.35~1.0)을 곱한다 -
@@ -348,12 +376,15 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 격자 셀 (ix, iz) 하나를 초지 후보로 평가한다. 지터 위치가 산포 원 안이고 지형 높이가
-        /// 초지 경계(DryTop + 디더 반폭) 위면 true와 함께 섬 로컬 (x, z, y)를 돌려준다.
+        /// 초지 경계(섬별 grassLine + 디더 반폭 = grassMinHeightBase) 위면 true와 함께
+        /// 섬 로컬 (x, z, y)를 돌려준다.
         /// 1차(계수)와 2차(생성) 통과가 반드시 같은 판정을 내려야 하므로 한 함수로 공유한다.
         /// </summary>
+        /// <param name="grassMinHeightBase">[B52] IslandMeshGenerator.GrassLineHeightFromT(t) +
+        /// GrassBoundaryDitherHalf. Build가 섬당 1회 계산해 넘긴다(캡 경계와 단일 소스).</param>
         private static bool TryGetGrassCandidate(int ix, int iz, uint islandSalt, Vector3[] verts,
             int rings, int segments, float radius, float maxPlaceRadiusSq, float phaseA, float phaseB,
-            out float x, out float z, out float y)
+            float grassMinHeightBase, out float x, out float z, out float y)
         {
             x = ix * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x51ED270Bu) - 0.5f) * 0.9f * CellSpacing;
             z = iz * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x1B873593u) - 0.5f) * 0.9f * CellSpacing;
@@ -366,8 +397,8 @@ namespace MakeGame.Systems
             float angle = Mathf.Atan2(z, x);
             y = SampleHeightPolar(verts, rings, segments, radius, Mathf.Sqrt(rSq), angle);
 
-            // 초지 경계: BuildGroundCaps의 DryTop과 같은 식(1.30 + BandWobble) + 디더 반폭 0.18.
-            float minHeight = GrassMinHeightBase
+            // 초지 경계: BuildGroundCaps의 DryTop과 같은 식(섬별 grassLine + BandWobble) + 디더 반폭 0.18.
+            float minHeight = grassMinHeightBase
                 + 0.22f * Mathf.Sin(angle * 2f + phaseA)
                 + 0.12f * Mathf.Sin(angle * 3f + phaseB);
             return y >= minHeight;
