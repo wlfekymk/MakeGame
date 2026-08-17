@@ -10,6 +10,9 @@ Git: 마운트에서 인덱스를 못 쓰므로 `GIT_DIR=/tmp/mg.git GIT_WORK_TR
      objects를 .git으로 복사하고 refs/heads/main을 직접 쓴다(해시 일치로 검증).
      남은 .lock 파일은 삭제가 안 되므로 `_to_delete/gitlocks/`로 옮긴다.
 커밋마다 버전 올리고(형식 **x.x.xx**, 0.2.00부터) repo.bundle 백업.
+웨이브 의식: 시작 전 `lock_audit.py snapshot`+지문 대조 → 종료 후 `audit <락 목록>` →
+배포·컴파일 0/0 → (동작 변경이면 스모크 테스트) → 커밋. 도구 설명: `Tools/agent/README.md`.
+에이전트가 중단되면 **즉시** `audit`(허용 0개) — 중단은 부분 수정을 남긴다(WorldScale 사고).
 
 기능을 만들면 해당 메쏘드에 어떤 기능인지 항상 주석을 남긴다.
 
