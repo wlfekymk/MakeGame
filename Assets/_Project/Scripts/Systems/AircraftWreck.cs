@@ -4,7 +4,7 @@ using MakeGame.Player;
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 시작 섬에 놓인 불시착한 경비행기 잔해. 상호작용 시 인벤토리에 있는 필요 재료를
+    /// 특대(XL) 섬에 놓인 불시착한 경비행기 잔해(수리 엔딩의 원정 목표). 상호작용 시 인벤토리에 있는 필요 재료를
     /// 자동으로 최대한 투입하고, 조건이 충족되면 수리를 완료시킨다 (BoatWorkbench와 동일한 사용 패턴).
     /// </summary>
     public class AircraftWreck : MonoBehaviour

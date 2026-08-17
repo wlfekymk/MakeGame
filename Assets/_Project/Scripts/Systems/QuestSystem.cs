@@ -503,7 +503,7 @@ namespace MakeGame.Systems
                 ? Mathf.RoundToInt(Mathf.Clamp01(aircraftRepair.GetOverallProgress()) * 100f)
                 : 0;
             bool aircraftDone = aircraftRepair != null && aircraftRepair.isRepairComplete;
-            Write(QuestCategory.Voyage, "quest.aircraft", "경비행기를 수리한다 (선택)",
+            Write(QuestCategory.Voyage, "quest.aircraft", "특대 섬의 경비행기를 수리한다 (선택)",
                 aircraftDone ? "수리 완료" : $"재료 {aircraftPercent}%",
                 aircraftPercent / 100f,
                 completed: aircraftDone, locked: aircraftRepair == null, latch: true);

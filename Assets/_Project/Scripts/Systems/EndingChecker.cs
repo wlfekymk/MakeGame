@@ -22,7 +22,7 @@ namespace MakeGame.Systems
     /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보
     ///    + 최소 경과 일수(requiredElapsedDays, Spec_11 기준 15일) 도달. 여러 단계를 밟아 꾸준히
     ///    자원을 모으는 정공법 경로.
-    /// 2) 경비행기 수리 엔딩: 시작 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
+    /// 2) 경비행기 수리 엔딩: 특대(XL) 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
     ///    한 번에 수리를 완료하는 경로. AircraftRepairSystem.isRepairComplete + 최소 경과 일수
     ///    (aircraftRequiredElapsedDays, Design_MidGame 8장 기준 8일)를 함께 요구한다 - 예전에는
     ///    isRepairComplete 하나뿐이라 시간 조건이 0이었다(HasElapsedAircraftRequiredDays 주석 참고).

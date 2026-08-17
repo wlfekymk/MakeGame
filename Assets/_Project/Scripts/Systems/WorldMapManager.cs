@@ -57,11 +57,13 @@ namespace MakeGame.Systems
         public SharkSpawner sharkSpawner;
 
         [Header("경비행기 수리 엔딩")]
-        [Tooltip("시작 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
+        [Tooltip("특대(XL) 섬에 배치할 경비행기 잔해가 진행 상태를 갱신할 수리 시스템 (비워두면 잔해를 배치하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
 
-        [Tooltip("시작 섬 중심을 기준으로 경비행기 잔해를 놓을 위치(오프셋). 플레이어 시작 회전을 이 반대\n" +
-                 "방향으로 잡는 계산에도 같은 값을 쓰므로, 잔해를 옮기면 시작 시선도 자동으로 따라온다.")]
+        [Tooltip("시작 섬 중심 기준 여객기 잔해(플레이어가 타고 온 기체)의 방향 앵커. 경비행기 잔해가 특대 섬으로\n" +
+                 "옮겨간 뒤에는 이 값의 수평 방향이 (1) 시작 섬 해안에 여객기 잔해를 놓을 방위, (2) 플레이어 시작\n" +
+                 "회전(이 반대 방향)을 함께 결정한다. 필드 이름은 씬 직렬화 호환을 위해 그대로 둔다\n" +
+                 "(RaftStructure도 같은 방향을 읽는다).")]
         public Vector3 aircraftWreckOffset = new Vector3(6f, 0f, -4f);
 
         [Header("시작 시선 (Design_Onboarding 2장, game-designer 요청)")]
@@ -69,11 +71,15 @@ namespace MakeGame.Systems
         // 손으로 맞춰 둘 수가 없다. 잔해 위치가 바뀌면 씬에 박아둔 각도는 조용히 틀린 값이 된다.
         // 같은 상수(aircraftWreckOffset)에서 두 값을 함께 유도해야 어긋나지 않는다.
         //
-        // 왜 등 뒤인가(설계 근거): 경비행기 잔해는 재료 15개를 요구하는 엔드게임 오브젝트다. 0분에
-        // 정면으로 보이면 플레이어는 그것부터 조사하러 가고, "아직 아무것도 못 한다"는 좌절만 얻는다.
+        // 시선 앵커는 이제 **시작 섬 해안의 여객기 잔해**다(경비행기 잔해는 특대 섬으로 이전됐다).
+        // 여객기는 aircraftWreckOffset의 수평 방향 위 해변에 놓이므로, 이 방향의 반대를 보게 하면
+        // "플레이어 등 뒤에 타고 온 기체가 있다" 관계가 그대로 유지된다.
+        //
+        // 왜 등 뒤인가(설계 근거): 타고 온 여객기 잔해는 "왜 여기 있는가"를 설명하는 배경 오브젝트다.
+        // 0분에 정면으로 보이면 시선이 생존 행동(물/음식)보다 잔해 조사로 먼저 간다.
         // 등 뒤에 두면 나중에 뒤를 돌아봤을 때 발견된다 - 발견 자체를 막는 게 아니라 발견 시점을
         // 늦추는 것이 목적이다.
-        [Tooltip("게임 시작 시 경비행기 잔해 반대 방향을 보도록 회전시킬 플레이어 트랜스폼.\n" +
+        [Tooltip("게임 시작 시 여객기 잔해 반대 방향을 보도록 회전시킬 플레이어 트랜스폼.\n" +
                  "비워두면 씬에서 PlayerController를 한 번 찾아 쓴다. 그래도 없으면 회전을 건드리지 않는다.")]
         public Transform playerTransform;
 
@@ -165,6 +171,11 @@ namespace MakeGame.Systems
                 GenerateNextIsland(i, additionalIslandCount);
             }
 
+            // 경비행기 잔해(수리 엔딩)는 특대 섬 위에 놓이므로 대상 섬이 생성된 뒤에 1회 배치한다.
+            // 반드시 동기 호출을 유지할 것 - SaveLoadController가 같은 프레임 안에서 복원하는 계약이
+            // 있으므로 코루틴/지연 호출로 미루면 안 된다. rng는 전혀 소비하지 않는다(결정적 탐색).
+            SpawnAircraftWreck();
+
             sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
         }
 
@@ -214,6 +225,10 @@ namespace MakeGame.Systems
             {
                 GenerateNextIsland(i, additionalIslandCount);
             }
+
+            // Start()와 동일한 계약: 특대 섬 생성 완료 후 1회, 같은 프레임 안의 동기 호출로 배치한다
+            // (SaveLoadController.Load가 RegenerateWorld 직후 같은 프레임에 상태를 복원한다).
+            SpawnAircraftWreck();
 
             sharkSpawner?.SpawnSharks(islands, oceanSize, seaLevel, transform, worldSeed);
         }
@@ -491,14 +506,15 @@ namespace MakeGame.Systems
             ApplyStartingFacing();
 
             SpawnIslandContent(startIsland);
-            SpawnAircraftWreck(startIsland);
+            SpawnAirlinerWreck(startIsland);
             SpawnBoatWorkbench(startIsland);
             islands.Add(startIsland);
             return startIsland;
         }
 
         /// <summary>
-        /// 시작 시선을 확정한다. 플레이어를 경비행기 잔해의 정반대 방향으로 돌려세우고, 같은 방향을
+        /// 시작 시선을 확정한다. 플레이어를 여객기 잔해(시작 섬 해안, aircraftWreckOffset 방향)의
+        /// 정반대 방향으로 돌려세우고, 같은 방향을
         /// 착륙 원 스포너에도 알려 첫 자원 노드(코코넛)가 플레이어 정면에 오게 한다.
         ///
         /// 위치는 손대지 않는다 - 씬의 시작 위치(현재 y 14, 지형 기복 상향 대응으로 5에서 올라간 값)를
@@ -593,18 +609,26 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 시작 섬(불시착 지점)에 경비행기 잔해를 한 번 배치한다. 프리미티브를 조합해 부서진 기체 형태를 만들고,
+        /// 특대(XL) 섬에 경비행기 잔해를 한 번 배치한다(수리 엔딩의 원정 목표 - 예전에는 시작 섬 중심
+        /// 근처였다). 프리미티브를 조합해 부서진 기체 형태를 만들고,
         /// AircraftWreck 컴포넌트를 붙여 상호작용(E키)으로 수리 재료를 투입할 수 있게 한다.
+        ///
+        /// 호출 시점: 모든 섬 생성이 끝난 뒤 Start()/RegenerateWorld()가 각각 1회 호출한다(같은 프레임
+        /// 안의 동기 흐름 - SaveLoadController 복원 계약). 대상 섬의 지형 콜라이더는 SpawnPlaceholder의
+        /// Physics.SyncTransforms로 이미 물리 씬에 반영돼 있어 SnapToGround가 바로 맞는다.
+        /// 난수 규율: 섬 선택/위치 탐색 전부 결정적이다 - islandLayoutRng를 비롯한 어떤 rng도 소비하지
+        /// 않으므로 같은 worldSeed = 같은 월드 계약이 한 칸도 밀리지 않는다.
         /// </summary>
-        private void SpawnAircraftWreck(IslandInstance startIsland)
+        private void SpawnAircraftWreck()
         {
             if (aircraftRepair == null)
                 return;
 
-            // 오프셋을 필드로 뺐다(기본값은 기존과 동일한 6,0,-4). ApplyStartingFacing이 같은 값으로
-            // 플레이어 시작 시선을 계산하므로, 잔해를 옮겨도 "등 뒤" 관계가 자동으로 유지된다.
-            Vector3 position = startIsland.mapPosition + aircraftWreckOffset;
-            position = TerrainSampler.SnapToGround(position);
+            IslandInstance targetIsland = FindAircraftWreckIsland();
+            if (targetIsland == null)
+                return;
+
+            Vector3 position = FindAircraftWreckPosition(targetIsland);
 
             var go = new GameObject("AircraftWreck");
             go.transform.SetParent(transform);
@@ -630,6 +654,140 @@ namespace MakeGame.Systems
 
             var wreck = go.AddComponent<AircraftWreck>();
             wreck.repairSystem = aircraftRepair;
+        }
+
+        /// <summary>
+        /// 경비행기 잔해를 놓을 섬을 고른다. 실측 배치(MaldivesLayout)가 켜져 있으면 데이터에서
+        /// size == ExtraLarge인 항목의 배열 인덱스(= gameIndex = islandId, 50섬 데이터에서는 Z28-043
+        /// 하나뿐)를 찾아 그 섬을 쓴다. 실측 배치가 꺼진 폴백 월드에서는 생성된 섬 중 가장 큰 등급의
+        /// 첫 섬을 고른다(시작 섬은 캠프이므로 가능하면 제외, 다른 섬이 하나도 없으면 시작 섬).
+        /// 어느 경로든 rng를 소비하지 않는 결정적 선택이다.
+        /// </summary>
+        private IslandInstance FindAircraftWreckIsland()
+        {
+            if (IsMaldivesLayoutActive())
+            {
+                var data = MaldivesLayout.Islands;
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (data[i].size != IslandSize.ExtraLarge)
+                        continue;
+
+                    var island = GetIsland(i);
+                    if (island != null)
+                        return island;
+                }
+            }
+
+            // 폴백: 생성 순서대로 훑으며 가장 큰 등급이 처음 나온 섬(결정적 - 동률이면 먼저 생성된 쪽).
+            IslandInstance best = null;
+            foreach (var island in islands)
+            {
+                if (island == null || island.isStartingIsland)
+                    continue;
+                if (best == null || island.size > best.size)
+                    best = island;
+            }
+            if (best == null && islands.Count > 0)
+                best = islands[0];
+            return best;
+        }
+
+        /// <summary>
+        /// 섬 중심 기준 "뭍 위" 배치 지점을 결정적으로 찾는다. 후보는 반지름 비율 4단계 × 방위 8개의
+        /// 고정 순서이고, 각 후보를 TerrainSampler.SnapToGround로 지면에 스냅해 해수면(seaLevel)보다
+        /// 충분히(+0.5m 이상) 높은 첫 지점을 쓴다. 전부 실패하면 섬 중심.
+        /// 특대 섬의 실측 윤곽(radialMask)은 방향에 따라 0.08R까지 좁아지므로 고정 오프셋 하나로는
+        /// 물 위에 뜰 수 있어 이런 탐색이 필요하다. rng는 전혀 소비하지 않는다(같은 시드 = 같은 위치).
+        /// </summary>
+        private Vector3 FindAircraftWreckPosition(IslandInstance island)
+        {
+            Vector3 center = island.mapPosition;
+            float terrainRadius = IslandSizeMetrics.GetTerrainRadius(island.size);
+            // 안쪽부터 바깥으로 시도한다(중심에 가까울수록 물에 잠길 확률이 낮다). 0.1은 마지막 보루.
+            float[] radiusFractions = { 0.2f, 0.35f, 0.5f, 0.1f };
+            const int bearingCount = 8;
+            const float minHeightAboveSea = 0.5f;
+
+            foreach (float fraction in radiusFractions)
+            {
+                for (int bearing = 0; bearing < bearingCount; bearing++)
+                {
+                    float angle = bearing * (Mathf.PI * 2f / bearingCount);
+                    Vector3 candidate = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle))
+                        * (terrainRadius * fraction);
+                    Vector3 snapped = TerrainSampler.SnapToGround(candidate);
+
+                    // SnapToGround는 지형을 못 맞히면 입력 y(= 0 = 해수면)를 그대로 돌려주므로
+                    // "물 밖에 있고 레이도 실제 지형에 맞았다"가 이 한 검사로 함께 보장된다.
+                    if (snapped.y >= seaLevel + minHeightAboveSea)
+                        return snapped;
+                }
+            }
+
+            return TerrainSampler.SnapToGround(center);
+        }
+
+        /// <summary>
+        /// 시작 섬 해안에 플레이어가 타고 온 여객기 잔해를 한 번 배치한다(시각+콜라이더 전용 배경
+        /// 오브젝트 - 형태와 콜라이더는 AirlinerWreck 컴포넌트가 스스로 만들므로 여기서는 루트만 세운다).
+        /// 경비행기 잔해(수리 엔딩)가 특대 섬으로 옮겨간 뒤, "왜 여기 있는가"를 설명하는 역할과
+        /// ApplyStartingFacing의 "등 뒤" 앵커 역할을 이 잔해가 물려받는다.
+        ///
+        /// 방향: aircraftWreckOffset의 수평 방향(정규화)을 그대로 쓴다 - 시작 시선이 이 반대 방향이므로
+        /// 여객기는 항상 플레이어 등 뒤 해안에 놓인다. 거리: 섬 중심에서 그 방향으로 8m부터 4m 간격으로
+        /// 바깥으로 걸어가며 SnapToGround 높이가 해수면+0.2~+1.2m에 들어오는 첫 "해변" 지점을 찾는다
+        /// (못 찾으면 마지막으로 뭍이었던 지점). 회전: 기수(+Z)가 바다 쪽에서 섬 안쪽을 향하도록(탐색
+        /// 방향의 반대) yaw만 준다. 전 과정이 결정적이라 rng를 전혀 소비하지 않고, 생명주기는 기존
+        /// 잔해 배치와 같다(신규 게임/RegenerateWorld 각각 정확히 1회 - GenerateStartingIsland에서 호출,
+        /// RegenerateWorld는 자식을 전부 지우고 다시 만들므로 중복이 생기지 않는다).
+        /// </summary>
+        private void SpawnAirlinerWreck(IslandInstance startIsland)
+        {
+            Vector3 direction = aircraftWreckOffset;
+            direction.y = 0f;
+            direction = direction.sqrMagnitude < 0.0001f ? Vector3.forward : direction.normalized;
+
+            Vector3 center = startIsland.mapPosition;
+            float maxDistance = IslandSizeMetrics.GetTerrainRadius(startIsland.size);
+
+            bool foundBeach = false;
+            bool foundLand = false;
+            Vector3 beach = Vector3.zero;
+            Vector3 lastLand = Vector3.zero;
+
+            for (float distance = 8f; distance <= maxDistance; distance += 4f)
+            {
+                Vector3 snapped = TerrainSampler.SnapToGround(center + direction * distance);
+                float heightAboveSea = snapped.y - seaLevel;
+
+                // SnapToGround가 지형을 못 맞히면 입력 y(= 0 = 해수면)가 그대로 돌아와 뭍 판정에서 걸러진다.
+                if (heightAboveSea > 0.01f)
+                {
+                    lastLand = snapped;
+                    foundLand = true;
+                }
+
+                if (heightAboveSea >= 0.2f && heightAboveSea <= 1.2f)
+                {
+                    beach = snapped;
+                    foundBeach = true;
+                    break;
+                }
+            }
+
+            if (!foundBeach)
+                beach = foundLand ? lastLand : TerrainSampler.SnapToGround(center + direction * 8f);
+
+            // 기수(+Z 모델 기준)가 바다 쪽에서 섬 안쪽을 향하게 = 해안 탐색(바깥) 방향의 반대.
+            Vector3 nose = -direction;
+            float yaw = Mathf.Atan2(nose.x, nose.z) * Mathf.Rad2Deg;
+
+            var go = new GameObject("AirlinerWreck");
+            go.transform.SetParent(transform);
+            go.transform.position = beach; // 루트 y = 해변 지면 높이(착지).
+            go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            go.AddComponent<AirlinerWreck>(); // 시각/콜라이더는 이 컴포넌트가 만든다(매개변수 없음).
         }
 
         /// <summary>
@@ -764,7 +922,8 @@ namespace MakeGame.Systems
         /// 시작 섬(0번) 실측 윤곽의 마스크 조회를 앞당기는 샘플 수(64샘플 기준 16 = 90도. 윤곽이
         /// 시계 방향으로 90도 돈 것과 같다). **모양은 그대로고 방향만 돈다.**
         /// 왜 필요한가 - 시작 섬에는 방위가 코드에 고정된 콘텐츠가 있다:
-        /// 경비행기 잔해(+6,-4 = 326도), 착륙 원(잔해 반대 = 146도, 반지름 최대 9m), 배 작업대(-6,-3 = 207도).
+        /// 여객기 잔해 방향(aircraftWreckOffset +6,-4 = 326도, 예전에는 경비행기 잔해 자리),
+        /// 착륙 원(잔해 반대 = 146도, 반지름 최대 9m), 배 작업대(-6,-3 = 207도).
         /// 9섬 시절 마스크(Z28-056)는 착륙 원 방향 해안이 0.15R = 7.5m라 첫 자원 노드(5.6~9m)가
         /// 물에 잠겨 이 회전이 필수였다.
         /// [B52] 50섬 데이터의 시작 섬은 Z28-017로 바뀌었다. 새 마스크 검산: 회전 16 기준 해안 거리
@@ -1316,8 +1475,10 @@ namespace MakeGame.Systems
                         : 0;
 
                     // 배(A)를 먼저 쓴다 - Design_Progression 4장의 결정(기본 안내 경로를 배로 둔다).
+                    // 경비행기 잔해가 특대 섬으로 이전되면서(WorldMapManager.SpawnAircraftWreck 참고)
+                    // 두 번째 줄의 위치 표기만 문서 원문과 달리 갱신했다 - 틀린 길 안내가 더 나쁘다.
                     return $"탈출 경로 A — 배 제작 (작업대: 시작 섬)  [{BoatConstructionSystem.TotalStages}단계 중 {boatStage}단계]\n" +
-                           $"탈출 경로 B — 경비행기 수리 (잔해: 시작 섬)  [재료 {aircraftPercent}%]";
+                           $"탈출 경로 B — 경비행기 수리 (잔해: 특대 섬)  [재료 {aircraftPercent}%]";
                 }
 
                 case ProgressionStage.Escape:
