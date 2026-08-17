@@ -71,6 +71,26 @@
 
 ---
 
+### 파일 분할 지도 (0.2.03~0.2.06 리팩토링)
+거대 파일이 partial로 갈라졌다. **락을 걸 때 파일 단위로 정확히 지정해라** — "HazardSource"라고만 쓰면 어느 파일인지 모호하다.
+
+| 클래스 | 파일 | 내용 |
+|---|---|---|
+| HazardSource | HazardSource.cs | 공통 위험요소·전투·재등장 (719줄) |
+| 〃 | HazardSource.BearAI.cs | 성체/새끼 곰 AI (991줄) |
+| IslandMeshGenerator | IslandMeshGenerator.cs | 지형 메시·프로파일 8종·모래 캡 (1,256줄) |
+| 〃 | IslandMeshGenerator.Vegetation.cs | 초목·소품 배치 (828줄) |
+| 〃 | IslandMeshGenerator.MeshLibrary.cs | 메시 공급·모델 로더 (682줄) |
+| CreatureVisualBuilder | CreatureVisualBuilder.cs | 공통·곰 외 생물 (608줄) |
+| 〃 | CreatureVisualBuilder.Bear.cs | 곰 규격·모델·빌더 (550줄) |
+| CreatureMeshLibrary | CreatureVisualBuilder.MeshLibrary.cs | 생물 메시 (1,820줄) |
+| BuildingSystem | BuildingSystem.cs | 격자·배치·지지·실내 판정 (2,682줄) |
+| 〃 | BuildingSystem.Chest.cs | 상자 런타임 거동 (134줄) |
+| 〃 | BuildingSystem.Persistence.cs | 저장/복원 (387줄) |
+| IslandResourceSpawner | IslandResourceSpawner.cs | 배치·stableKey·증량 (505줄) |
+| 〃 | IslandResourceSpawner.Visuals.cs | 노드 겉모습 (671줄) |
+| ResourceVisualLibrary | IslandResourceSpawner.MeshLibrary.cs | 자원 메시·OBJ 로더 (684줄) |
+
 ## 2. 절대 금지 (전 역할 공통)
 
 1. **소유 파일 밖 편집 금지.** 매 웨이브 3~4명이 병렬 편집한다. 남의 파일을 건드리면 덮어쓰기 사고다.
@@ -359,6 +379,24 @@ Roof 5 / Chest 6.** 값이 세이브에 정수로 들어간다 — **추가는 �
    오늘 상자 작업에서 두 에이전트 모두에게 `BuildMenuUI.cs` 를 금지시켰고, 그래서 아무도 메뉴 슬롯을
    추가하지 않았다. **기능은 전부 됐는데 버튼만 없었다.**
    → 네 락 목록에 **"이 작업을 끝내려면 필요한데 금지된 파일"** 이 있으면 **조용히 우회하지 말고 보고해라.**
+
+### ★ 0.2.13~0.2.26에서 추가로 사고가 난 3가지 ★
+
+6. **Unity 6.5 OBJ 임포터는 서브메시를 `o`가 아니라 머티리얼 단위로 만든다.**
+   `o` 오브젝트가 5개라도 usemtl이 없으면 **"default" 메시 1장·서브메시 1개**로 병합된다
+   (여객기가 통째로 회색이던 사고). usemtl을 넣어도 **mtllib가 가리키는 실제 .mtl에서
+   해석되지 않으면 무시**된다(sub1 재발 사고). → 파이프라인은 mtllib+최소 .mtl을 동봉한다
+   (`Tools/blender/units/coral.py inject_usemtl` 이 표준). 로더는 병합(서브메시 N +
+   `sharedMaterials` 배열)과 개별 메시 양쪽을 지원해야 한다(`AirlinerWreck.cs` 참고).
+
+7. **`Resources.LoadAll<Mesh>(모델 경로)` 는 이 프로젝트 모델에서 빈 배열이다.**
+   메시를 꺼내는 검증된 경로는 `Resources.Load<GameObject>` + `GetComponentsInChildren<MeshFilter>`
+   뿐이다(`ResourceVisualLibrary.TryLoadTwoPartModel`). 다른 API로 "안 로드된다"고 결론내리지 마라.
+
+8. **(디렉터 전용) 마운트 git 우회에서 `cp -r .git` 직후의 인덱스는 낡아 있다.**
+   `git add -A` 는 전체 재구축이라 가려지지만, **pathspec add 후 커밋하면 낡은 인덱스가
+   그대로 기록돼 대량 삭제 커밋이 된다**(ff26f69 사고 - soft reset으로 폐기).
+   → pathspec add 전에 반드시 `git read-tree HEAD`.
 
 ### 그 밖의 상시 함정
 

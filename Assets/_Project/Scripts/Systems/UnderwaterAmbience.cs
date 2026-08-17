@@ -251,6 +251,12 @@ namespace MakeGame.Systems
 
                 if (!diveBubbles.isEmitting)
                     diveBubbles.Play();
+
+                // 방출 콘이 항상 **월드 위**를 향하게 매 프레임 월드 회전을 고정한다.
+                // CreateDiveBubbles(pointUpward)는 부모가 회전 없다는 전제로 X-90도를 주는데,
+                // 부모가 카메라라 고개를 숙이면 새 기포가 수평/뒤로 발사됐다(야간 검증 지적).
+                // 위치는 카메라를 따르고 회전만 고정 - 트랜스폼 대입 1회/프레임 수준이라 비용 없음.
+                diveBubbles.transform.rotation = Quaternion.Euler(-90f, 0f, 0f);
             }
             else if (diveBubbles != null && diveBubbles.isEmitting)
             {
