@@ -255,7 +255,10 @@ namespace MakeGame.UI
             // [B25] 건축 모드는 조작이 따로 놀아서 한 줄을 더 준다.
             controlsBuilder.Append("건축 중 — 1~4 부품 · 휠/[Q] 회전 · 좌클릭 설치 · 우클릭 철거\n");
             // 수영은 지상 조작과 키가 겹쳐(Space) 따로 묶어주지 않으면 오해를 산다.
-            controlsBuilder.Append("수영 중 — Space 떠오르기 · [").Append(dive.ToString()).Append("] 잠수\n");
+            // [0.2.22] 보조 잠수 키 병기 - "잠수 키가 안 된다" 보고의 견고책(PlayerController 주석).
+            KeyCode diveAlt = playerController != null ? playerController.diveKeyAlt : KeyCode.LeftShift;
+            controlsBuilder.Append("수영 중 — Space 떠오르기 · [").Append(dive.ToString())
+                .Append("]/[").Append(diveAlt.ToString()).Append("] 잠수\n");
 
             if (saveLoad != null)
                 controlsBuilder.Append('[').Append(saveLoad.saveKey.ToString()).Append("] 저장    [")

@@ -38,6 +38,13 @@ namespace MakeGame.Player
         [Tooltip("잠수(더 깊이 내려가기) 키")]
         public KeyCode diveKey = KeyCode.LeftControl;
 
+        // [0.2.22 사용자 보고 "잠수 키가 설정 안되어 있어"] 씬에는 diveKey=LeftControl(306)이
+        // 멀쩡히 직렬화돼 있었지만 실기에서 잠수가 안 된다는 보고가 있었다(원인 미재현 - Ctrl이
+        // 다른 프로그램/OS 조합에 먹혔을 가능성). 재현 불가 상황의 견고책으로 보조 키를 둔다.
+        // 새 직렬화 필드는 기존 씬에 값이 없으므로 이 코드 기본값(LeftShift)이 그대로 적용된다.
+        [Tooltip("보조 잠수 키 (주 키와 어느 쪽이든 동작)")]
+        public KeyCode diveKeyAlt = KeyCode.LeftShift;
+
         [Tooltip("마우스 좌우/상하 회전 감도")]
         public float lookSensitivity = 2f;
 
@@ -207,7 +214,7 @@ namespace MakeGame.Player
             float verticalInput = 0f;
             if (Input.GetButton("Jump"))
                 verticalInput += 1f;
-            if (Input.GetKey(diveKey))
+            if (Input.GetKey(diveKey) || Input.GetKey(diveKeyAlt))
                 verticalInput -= 1f;
 
             // 입력이 없으면 부력으로 서서히 떠오르고, 입력이 있으면 그 방향으로 움직인다.
