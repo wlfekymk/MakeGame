@@ -136,7 +136,8 @@ namespace MakeGame.Systems
         // ★ 난수 소비 0 (B46과 같은 제약, 같은 방법) ★
         // 프로파일 선택도 파라미터 지터도 전부 (worldSeed, islandId) 순수 해시다. System.Random을
         // 만들지도 소비하지도 않는다. 한 번이라도 추첨을 더 하면 IslandResourceSpawner의
-        // (islandIndex, spawnOrder) 세이브 키가 통째로 밀린다.
+        // 월드 배치 재현성(같은 시드 = 같은 월드)이 깨진다.
+        // (세이브 키는 v2부터 안정 해시라 세이브 자체는 안 깨진다 - SaveData.StableSpawnKey 참고.)
         //
         // ★ 자원이 물에 빠지지 않게 하는 제약 ★
         // 자원/위험요소는 산포 반지름 0.8R 안에 **지형과 무관하게** 뿌려진다(IslandResourceSpawner는

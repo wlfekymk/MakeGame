@@ -207,8 +207,9 @@ namespace MakeGame.Systems
         /// 확률을 굴려서 섬당 최대 6마리가 상한이었다. 이제는 ComputeHazardCount가 면적으로 마릿수를
         /// 먼저 정하고, 매 마리마다 PickWeightedEntry가 baseChance 비율대로 종류를 뽑는다.
         /// spawnOrder는 예전과 똑같이 "실제로 생성된 개체의 0부터 시작하는 러닝 카운터"다 —
-        /// 부여 방식 자체는 손대지 않았다(SaveLoadController가 (islandIndex, spawnOrder)를 세이브 키로
-        /// 쓰기 때문. 세이브 영향 분석은 이 변경의 보고서 참고).
+        /// [세이브 키 v2] 다만 이제 세이브 대조 키가 아니다. 세이브 키는 종류별 안정 해시
+        /// (HazardSource.stableKey = StableSpawnKey.Compute(섬, (int)type, 같은 종류 안에서의 순번))이고,
+        /// spawnOrder는 곰 개체성 해시(IsBearCubIndividual)·곰 AI 시드·판별값(음수=스포너 밖)으로만 남는다.
         /// </summary>
         public List<HazardSource> SpawnHazardsForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
@@ -236,6 +237,11 @@ namespace MakeGame.Systems
 
             System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
             int spawnOrder = 0;
+
+            // [세이브 키 v2] 종류(HazardType) → 이 섬에서 지금까지 스폰된 그 종류의 마릿수.
+            // 같은 종류 안에서만 세는 순번이라, hazardEntries에 종류를 추가하거나 가중치를 바꿔 다른
+            // 종류의 마릿수가 변해도 기존 종류의 세이브 키는 밀리지 않는다. rng 소비량 0(순수 계산).
+            var perTypeCounts = new Dictionary<HazardType, int>();
 
             float radius = GetScatterRadius(island.size);
             int hazardCount = ComputeHazardCount(island.size);
@@ -275,7 +281,11 @@ namespace MakeGame.Systems
                     && i >= guaranteedEntries.Count
                     && IsBearCubIndividual(island.islandId, spawnOrder);
 
-                spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder, asCub));
+                // [세이브 키 v2] 같은 종류 안에서의 생성 순번을 뽑아 안정 키의 재료로 넘긴다.
+                perTypeCounts.TryGetValue(entry.type, out int perTypeIndex);
+                perTypeCounts[entry.type] = perTypeIndex + 1;
+
+                spawned.Add(SpawnSingleHazard(entry.type, position, parent, rng, island.islandId, spawnOrder, perTypeIndex, asCub));
                 spawnOrder++;
             }
 
@@ -290,8 +300,10 @@ namespace MakeGame.Systems
         ///      쓰면 그 뒤의 모든 추첨(위치·지터·다음 섬)이 밀려 같은 worldSeed의 기존 월드가 통째로
         ///      달라진다(B34 주석의 "결과만 덮어쓴다"와 같은 규칙).
         ///  (2) **마릿수·spawnOrder 불변.** 개체를 추가로 낳지 않는다. 이미 그 자리에 있던 곰 한 마리의
-        ///      크기와 성격만 갈린다. SaveLoadController가 (islandIndex, spawnOrder)를 세이브 키로 쓰므로
-        ///      순번이 한 칸이라도 밀리면 기존 세이브의 "처치됨" 표시가 엉뚱한 개체에 붙는다.
+        ///      크기와 성격만 갈린다. [세이브 키 v2] 세이브 키는 이제 종류별 안정 해시(stableKey)라
+        ///      spawnOrder가 밀려도 세이브 대조 자체는 안 깨지지만, 이 해시와 곰 AI 시드(BearRngSeed)의
+        ///      입력이 spawnOrder이므로 순번이 밀리면 **어느 곰이 새끼인지**가 바뀐다(같은 시드 =
+        ///      같은 월드 재현성 위반). 그래서 이 불변식은 그대로 유지한다.
         /// 그래서 입력은 **이미 확정된 두 정수뿐**이고 출력은 순수 함수다. 같은 월드를 다시 열면 같은
         /// 자리의 곰이 항상 같은 쪽으로 갈린다.
         ///
@@ -438,19 +450,24 @@ namespace MakeGame.Systems
         /// 없고, 호출자가 이미 정한 위치에 정확히 하나를 생성한다.
         /// B3-3: 호출자(SharkSpawner)가 자신만의 독립된 결정적 rng와 spawnOrder를 넘겨야 한다 - 섬에
         /// 속하지 않는 스폰이므로 islandIndex는 호출자가 판단해 넘긴다(SharkSpawner는 -1을 쓴다).
+        /// [세이브 키 v2] 이 진입점은 단일 종류를 순서대로 놓는 호출자용이라(SharkSpawner의 상어 무리),
+        /// 호출자의 spawnOrder가 곧 "같은 종류 안에서의 순번"이다 - 그대로 안정 키 재료로 쓴다.
+        /// 시그니처는 바꾸지 않는다(SharkSpawner는 이 배치의 수정 대상 밖 파일).
         /// </summary>
         public HazardSource SpawnHazardAtPosition(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
         {
-            return SpawnSingleHazard(type, position, parent, rng, islandIndex, spawnOrder);
+            return SpawnSingleHazard(type, position, parent, rng, islandIndex, spawnOrder, spawnOrder);
         }
 
         /// <summary>
         /// 위험 요소 하나를 실제로 생성한다. 종류별로 형태/크기/색상/회전이 다른 프리미티브를 사용해
         /// 플레이어가 캡슐 하나로는 구분할 수 없던 곰/식인종/독사/전갈/벌떼/함정/상어를 한눈에 구별할 수 있게 한다.
         /// </summary>
+        /// <param name="perTypeIndex">[세이브 키 v2] 같은 종류 안에서의 생성 순번(0부터). 안정 키
+        /// (HazardSource.stableKey) 계산에만 쓰인다.</param>
         /// <param name="asCub">[B37] 곰일 때만 의미가 있다. true면 이 개체는 새끼 곰으로 만들어진다
         /// (몸집·히트박스·행동이 전부 갈린다). 다른 종류에서는 무시된다.</param>
-        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder, bool asCub = false)
+        private HazardSource SpawnSingleHazard(HazardType type, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder, int perTypeIndex, bool asCub = false)
         {
             asCub = asCub && type == HazardType.Bear;
             HazardVisualConfig config = GetVisualConfig(type, asCub);
@@ -494,6 +511,9 @@ namespace MakeGame.Systems
             hazard.ConfigureForType(); // 종류(곰/식인종/벌떼 등)에 맞춰 전투 가능 여부와 체력을 설정한다.
             hazard.islandIndex = islandIndex;
             hazard.spawnOrder = spawnOrder;
+            // [세이브 키 v2] 세이브 대조용 안정 키. 새끼 곰도 hazardType은 Bear 그대로이므로(isBearCub는
+            // 같은 자리 개체의 성격일 뿐) 키는 성체/새끼 구분 없이 같은 공식이다.
+            hazard.stableKey = StableSpawnKey.Compute(islandIndex, (int)type, perTypeIndex);
             return hazard;
         }
 

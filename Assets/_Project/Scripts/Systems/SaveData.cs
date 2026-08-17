@@ -17,9 +17,10 @@ namespace MakeGame.Systems
     /// 하위호환: JsonUtility.FromJson은 대상 타입을 필드 초기값으로 먼저 만든 뒤 JSON에 있는 필드만
     /// 덮어쓰므로, structures처럼 나중에 추가된 필드가 없는 옛 세이브 파일을 불러와도 초기화 구문
     /// (= new List&lt;...&gt;())대로 빈 리스트가 되어 NullReferenceException 없이 안전하게 동작한다 -
-    /// discoveredIslandIds/skills/inventory 등 기존 리스트 필드들도 이미 동일한 방식에 의존하고 있어
-    /// (이 프로젝트에는 세이브 버전 필드가 없다) 별도 버전 필드/마이그레이션 없이 이 관례를 그대로
-    /// 따랐다.
+    /// discoveredIslandIds/skills/inventory 등 기존 리스트 필드들도 이미 동일한 방식에 의존한다.
+    /// [세이브 키 v2] 세이브 키 스키마 버전 필드(saveKeyVersion, 파일 맨 끝)가 하나 있다 - 절차 생성
+    /// 개체(자원/위험요소/사냥감)의 키가 러닝 카운터에서 안정 해시(StableSpawnKey)로 바뀌면서 옛 목록을
+    /// 구분하기 위해서다. 그 외 필드는 여전히 "추가만, 맨 끝에" 관례로 하위호환을 지킨다.
     /// </summary>
     [System.Serializable]
     public class SaveData
@@ -88,11 +89,11 @@ namespace MakeGame.Systems
         [Tooltip("완전한 상태(remainingHarvestCount == maxHarvestCount)가 아닌 자원 노드만 기록한다.\n" +
             "특대 섬 하나에만 최대 수백 개의 노드가 나올 수 있어(섬 8개면 수천 개), 대부분을 차지하는" +
             " '아직 하나도 안 캔 노드'까지 전부 저장하면 세이브 파일이 불필요하게 커진다. 목록에 없는" +
-            " (islandIndex, spawnOrder)는 '온전한 상태'로 간주한다(RestoreResourceNodes 참고).")]
+            " (islandIndex, stableKey)는 '온전한 상태'로 간주한다(RestoreResourceNodes 참고).")]
         public List<ResourceNodeSaveEntry> partialResourceNodes = new List<ResourceNodeSaveEntry>();
 
         [Header("위험요소 처치 상태 (B3-5)")]
-        [Tooltip("현재 처치되어(isDefeated) 재등장 대기 중인 위험 요소의 (islandIndex, spawnOrder) 키 목록.\n" +
+        [Tooltip("현재 처치되어(isDefeated) 재등장 대기 중인 위험 요소의 (islandIndex, stableKey) 키 목록.\n" +
             "모든 위험 요소 종류는 시간이 지나면 자동으로 재등장하므로(HazardSource.Update, 영구 제거되는" +
             " 종류 없음) '처치됨' 여부만 기록하면 충분하다. 재등장까지 남은 시간은 저장하지 않고 불러올 때" +
             " respawnTimer를 0으로 되돌린다 - 실시간(벽시계) 경과는 반영하지 않는다는 뜻이다. 자세한 근거는" +
@@ -100,7 +101,7 @@ namespace MakeGame.Systems
         public List<SpawnKeySaveEntry> defeatedHazards = new List<SpawnKeySaveEntry>();
 
         [Header("사냥감 포획 상태 (B3-5)")]
-        [Tooltip("현재 잡혀서(isCaught) 재등장 대기 중인 사냥감/물고기의 (islandIndex, spawnOrder) 키 목록.\n" +
+        [Tooltip("현재 잡혀서(isCaught) 재등장 대기 중인 사냥감/물고기의 (islandIndex, stableKey) 키 목록.\n" +
             "위험 요소와 동일하게 '잡힘' 여부만 기록하고 재등장까지 남은 시간은 저장하지 않는다.")]
         public List<SpawnKeySaveEntry> caughtCreatures = new List<SpawnKeySaveEntry>();
 
@@ -117,6 +118,24 @@ namespace MakeGame.Systems
         [Tooltip("설치된 보관 상자 각각의 격자 자리·회전·등급·내용물. 옛 세이브에는 이 필드가 없어" +
             " 빈 목록으로 읽히며, 그 경우 BuildingSystem.RestoreChests는 아무것도 하지 않는다.")]
         public List<ChestSaveEntry> storageChests = new List<ChestSaveEntry>();
+
+        // ── 세이브 키 스키마 버전 ─────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 규칙). 이 필드가 없는 옛 세이브는 0으로 읽힌다.
+        //
+        // v2(현재): 자원 노드/위험 요소/사냥감의 세이브 키가 (islandIndex, spawnOrder=생성 순서
+        // 러닝 카운터)에서 (islandIndex, stableKey=결정론적 안정 해시)로 바뀌었다(StableSpawnKey 참고).
+        // v1(0으로 읽히는 세이브 포함) 파일의 partialResourceNodes/defeatedHazards/caughtCreatures는
+        // 새 키와 대조할 수 없으므로 로드 시 **그 세 목록만** 버린다(경고 로그 1줄). 인벤토리·건축·
+        // 상자·퀘스트·구조물 등 나머지는 전부 그대로 복원된다 - 월드 자체는 worldSeed로 재생성되는
+        // 구조라 세 목록을 버려도 "채집/처치/포획 진행이 온전한 상태로 리셋"될 뿐 깨지는 것이 없다.
+        // 마이그레이션은 하지 않는다(사용자가 옛 세이브 포기를 허락했다 - v1 spawnOrder를 새 키로
+        // 환산하려면 당시 스폰 구성을 완벽 재현해야 해서 그 자체가 새 세금이 된다).
+        [Tooltip("세이브 키 스키마 버전. 0(필드 없음)/1 = 옛 러닝 카운터 키, 2 = 안정 해시 키." +
+            " 로드 시 2 미만이면 채집/처치/포획 목록만 버리고 나머지는 그대로 복원한다.")]
+        public int saveKeyVersion;
+
+        /// <summary>현재 세이브 키 스키마 버전. Save()가 기록하고 Load()가 비교한다.</summary>
+        public const int CurrentSaveKeyVersion = 2;
     }
 
     /// <summary>
@@ -273,23 +292,34 @@ namespace MakeGame.Systems
 
     /// <summary>
     /// 절차적으로 생성되는 자원 노드/위험 요소/사냥감을 다시 가리키기 위한 안정적인 키.
-    /// (islandIndex, spawnOrder)는 스포너가 섬별 결정적 System.Random으로 생성 순서대로 부여한 값으로,
-    /// 같은 worldSeed로 WorldMapManager.RegenerateWorld를 다시 실행하면 항상 동일한 키에 동일한
-    /// 노드/위험요소/사냥감이 나온다(B3-3 재현성 논증 참고, IslandResourceSpawner/HazardSpawner/
-    /// CreatureSpawner의 주석 및 각 컴포넌트의 islandIndex/spawnOrder 필드 참고). 섬에 속하지 않는
-    /// 개체(예: 상어)는 islandIndex가 -1일 수 있다.
+    ///
+    /// [세이브 키 v2] 실제 대조 키는 (islandIndex, stableKey)다. stableKey는
+    /// StableSpawnKey.Compute(섬 번호, 종류 이름/HazardType, 그 종류 안에서의 생성 순번)의 순수 해시라,
+    /// 다른 종류의 개수·순서가 바뀌어도(엔트리 추가/증량) 이 종류의 키는 밀리지 않는다 -
+    /// v1 키였던 spawnOrder(섬 전체 러닝 카운터)가 콘텐츠 변경마다 "rng 소비 순서를 비트 단위로
+    /// 보존해야 한다"는 세금을 강요하던 문제를 없앴다.
+    /// spawnOrder 필드는 디버깅 참고용으로 계속 기록하지만 복원 대조에는 더 이상 쓰지 않는다
+    /// (필드 제거는 파괴적 변경이라 하지 않는다 - 이 파일 상단 하위호환 관례 참고).
+    /// 섬에 속하지 않는 개체(예: 상어)는 islandIndex가 -1일 수 있다.
     /// </summary>
     [System.Serializable]
     public class SpawnKeySaveEntry
     {
         public int islandIndex;
         public int spawnOrder;
+
+        // [세이브 키 v2] **맨 끝에 추가만 했다.** 이 필드가 없는 옛(v1) 세이브는 0으로 읽히지만,
+        // 어차피 로드 시 saveKeyVersion 검사에서 v1의 채집/처치/포획 목록은 통째로 버려지므로
+        // 0 값이 대조에 쓰이는 일은 없다(SaveLoadController.Load 참고).
+        [Tooltip("결정론적 안정 키. StableSpawnKey.Compute(islandIndex, 종류, 종류 내 순번)의 해시값.")]
+        public int stableKey;
     }
 
     /// <summary>
     /// 자원 노드 하나의 부분/소진 채집 상태 저장 항목. SpawnKeySaveEntry에 남은 채집 가능 횟수를 더한
     /// 형태다 - 단순 bool(소진 여부)이 아니라 remainingHarvestCount 자체를 저장해, maxHarvestCount가
     /// 3인 노드를 1번만 캔 "부분 채집" 상태도 정확히 복원할 수 있게 했다.
+    /// [세이브 키 v2] 대조 키는 (islandIndex, stableKey)다 - SpawnKeySaveEntry 주석 참고.
     /// </summary>
     [System.Serializable]
     public class ResourceNodeSaveEntry
@@ -297,5 +327,74 @@ namespace MakeGame.Systems
         public int islandIndex;
         public int spawnOrder;
         public int remainingHarvestCount;
+
+        // [세이브 키 v2] 맨 끝에 추가만 했다(위 SpawnKeySaveEntry.stableKey와 같은 규칙).
+        [Tooltip("결정론적 안정 키. StableSpawnKey.Compute(islandIndex, 아이템 이름, 종류 내 순번)의 해시값.")]
+        public int stableKey;
+    }
+
+    /// <summary>
+    /// [세이브 키 v2] 절차 생성 개체(자원 노드/위험 요소/사냥감)의 결정론적 안정 키 계산기.
+    ///
+    /// 키 공식: Hash(islandIndex, 종류 식별자, perTypeIndex)
+    ///  - 종류 식별자: 자원/사냥감은 아이템 이름(문자열 → FNV-1a), 위험 요소는 (int)HazardType.
+    ///  - perTypeIndex: **같은 종류 안에서** 몇 번째로 생성됐는지(0부터). 같은 종류 안에서만 세므로
+    ///    다른 종류의 개수가 바뀌어도(엔트리 추가/증량) 이 종류의 키는 밀리지 않는다 - 이것이
+    ///    v1 키(섬 전체 러닝 카운터 spawnOrder)와의 유일하고 결정적인 차이다.
+    ///
+    /// 순수 함수다: System.Random/UnityEngine.Random을 일절 쓰지 않고(월드 생성 rng 소비량 0),
+    /// 같은 입력이면 언제나 같은 출력이다. 해시 구조는 이 프로젝트에 이미 있는
+    /// HazardSpawner.IsBearCubIndividual(소수 곱 → xorshift-곱 finalizer)을 그대로 따랐다 -
+    /// 입력 세 값이 전부 작은 정수라 단순 덧셈으로는 상관이 남기 때문에 섞는다.
+    ///
+    /// 충돌: int 해시라 이론상 충돌이 가능하다. (islandIndex, stableKey) 쌍으로 저장/대조하므로
+    /// 실질 확률은 무시 가능한 수준이지만, 로드 시 같은 쌍이 2개 발견되면 SaveLoadController가
+    /// 경고 로그를 남긴다(먼저 발견된 개체를 유지).
+    /// </summary>
+    public static class StableSpawnKey
+    {
+        /// <summary>위험 요소용: 종류 식별자가 정수((int)HazardType)인 형태.</summary>
+        public static int Compute(int islandIndex, int typeId, int perTypeIndex)
+        {
+            unchecked
+            {
+                uint h = (uint)(islandIndex * 73856093) ^ (uint)(typeId * 19349663)
+                    ^ (uint)(perTypeIndex * 83492791) ^ 0x9E3779B9u;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return (int)h;
+            }
+        }
+
+        /// <summary>자원 노드/사냥감용: 종류 식별자가 이름(아이템 이름 등 문자열)인 형태.</summary>
+        public static int Compute(int islandIndex, string typeName, int perTypeIndex)
+        {
+            return Compute(islandIndex, HashName(typeName), perTypeIndex);
+        }
+
+        /// <summary>
+        /// 문자열 → 결정적 int 해시(FNV-1a). string.GetHashCode()를 쓰지 않는 이유: .NET 런타임/버전에
+        /// 따라 값이 달라질 수 있어(해시 무작위화) 세이브 파일에 남는 키로는 부적합하다. FNV-1a는
+        /// 문자 값만으로 계산하는 순수 함수라 빌드/플랫폼이 바뀌어도 같은 이름이면 같은 값이다.
+        /// </summary>
+        public static int HashName(string name)
+        {
+            unchecked
+            {
+                uint h = 2166136261u;
+                if (!string.IsNullOrEmpty(name))
+                {
+                    for (int i = 0; i < name.Length; i++)
+                    {
+                        h ^= name[i];
+                        h *= 16777619u;
+                    }
+                }
+                return (int)h;
+            }
+        }
     }
 }

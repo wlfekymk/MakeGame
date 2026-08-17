@@ -55,14 +55,22 @@ namespace MakeGame.Systems
         [Tooltip("사냥 스킬 레벨 1당(Lv1 초과분) 성공 확률에 더할 값")]
         public float huntingLevelSuccessBonus = 0.03f;
 
-        // B3-3: ResourceNode/HazardSource와 동일한 목적의 안정적 식별자. CreatureSpawner가 섬별 결정적
-        // System.Random을 쓰게 되어, 같은 worldSeed면 항상 같은 (islandIndex, spawnOrder)에 같은
-        // 사냥감/물고기가 나온다는 전제가 성립한다.
-        [Tooltip("이 개체를 배치한 섬 번호(IslandInstance.islandId).")]
+        // B3-3: ResourceNode/HazardSource와 동일한 목적의 식별자.
+        // [세이브 키 v2] 세이브 키는 (islandIndex, spawnOrder)가 아니라 (islandIndex, stableKey)다.
+        // spawnOrder는 "스포너가 만든 개체" 판별(음수면 세이브 제외)과 디버깅 참고용으로만 남는다.
+        // public 필드라 제거·개명하지 않는다(AGENT_BRIEF 2장).
+        [Tooltip("이 개체를 배치한 섬 번호(IslandInstance.islandId). 세이브 키의 앞부분.")]
         public int islandIndex = -1;
 
-        [Tooltip("이 섬 안에서 몇 번째로 생성된 개체인지(생성 순번, 0부터).")]
+        [Tooltip("이 섬 안에서 몇 번째로 생성된 개체인지(생성 순번, 0부터). 음수면 스포너 밖 생성이라" +
+            " 세이브 제외. v2부터 세이브 대조 키로는 쓰이지 않는다.")]
         public int spawnOrder = -1;
+
+        // [세이브 키 v2] 결정론적 안정 키. CreatureSpawner가 StableSpawnKey.Compute(islandIndex,
+        // 종류 이름(아이템 이름 + 게 구분), 같은 종류 안에서의 생성 순번)으로 계산해 붙인다.
+        // 같은 종류 안에서만 순번을 세므로 creatureEntries에 다른 종류를 추가/증량해도 키가 밀리지 않는다.
+        [Tooltip("결정론적 안정 세이브 키(StableSpawnKey.Compute 해시). 0은 '스포너가 아직 설정하지 않음'.")]
+        public int stableKey = 0;
 
         private bool isCaught = false;
         private float respawnTimer = 0f;

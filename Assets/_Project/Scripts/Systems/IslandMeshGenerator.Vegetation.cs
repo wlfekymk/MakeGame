@@ -223,7 +223,7 @@ namespace MakeGame.Systems
             //     계수만 올리면 대·특대가 16에 묶인 채 트림에 깎인다.
             //     ★ 이 변경은 초목 전용 난수 스트림(WorldMapManager.VegetationSeedSalt = 3000000+islandId)
             //       안에서만 일어난다. 자원 노드 스트림은 CreateForIsland(worldSeed, islandId)로 **별도
-            //       인스턴스**라, 야자수 draw가 몇 개 늘든 (islandIndex, spawnOrder) 세이브 키는 불변이다.
+            //       인스턴스**라, 야자수 draw가 몇 개 늘든 자원 노드의 배치·세이브에는 영향이 없다.
             //       같은 스트림 안의 덤불·풀포기·바위·표류물은 야자수 뒤에 오므로 위치가 재배치된다
             //       (개수는 그대로, 세이브와 무관한 장식이다).
             int palmCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.60f), 20, 80);

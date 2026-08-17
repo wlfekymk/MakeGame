@@ -55,17 +55,26 @@ namespace MakeGame.Systems
         public int bonusYieldPerHarvest = 0;
 
         // B3-3: 이 노드를 배치한 섬 번호와, 그 섬 안에서 몇 번째로 생성됐는지(생성 순번). 절차적으로
-        // 생성되는 노드라 고유한 프리팹/에셋 식별자가 없으므로, 이 두 값의 조합이 세이브 파일에서 노드
-        // 하나를 다시 가리킬 수 있는 유일한 안정적인 키가 된다 - 같은 worldSeed로 재생성하면 항상 같은
-        // (islandIndex, spawnOrder)에 같은 노드가 나온다는 전제가 있어야 성립하며, 이 전제는
-        // IslandResourceSpawner가 섬별 결정적 System.Random을 쓰도록 바뀐 뒤에야 보장된다. B3-4(자원
-        // 노드 채집 상태 저장)에서 이 값을 그대로 세이브 키로 쓴다. -1은 "아직 스포너가 설정하지 않음"을
+        // 생성되는 노드라 고유한 프리팹/에셋 식별자가 없다. -1은 "아직 스포너가 설정하지 않음"을
         // 뜻하는 안전한 기본값(스포너 밖에서 수동으로 생성된 노드가 있어도 크래시하지 않도록).
-        [Tooltip("이 노드를 배치한 섬 번호(IslandInstance.islandId). B3-4 세이브 키로 쓰인다.")]
+        //
+        // [세이브 키 v2] 세이브 키는 더 이상 (islandIndex, spawnOrder)가 아니라 (islandIndex, stableKey)다
+        // (아래 stableKey 주석 참고). spawnOrder는 (1) "스포너가 만든 노드"의 판별값(음수면 세이브 제외 -
+        // SaveLoadController.SaveResourceNodes)과 (2) 디버깅 참고용으로만 남는다. public 필드라 제거하지
+        // 않는다(AGENT_BRIEF 2장).
+        [Tooltip("이 노드를 배치한 섬 번호(IslandInstance.islandId). 세이브 키의 앞부분.")]
         public int islandIndex = -1;
 
-        [Tooltip("이 섬 안에서 몇 번째로 생성된 노드인지(생성 순번, 0부터). B3-4 세이브 키로 쓰인다.")]
+        [Tooltip("이 섬 안에서 몇 번째로 생성된 노드인지(생성 순번, 0부터). 음수면 스포너 밖에서 생성된" +
+            " 노드라는 뜻으로 세이브 대상에서 제외된다. v2부터 세이브 대조 키로는 쓰이지 않는다.")]
         public int spawnOrder = -1;
+
+        // [세이브 키 v2] 결정론적 안정 키. 스포너가 StableSpawnKey.Compute(islandIndex, 아이템 이름,
+        // 같은 아이템 안에서의 생성 순번)으로 계산해 붙인다. 같은 종류 안에서만 순번을 세므로, 다른
+        // 종류의 개수·순서가 바뀌어도(엔트리 추가/증량) 이 노드의 키는 밀리지 않는다 - spawnOrder
+        // (섬 전체 러닝 카운터)가 강요하던 "rng 소비 순서 보존" 세금이 세이브 키에 관한 한 사라졌다.
+        [Tooltip("결정론적 안정 세이브 키(StableSpawnKey.Compute 해시). 0은 '스포너가 아직 설정하지 않음'.")]
+        public int stableKey = 0;
 
         private float respawnTimer = 0f;
 

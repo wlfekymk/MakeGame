@@ -38,15 +38,26 @@ namespace MakeGame.Systems
         [Tooltip("접촉 상태를 유지할 때 재피격 사이의 최소 간격(초). 붙어 있다고 매 프레임 피해를 입지 않게 한다.")]
         public float contactDamageCooldown = 1.5f;
 
-        // B3-3: ResourceNode와 동일한 목적의 안정적 식별자(생성 섬 번호 + 섬 안에서의 생성 순번).
-        // HazardSpawner.SpawnHazardsForIsland가 섬별 결정적 System.Random을 쓰게 되어, 같은 worldSeed면
-        // 항상 같은 (islandIndex, spawnOrder)에 같은 위험 요소가 나온다는 전제가 성립한다. 섬에 속하지
+        // B3-3: ResourceNode와 동일한 목적의 식별자(생성 섬 번호 + 섬 안에서의 생성 순번). 섬에 속하지
         // 않는 스폰(SharkSpawner가 배치하는 상어)은 islandIndex를 -1로 둬 "섬에 속하지 않음"을 표시한다.
+        //
+        // [세이브 키 v2] 세이브 키는 (islandIndex, spawnOrder)가 아니라 (islandIndex, stableKey)다
+        // (아래 stableKey 주석 참고). spawnOrder는 여전히 살아 있는 입력이다 - (1) 곰 개체성 해시
+        // (HazardSpawner.IsBearCubIndividual)와 곰 AI 배회 rng 시드(HazardSource.BearAI.cs의 BearRngSeed),
+        // 숨쉬기/모션 위상이 이 값을 쓰고, (2) 음수면 "스포너 밖 생성"으로 세이브에서 제외된다.
+        // 세이브 대조에만 안 쓰일 뿐이니 제거·개명하지 마라(AGENT_BRIEF 2장).
         [Tooltip("이 위험 요소를 배치한 섬 번호(IslandInstance.islandId). 섬에 속하지 않으면(예: 상어) -1.")]
         public int islandIndex = -1;
 
-        [Tooltip("이 섬(또는 스폰 그룹) 안에서 몇 번째로 생성됐는지(생성 순번, 0부터).")]
+        [Tooltip("이 섬(또는 스폰 그룹) 안에서 몇 번째로 생성됐는지(생성 순번, 0부터). 음수면 스포너 밖" +
+            " 생성이라 세이브 제외. v2부터 세이브 대조 키로는 쓰이지 않는다(곰 해시/AI 시드는 계속 쓴다).")]
         public int spawnOrder = -1;
+
+        // [세이브 키 v2] 결정론적 안정 키. 스포너가 StableSpawnKey.Compute(islandIndex, (int)hazardType,
+        // 같은 종류 안에서의 생성 순번)으로 계산해 붙인다. 같은 종류 안에서만 순번을 세므로 hazardEntries
+        // 추가/가중치 변경으로 다른 종류의 마릿수가 바뀌어도 이 개체의 키는 밀리지 않는다.
+        [Tooltip("결정론적 안정 세이브 키(StableSpawnKey.Compute 해시). 0은 '스포너가 아직 설정하지 않음'.")]
+        public int stableKey = 0;
 
         // [B37] 새끼 곰 표시. hazardType은 그대로 Bear다 - 열거형에 값을 추가하면 씬 편집이 필요하고
         // (hazardEntries가 씬에 int로 직렬화돼 있다) 새 엔트리는 spawnOrder를 밀어 기존 세이브를 깨뜨린다.

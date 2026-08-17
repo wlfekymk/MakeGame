@@ -16,10 +16,13 @@ namespace MakeGame.Systems
     /// B2-15 1단계: 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기)의 위치·상태를 저장·복원한다
     /// (SaveStructures/RestoreStructures 참고).
     /// B3-4/B3-5: IslandResourceSpawner/HazardSpawner/CreatureSpawner가 섬별 결정적 System.Random을
-    /// 쓰도록 바뀌어(B3-3) 같은 worldSeed로 재생성해도 (islandIndex, spawnOrder) 키가 항상 동일한
-    /// 개체를 가리킨다는 전제가 성립하게 되면서, 자원 노드의 부분/완전 채집 상태(SaveResourceNodes/
-    /// RestoreResourceNodes)와 위험 요소·사냥감의 처치/포획 상태(SaveHazardsAndCreatures/
-    /// RestoreHazardsAndCreatures)도 저장·복원 대상에 추가했다.
+    /// 쓰도록 바뀌어(B3-3) 같은 worldSeed로 재생성하면 항상 같은 개체가 같은 자리에 나온다는 전제가
+    /// 성립하게 되면서, 자원 노드의 부분/완전 채집 상태(SaveResourceNodes/RestoreResourceNodes)와
+    /// 위험 요소·사냥감의 처치/포획 상태(SaveHazardsAndCreatures/RestoreHazardsAndCreatures)도
+    /// 저장·복원 대상에 추가했다.
+    /// [세이브 키 v2] 대조 키가 (islandIndex, spawnOrder=생성 순서 러닝 카운터)에서 (islandIndex,
+    /// stableKey=Hash(섬, 종류, 종류 내 순번))로 바뀌었다(SaveData.StableSpawnKey / saveKeyVersion 참고).
+    /// 옛(v1) 세이브는 로드 시 채집/처치/포획 목록만 버리고 나머지는 전부 살린다(Load의 버전 검사).
     /// </summary>
     public class SaveLoadController : MonoBehaviour
     {
@@ -89,6 +92,8 @@ namespace MakeGame.Systems
                 elapsedSeconds = survivalClock != null ? survivalClock.elapsedSeconds : 0f,
                 currentIslandId = islandTravel != null ? islandTravel.currentIslandId : 0,
                 hasCompletedFirstEnding = GameManager.Instance != null && GameManager.Instance.HasCompletedFirstEnding,
+                // [세이브 키 v2] 이 파일의 채집/처치/포획 목록이 안정 키(stableKey)로 기록됐음을 표시.
+                saveKeyVersion = SaveData.CurrentSaveKeyVersion,
             };
 
             // 발견한 섬 목록을 함께 저장한다. RegenerateWorld는 섬을 처음부터 다시 만들기 때문에
@@ -292,6 +297,21 @@ namespace MakeGame.Systems
                 lastStatusMessage = File.Exists(SavePath) ? "저장 파일을 읽는 데 실패했습니다." : "저장 파일이 없습니다.";
                 Debug.LogWarning($"[SaveLoadController] {lastStatusMessage}");
                 return;
+            }
+
+            // [세이브 키 v2] 옛(v1 이하) 세이브의 채집/처치/포획 목록은 러닝 카운터(spawnOrder) 키로
+            // 기록돼 있어 새 안정 키(stableKey)와 대조할 수 없다. **그 세 목록만 버리고** 나머지
+            // (인벤토리·건축·상자·구조물·배/비행기 진행·시계·발견 섬 등)는 전부 그대로 복원한다 -
+            // 월드는 worldSeed로 재생성되므로 세 목록을 버리면 노드/위험요소/사냥감이 전부 "온전한
+            // 상태"로 시작할 뿐, 다른 진행은 아무것도 잃지 않는다. 마이그레이션은 하지 않는다
+            // (SaveData.saveKeyVersion 주석 참고 - 사용자가 옛 세이브 포기를 허락했다).
+            if (data.saveKeyVersion < SaveData.CurrentSaveKeyVersion)
+            {
+                Debug.LogWarning($"[SaveLoadController] 옛 세이브 키 버전(v{data.saveKeyVersion})입니다." +
+                    " 자원 채집/위험요소 처치/사냥감 포획 상태만 초기화하고 나머지는 그대로 불러옵니다.");
+                data.partialResourceNodes?.Clear();
+                data.defeatedHazards?.Clear();
+                data.caughtCreatures?.Clear();
             }
 
             // 저장된 worldSeed로 섬/바다/자원/위험요소/사냥감 배치를 처음부터 다시 만들어, 저장 시점과
@@ -796,19 +816,24 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 섬 인덱스와 생성 순번을 딕셔너리 키로 쓸 수 있는 충돌 없는 long 하나로 합친다. islandIndex를
-        /// 상위 32비트, spawnOrder를 하위 32비트에 넣는다 - islandIndex는 음수(-1, 섬에 속하지 않는
-        /// 상어 등)일 수 있어 그대로 두고, spawnOrder는 항상 0 이상이므로 uint로 캐스팅해 부호 확장으로
-        /// 하위 비트가 오염되지 않게 한다.
+        /// 섬 인덱스와 안정 키를 딕셔너리 키로 쓸 수 있는 long 하나로 합친다. islandIndex를 상위
+        /// 32비트, stableKey를 하위 32비트에 넣는다 - islandIndex는 음수(-1, 섬에 속하지 않는 상어
+        /// 등)일 수 있어 그대로 두고, stableKey는 부호와 무관한 해시 비트열이므로 uint로 캐스팅해
+        /// 부호 확장으로 상위 비트가 오염되지 않게 한다.
+        /// [세이브 키 v2] 두 번째 인자가 spawnOrder(러닝 카운터)에서 stableKey(종류별 안정 해시)로
+        /// 바뀌었다. (islandIndex, stableKey) 쌍으로 대조하므로 32비트 해시 충돌은 같은 섬 안에서만
+        /// 문제가 되고, 실질 확률은 무시 가능하다(섬 하나의 개체 수백 개 기준 ~1e-5 수준). 그래도
+        /// 같은 쌍이 2개 발견되면 복원 딕셔너리를 만들 때 경고 로그를 남긴다.
         /// </summary>
-        private static long CombineSpawnKey(int islandIndex, int spawnOrder)
+        private static long CombineSpawnKey(int islandIndex, int stableKey)
         {
-            return ((long)islandIndex << 32) | (uint)spawnOrder;
+            return ((long)islandIndex << 32) | (uint)stableKey;
         }
 
         /// <summary>
         /// B3-4: 씬에 있는 모든 ResourceNode 중 "온전한 상태(remainingHarvestCount == maxHarvestCount)"가
-        /// 아닌 노드만 골라 (islandIndex, spawnOrder, remainingHarvestCount)로 기록한다.
+        /// 아닌 노드만 골라 (islandIndex, stableKey, remainingHarvestCount)로 기록한다
+        /// ([세이브 키 v2] spawnOrder도 디버깅 참고용으로 함께 적지만 대조에는 쓰지 않는다).
         /// 온전한 노드까지 전부 저장하지 않는 이유: 특대 섬 하나에만 자원 노드가 최대 수백 개(예: 나뭇가지
         /// baseCount=3 x extraLargeMultiplier=4 = 12개 같은 항목이 resourceEntries 개수만큼) 나올 수 있고
         /// 섬이 8개라면 전체 노드 수가 수천 개에 이를 수 있는데, 그중 대다수는 플레이어가 아직 손대지
@@ -832,19 +857,21 @@ namespace MakeGame.Systems
                     islandIndex = node.islandIndex,
                     spawnOrder = node.spawnOrder,
                     remainingHarvestCount = node.remainingHarvestCount,
+                    stableKey = node.stableKey,
                 });
             }
         }
 
         /// <summary>
-        /// B3-4: RegenerateWorld로 새로 생성된 자원 노드들 중, 저장된 (islandIndex, spawnOrder) 키와
-        /// 일치하는 노드를 찾아 remainingHarvestCount를 되돌린다. 키 안정성 논증은 SaveLoadController
-        /// 클래스 주석과 IslandResourceSpawner.SpawnResourcesForIsland 주석을 참고 - 같은 worldSeed면
-        /// 섬별 결정적 System.Random 스트림 덕분에 항상 같은 순번에 같은 노드가 나온다는 전제가 성립한다.
+        /// B3-4: RegenerateWorld로 새로 생성된 자원 노드들 중, 저장된 (islandIndex, stableKey) 키와
+        /// 일치하는 노드를 찾아 remainingHarvestCount를 되돌린다.
+        /// [세이브 키 v2] stableKey는 (섬, 아이템 이름, 같은 아이템 안에서의 순번)의 순수 해시라
+        /// (StableSpawnKey 참고), 같은 worldSeed로 재생성하면 같은 노드가 항상 같은 키를 받는다 -
+        /// 게다가 종류 안에서만 순번을 세므로 다른 종류의 엔트리 추가/증량에도 키가 밀리지 않는다.
         /// 목록에 없는 노드는 손대지 않는다(스폰 직후의 기본값 그대로 = 온전한 상태이므로 맞다).
         /// 버그 수정: 이 메서드는 WorldMapManager.RegenerateWorld 호출 직후, 같은 Load() 호출 안에서(=
         /// 같은 프레임 안에서) 실행된다. Destroy()는 프레임 끝까지 지연되므로, 이 시점에는 RegenerateWorld가
-        /// 막 지운 "옛" 자원 노드와 방금 새로 생성한 "새" 자원 노드가 동일한 (islandIndex, spawnOrder) 키로
+        /// 막 지운 "옛" 자원 노드와 방금 새로 생성한 "새" 자원 노드가 동일한 (islandIndex, stableKey) 키로
         /// 동시에 씬에 존재할 수 있다. FindObjectsInactive.Include로 둘 다 주웠다면 어느 쪽이 딕셔너리에
         /// 최종적으로 남는지가 Unity의 열거 순서에 암묵적으로 의존하게 되고, 하필 옛(파괴 예정) 노드가
         /// 남으면 그 노드에 채집 상태를 복원한 뒤 프레임 끝에 함께 파괴되어 방금 복원한 진행도가 조용히
@@ -867,19 +894,31 @@ namespace MakeGame.Systems
             {
                 if (node.spawnOrder < 0)
                     continue;
-                nodesByKey[CombineSpawnKey(node.islandIndex, node.spawnOrder)] = node;
+
+                // [세이브 키 v2] 해시 충돌 감시: 같은 (islandIndex, stableKey) 쌍이 2개면 경고를 남기고
+                // 먼저 발견된 노드를 유지한다(뒤 노드는 대조에서 빠져 온전한 상태로 남는다 - 데이터가
+                // 엉뚱한 노드에 붙는 것보다 안전한 실패다).
+                long key = CombineSpawnKey(node.islandIndex, node.stableKey);
+                if (nodesByKey.ContainsKey(key))
+                {
+                    Debug.LogWarning($"[SaveLoadController] 자원 노드 안정 키 충돌: island {node.islandIndex}," +
+                        $" stableKey {node.stableKey} ({node.name}). 먼저 발견된 노드를 유지합니다.");
+                    continue;
+                }
+                nodesByKey.Add(key, node);
             }
 
             foreach (var saved in data.partialResourceNodes)
             {
-                if (nodesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out ResourceNode node))
+                if (nodesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.stableKey), out ResourceNode node))
                     node.remainingHarvestCount = Mathf.Clamp(saved.remainingHarvestCount, 0, node.maxHarvestCount);
             }
         }
 
         /// <summary>
         /// B3-5: 씬에 있는 모든 HazardSource/HuntableCreature 중 현재 처치/포획된 것만 (islandIndex,
-        /// spawnOrder) 키로 기록한다. 온전한(살아있는/잡히지 않은) 개체는 저장하지 않는다 - 자원 노드와
+        /// stableKey) 키로 기록한다([세이브 키 v2] spawnOrder는 디버깅 참고용으로만 함께 적는다).
+        /// 온전한(살아있는/잡히지 않은) 개체는 저장하지 않는다 - 자원 노드와
         /// 같은 이유로 목록에 없는 키는 "온전한 상태"로 간주되기 때문이다.
         /// </summary>
         private void SaveHazardsAndCreatures(SaveData data)
@@ -889,7 +928,12 @@ namespace MakeGame.Systems
                 if (hazard.spawnOrder < 0 || hazard.IsActive)
                     continue;
 
-                data.defeatedHazards.Add(new SpawnKeySaveEntry { islandIndex = hazard.islandIndex, spawnOrder = hazard.spawnOrder });
+                data.defeatedHazards.Add(new SpawnKeySaveEntry
+                {
+                    islandIndex = hazard.islandIndex,
+                    spawnOrder = hazard.spawnOrder,
+                    stableKey = hazard.stableKey,
+                });
             }
 
             foreach (var creature in Object.FindObjectsByType<HuntableCreature>(FindObjectsInactive.Include))
@@ -897,7 +941,12 @@ namespace MakeGame.Systems
                 if (creature.spawnOrder < 0 || creature.IsAvailable)
                     continue;
 
-                data.caughtCreatures.Add(new SpawnKeySaveEntry { islandIndex = creature.islandIndex, spawnOrder = creature.spawnOrder });
+                data.caughtCreatures.Add(new SpawnKeySaveEntry
+                {
+                    islandIndex = creature.islandIndex,
+                    spawnOrder = creature.spawnOrder,
+                    stableKey = creature.stableKey,
+                });
             }
         }
 
@@ -919,7 +968,7 @@ namespace MakeGame.Systems
         /// 버그 수정: RestoreResourceNodes와 동일한 이유로 FindObjectsInactive.Include를 Exclude로 바꿨다.
         /// 이 메서드도 WorldMapManager.RegenerateWorld 직후 같은 프레임에 실행되어, Destroy 예약만 되고
         /// 아직 실제로 파괴되지 않은 옛 HazardSource/HuntableCreature가 새로 생성된 것과 같은 (islandIndex,
-        /// spawnOrder) 키로 공존할 수 있다 - Include였다면 처치/포획 상태가 하필 옛(파괴 예정) 개체에
+        /// stableKey) 키로 공존할 수 있다 - Include였다면 처치/포획 상태가 하필 옛(파괴 예정) 개체에
         /// 복원되어 프레임 끝에 함께 사라지는 조용한 진행도 손실이 생길 수 있었다. HazardSource는 처치돼도
         /// SetVisualActive에서 Renderer/Collider의 enabled만 끄고 gameObject.SetActive(false)는 호출하지
         /// 않으며(HazardSource.cs 확인), HuntableCreature는 잡혀도 데이터 필드(isCaught)만 바꿀 뿐 아예
@@ -931,6 +980,8 @@ namespace MakeGame.Systems
         /// </summary>
         private void RestoreHazardsAndCreatures(SaveData data)
         {
+            // [세이브 키 v2] 아래 두 딕셔너리 모두 (islandIndex, stableKey)로 대조한다. 해시 충돌
+            // (같은 쌍 2개)은 경고를 남기고 먼저 발견된 개체를 유지한다(RestoreResourceNodes와 같은 규칙).
             if (data.defeatedHazards != null && data.defeatedHazards.Count > 0)
             {
                 var hazardsByKey = new Dictionary<long, HazardSource>();
@@ -938,12 +989,20 @@ namespace MakeGame.Systems
                 {
                     if (hazard.spawnOrder < 0)
                         continue;
-                    hazardsByKey[CombineSpawnKey(hazard.islandIndex, hazard.spawnOrder)] = hazard;
+
+                    long key = CombineSpawnKey(hazard.islandIndex, hazard.stableKey);
+                    if (hazardsByKey.ContainsKey(key))
+                    {
+                        Debug.LogWarning($"[SaveLoadController] 위험 요소 안정 키 충돌: island {hazard.islandIndex}," +
+                            $" stableKey {hazard.stableKey} ({hazard.name}). 먼저 발견된 개체를 유지합니다.");
+                        continue;
+                    }
+                    hazardsByKey.Add(key, hazard);
                 }
 
                 foreach (var saved in data.defeatedHazards)
                 {
-                    if (hazardsByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out HazardSource hazard))
+                    if (hazardsByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.stableKey), out HazardSource hazard))
                         hazard.RestoreDefeatedState(true);
                 }
             }
@@ -955,12 +1014,20 @@ namespace MakeGame.Systems
                 {
                     if (creature.spawnOrder < 0)
                         continue;
-                    creaturesByKey[CombineSpawnKey(creature.islandIndex, creature.spawnOrder)] = creature;
+
+                    long key = CombineSpawnKey(creature.islandIndex, creature.stableKey);
+                    if (creaturesByKey.ContainsKey(key))
+                    {
+                        Debug.LogWarning($"[SaveLoadController] 사냥감 안정 키 충돌: island {creature.islandIndex}," +
+                            $" stableKey {creature.stableKey} ({creature.name}). 먼저 발견된 개체를 유지합니다.");
+                        continue;
+                    }
+                    creaturesByKey.Add(key, creature);
                 }
 
                 foreach (var saved in data.caughtCreatures)
                 {
-                    if (creaturesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.spawnOrder), out HuntableCreature creature))
+                    if (creaturesByKey.TryGetValue(CombineSpawnKey(saved.islandIndex, saved.stableKey), out HuntableCreature creature))
                         creature.RestoreCaughtState(true);
                 }
             }

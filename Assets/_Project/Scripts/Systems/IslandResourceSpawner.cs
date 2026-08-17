@@ -176,8 +176,9 @@ namespace MakeGame.Systems
         /// 만들어 쓴다. 같은 worldSeed로 다시 호출하면(WorldMapManager.RegenerateWorld) 이 섬에서
         /// 생성되는 노드의 위치·모양(스케일/회전 지터 포함)·개수·순서가 정확히 그대로 재현된다 -
         /// 다른 섬이 그 사이에 몇 개를 뽑았는지와 완전히 무관하다(섬마다 독립된 스트림이므로).
-        /// 각 노드에는 (island.islandId, spawnOrder) 쌍으로 이뤄진 안정적인 식별자를 부여한다
-        /// (ResourceNode.islandIndex/spawnOrder 참고) - B3-4에서 이 쌍을 세이브 키로 그대로 쓴다.
+        /// 각 노드에는 (island.islandId, spawnOrder) 식별자와 [세이브 키 v2] 결정론적 안정 키
+        /// (ResourceNode.stableKey = StableSpawnKey.Compute(섬, 아이템 이름, 같은 아이템 안에서의 순번))를
+        /// 부여한다. 세이브 대조는 stableKey로만 한다(SaveLoadController.RestoreResourceNodes).
         /// </summary>
         public List<ResourceNode> SpawnResourcesForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
@@ -187,6 +188,11 @@ namespace MakeGame.Systems
 
             System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
             int spawnOrder = 0;
+
+            // [세이브 키 v2] 아이템 이름 → 이 섬에서 지금까지 스폰된 그 아이템 노드 수. 무작위 루프·
+            // 착륙 원·대나무 증량이 **하나의 카운터를 이어 쓴다**(같은 아이템이면 어느 경로로 스폰되든
+            // 종류 내 순번이 이어져야 키가 유일하다).
+            var perTypeCounts = new Dictionary<string, int>();
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
@@ -206,28 +212,27 @@ namespace MakeGame.Systems
                     Vector2 offset = rng.NextInsideUnitCircle() * radius;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                    spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                     spawnOrder++;
                 }
             }
 
-            // 착륙 원은 반드시 위 무작위 루프가 끝난 "뒤"에 처리한다. 이유가 두 개다.
-            // (1) 난수: 같은 rng를 이어 쓰되 모든 추가 draw가 기존 노드들의 draw 뒤에 오므로, 기존 18개
-            //     노드의 위치/모양/개수가 1mm도 바뀌지 않는다(기존 밸런스·레이아웃 완전 보존).
-            // (2) 세이브 키: 채집 상태가 (islandIndex, spawnOrder) 쌍으로 저장되므로(B3-4) 새 노드는
-            //     기존 번호 뒤에 이어 붙는 번호를 받아야 한다. 앞에 끼워 넣으면 기존 세이브의 채집 상태가
-            //     통째로 한 칸씩 밀린다. 뒤에 붙이면 옛 세이브도 그대로 복원되고, 새 노드 3개만 미채집
-            //     상태로 시작한다.
+            // 착륙 원은 반드시 위 무작위 루프가 끝난 "뒤"에 처리한다.
+            // 이유 - 난수: 같은 rng를 이어 쓰되 모든 추가 draw가 기존 노드들의 draw 뒤에 오므로, 기존
+            // 노드의 위치/모양/개수가 1mm도 바뀌지 않는다(같은 worldSeed = 같은 월드 배치 재현성 유지).
+            // [세이브 키 v2] 예전에는 "(2) 세이브 키: spawnOrder가 밀리면 기존 세이브가 어긋난다"가
+            // 두 번째 이유였지만, 키가 종류별 안정 해시(stableKey)로 바뀌어 **세이브 키에 관한 한 이
+            // 순서 제약은 더 이상 없다.** 위 배치 재현성 근거만으로도 이 순서가 맞으므로 구조는 그대로 둔다.
             if (spawnLandingCircle && island.isStartingIsland)
-                SpawnLandingCircleNodes(island, parent, rng, spawned, ref spawnOrder);
+                SpawnLandingCircleNodes(island, parent, rng, spawned, ref spawnOrder, perTypeCounts);
 
             // [B49 디렉터 지시 "대나무를 5배로"] 증량분은 **모든 기존 노드(착륙 원 포함) 뒤**에 붙인다.
-            // 위 (1)(2)와 정확히 같은 이유이고, 대나무는 resourceEntries 5번째 항목이라 그 자리에서
-            // count를 늘리면 뒤따르는 8종(천조각/부싯돌/금속조각/부력통/비상식량/연료/엔진부품/생수) +
-            // 착륙 원 3개의 spawnOrder가 통째로 밀려 기존 세이브의 채집 상태가 엉뚱한 노드에 복원된다.
-            // 이 호출은 위 루프와 착륙 원이 draw를 전부 끝낸 **뒤에** 시작하므로, 기존 노드의
-            // 위치·모양·개수·번호가 하나도 바뀌지 않는다.
-            SpawnExtraBambooNodes(island, parent, rng, spawned, ref spawnOrder);
+            // [세이브 키 v2] 이 "뒤에 덧붙이기" 구조가 원래 지키던 것은 두 가지였다 - (a) 기존 노드의
+            // rng draw 순서(= 같은 worldSeed의 월드 배치 재현성)와 (b) spawnOrder 세이브 키. 키가
+            // stableKey로 바뀌어 (b)는 더 이상 이 구조를 요구하지 않지만, (a)는 여전히 유효하다 -
+            // 같은 시드에서 기존 노드의 위치·모양이 그대로여야 하므로 추가 draw는 전부 뒤에 온다.
+            // 이미 동작하는 배치라 구조는 바꾸지 않는다(주석만 갱신).
+            SpawnExtraBambooNodes(island, parent, rng, spawned, ref spawnOrder, perTypeCounts);
 
             return spawned;
         }
@@ -238,8 +243,10 @@ namespace MakeGame.Systems
         /// <summary>
         /// [B49] 대나무 **추가** 배치 배수. 기존 배치분(baseCount × 규모 배율)의 이 배수만큼을 뒤에 덧붙여
         /// 합계가 (1 + 이 값)배가 된다. 사용자 요청이 "5배"이므로 4다.
-        /// 씬 `resourceEntries`의 `baseCount`를 고치는 방식은 쓸 수 없다 - 그 방식은 대나무가 목록
-        /// 중간(5번째)에 있어서 뒤따르는 모든 노드의 spawnOrder를 밀어버리고, 그 값이 곧 세이브 키다.
+        /// [세이브 키 v2] 이 방식을 택했던 원래 이유 중 "spawnOrder(세이브 키)가 밀린다"는 키 교체로
+        /// 사라졌다. 다만 씬 baseCount를 고치면 대나무의 rng draw 시점이 목록 중간(5번째)에서 늘어나
+        /// 뒤따르는 8종의 위치·지터가 통째로 바뀐다(같은 worldSeed의 월드 배치 재현성 위반). 그래서
+        /// 이미 동작하는 이 "뒤에 덧붙이기" 구조를 유지한다.
         /// </summary>
         private const int BambooExtraSpawnMultiplier = 4;
 
@@ -248,9 +255,10 @@ namespace MakeGame.Systems
         ///
         /// ★ 이 함수가 지키는 계약 ★
         ///  · 반드시 SpawnResourcesForIsland의 무작위 루프와 착륙 원이 **모두 끝난 뒤**에 호출된다.
-        ///    그래야 (a) 기존 노드의 spawnOrder 0..N-1이 예전과 같은 노드에 그대로 붙고(세이브 안전),
-        ///    (b) 여기서 소비하는 rng draw가 전부 기존 draw **뒤**에 와서 기존 노드의 위치·스케일·회전
-        ///    지터가 1mm도 바뀌지 않는다. 추가분은 N 이후 번호를 받아 미채집 상태로 시작한다(정상).
+        ///    여기서 소비하는 rng draw가 전부 기존 draw **뒤**에 와야 기존 노드의 위치·스케일·회전
+        ///    지터가 1mm도 바뀌지 않는다(같은 worldSeed = 같은 월드). [세이브 키 v2] 예전에는
+        ///    "spawnOrder 0..N-1이 그대로 붙어야 한다(세이브 안전)"도 근거였지만, 세이브 키가 종류별
+        ///    안정 해시(stableKey)로 바뀌어 그 근거는 소멸했다 - 남은 근거는 배치 재현성 하나다.
         ///  · 배치 규칙을 **새로 만들지 않는다.** 위 무작위 루프와 완전히 같은 식을 쓴다 -
         ///    같은 산포 반경(GetScatterRadius), 같은 균등 원판 표집(NextInsideUnitCircle),
         ///    같은 TerrainSampler.SnapToGround, 같은 SpawnSingleNode 경로.
@@ -261,7 +269,7 @@ namespace MakeGame.Systems
         ///    Small이라 전 섬에 나오지만, 디렉터가 씬에서 이 값을 올리면 증량분도 함께 사라져야 한다.
         /// </summary>
         private void SpawnExtraBambooNodes(IslandInstance island, Transform parent, System.Random rng,
-            List<ResourceNode> spawned, ref int spawnOrder)
+            List<ResourceNode> spawned, ref int spawnOrder, Dictionary<string, int> perTypeCounts)
         {
             ResourceEntry entry = FindEntryByItemName(BambooItemName);
             if (entry == null || entry.yieldItem == null)
@@ -282,7 +290,7 @@ namespace MakeGame.Systems
                 Vector2 offset = rng.NextInsideUnitCircle() * radius;
                 Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                 position = TerrainSampler.SnapToGround(position);
-                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                 spawnOrder++;
             }
         }
@@ -305,7 +313,7 @@ namespace MakeGame.Systems
         /// 시드가 같으면 항상 같은 자리에 오도록 한다.
         /// </summary>
         private void SpawnLandingCircleNodes(IslandInstance island, Transform parent, System.Random rng,
-            List<ResourceNode> spawned, ref int spawnOrder)
+            List<ResourceNode> spawned, ref int spawnOrder, Dictionary<string, int> perTypeCounts)
         {
             float radius = Mathf.Clamp(landingCircleRadius, 3f, LandingCircleMaxRadius);
             float baseAngle = GetLandingCircleBaseAngle();
@@ -324,7 +332,7 @@ namespace MakeGame.Systems
                 Vector3 position = island.mapPosition + new Vector3(Mathf.Cos(angle) * distance, 0f, Mathf.Sin(angle) * distance);
                 position = TerrainSampler.SnapToGround(position);
 
-                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder));
+                spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                 spawnOrder++;
             }
         }
@@ -386,10 +394,17 @@ namespace MakeGame.Systems
         /// GetNodeShape로 자원 종류별 실제 프리미티브/크기를 다르게 하고, AddResourceDetailParts로
         /// 보조 파츠(대나무 마디, 야자잎 부채꼴 등)를 덧붙여 실루엣만 보고도 구분되게 했다.
         /// </summary>
-        private ResourceNode SpawnSingleNode(ResourceEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
+        private ResourceNode SpawnSingleNode(ResourceEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder,
+            Dictionary<string, int> perTypeCounts)
         {
             ItemData yieldItem = entry.yieldItem;
             string itemName = yieldItem.itemName;
+
+            // [세이브 키 v2] 같은 아이템 안에서의 생성 순번. 카운터는 호출자(SpawnResourcesForIsland)가
+            // 섬 하나당 하나를 만들어 모든 스폰 경로(무작위 루프/착륙 원/대나무 증량)에 이어 쓴다.
+            // rng를 전혀 소비하지 않는 순수 계산이라 월드 배치 재현성에는 영향이 없다.
+            perTypeCounts.TryGetValue(itemName, out int perTypeIndex);
+            perTypeCounts[itemName] = perTypeIndex + 1;
 
             GetNodeShape(itemName, out PrimitiveType primitive, out Vector3 scale, out Quaternion rotation);
 
@@ -456,6 +471,8 @@ namespace MakeGame.Systems
             node.bonusYieldPerHarvest = entry.bonusYieldPerHarvest;
             node.islandIndex = islandIndex;
             node.spawnOrder = spawnOrder;
+            // [세이브 키 v2] 세이브 대조용 안정 키. spawnOrder는 판별/디버깅용으로만 남는다.
+            node.stableKey = StableSpawnKey.Compute(islandIndex, itemName, perTypeIndex);
             return node;
         }
 
@@ -723,7 +740,10 @@ namespace MakeGame.Systems
                             // ★ [B48] 난수 소비 불변 ★ 아래 두 draw(메시 변주 · 방위각)는 모델 경로에서도
                             // **반드시 여기서 뽑는다.** 인자 안에서 뽑던 것을 지역변수로 끌어낸 이유가 그것이다
                             // (바위에서 쓴 방법). 한 번이라도 덜 뽑으면 같은 worldSeed에서 뒤따르는 노드의
-                            // 위치·지터가 통째로 밀리고, spawnOrder가 세이브 키라 기존 월드가 어긋난다.
+                            // 위치·지터가 통째로 밀린다(같은 시드 = 같은 월드 재현성 위반).
+                            // [세이브 키 v2] 세이브 키는 이제 종류별 안정 해시(stableKey)라 키 자체는 안
+                            // 밀리지만, 노드의 "위치"가 바뀌면 결국 같은 세이브가 다른 월드 위에 얹히는
+                            // 것이므로 이 rng 규율은 여전히 유효하다.
                             int culmVariant = rng.NextInt(0, 5);
                             float culmYaw = rng.NextFloat(0f, 360f);
                             if (useBambooModel)

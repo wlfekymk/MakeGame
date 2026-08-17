@@ -188,7 +188,7 @@ Trap 5 / Cannibal 6 / Dehydration 7 / Shark 8 / **GiantCrab 9**.
 - **새끼**(`HazardSource.cs:1461-1485`): 플레이어를 **쫓지 않는다**. 12m에서 도망(속도 4.2 · 회전 210°/s ·
   이탈 후 3.5초 더 달림), **10m에 들어오거나 맞으면 반경 30m 성체를 시야각 무관하게 즉시 추격 상태로
   깨운다**(쿨다운 4초). 출혈은 걸지 않는다.
-- **새끼가 될 확률 40%** — `(islandIndex, spawnOrder)` 해시(`HazardSpawner.cs:303,318`).
+- **새끼가 될 확률 40%** — `(islandIndex, stableKey) — **v0.2.05부터 안정 해시**(SaveData.StableSpawnKey). 예전 spawnOrder 러닝 카운터 아님` 해시(`HazardSpawner.cs:303,318`).
   **보장 배치분(중형+ 섬의 곰 1마리)은 언제나 성체다.**
 
 ### 자원 노드 (씬 `resourceEntries`, 13종 · 순서가 곧 세이브 키다)
@@ -199,7 +199,7 @@ Trap 5 / Cannibal 6 / Dehydration 7 / Shark 8 / **GiantCrab 9**.
 
 > ⚠️ **`resourceEntries` 순서를 바꾸거나 중간에 끼워 넣지 마라.** `spawnOrder` 는 엔트리 인덱스가
 > 아니라 **실제로 스폰된 노드의 러닝 카운터**이고(규모 미달 엔트리는 통째로 건너뛴다),
-> `SaveLoadController` 가 `(islandIndex, spawnOrder)` 를 세이브 키로 쓴다. 중간 삽입 = 그 뒤 전부의
+> `SaveLoadController` 가 `(islandIndex, stableKey) — **v0.2.05부터 안정 해시**(SaveData.StableSpawnKey). 예전 spawnOrder 러닝 카운터 아님` 를 세이브 키로 쓴다. 중간 삽입 = 그 뒤 전부의
 > 번호가 밀림 = 기존 세이브의 채집 상태가 엉뚱한 노드에 복원된다. **추가는 반드시 맨 끝에.**
 > 시작 섬 착륙 원 3노드도 같은 이유로 루프 뒤에 붙어 있다.
 > `hazardEntries` · `HazardType` · `BuildPieceType` 도 정확히 같은 제약이다.

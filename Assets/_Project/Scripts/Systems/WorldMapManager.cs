@@ -719,7 +719,7 @@ namespace MakeGame.Systems
         /// **반지름이 같은 섬은 지형 메시가 비트 단위로 동일**했다(정점은 원점 대칭으로 굽고 섬의 월드
         /// 위치는 오브젝트 트랜스폼에만 들어가므로, 위치가 달라도 메시는 같다). islandId는 지형 노이즈
         /// **오프셋 유도에만** 쓰이고 난수 스트림을 하나도 만들지 않는다 - 자원/위험요소의 추첨 순서와
-        /// (islandIndex, spawnOrder) 세이브 키는 한 칸도 밀리지 않는다.
+        /// 세이브 키(v2부터 (islandIndex, stableKey) 안정 해시)도 영향을 받지 않는다.
         /// </summary>
         private GameObject CreateProceduralIslandTerrain(float radius, Vector3 position, int islandId)
         {
@@ -739,7 +739,8 @@ namespace MakeGame.Systems
             // [B47] 여기에 **지형 프로파일 번호**가 더해졌다. 프로파일은 섬의 형태 언어 자체를 바꾼다
             // (완만한 초원 / 단봉 / 쌍봉 / 초승달 / 가운데 수로 / 석호 / 길쭉한 능선 / 고원+절벽).
             //  · SelectShapeProfile도 (worldSeed, islandId) 순수 해시다 - 난수 스트림을 만들지 않으므로
-            //    자원·위험요소의 추첨 순서와 (islandIndex, spawnOrder) 세이브 키가 한 칸도 밀리지 않는다.
+            //    자원·위험요소의 추첨 순서(월드 배치 재현성)가 한 칸도 밀리지 않는다.
+            //    (세이브 키는 v2부터 안정 해시라 추첨 순서와 무관하다 - SaveData.StableSpawnKey 참고.)
             //  · islandId 0(시작 섬)은 그 함수가 항상 0번(가장 완만한 프로파일)을 돌려준다. 튜토리얼
             //    구간이고, 경비행기 잔해(+6,-4)·배 작업대(-6,-3)가 중심 근처에 고정 배치되며,
             //    사용자가 여기서 처음 집을 짓는다.

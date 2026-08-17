@@ -40,8 +40,8 @@ namespace MakeGame.Systems
             // ⚠️ 이 두 필드는 리스트의 **끝에 추가**했다. 씬 creatureEntries(SampleScene.unity:1244~1256)에는
             // 아직 이 YAML 키가 없는데, Unity는 직렬화된 키가 없는 필드에 대해 C# 필드 초기값을 그대로
             // 남기므로 씬을 고치지 않아도 0.2 / 1이 살아 있다(디렉터 조치는 선택 사항).
-            // 엔트리 개수·순서는 손대지 않았다 — spawnOrder는 실제 생성된 개체의 러닝 카운터라
-            // 필드 추가만으로는 세이브 키 매핑이 1도 움직이지 않는다.
+            // 엔트리 개수·순서는 손대지 않았다 — 필드 추가만으로는 스폰 개수·순서·난수 소비가
+            // 전혀 움직이지 않는다([세이브 키 v2] 세이브 키는 이제 종류별 안정 해시라 애초에 안 밀린다).
             [Tooltip("밤에 사냥 성공 확률에 더할 보너스. 0이면 이 종류는 밤낮 차이가 없다")]
             public float nightSuccessBonus = 0.2f;
 
@@ -57,9 +57,10 @@ namespace MakeGame.Systems
             // (생고기/창/육상, 생선/도구없음/해안)은 false로 읽혀 예전과 100% 동일하게 동작한다.
             // 기존 필드는 하나도 제거·개명·재정렬하지 않았다.
             //
-            // ⚠️ 게 항목을 씬에 추가할 때도 **creatureEntries의 맨 끝**에 넣어야 한다. spawnOrder는 엔트리
-            // 인덱스가 아니라 실제로 스폰된 개체의 러닝 카운터이고 SaveLoadController가 (islandIndex,
-            // spawnOrder)를 세이브 키로 쓰기 때문에, 중간에 끼워 넣으면 그 뒤 모든 개체의 세이브 키가 밀린다.
+            // ⚠️ 게 항목을 씬에 추가할 때도 **creatureEntries의 맨 끝**에 넣기를 권장한다.
+            // [세이브 키 v2] 세이브 키는 종류별 안정 해시(stableKey)로 바뀌어 중간 삽입이 **세이브를
+            // 깨뜨리지는 않게 됐다.** 다만 순서가 바뀌면 개체들의 rng draw 순서가 바뀌어 같은 worldSeed의
+            // 배치(위치·지터)가 달라진다 - "같은 시드 = 같은 월드" 재현성을 위해 맨 끝 추가 관례는 유지한다.
             // 이 스포너는 creatureEntries를 정렬하거나 필터링하지 않고 선언 순서대로만 순회한다(아래 foreach).
             [Tooltip("이 항목을 게(소형 크랩)로 만들지 여부. 켜면 해안선 배치 + 게 외형이 된다.")]
             public bool isCrab = false;
@@ -101,7 +102,8 @@ namespace MakeGame.Systems
         /// 지정한 섬에 규모에 맞는 개체 수만큼 사냥감/물고기를 배치한다.
         /// B3-3: worldSeed를 추가로 받아, 이 섬(island.islandId) 전용 결정적 System.Random 스트림으로
         /// 배치 위치·크기/방향 지터를 전부 뽑는다(재현성 근거는 IslandResourceSpawner 상단 주석과 동일).
-        /// 각 개체마다 (island.islandId, spawnOrder) 식별자를 부여한다.
+        /// 각 개체마다 (island.islandId, spawnOrder) 식별자와 [세이브 키 v2] 결정론적 안정 키
+        /// (HuntableCreature.stableKey)를 부여한다. 세이브 대조는 stableKey로만 한다.
         /// </summary>
         public List<HuntableCreature> SpawnCreaturesForIsland(IslandInstance island, Transform parent, int worldSeed)
         {
@@ -111,6 +113,10 @@ namespace MakeGame.Systems
 
             System.Random rng = SeededRandomExtensions.CreateForIsland(worldSeed, island.islandId);
             int spawnOrder = 0;
+
+            // [세이브 키 v2] 종류 이름 → 이 섬에서 지금까지 스폰된 그 종류의 마릿수. 같은 종류 안에서만
+            // 세므로 다른 종류의 개수가 바뀌어도 이 종류의 키는 밀리지 않는다. rng 소비량 0(순수 계산).
+            var perTypeCounts = new Dictionary<string, int>();
 
             float multiplier = GetMultiplier(island.size);
             float radius = GetScatterRadius(island.size);
@@ -132,7 +138,14 @@ namespace MakeGame.Systems
                     Vector2 offset = rng.NextInsideUnitCircle().normalized * radius * radiusScale;
                     Vector3 position = island.mapPosition + new Vector3(offset.x, 0f, offset.y);
                     position = TerrainSampler.SnapToGround(position);
-                    spawned.Add(SpawnSingleCreature(entry, position, parent, rng, island.islandId, spawnOrder));
+
+                    // [세이브 키 v2] 같은 종류 안에서의 생성 순번. 종류 이름은 GetStableTypeName 참고
+                    // (게는 물고기와 yieldItem이 같아도 다른 종류로 센다).
+                    string typeName = GetStableTypeName(entry);
+                    perTypeCounts.TryGetValue(typeName, out int perTypeIndex);
+                    perTypeCounts[typeName] = perTypeIndex + 1;
+
+                    spawned.Add(SpawnSingleCreature(entry, position, parent, rng, island.islandId, spawnOrder, typeName, perTypeIndex));
                     spawnOrder++;
                 }
             }
@@ -144,7 +157,8 @@ namespace MakeGame.Systems
         /// 사냥감/물고기/게 개체 하나를 실제로 생성한다. 시각화용 캡슐(육상 동물) 또는 구체(물고기·게)
         /// 프리미티브에 HuntableCreature 컴포넌트를 붙인다.
         /// </summary>
-        private HuntableCreature SpawnSingleCreature(CreatureEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder)
+        private HuntableCreature SpawnSingleCreature(CreatureEntry entry, Vector3 position, Transform parent, System.Random rng, int islandIndex, int spawnOrder,
+            string stableTypeName, int perTypeIndex)
         {
             // [B30] 종류는 셋이다: 게(isCrab) / 물고기(게가 아니면서 preferShoreline) / 육상 사냥감(그 외).
             // 게도 물고기와 같은 Sphere 프리미티브를 쓴다 - 몸통 메시는 BuildCrabBody가 갈아 끼우고
@@ -229,7 +243,22 @@ namespace MakeGame.Systems
             creature.nightYieldBonus = entry.nightYieldBonus;
             creature.islandIndex = islandIndex;
             creature.spawnOrder = spawnOrder;
+            // [세이브 키 v2] 세이브 대조용 안정 키. spawnOrder는 판별/디버깅용으로만 남는다.
+            creature.stableKey = StableSpawnKey.Compute(islandIndex, stableTypeName, perTypeIndex);
             return creature;
+        }
+
+        /// <summary>
+        /// [세이브 키 v2] 안정 키에 쓰는 종류 이름. 기본은 yieldItem.itemName이지만, 게(isCrab)는
+        /// 물고기 항목과 yieldItem("생선")이 같아도 **다른 종류**로 세야 한다 - 같은 이름으로 묶으면
+        /// 물고기 개수를 조정할 때 게의 종류 내 순번이 밀려 안정 키 설계의 목적(종류 간 독립)이 깨진다.
+        /// 접미사는 세이브 파일에 해시로만 남는 내부 문자열이라 표기를 바꾸면 기존 v2 세이브의 게 키가
+        /// 전부 바뀐다 - 한 번 정한 뒤 바꾸지 말 것.
+        /// </summary>
+        private static string GetStableTypeName(CreatureEntry entry)
+        {
+            string itemName = entry.yieldItem != null ? entry.yieldItem.itemName : "";
+            return entry.isCrab ? itemName + "#crab" : itemName;
         }
 
         /// <summary>
