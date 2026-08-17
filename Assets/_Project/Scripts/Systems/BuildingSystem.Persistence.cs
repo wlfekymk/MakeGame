@@ -52,6 +52,8 @@ namespace MakeGame.Systems
                     posY = piece.position.y,
                     posZ = piece.position.z,
                     yaw = piece.yaw,
+                    // [건축 4티어] 1~4로 잘라 저장한다(0은 "옛 세이브"의 표식이므로 새 세이브에 쓰지 않는다).
+                    tier = BuildPieceCatalog.ClampPieceTier(piece.tier),
                 });
             }
 
@@ -153,8 +155,12 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // [건축 4티어] tier 필드가 없던 옛 세이브는 0으로 읽히고, ClampPieceTier가 0을 1(나무)로
+            // 해석한다 - 옛 세이브의 부품은 전부 1티어로 그대로 복원된다(하위호환의 핵심).
+            int tier = BuildPieceCatalog.ClampPieceTier(entry.tier);
+
             Transform parent = space == BuildSpace.Deck ? deckContainer : piecesRoot;
-            GameObject go = BuildPieceVisualBuilder.CreateSolid(type, parent);
+            GameObject go = CreatePieceObject(type, parent, tier);
             if (go == null)
                 return;
 
@@ -162,7 +168,9 @@ namespace MakeGame.Systems
             var position = new Vector3(entry.posX, entry.posY, entry.posZ);
             ApplyPieceTransform(go.transform, space, position, entry.yaw);
 
-            RegisterPiece(type, space, go, entry.cellX, entry.cellZ, entry.level, entry.axis, position, entry.yaw);
+            PlacedPiece piece = RegisterPiece(type, space, go, entry.cellX, entry.cellZ, entry.level, entry.axis,
+                position, entry.yaw);
+            piece.tier = tier;
         }
 
         // ────────────────────────────────────────────────────────────────────────

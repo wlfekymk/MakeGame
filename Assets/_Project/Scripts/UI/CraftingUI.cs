@@ -189,6 +189,11 @@ namespace MakeGame.UI
         {
             tooltip = ItemTooltipUI.GetOrCreate();
 
+            // Resources/Recipes의 제작법을 recipeBook에 합친 **다음** BuildEntries를 부른다 -
+            // 격자 칸 수(BuildUI의 slots)와 창 높이(ApplyWindowLayout)가 entries.Count로 정해지므로,
+            // 등재가 늦으면 새 제작법이 칸 없이 잘려 나간다. Resources.LoadAll은 런타임 메서드에서만
+            // 부른다(필드 초기화식/생성자에서 Unity API를 부르면 로드 순서에 따라 터진다).
+            AppendResourceRecipes();
             BuildEntries();
             BuildUI();
             SubscribeInventory();
@@ -255,6 +260,36 @@ namespace MakeGame.UI
         // ────────────────────────────────────────────────────────────────────────
         // 생성
         // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Resources/Recipes 폴더의 제작법을 recipeBook에 자동 등재한다. recipeBook은 씬에 직렬화된
+        /// 리스트라 새 제작법 에셋을 만들 때마다 씬을 고칠 수는 없다 - 폴더에 넣으면 여기서 줍는다.
+        /// 씬 리스트에 이미 연결된 것과의 중복은 **참조 비교**로 거른다(같은 에셋은 같은 인스턴스로
+        /// 로드되므로 이름 비교가 필요 없고, GetInstanceID 같은 우회도 쓰지 않는다).
+        /// </summary>
+        private void AppendResourceRecipes()
+        {
+            var loaded = Resources.LoadAll<CraftingRecipe>("Recipes");
+            for (int i = 0; i < loaded.Length; i++)
+            {
+                var recipe = loaded[i];
+                if (recipe == null)
+                    continue;
+
+                bool alreadyListed = false;
+                for (int j = 0; j < recipeBook.Count; j++)
+                {
+                    if (ReferenceEquals(recipeBook[j], recipe))
+                    {
+                        alreadyListed = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyListed)
+                    recipeBook.Add(recipe);
+            }
+        }
 
         /// <summary>
         /// recipeBook을 표시용 항목으로 한 번만 변환한다. 이름·카테고리처럼 절대 변하지 않는 값은

@@ -106,6 +106,14 @@ namespace MakeGame.Systems
                     primitive = PrimitiveType.Cylinder;
                     scale = new Vector3(0.3f, 0.22f, 0.3f);
                     break;
+                case "석재": // [4티어] 밝은 회색의 각진 원석 한 덩어리 - 돌조각(납작한 파편 무더기)보다 크고 도톰하다
+                    primitive = PrimitiveType.Sphere;
+                    scale = new Vector3(0.62f, 0.44f, 0.62f);
+                    break;
+                case "대리석": // [4티어] 거의 흰(0.9) 노두 - 형태는 석재와 같은 각진 덩어리, 색과 매끈한 표면("noise")으로 갈린다
+                    primitive = PrimitiveType.Sphere;
+                    scale = new Vector3(0.52f, 0.40f, 0.52f);
+                    break;
                 case "생수": // 표류한 생수병 (목/뚜껑은 AddResourceDetailParts에서 추가)
                     // [B28 버그 수정] 씬 resourceEntries 13번째 항목이 생수인데(baseCount 1, 중형 섬 이상)
                     // 여기에 case가 없어서 default로 떨어졌다 - 중형 이상 섬마다 **1×1.5×1m짜리 파란 큐브**가
@@ -172,6 +180,10 @@ namespace MakeGame.Systems
                 case "나뭇가지": mesh = ResourceVisualLibrary.BranchStickUnit(variant); break;
                 case "돌조각": mesh = ResourceVisualLibrary.RockChunkUnit(variant); break;
                 case "부싯돌": mesh = ResourceVisualLibrary.StoneFlakeUnit(variant); break;
+                // [4티어] 원석 2종은 돌조각과 같은 각진 파편 메시를 루트로 재사용한다(신규 모델 없음 규격).
+                // 실물 바위 모델이 로드되면 AddResourceDetailParts가 루트 렌더러를 끄고 모델로 갈아 끼운다.
+                case StoneOreItemName: mesh = ResourceVisualLibrary.RockChunkUnit(variant); break;
+                case MarbleOreItemName: mesh = ResourceVisualLibrary.RockChunkUnit(variant); break;
             }
 
             if (mesh == null)
@@ -454,6 +466,46 @@ namespace MakeGame.Systems
                         parentScale, Quaternion.identity, ResourceVisualLibrary.Shade(color, 0.6f), textureName);
                     break;
 
+                case StoneOreItemName:
+                case MarbleOreItemName:
+                    // [4티어 원석 - B48 패턴] 실물 바위 모델(rock_a~c 재사용)을 원석 크기로 줄여 본체로 쓴다.
+                    // 곁돌 1~2개는 돌조각 무더기와 같은 각진 파편 메시를 재사용한다(파츠 예산: 루트 1 +
+                    // 곁돌 최대 2 + 모델 1 = 4, 돌조각의 최대치와 같다). 색은 GetWorldSurfaceColor가
+                    // 종별 틴트(석재 밝은 회색 / 대리석 거의 흰색)로 이미 갈라 놓았다 - 여기서는 그대로 쓴다.
+                    {
+                        int chipCount = rng.NextInt(1, 3);
+                        Vector3[] chipOffsets = { new Vector3(0.55f, -0.30f, 0.25f), new Vector3(-0.48f, -0.34f, -0.30f) };
+                        for (int i = 0; i < chipCount && i < chipOffsets.Length; i++)
+                        {
+                            float size = rng.NextFloat(0.14f, 0.24f);
+                            AddPart(go, $"OreChip{i}", PrimitiveType.Sphere, chipOffsets[i], new Vector3(size, size * 0.7f, size),
+                                parentScale, Quaternion.identity,
+                                ResourceVisualLibrary.Shade(color, RockTints[i % RockTints.Length]), textureName,
+                                ResourceVisualLibrary.RockChunkUnit(rng.NextInt(0, 4)));
+                        }
+
+                        // ★ 난수 소비 불변(대나무 B48의 방법) ★ 변종 draw는 모델 로드 성공 여부와 무관하게
+                        // 먼저 뽑는다 - 모델 임포트 전/후에 같은 worldSeed의 배치가 갈라지지 않게.
+                        int modelVariant = rng.NextInt(0, ResourceVisualLibrary.OreRockVariantCount);
+                        Mesh oreMesh;
+                        Vector3 oreModelSize;
+                        if (ResourceVisualLibrary.TryGetOreRockModel(modelVariant, out oreMesh, out oreModelSize))
+                        {
+                            // 루트 파편은 그리지 않는다. 메시·콜라이더는 그대로 둔 채 렌더러만 끈다 -
+                            // GetHalfHeight/RootTopLocalY가 루트 메시 경계상자에 걸려 있다(대나무 주석과 동일).
+                            var rootRenderer = go.GetComponent<MeshRenderer>();
+                            if (rootRenderer != null)
+                                rootRenderer.enabled = false;
+
+                            // 목표 폭 = 루트 구의 가로 지름(m) = 채집 콜라이더 폭. 모델은 미터 규격·밑면 y=0이라
+                            // 균등 fit 배율 하나만 곱하고, 밑면을 루트 바닥(-반높이)에 맞춘다.
+                            float fit = parentScale.x / Mathf.Max(0.01f, Mathf.Max(oreModelSize.x, oreModelSize.z));
+                            AddMeshPart(go, "OreRockModel", new Vector3(0f, -parentScale.y * 0.5f, 0f), parentScale,
+                                oreMesh, ResourceVisualLibrary.GetMaterial(color, textureName), 0f, fit);
+                        }
+                        break;
+                    }
+
                 case "엔진부품":
                     // 퀄리티 개선: 볼트 개수를 무작위로 바꿔 부품마다 조립 상태가 달라 보이게 했다.
                     // [tech-artist-B 요청 - 파츠 예산] 3~6개 → 2~3개 (야자잎 주석의 근거와 동일).
@@ -615,10 +667,24 @@ namespace MakeGame.Systems
         /// 이 값은 루트 줄기·곁줄기·모델 줄기 · EffectBuilder.PlayHarvestPop의 채집 입자 색까지
         /// 한 곳에서 따라간다(전부 이 색을 읽는다).
         /// </summary>
+        /// <summary>[4티어] 석재 원석의 월드 표면색 - 밝은 회색(돌조각의 카테고리 회갈색보다 확실히 밝다).
+        /// 팔레트 색상(hue)을 새로 만들지 않는 무채색 계열이라 ArtDirection 소유권과 충돌하지 않는다.</summary>
+        private static readonly Color StoneOreSurfaceColor = new Color(0.72f, 0.73f, 0.74f);
+
+        /// <summary>[4티어] 대리석 원석의 월드 표면색 - 거의 흰색(0.88+ 규격). 매끈함은 "noise" 텍스처가 맡는다.</summary>
+        private static readonly Color MarbleOreSurfaceColor = new Color(0.91f, 0.90f, 0.88f);
+
         private Color GetWorldSurfaceColor(string itemName, Color categoryColor)
         {
             if (itemName == "대나무")
                 return StructureVisualBuilder.BambooCulm;
+
+            // [4티어] 원석 2종은 같은 바위 형태를 색으로 가른다(석재 = 밝은 회색, 대리석 = 거의 흰색).
+            // EffectBuilder.PlayHarvestPop의 채집 입자 색도 이 색을 그대로 따라간다.
+            if (itemName == StoneOreItemName)
+                return StoneOreSurfaceColor;
+            if (itemName == MarbleOreItemName)
+                return MarbleOreSurfaceColor;
 
             return categoryColor;
         }
@@ -635,6 +701,8 @@ namespace MakeGame.Systems
                 case "야자잎": return "frond";    // 잎맥
                 case "돌조각": return "rock";     // 거친 암석
                 case "부싯돌": return "rock";
+                case StoneOreItemName: return "rock";   // [4티어] 석재 원석 = 거친 암석 그대로(밝은 틴트로만 구분)
+                case MarbleOreItemName: return "noise"; // [4티어] 대리석 원석 = 매끈한 표면(거친 rock 결을 쓰지 않는다)
                 case "천조각": return "thatch";   // 엮인 섬유
                 case "코코넛": return "thatch";   // 코코넛 겉껍질의 섬유질
                 case "비상식량": return "driftwood"; // 표류한 나무 배급 상자

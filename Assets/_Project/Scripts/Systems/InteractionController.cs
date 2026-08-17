@@ -181,6 +181,20 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // [건축 4티어] 건축 부품(바닥/벽/문/창/계단/지붕)을 조준한 E는 **제자리 티어 승급**이다.
+            // 부품 식별은 BuildingSystem의 격자 역조회(TryGetPieceTier → pieceByRoot)를 그대로 쓴다 -
+            // 여기서 판정을 새로 만들면 프롬프트가 보여주는 대상과 E가 잡는 대상이 갈라진다.
+            // 반드시 위의 모든 분기(수거 지점/여객기/상자/쉼터 등)보다 **뒤**에 둔다: 상자는 건축 부품
+            // 실물이지만 자체 등급 승급(ChestUI)이 있어 맨 위 StorageChest 분기가 먼저 가져가고,
+            // TryGetPieceTier도 상자는 대상에서 제외한다. 성공/실패(재료 부족·최고 티어)의 효과음은
+            // TryUpgradePiece가 내부에서 처리하므로 여기서는 분기만 소비한다.
+            var building = BuildingSystem.Instance;
+            if (building != null && building.TryGetPieceTier(target.transform, out _, out _))
+            {
+                building.TryUpgradePiece(target.transform, inventory);
+                return;
+            }
+
             // [보관 상자 폴백] 상자 본체에 콜라이더가 없고 별도의 조준 판정(StorageChest.Focused)으로만
             // 자기를 알리는 구성일 수 있다. **다른 상호작용이 전부 없었을 때만** 이 값을 본다 - 위쪽에
             // 두면 조준 판정이 근접 판정으로 바뀌는 순간 채집/사냥이 조용히 상자 열기에 먹힌다.

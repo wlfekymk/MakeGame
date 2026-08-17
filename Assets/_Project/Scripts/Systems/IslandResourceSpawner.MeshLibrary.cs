@@ -210,6 +210,91 @@ namespace MakeGame.Systems
             return culms != null;
         }
 
+        // ── [4티어 원석] 실물 바위 모델 (rock_a~c 재사용) ─────────────────────────────
+        /// <summary>원석(석재/대리석) 본체로 재사용하는 바위 모델 경로(Resources 기준, 확장자 없음).
+        /// 신규 모델은 만들지 않는다 - 지형 장식용 rock_a~c를 원석 크기(0.5~0.6m 폭)로 줄여 쓴다.
+        /// rock_d(판석)/rock_e(첨탑)는 이 크기로 줄이면 "덩어리"로 안 읽혀 제외했다.</summary>
+        private static readonly string[] OreRockModelResourcePaths =
+        {
+            "Models/rock_a", "Models/rock_b", "Models/rock_c"
+        };
+
+        /// <summary>각 모델의 실측 크기(m, W×H×D · 밑면 y=0 · X/Z 중심). IslandMeshGenerator.MeshLibrary의
+        /// RockModelSizes 실측값과 같은 값이다(같은 OBJ를 읽는다 - 그 파일은 수정 금지라 여기 사본을 둔다).</summary>
+        private static readonly Vector3[] OreRockModelSizes =
+        {
+            new Vector3(1.85f, 1.20f, 1.60f),
+            new Vector3(2.60f, 1.55f, 2.30f),
+            new Vector3(3.20f, 2.35f, 2.60f),
+        };
+
+        private static readonly Mesh[] oreRockMeshes = new Mesh[OreRockModelResourcePaths.Length];
+        private static int oreRockProbeFrame = -1;
+
+        /// <summary>원석 바위 모델 변종 수. 호출부가 변종 draw를 모델 로드 여부와 무관하게 먼저 뽑는 데 쓴다.</summary>
+        public static int OreRockVariantCount
+        {
+            get { return OreRockModelResourcePaths.Length; }
+        }
+
+        /// <summary>
+        /// 지정 변종의 원석 바위 **공유 메시**를 돌려준다. 그 변종이 아직 안 로드됐으면 로드된 다른
+        /// 변종으로 폴백하고, 하나도 없으면 false다(호출부는 절차 파편 메시 루트를 그대로 쓴다).
+        ///
+        /// 로드 규칙은 TryGetBambooModel과 동일하다: 필드 초기자에서 Load하지 않고, 실패를 영구
+        /// 캐시하지 않으며(성공할 때까지 프레임당 1회만 재프로브), 변종 선택에 여기서 난수를 쓰지 않는다
+        /// (호출부가 이미 뽑아 둔 변종 인덱스를 받는다). Instantiate하지 않고 메시만 꺼내 쓰므로
+        /// 임포터가 붙였을 수 있는 콜라이더가 씬에 구조적으로 들어오지 않는다.
+        /// </summary>
+        public static bool TryGetOreRockModel(int variant, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            bool anyMissing = false;
+            for (int i = 0; i < oreRockMeshes.Length; i++)
+            {
+                if (oreRockMeshes[i] == null)
+                    anyMissing = true;
+            }
+
+            if (anyMissing && oreRockProbeFrame != Time.frameCount)
+            {
+                oreRockProbeFrame = Time.frameCount;
+                for (int i = 0; i < oreRockMeshes.Length; i++)
+                {
+                    if (oreRockMeshes[i] != null)
+                        continue;
+
+                    // 바위 OBJ는 `o`가 하나뿐이라 첫 메시가 곧 본체다(두 번째 out은 버린다).
+                    Mesh loaded, unused;
+                    if (TryLoadTwoPartModel(OreRockModelResourcePaths[i], out loaded, out unused))
+                        oreRockMeshes[i] = loaded;
+                }
+            }
+
+            int pick = Mathf.Abs(variant) % oreRockMeshes.Length;
+            if (oreRockMeshes[pick] == null)
+            {
+                pick = -1;
+                for (int i = 0; i < oreRockMeshes.Length; i++)
+                {
+                    if (oreRockMeshes[i] != null)
+                    {
+                        pick = i;
+                        break;
+                    }
+                }
+
+                if (pick < 0)
+                    return false;
+            }
+
+            mesh = oreRockMeshes[pick];
+            size = OreRockModelSizes[pick];
+            return true;
+        }
+
         // ── 대나무 ─────────────────────────────────────────────────────────────
         /// <summary>
         /// 노드 루트용 대나무 줄기(실린더 규격). 마디 5~7개 · 위로 갈수록 가늘어짐.

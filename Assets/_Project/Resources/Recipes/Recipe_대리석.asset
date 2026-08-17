@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_대리석
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: 대리석
+  description: "석재를 부싯돌로 갈아 내 흰 대리석을 만든다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: ed85b16e08fdacf23796425685c560d8, type: 2}
+    quantity: 3
+  - item: {fileID: 11400000, guid: e6d70fced200407eb31b08731cd6db82, type: 2}
+    quantity: 2
+  resultItem: {fileID: 11400000, guid: 98601757b4759f39747526fae2c58324, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 18

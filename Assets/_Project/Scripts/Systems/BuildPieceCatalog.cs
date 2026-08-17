@@ -60,10 +60,10 @@ namespace MakeGame.Systems
     /// (나뭇가지 / 노끈 / 대나무). 인벤토리 대조는 Shelter.CountByName과 동일하게 문자열 비교라,
     /// 오타 하나가 "영원히 못 짓는 부품"이 된다. 이름을 고칠 일이 있으면 에셋을 먼저 확인해라.
     ///
-    /// 난이도 감각:
-    /// - 바닥이 가장 싸고 **노끈을 요구하지 않는다** - 첫 바닥은 나뭇가지만으로 놓을 수 있어야 한다
-    ///   (노끈 1개 = 야자잎 3개 + 제작 스킬 1, Recipe_노끈.asset). 집짓기 시작에 제작대를 요구하지 않는다.
-    /// - 벽부터 결속(노끈)이 붙고, 문·창문은 벽보다 한 단계 비싸다(문틀/창틀은 부재가 더 든다).
+    /// 난이도 감각([건축 4티어]에서 신축비를 대폭 내렸다):
+    /// - **신축은 언제나 1티어(나무)** 고, 바닥·벽은 나뭇가지 2개면 놓인다 - 형태를 잡는 비용은 싸게,
+    ///   내구/외관의 값은 티어 승급비(석재/강철/대리석)가 담당한다.
+    /// - 문만 결속(노끈)이 붙고(경첩 부위), 문·계단은 부재가 더 들어 벽보다 한 단계 비싸다.
     /// - 비교 기준: 쉼터 Lv2 승급이 나뭇가지6+야자잎4+노끈3+천조각2 (Shelter.cs:118). 부품은 수십 개를
     ///   놓는 물건이므로 그보다 한참 싸야 한다.
     /// </summary>
@@ -79,45 +79,61 @@ namespace MakeGame.Systems
         // UI가 매 프레임 폴링하므로 호출마다 new 하지 않는다. 정적 배열을 한 번만 만들어 그대로 돌려준다.
         // (배열이지만 IReadOnlyList로만 노출하므로 호출부가 실수로 갈아끼울 수 없다.)
 
+        // [건축 4티어] 신축은 언제나 1티어(나무)이고 비용을 대폭 내렸다 - 상위 티어는 신축이 아니라
+        // **제자리 승급**(GetPieceUpgradeCost)으로만 도달하므로, 1티어는 "일단 형태를 잡는 값"이면 된다.
+
         private static readonly BuildPieceCost[] FloorCost =
         {
-            new BuildPieceCost("나뭇가지", 4),
+            new BuildPieceCost("나뭇가지", 2),
         };
 
         private static readonly BuildPieceCost[] WallCost =
         {
-            new BuildPieceCost("나뭇가지", 4),
-            new BuildPieceCost("노끈", 1),
+            new BuildPieceCost("나뭇가지", 2),
         };
 
         private static readonly BuildPieceCost[] DoorwayCost =
         {
-            new BuildPieceCost("나뭇가지", 5),
-            new BuildPieceCost("노끈", 2),
+            new BuildPieceCost("나뭇가지", 3),
+            new BuildPieceCost("노끈", 1),
         };
 
         private static readonly BuildPieceCost[] WindowCost =
         {
-            new BuildPieceCost("나뭇가지", 4),
-            new BuildPieceCost("대나무", 2),
-            new BuildPieceCost("노끈", 1),
+            new BuildPieceCost("나뭇가지", 2),
+            new BuildPieceCost("대나무", 1),
         };
 
         private static readonly BuildPieceCost[] StairCost =
         {
-            new BuildPieceCost("나뭇가지", 6),
-            new BuildPieceCost("대나무", 2),
-            new BuildPieceCost("노끈", 2),
+            new BuildPieceCost("나뭇가지", 3),
+            new BuildPieceCost("대나무", 1),
         };
 
-        // 지붕은 **벽보다 조금 싸다**(나뭇가지 4 + 노끈 1 → 3 + 1). 대신 이엉으로 덮으므로 야자잎이
-        // 들어간다 - 야자잎은 야자나무에서 도구 없이 얻는 가장 흔한 재료라 실질 난이도는 벽 이하다.
-        // 집 한 채에 지붕이 여러 장 필요한 물건이라, 여기서 비싸지면 지붕을 아예 안 올리게 된다.
+        // 지붕은 이엉으로 덮으므로 야자잎이 들어간다 - 야자잎은 야자나무에서 도구 없이 얻는 가장 흔한
+        // 재료라 실질 난이도는 벽과 비슷하다. 집 한 채에 지붕이 여러 장 필요한 물건이라 싸게 유지한다.
         private static readonly BuildPieceCost[] RoofCost =
         {
-            new BuildPieceCost("나뭇가지", 3),
-            new BuildPieceCost("야자잎", 3),
-            new BuildPieceCost("노끈", 1),
+            new BuildPieceCost("나뭇가지", 2),
+            new BuildPieceCost("야자잎", 2),
+        };
+
+        // ── 부품 티어 승급표 (건축 4티어: 1 나무 / 2 돌 / 3 강철 / 4 대리석) ─────
+        // 재료 이름 "석재"/"강철"/"대리석"은 같은 웨이브의 신규 ItemData 에셋 이름과 문자 그대로
+        // 대조된다(카탈로그는 이름 문자열 기반 - BuildPieceCost.itemName 주석 참고).
+        // 가벼운 부품(바닥/벽/창/지붕)은 2개, 무거운 부품(문/계단 - 부재가 더 든다)은 3개.
+        // 4티어 지붕만 마감용 석재 1이 더 붙는다.
+
+        private static readonly BuildPieceCost[] UpgradeStoneLight = { new BuildPieceCost("석재", 2) };
+        private static readonly BuildPieceCost[] UpgradeStoneHeavy = { new BuildPieceCost("석재", 3) };
+        private static readonly BuildPieceCost[] UpgradeSteelLight = { new BuildPieceCost("강철", 2) };
+        private static readonly BuildPieceCost[] UpgradeSteelHeavy = { new BuildPieceCost("강철", 3) };
+        private static readonly BuildPieceCost[] UpgradeMarbleLight = { new BuildPieceCost("대리석", 2) };
+        private static readonly BuildPieceCost[] UpgradeMarbleHeavy = { new BuildPieceCost("대리석", 3) };
+        private static readonly BuildPieceCost[] UpgradeMarbleRoof =
+        {
+            new BuildPieceCost("대리석", 2),
+            new BuildPieceCost("석재", 1),
         };
 
         // ── 보관 상자 (배치 39) ──────────────────────────────────────────────────
@@ -160,6 +176,81 @@ namespace MakeGame.Systems
         };
 
         private static readonly BuildPieceCost[] EmptyCost = new BuildPieceCost[0];
+
+        // ── 부품 티어 조회 (상자와 별개 - 상자는 자체 등급 ChestTier가 있다) ──────
+
+        /// <summary>구조 부품의 티어 수(1=나무 2=돌 3=강철 4=대리석). 상자 등급과 무관하다.</summary>
+        public const int PieceTierCount = 4;
+
+        /// <summary>티어별 재질 이름. 인덱스 = 티어 - 1.</summary>
+        private static readonly string[] PieceTierNames = { "나무", "돌", "강철", "대리석" };
+
+        /// <summary>
+        /// 부품 티어를 1~4로 자른다. **0 이하는 1로 해석한다** - 티어 필드가 없던 옛 세이브는
+        /// JsonUtility가 0으로 읽는데, 그것이 곧 "티어 개념이 생기기 전의 나무 부품(1티어)"이다.
+        /// </summary>
+        public static int ClampPieceTier(int tier)
+        {
+            if (tier < 1)
+                return 1;
+            if (tier > PieceTierCount)
+                return PieceTierCount;
+            return tier;
+        }
+
+        /// <summary>티어의 재질 이름("나무"/"돌"/"강철"/"대리석"). 프롬프트가 "2티어(돌)"처럼 쓴다.</summary>
+        public static string GetPieceTierDisplayName(int tier)
+        {
+            return PieceTierNames[ClampPieceTier(tier) - 1];
+        }
+
+        /// <summary>
+        /// 이 부품이 티어 승급 대상인지. **상자는 아니다** - 상자는 자체 등급(소~특대,
+        /// GetChestUpgradeCost)이 따로 있고, 두 승급이 한 부품에 겹치면 E 키의 의미가 갈라진다.
+        /// </summary>
+        public static bool IsTierUpgradable(BuildPieceType type)
+        {
+            switch (type)
+            {
+                case BuildPieceType.Floor:
+                case BuildPieceType.Wall:
+                case BuildPieceType.Doorway:
+                case BuildPieceType.Window:
+                case BuildPieceType.Stair:
+                case BuildPieceType.Roof:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>문/계단은 부재가 더 들어 승급비가 한 단계 비싸다(재료표의 "무거운 부품").</summary>
+        private static bool IsHeavyPiece(BuildPieceType type)
+        {
+            return type == BuildPieceType.Doorway || type == BuildPieceType.Stair;
+        }
+
+        /// <summary>
+        /// currentTier에서 currentTier+1로 올리는 데 드는 재료. **최고 티어(4)거나 승급 대상이
+        /// 아닌 부품(상자 등)이면 빈 목록**이다(null이 아니다 - GetChestUpgradeCost와 같은 규약).
+        /// 매 호출 같은 배열 인스턴스를 돌려주므로 UI가 폴링해도 할당이 없다.
+        /// </summary>
+        public static IReadOnlyList<BuildPieceCost> GetPieceUpgradeCost(BuildPieceType type, int currentTier)
+        {
+            if (!IsTierUpgradable(type))
+                return EmptyCost;
+
+            switch (ClampPieceTier(currentTier))
+            {
+                case 1: return IsHeavyPiece(type) ? UpgradeStoneHeavy : UpgradeStoneLight;
+                case 2: return IsHeavyPiece(type) ? UpgradeSteelHeavy : UpgradeSteelLight;
+                case 3:
+                    if (type == BuildPieceType.Roof)
+                        return UpgradeMarbleRoof;
+                    return IsHeavyPiece(type) ? UpgradeMarbleHeavy : UpgradeMarbleLight;
+                default: return EmptyCost; // 4티어 = 끝
+            }
+        }
 
         /// <summary>보관 상자의 등급 수(0=소 1=중 2=대 3=특대).</summary>
         public const int ChestTierCount = 4;

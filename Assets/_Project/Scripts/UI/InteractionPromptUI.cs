@@ -287,7 +287,58 @@ namespace MakeGame.UI
             if (shelter != null)
                 return BuildShelterPrompt(shelter, inventory, key, out main, out sub, out blocked);
 
+            // [건축 4티어] 건축 부품 조준 시 티어 승급 프롬프트. InteractionController와 같은 우선순위
+            // 위치(모든 분기의 맨 뒤)이고, 부품 식별도 같은 소스(BuildingSystem.TryGetPieceTier -
+            // 격자 역조회)만 쓴다 - UI가 부품 판정을 따로 만들지 않는다(클래스 주석의 원칙).
+            var building = BuildingSystem.Instance;
+            if (building != null && building.TryGetPieceTier(target.transform, out BuildPieceType pieceType, out int pieceTier))
+                return BuildPieceUpgradePrompt(building, pieceType, pieceTier, key, out main, out sub, out blocked);
+
             return false;
+        }
+
+        /// <summary>
+        /// [건축 4티어] 부품 티어 승급 프롬프트. 예: "[E] 『벽』 2티어(돌) 승급 - 석재 2".
+        /// 승급비·티어 이름은 전부 BuildPieceCatalog(단일 소스)에서 읽고, 보유 수량 대조는 실제 소모와
+        /// 같은 경로(BuildingSystem.CountOwned - 이름 문자열 대조)를 쓴다. 최고 티어(4=대리석)는
+        /// 숨기지 않고 회색으로 사실을 알려준다("눌러도 아무 일이 없다"가 가장 나쁜 경험이기 때문이다).
+        /// </summary>
+        private bool BuildPieceUpgradePrompt(BuildingSystem building, BuildPieceType pieceType, int tier,
+            string key, out string main, out string sub, out bool blocked)
+        {
+            string pieceName = BuildPieceCatalog.GetDisplayName(pieceType);
+
+            if (tier >= BuildPieceCatalog.PieceTierCount)
+            {
+                main = $"『{pieceName}』 {tier}티어({BuildPieceCatalog.GetPieceTierDisplayName(tier)})";
+                sub = "최고 티어 - 더 승급할 수 없다";
+                blocked = true;
+                return true;
+            }
+
+            int nextTier = tier + 1;
+            main = $"{key} 『{pieceName}』 {nextTier}티어({BuildPieceCatalog.GetPieceTierDisplayName(nextTier)}) 승급";
+
+            var cost = BuildPieceCatalog.GetPieceUpgradeCost(pieceType, tier);
+            var costParts = new System.Collections.Generic.List<string>();
+            var missingParts = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < cost.Count; i++)
+            {
+                if (string.IsNullOrEmpty(cost[i].itemName) || cost[i].count <= 0)
+                    continue;
+
+                costParts.Add($"{cost[i].itemName} {cost[i].count}");
+
+                int shortage = cost[i].count - building.CountOwned(cost[i].itemName);
+                if (shortage > 0)
+                    missingParts.Add($"{cost[i].itemName} {shortage}개");
+            }
+
+            blocked = missingParts.Count > 0;
+            sub = blocked
+                ? $"부족: {string.Join(", ", missingParts)}"
+                : string.Join(", ", costParts);
+            return true;
         }
 
         /// <summary>

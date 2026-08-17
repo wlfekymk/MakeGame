@@ -79,6 +79,15 @@ namespace MakeGame.Systems
         private static Material ghostValidMaterial;
         private static Material ghostInvalidMaterial;
 
+        // ── 부품 티어 머티리얼 (건축 4티어) ──────────────────────────────────────
+        // 티어가 올라도 **지오메트리는 그대로**고 재질(머티리얼)만 바뀐다. 슬롯(post/plank/lashing) ×
+        // 티어(4)로 프로세스 전체 12개가 상한이며, 1티어 슬롯은 위의 기존 나무 머티리얼 그 자체다 -
+        // 파츠마다 머티리얼을 만들면 SRP 배처가 죽는다는 규칙(클래스 주석)을 티어에도 그대로 적용한다.
+        // 인덱스 = 티어 - 1.
+        private static Material[] tierPostMaterials;
+        private static Material[] tierPlankMaterials;
+        private static Material[] tierLashingMaterials;
+
         /// <summary>고스트 반투명도. 뒤의 지형이 비쳐 보이되 형태는 읽혀야 한다.</summary>
         private const float GhostAlpha = 0.38f;
 
@@ -146,6 +155,54 @@ namespace MakeGame.Systems
 
             BuildChest(root.transform, postMaterial, plankMaterial, lashingMaterial, tier);
             AddChestCollider(root, tier);
+        }
+
+        /// <summary>
+        /// 이미 서 있는 부품의 **렌더러 머티리얼만** 티어 재질로 갈아 끼운다. 지오메트리·콜라이더·루트는
+        /// 일절 건드리지 않는다(상자 RebuildChest가 형상을 다시 만드는 것과 달리, 부품 티어는 재질 교체가
+        /// 전부다). 각 렌더러가 어느 슬롯(구조재/널판/결속)이었는지는 지금 물고 있는 공유 머티리얼의
+        /// 정체로 역추적하므로, 부품 종류별 파츠 구성을 여기서 알 필요가 없다.
+        /// tier는 1~4(나무/돌/강철/대리석)이고 범위 밖은 잘린다. 1티어 적용은 기존 나무 재질로 되돌린다.
+        /// </summary>
+        public static void ApplyTier(GameObject root, int tier)
+        {
+            if (root == null)
+                return;
+
+            EnsureSolidMaterials();
+            EnsureTierMaterials();
+
+            int index = BuildPieceCatalog.ClampPieceTier(tier) - 1;
+            var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] == null)
+                    continue;
+
+                int slot = SlotOfMaterial(renderers[i].sharedMaterial);
+                switch (slot)
+                {
+                    case 0: renderers[i].sharedMaterial = tierPostMaterials[index]; break;
+                    case 1: renderers[i].sharedMaterial = tierPlankMaterials[index]; break;
+                    case 2: renderers[i].sharedMaterial = tierLashingMaterials[index]; break;
+                    // 모르는 머티리얼(고스트 등)은 그대로 둔다.
+                }
+            }
+        }
+
+        /// <summary>이 공유 머티리얼이 어느 슬롯 소속인지(0=구조재 1=널판 2=결속, 아니면 -1).</summary>
+        private static int SlotOfMaterial(Material material)
+        {
+            if (material == null || tierPostMaterials == null)
+                return -1;
+
+            for (int t = 0; t < tierPostMaterials.Length; t++)
+            {
+                if (material == tierPostMaterials[t]) return 0;
+                if (material == tierPlankMaterials[t]) return 1;
+                if (material == tierLashingMaterials[t]) return 2;
+            }
+            return -1;
         }
 
         /// <summary>
@@ -219,6 +276,51 @@ namespace MakeGame.Systems
             plankMaterial = StructureVisualBuilder.CreateColorMaterial(
                 Color.Lerp(StructureVisualBuilder.Driftwood, StructureVisualBuilder.SalvageMarkerWhite, 0.22f), "wood");
             lashingMaterial = StructureVisualBuilder.CreateColorMaterial(StructureVisualBuilder.PalmFiber, "leaf");
+        }
+
+        /// <summary>
+        /// 티어별 슬롯 머티리얼을 한 번만 만든다. 1티어는 기존 나무 3종을 **그대로 재사용**하므로
+        /// (새 인스턴스 없음) 나무 부품의 겉모습은 티어 도입 전과 비트 하나 다르지 않다.
+        /// · 2티어 돌: 회색(WeatheredStone 계열) + "rock" 텍스처.
+        /// · 3티어 강철: 어두운 금속(SalvageMetal을 어둡게) + "metal" 텍스처(에셋이 없으면 단색 - 안전).
+        /// · 4티어 대리석: 밝은 백색(명도 0.90 부근) + "noise" 텍스처(매끈한 무늬).
+        /// </summary>
+        private static void EnsureTierMaterials()
+        {
+            if (tierPostMaterials != null)
+                return;
+
+            EnsureSolidMaterials();
+
+            Color stone = StructureVisualBuilder.WeatheredStone;
+            Color metal = StructureVisualBuilder.SalvageMetal;
+            var marble = new Color(0.90f, 0.89f, 0.87f);
+
+            tierPostMaterials = new Material[BuildPieceCatalog.PieceTierCount];
+            tierPlankMaterials = new Material[BuildPieceCatalog.PieceTierCount];
+            tierLashingMaterials = new Material[BuildPieceCatalog.PieceTierCount];
+
+            // 1티어(나무) = 기존 머티리얼 그 자체.
+            tierPostMaterials[0] = postMaterial;
+            tierPlankMaterials[0] = plankMaterial;
+            tierLashingMaterials[0] = lashingMaterial;
+
+            // 2티어(돌): 구조재는 짙은 회색, 널판 자리는 살짝 밝은 회색(나무의 명도 변형과 같은 수법),
+            // 결속 자리는 줄눈(모르타르)처럼 어둡게 - 밧줄 색이 돌벽에 남아 있으면 재질이 섞여 보인다.
+            tierPostMaterials[1] = StructureVisualBuilder.CreateColorMaterial(stone * 0.85f, "rock");
+            tierPlankMaterials[1] = StructureVisualBuilder.CreateColorMaterial(
+                Color.Lerp(stone, StructureVisualBuilder.SalvageMarkerWhite, 0.18f), "rock");
+            tierLashingMaterials[1] = StructureVisualBuilder.CreateColorMaterial(stone * 0.65f, "rock");
+
+            // 3티어(강철): 어두운 금속. 결속 자리는 리벳 띠처럼 가장 어둡게.
+            tierPostMaterials[2] = StructureVisualBuilder.CreateColorMaterial(metal * 0.62f, "metal");
+            tierPlankMaterials[2] = StructureVisualBuilder.CreateColorMaterial(metal * 0.82f, "metal");
+            tierLashingMaterials[2] = StructureVisualBuilder.CreateColorMaterial(metal * 0.45f, "metal");
+
+            // 4티어(대리석): 밝은 백색 0.90. 결속 자리는 살짝 회색 줄무늬(결)로.
+            tierPostMaterials[3] = StructureVisualBuilder.CreateColorMaterial(marble * 0.90f, "noise");
+            tierPlankMaterials[3] = StructureVisualBuilder.CreateColorMaterial(marble, "noise");
+            tierLashingMaterials[3] = StructureVisualBuilder.CreateColorMaterial(marble * 0.78f, "noise");
         }
 
         private static void EnsureGhostMaterials()

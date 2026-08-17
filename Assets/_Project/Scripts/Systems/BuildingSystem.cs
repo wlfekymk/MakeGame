@@ -196,6 +196,13 @@ namespace MakeGame.Systems
             public float yaw;
 
             /// <summary>
+            /// [건축 4티어] 부품 티어(1=나무 2=돌 3=강철 4=대리석). 신축은 언제나 1이고
+            /// TryUpgradePiece로만 오른다. **상자는 이 값을 쓰지 않는다** - 상자 등급은 chestState.tier가
+            /// 따로 들고 있다(두 승급 축이 한 필드에 겹치면 세이브 해석이 갈라진다).
+            /// </summary>
+            public int tier = 1;
+
+            /// <summary>
             /// 보관 상자 전용. 내용물과 등급은 **실물이 아니라 이 기록이 들고 있다** - 갑판 재생성으로
             /// 실물이 파괴돼도(RestoreDeckPiecesAfterRebuild) 새 실물에 같은 그릇을 다시 물려주면
             /// 상자 안의 물건이 그대로 이어진다. 상자가 아닌 조각에서는 항상 null이다.
@@ -293,8 +300,11 @@ namespace MakeGame.Systems
         private readonly List<BuildPieceCost> refundBuffer = new List<BuildPieceCost>();
         private readonly List<BuildPieceCost> placementCostBuffer = new List<BuildPieceCost>();
 
-        /// <summary>상자 철거 반환액을 합산할 때만 쓰는 버퍼(매 프레임 도는 placementCostBuffer와 섞지 않는다).</summary>
+        /// <summary>상자·티어 부품의 철거 반환액을 합산할 때만 쓰는 버퍼(매 프레임 도는 placementCostBuffer와 섞지 않는다).</summary>
         private readonly List<BuildPieceCost> chestCostBuffer = new List<BuildPieceCost>();
+
+        /// <summary>[건축 4티어] 승급 비용을 모아 소모할 때만 쓰는 버퍼(E 키를 눌렀을 때만 돈다).</summary>
+        private readonly List<BuildPieceCost> upgradeCostBuffer = new List<BuildPieceCost>();
 
         // ResolveWallTarget이 후보를 고르는 동안 쓰는 작업 필드. 호출이 중첩되지 않으므로 지역 변수를
         // 여러 개 ref로 넘기는 대신 여기 둔다(할당 0). '빈 자리'와 '이미 찬 자리'를 따로 들고 있다가
@@ -657,7 +667,10 @@ namespace MakeGame.Systems
                     continue;
                 }
 
-                int tier = piece.chestState != null ? piece.chestState.tier : 0;
+                // 상자는 상자 등급, 그 외 부품은 부품 티어를 넘긴다(CreatePieceObject 주석 참고).
+                int tier = piece.type == BuildPieceType.Chest
+                    ? (piece.chestState != null ? piece.chestState.tier : 0)
+                    : piece.tier;
                 GameObject go = CreatePieceObject(piece.type, deckContainer, tier);
                 if (go == null)
                 {
@@ -1958,6 +1971,78 @@ namespace MakeGame.Systems
         }
 
         // ────────────────────────────────────────────────────────────────────────
+        // 부품 티어 승급 (건축 4티어 - 상자 등급 승급과 같은 "제자리 업그레이드" 패턴)
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 조준한 콜라이더가 티어 승급 대상 부품(바닥/벽/문/창/계단/지붕)인지 확인하고 현재 티어를
+        /// 돌려준다. **격자 역조회(pieceByRoot → FindPieceOf)를 그대로 재사용한다** - UI가 부품 식별을
+        /// 따로 구현하면 화면에 뜨는 대상과 E가 잡는 대상이 갈라진다. 상자는 자체 등급 경로(ChestUI)가
+        /// 있으므로 여기서 항상 false다. 상태를 바꾸지 않으므로 매 프레임 불러도 안전하다.
+        /// </summary>
+        public bool TryGetPieceTier(Transform colliderTransform, out BuildPieceType type, out int tier)
+        {
+            type = BuildPieceType.Floor;
+            tier = 1;
+
+            if (colliderTransform == null)
+                return false;
+
+            PlacedPiece piece = FindPieceOf(colliderTransform);
+            if (piece == null || !BuildPieceCatalog.IsTierUpgradable(piece.type))
+                return false;
+
+            type = piece.type;
+            tier = BuildPieceCatalog.ClampPieceTier(piece.tier);
+            return true;
+        }
+
+        /// <summary>
+        /// 조준한 부품을 다음 티어로 승급한다(최대 4티어 = 대리석). 카탈로그의 승급비
+        /// (BuildPieceCatalog.GetPieceUpgradeCost)를 소모하며, **재료를 지우기 전에 전부 있는지 먼저
+        /// 확인한다**(ConsumeCostList의 기존 규칙). 성공하면 해당 부품의 렌더러 재질만 새 티어로
+        /// 갈아 끼운다 - 지오메트리·콜라이더·격자 표는 그대로다(자리·지지 판정이 변하지 않는다).
+        /// 실패(대상 아님/최고 티어/재료 부족)는 false를 돌려주고, 대상이 맞는데 못 올린 경우만
+        /// 실패음을 낸다(대상이 아닐 때는 호출부의 다른 분기가 처리할 몫이다).
+        /// </summary>
+        public bool TryUpgradePiece(Transform colliderTransform, PlayerInventory inventory)
+        {
+            if (colliderTransform == null)
+                return false;
+
+            PlacedPiece piece = FindPieceOf(colliderTransform);
+            if (piece == null || !BuildPieceCatalog.IsTierUpgradable(piece.type))
+                return false;
+
+            // 호출부가 인벤토리를 손에 들고 있으면 그것을 캐시로 쓴다(씬 전수 조회 생략).
+            if (inventory != null)
+                cachedInventory = inventory;
+
+            int tier = BuildPieceCatalog.ClampPieceTier(piece.tier);
+            if (tier >= BuildPieceCatalog.PieceTierCount)
+            {
+                AudioManager.Instance?.PlayActionFail();
+                return false;
+            }
+
+            upgradeCostBuffer.Clear();
+            AccumulateCost(upgradeCostBuffer, BuildPieceCatalog.GetPieceUpgradeCost(piece.type, tier));
+
+            if (!ConsumeCostList(upgradeCostBuffer))
+            {
+                AudioManager.Instance?.PlayActionFail();
+                return false;
+            }
+
+            piece.tier = tier + 1;
+            BuildPieceVisualBuilder.ApplyTier(piece.go, piece.tier);
+
+            AudioManager.Instance?.PlayCraftSuccess();
+            Changed?.Invoke();
+            return true;
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
         // 철거
         // ────────────────────────────────────────────────────────────────────────
 
@@ -2105,56 +2190,37 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 조각 하나를 부술 때 돌려줄 재료를 채운다. 보관 상자만 특별하다 - 지금까지 **부어 넣은 전부**
-        /// (소형 설치비 + 여기까지 올라온 승급비 전부)를 합산한 뒤 절반을 돌려준다. 그러지 않으면
-        /// 특대까지 올린 상자를 부술 때 승급에 쓴 금속조각이 통째로 증발한다.
+        /// 조각 하나를 부술 때 돌려줄 재료를 채운다. 등급/티어가 있는 부품은 지금까지 **부어 넣은 전부**
+        /// (설치비 + 여기까지 올라온 승급비 전부)를 합산한 뒤 절반을 돌려준다. 그러지 않으면
+        /// 특대까지 올린 상자나 대리석까지 올린 벽을 부술 때 승급에 쓴 재료가 통째로 증발한다.
         /// </summary>
         private bool CollectRefundForPiece(PlacedPiece piece, List<BuildPieceCost> buffer)
         {
-            if (piece.type != BuildPieceType.Chest)
-                return CollectRefund(piece.type, buffer);
-
-            int tier = piece.chestState != null ? BuildPieceCatalog.ClampChestTier(piece.chestState.tier) : 0;
-
-            // 먼저 원가를 전부 합산한다(줄마다 절반을 먼저 내리면 홀수 줄에서 손해가 누적된다).
             chestCostBuffer.Clear();
-            AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetCost(BuildPieceType.Chest));
-            for (int t = 0; t < tier; t++)
-                AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetChestUpgradeCost(t));
+
+            if (piece.type == BuildPieceType.Chest)
+            {
+                int chestTier = piece.chestState != null ? BuildPieceCatalog.ClampChestTier(piece.chestState.tier) : 0;
+
+                // 먼저 원가를 전부 합산한다(줄마다 절반을 먼저 내리면 홀수 줄에서 손해가 누적된다).
+                AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetCost(BuildPieceType.Chest));
+                for (int t = 0; t < chestTier; t++)
+                    AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetChestUpgradeCost(t));
+            }
+            else
+            {
+                // [건축 4티어] 1티어 설치비 + 지금 티어까지의 승급비 전부(상자와 완전히 같은 원칙).
+                int tier = BuildPieceCatalog.ClampPieceTier(piece.tier);
+                AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetCost(piece.type));
+                for (int t = 1; t < tier; t++)
+                    AccumulateCost(chestCostBuffer, BuildPieceCatalog.GetPieceUpgradeCost(piece.type, t));
+            }
 
             buffer.Clear();
             for (int i = 0; i < chestCostBuffer.Count; i++)
             {
                 BuildPieceCost entry = chestCostBuffer[i];
                 int back = entry.count / 2;
-                if (back <= 0)
-                    continue;
-
-                if (ResolveItem(entry.itemName) == null)
-                    return false;
-
-                buffer.Add(new BuildPieceCost(entry.itemName, back));
-            }
-
-            return true;
-        }
-
-        /// <summary>반환 재료 목록(원가의 절반, 내림)을 채운다. ItemData를 못 찾으면 false.</summary>
-        private bool CollectRefund(BuildPieceType type, List<BuildPieceCost> buffer)
-        {
-            buffer.Clear();
-
-            IReadOnlyList<BuildPieceCost> cost = BuildPieceCatalog.GetCost(type);
-            if (cost == null)
-                return true;
-
-            for (int i = 0; i < cost.Count; i++)
-            {
-                BuildPieceCost entry = cost[i];
-                if (string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
-                    continue;
-
-                int back = entry.count / 2; // 절반 내림
                 if (back <= 0)
                     continue;
 
@@ -2335,13 +2401,19 @@ namespace MakeGame.Systems
             return piece;
         }
 
-        /// <summary>부품 실물을 만든다. 상자만 등급에 따라 크기가 달라 별도 경로를 탄다.</summary>
+        /// <summary>
+        /// 부품 실물을 만든다. tier의 의미가 종류에 따라 다르다 - 상자면 상자 등급(0~3, 크기가 다르다),
+        /// 그 외 부품이면 부품 티어(1~4, 재질만 다르다 · 0/1은 나무 그대로).
+        /// </summary>
         private static GameObject CreatePieceObject(BuildPieceType type, Transform parent, int tier)
         {
             if (type == BuildPieceType.Chest)
                 return BuildPieceVisualBuilder.CreateChestSolid(parent, tier);
 
-            return BuildPieceVisualBuilder.CreateSolid(type, parent);
+            GameObject go = BuildPieceVisualBuilder.CreateSolid(type, parent);
+            if (go != null && tier > 1)
+                BuildPieceVisualBuilder.ApplyTier(go, tier);
+            return go;
         }
 
         private void UnregisterPiece(PlacedPiece piece)
@@ -2667,6 +2739,14 @@ namespace MakeGame.Systems
         /// 이 필드가 없는 옛 세이브는 JsonUtility가 0으로 채우고, 그게 정확히 옛 동작이다.
         /// </summary>
         public int space;
+
+        /// <summary>
+        /// [건축 4티어 추가 - **맨 끝에 추가만 했다**] 부품 티어(1=나무 2=돌 3=강철 4=대리석).
+        /// 이 필드가 없는 옛 세이브는 JsonUtility가 0으로 채우는데, 복원(CreatePieceFromEntry)이
+        /// BuildPieceCatalog.ClampPieceTier로 **0을 1(나무)로 해석**하므로 옛 세이브의 부품은 전부
+        /// 1티어로 그대로 되살아난다(파괴되지 않는다).
+        /// </summary>
+        public int tier;
     }
 
     /// <summary>

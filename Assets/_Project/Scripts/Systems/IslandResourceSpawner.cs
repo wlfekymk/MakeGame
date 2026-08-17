@@ -134,8 +134,12 @@ namespace MakeGame.Systems
         // 목록에 없는 이름은 전부 수중 허용으로 처리되므로, 새 유기물 자원을 씬에 추가하면
         // 이 표에도 이름을 추가해야 한다.
         // ═════════════════════════════════════════════════════════════════════════════
+        // [4티어 채집 노드] "대리석"은 유기물이 아니지만 육상 필수다 - 흰 노두(원석)가 물에 잠기면
+        // 보이지 않는다(사용자 규격). 씬 resourceEntries에는 대리석 항목이 없으므로 이 이름 추가가
+        // 기존 종들의 재추첨 경로(rng draw)를 건드릴 일은 없다 - SpawnQuarryOreNodes(맨 끝)에서만 쓰인다.
+        // 석재는 돌조각과 같은 부류(석재·광물 = 수중 허용)라 표에 넣지 않는다.
         private static readonly string[] LandRequiredItemNames =
-            { "나뭇가지", "대나무", "야자잎", "코코넛", "천조각", "비상식량" };
+            { "나뭇가지", "대나무", "야자잎", "코코넛", "천조각", "비상식량", "대리석" };
 
         /// <summary>이 아이템이 물속 배치가 부자연스러운 "육상 필수" 자원인가.</summary>
         private static bool IsLandRequiredItem(string itemName)
@@ -264,6 +268,11 @@ namespace MakeGame.Systems
             // 이미 동작하는 배치라 구조는 바꾸지 않는다(주석만 갱신).
             SpawnExtraBambooNodes(island, parent, rng, spawned, ref spawnOrder, perTypeCounts);
 
+            // [4티어 채집 노드] 석재/대리석 원석. 반드시 **모든 기존 스폰 경로(무작위 루프·착륙 원·
+            // 대나무 증량)가 끝난 뒤**에 호출한다 - 신규 종이 소비하는 rng draw가 전부 기존 draw 뒤에
+            // 와야 기존 종들의 추첨 순서·횟수가 1회도 안 바뀐다(같은 worldSeed = 같은 월드 배치).
+            SpawnQuarryOreNodes(island, parent, rng, spawned, ref spawnOrder, perTypeCounts);
+
             return spawned;
         }
 
@@ -325,6 +334,139 @@ namespace MakeGame.Systems
                 spawned.Add(SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts));
                 spawnOrder++;
             }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════════
+        // [4티어 채집 노드 - 석재/대리석 원석] 건축 4티어 재료의 직접 채집 경로.
+        // 씬 resourceEntries에는 이 두 종이 없고 씬(.unity) 수정은 금지라, 대나무 증량과 같은
+        // "맨 끝 덧붙이기" 코드 스폰으로 넣는다. ItemData는 ItemDataRegistry에서 이름으로 찾는다
+        // (AirlinerSalvagePoint와 같은 조회 방식 - 석재/대리석 에셋은 레지스트리에 등록돼 있음을 확인).
+        //
+        // ★ 이 경로가 지키는 계약(SpawnExtraBambooNodes와 동일) ★
+        //  · 반드시 기존 스폰이 전부 끝난 뒤 호출된다 - 추가 draw가 전부 뒤에 오므로 기존 종의
+        //    추첨 순서·횟수·위치·지터가 1회도 안 바뀐다.
+        //  · stableKey는 (섬, 아이템 이름, 종별 순번) 안정 해시라 신규 종 추가 자체는 기존 세이브와
+        //    충돌하지 않는다(perTypeCounts 카운터를 그대로 이어 쓴다).
+        //  · 배치 규칙을 새로 만들지 않는다 - 같은 산포 반경, 같은 PickScatterPosition(대리석은
+        //    육상 필수 재추첨), 같은 SpawnSingleNode 경로.
+        //  · 디렉터가 나중에 씬 resourceEntries **맨 끝**에 같은 종을 정식 추가하면
+        //    (FindEntryByItemName이 찾게 되면) 코드 스폰은 스스로 물러난다(이중 스폰 방지).
+        // ═════════════════════════════════════════════════════════════════════════════
+        private const string StoneOreItemName = "석재";
+        private const string MarbleOreItemName = "대리석";
+
+        /// <summary>원석 채집 요구 도구. 금속조각(씬 엔트리: requiresTool=1, requiredTool=손도끼)과 같은 급.
+        /// 레지스트리에서 못 찾으면 도구 없이 채집 가능으로 완화된다(진행 잠금이 노드 부재보다 나쁘다).</summary>
+        private const string OreRequiredToolName = "손도끼";
+
+        /// <summary>석재 원석의 섬 규모별 스폰 개수 범위(결정적 rng로 그 안에서 확정).
+        /// 소량 유지가 규격이다 - 돌조각(3 × 배율)처럼 배율을 곱하지 않는다.</summary>
+        private static void GetStoneOreCountRange(IslandSize size, out int min, out int max)
+        {
+            switch (size)
+            {
+                case IslandSize.Small: min = 1; max = 2; break;
+                case IslandSize.Medium: min = 2; max = 3; break;
+                default: min = 3; max = 4; break; // 대형/특대
+            }
+        }
+
+        /// <summary>대리석 원석의 섬 규모별 스폰 개수 범위. 대형/특대 전용(그 외 0 = 스폰 안 함).</summary>
+        private static void GetMarbleOreCountRange(IslandSize size, out int min, out int max)
+        {
+            switch (size)
+            {
+                case IslandSize.Large: min = 1; max = 2; break;
+                case IslandSize.ExtraLarge: min = 2; max = 3; break;
+                default: min = 0; max = 0; break;
+            }
+        }
+
+        /// <summary>
+        /// 석재(전 섬 · 수중 허용 · 채집당 1~2개)와 대리석(대형/특대 · 육상 필수 · 채집당 1개)
+        /// 원석 노드를 스폰한다. 호출 순서 계약은 위 블록 주석 참고.
+        /// </summary>
+        private void SpawnQuarryOreNodes(IslandInstance island, Transform parent, System.Random rng,
+            List<ResourceNode> spawned, ref int spawnOrder, Dictionary<string, int> perTypeCounts)
+        {
+            // Resources.Load 규칙 준수: 필드 초기자가 아닌 스폰 시점(월드 생성)에 로드하고, 실패(null)를
+            // 영구 캐시하지 않는다 - 다음 스폰 호출에서 다시 시도된다. Load 자체는 Unity가 캐시한다.
+            var registry = ItemDataRegistry.LoadFromResources();
+            if (registry == null)
+                return; // 레지스트리가 아직 없으면 조용히 건너뛴다(설정 누락에 NRE로 죽지 않게).
+
+            ItemData tool = FindRegistryItemByName(registry, OreRequiredToolName);
+
+            GetStoneOreCountRange(island.size, out int stoneMin, out int stoneMax);
+            SpawnOreSpecies(island, parent, rng, spawned, ref spawnOrder, perTypeCounts,
+                registry, StoneOreItemName, tool, stoneMin, stoneMax, yieldOneToTwo: true);
+
+            GetMarbleOreCountRange(island.size, out int marbleMin, out int marbleMax);
+            SpawnOreSpecies(island, parent, rng, spawned, ref spawnOrder, perTypeCounts,
+                registry, MarbleOreItemName, tool, marbleMin, marbleMax, yieldOneToTwo: false);
+        }
+
+        /// <summary>
+        /// 원석 한 종을 스폰한다. rng draw는 (개수 1회) + 노드당 (수확량 0~1회 + 위치 + 모양 지터)이며
+        /// 전부 기존 draw 뒤에 온다. 씬에 같은 종의 엔트리가 생기면(정식 편입) 아무것도 하지 않는다.
+        /// </summary>
+        private void SpawnOreSpecies(IslandInstance island, Transform parent, System.Random rng,
+            List<ResourceNode> spawned, ref int spawnOrder, Dictionary<string, int> perTypeCounts,
+            ItemDataRegistry registry, string itemName, ItemData tool, int minCount, int maxCount,
+            bool yieldOneToTwo)
+        {
+            if (maxCount <= 0)
+                return;
+
+            if (FindEntryByItemName(itemName) != null)
+                return; // 씬이 이 종을 정식으로 갖게 됐다 - 코드 스폰은 물러난다(이중 스폰 방지).
+
+            ItemData item = FindRegistryItemByName(registry, itemName);
+            if (item == null)
+                return; // 아이템 에셋이 아직 레지스트리에 없으면 조용히 건너뛴다.
+
+            // 코드 엔트리: 씬에 이 종의 직렬화 항목이 존재하지 않으므로(위에서 확인) "씬 설정과 어긋난
+            // 노드" 문제가 없다. 도구 규칙은 금속조각과 같은 급(손도끼 요구, 내구도 1 소모).
+            var entry = new ResourceEntry
+            {
+                yieldItem = item,
+                baseCount = 0, // 미사용 - 개수는 아래 rng 확정값을 쓴다(배율 미적용, 소량 유지)
+                minimumIslandSize = itemName == MarbleOreItemName ? IslandSize.Large : IslandSize.Small,
+                requiresTool = tool != null,
+                requiredTool = tool,
+                bonusTool = null,
+                bonusYieldPerHarvest = 0,
+            };
+
+            int count = rng.NextInt(minCount, maxCount + 1);
+            float radius = GetScatterRadius(island.size);
+            float seaLevel = SpawnLandPlacement.ResolveSeaLevel();
+            bool landRequired = IsLandRequiredItem(itemName); // 대리석 true / 석재 false(돌조각과 같은 수중 허용)
+
+            for (int i = 0; i < count; i++)
+            {
+                // 수확량은 노드마다 결정적으로 확정한다(석재 1~2, 대리석은 draw 없이 1 고정).
+                int yieldPerHarvest = yieldOneToTwo ? rng.NextInt(1, 3) : 1;
+                Vector3 position = PickScatterPosition(island, radius, rng, landRequired, seaLevel);
+                ResourceNode node = SpawnSingleNode(entry, position, parent, rng, island.islandId, spawnOrder, perTypeCounts);
+                node.yieldPerHarvest = yieldPerHarvest;
+                spawned.Add(node);
+                spawnOrder++;
+            }
+        }
+
+        /// <summary>레지스트리에서 이름으로 ItemData를 찾는다(AirlinerSalvagePoint와 같은 조회 방식).</summary>
+        private static ItemData FindRegistryItemByName(ItemDataRegistry registry, string itemName)
+        {
+            if (registry == null || registry.allItems == null || string.IsNullOrEmpty(itemName))
+                return null;
+
+            foreach (var candidate in registry.allItems)
+            {
+                if (candidate != null && candidate.itemName == itemName)
+                    return candidate;
+            }
+            return null;
         }
 
         /// <summary>
