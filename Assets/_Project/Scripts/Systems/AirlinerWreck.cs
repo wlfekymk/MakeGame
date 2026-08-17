@@ -104,6 +104,7 @@ namespace MakeGame.Systems
 
             BuildVisualParts(root.transform);
             BuildColliders(root.transform);
+            BuildSalvagePoints(root.transform);
             BuildSmoke(root.transform);
 
             // 빌드 확인 로그(정보 수준 - 스모크 경고 집계에 잡히지 않는다). 실사고 0.2.13
@@ -332,6 +333,145 @@ namespace MakeGame.Systems
             box.isTrigger = false;
         }
 
+        // ---------------------------------------------------------------------------------------
+        // 객실 내부 부품 수거 지점 (경비행기 수리 엔딩 재료 파밍 흐름)
+        // ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// 수거 지점 6곳을 만든다. 좌표 규칙은 콜라이더와 동일하다 - **명세 로컬값 + AlignOffset**.
+        /// 객실 내부 지점은 바닥판 윗면 y=0.95 위에 얹는다(콜라이더 center y = 0.95 + 상자높이/2).
+        ///
+        /// 후방 객실 좌표는 cabin_floor_rear와 같은 변환을 미리 계산해 상수로 박았다:
+        /// 후방 동체 프레임의 점 (x0, z0)를 yaw 24도로 돌리고 x로 -4.2 시프트하면
+        ///   x = x0·cos24 + z0·sin24 - 4.2,  z = -x0·sin24 + z0·cos24
+        /// (검산: 프레임 원점 기준 (0, -6.699) → (-6.93, -6.12) = cabin_floor_rear center와 일치).
+        /// rng는 소비하지 않는다 - 위치·지급물 전부 고정 상수다.
+        ///
+        /// 지급 아이템 이름은 전부 ItemDataRegistry 실재 확인 완료(Item_엔진부품/금속조각/천조각/
+        /// 비상식량/생수/연료.asset). 특히 엔진부품·연료·금속조각은 씬의 AircraftRepairSystem
+        /// requiredMaterials(엔진부품 2·금속조각 6·연료 3·노끈 4, GUID 대조로 확인)와 같은
+        /// 에셋이라 이 지점들이 실제로 경비행기 수리 엔딩 재료를 준다.
+        /// </summary>
+        private static void BuildSalvagePoints(Transform root)
+        {
+            // 시각 파츠용 공유 머티리얼(파츠마다 새로 만들면 SRP 배처가 죽는다 - StructureVisualBuilder 주석).
+            Material slate = ResourceVisualLibrary.GetMaterial(new Color(0.24f, 0.26f, 0.28f), "metal");   // 어두운 기체 내장재
+            Material charcoal = ResourceVisualLibrary.GetMaterial(new Color(0.13f, 0.14f, 0.15f), "metal"); // 그을린 부품
+            Material fabric = ResourceVisualLibrary.GetMaterial(new Color(0.20f, 0.16f, 0.13f), "noise");   // 탄 좌석 천
+
+            // 1) 조종석 계기판 - 전방 객실 맨 앞(z=16, nose_block 앞면 17.5 직전), 바닥 y=0.95 위.
+            var cockpit = AddSalvagePoint(root, "salvage_cockpit_console", "조종석 계기판",
+                new Vector3(0f, 1.30f, 16.0f), new Vector3(1.0f, 0.7f, 0.6f), Quaternion.identity,
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("엔진부품", 1),
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 1),
+                });
+            StructureVisualBuilder.CreateVisualPart(cockpit, "console_body", PrimitiveType.Cube,
+                new Vector3(0f, -0.10f, 0f), new Vector3(0.9f, 0.45f, 0.5f), slate);
+            StructureVisualBuilder.CreateVisualPart(cockpit, "console_panel", PrimitiveType.Cube,
+                new Vector3(0f, 0.25f, -0.15f), new Vector3(0.85f, 0.35f, 0.08f), charcoal,
+                Quaternion.Euler(-35f, 0f, 0f));
+
+            // 2) 좌석 잔해 A - 전방 객실 z=11 왼쪽(벽 x=-1.82 안쪽).
+            var seatA = AddSalvagePoint(root, "salvage_seat_wreck_a", "좌석 잔해",
+                new Vector3(-1.0f, 1.35f, 11.0f), new Vector3(0.8f, 0.8f, 0.8f), Quaternion.identity,
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("천조각", 2),
+                });
+            StructureVisualBuilder.CreateVisualPart(seatA, "seat_base", PrimitiveType.Cube,
+                new Vector3(0f, -0.22f, 0f), new Vector3(0.7f, 0.35f, 0.6f), fabric);
+            StructureVisualBuilder.CreateVisualPart(seatA, "seat_back", PrimitiveType.Cube,
+                new Vector3(0f, 0.10f, 0.28f), new Vector3(0.7f, 0.6f, 0.12f), fabric,
+                Quaternion.Euler(15f, 0f, 0f));
+
+            // 3) 좌석 잔해 B - 전방 객실 z=6 오른쪽. 등받이가 뜯겨 넘어진 형태(회전만 다르게).
+            var seatB = AddSalvagePoint(root, "salvage_seat_wreck_b", "부서진 좌석",
+                new Vector3(1.0f, 1.35f, 6.0f), new Vector3(0.8f, 0.8f, 0.8f), Quaternion.identity,
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("천조각", 1),
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 1),
+                });
+            StructureVisualBuilder.CreateVisualPart(seatB, "seat_base", PrimitiveType.Cube,
+                new Vector3(0f, -0.22f, 0f), new Vector3(0.7f, 0.35f, 0.6f), fabric);
+            StructureVisualBuilder.CreateVisualPart(seatB, "seat_back_torn", PrimitiveType.Cube,
+                new Vector3(0.05f, 0.02f, -0.25f), new Vector3(0.7f, 0.6f, 0.12f), slate,
+                Quaternion.Euler(70f, 0f, 8f));
+
+            // 4) 갤리 카트 - 후방 객실, 후방 프레임 (0.9, -3) → 변환값 (-4.60, -3.11), yaw 24.
+            var galley = AddSalvagePoint(root, "salvage_galley_cart", "갤리 카트",
+                new Vector3(-4.60f, 1.45f, -3.11f), new Vector3(0.7f, 1.0f, 0.7f), Quaternion.Euler(0f, 24f, 0f),
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("비상식량", 2),
+                    new AirlinerSalvagePoint.LootEntry("생수", 2),
+                });
+            StructureVisualBuilder.CreateVisualPart(galley, "cart_body", PrimitiveType.Cube,
+                new Vector3(0f, -0.05f, 0f), new Vector3(0.6f, 0.9f, 0.6f), slate);
+            StructureVisualBuilder.CreateVisualPart(galley, "cart_handle", PrimitiveType.Cylinder,
+                new Vector3(0f, 0.35f, 0.32f), new Vector3(0.04f, 0.3f, 0.04f), charcoal,
+                Quaternion.Euler(0f, 0f, 90f));
+
+            // 5) 수하물 더미 - 후방 객실, 후방 프레임 (-0.8, -9) → 변환값 (-8.59, -7.90), yaw 24.
+            var luggage = AddSalvagePoint(root, "salvage_luggage_pile", "수하물 더미",
+                new Vector3(-8.59f, 1.30f, -7.90f), new Vector3(1.0f, 0.7f, 0.9f), Quaternion.Euler(0f, 24f, 0f),
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 2),
+                    new AirlinerSalvagePoint.LootEntry("연료", 1),
+                });
+            StructureVisualBuilder.CreateVisualPart(luggage, "case_bottom", PrimitiveType.Cube,
+                new Vector3(0f, -0.18f, 0f), new Vector3(0.9f, 0.35f, 0.7f), charcoal);
+            StructureVisualBuilder.CreateVisualPart(luggage, "case_top", PrimitiveType.Cube,
+                new Vector3(0.1f, 0.14f, 0.05f), new Vector3(0.55f, 0.3f, 0.45f), fabric,
+                Quaternion.Euler(0f, 18f, -6f));
+
+            // 6) 뜯긴 엔진 내부 - 외부 지상. engine_torn (-3.4, 0.95, 4.6)·yaw 50의 후단(엔진 프레임
+            //    z=-2.2, 반길이 1.9 바깥)에 둬서 엔진 콜라이더에 가려지지 않고 직접 조준된다.
+            //    객실 바닥이 아니라 지면(y=0) 위라 center y = 상자높이/2.
+            var engine = AddSalvagePoint(root, "salvage_engine_open", "뜯긴 엔진 내부",
+                new Vector3(-5.1f, 0.45f, 3.2f), new Vector3(0.9f, 0.9f, 0.9f), Quaternion.Euler(0f, 50f, 0f),
+                new AirlinerSalvagePoint.LootEntry[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("엔진부품", 1),
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 2),
+                });
+            StructureVisualBuilder.CreateVisualPart(engine, "engine_drum", PrimitiveType.Cylinder,
+                new Vector3(0f, -0.15f, 0f), new Vector3(0.5f, 0.25f, 0.5f), charcoal,
+                Quaternion.Euler(90f, 0f, 0f));
+            StructureVisualBuilder.CreateVisualPart(engine, "engine_chunk", PrimitiveType.Cube,
+                new Vector3(0.1f, -0.2f, 0.1f), new Vector3(0.35f, 0.25f, 0.3f), slate,
+                Quaternion.Euler(0f, 30f, 0f));
+        }
+
+        /// <summary>
+        /// 수거 지점 하나: 명세 로컬 center + AlignOffset 위치에 BoxCollider(비트리거 - 콜라이더
+        /// 15개와 같은 실제 충돌면이자 InteractionController 레이의 조준면) + AirlinerSalvagePoint를
+        /// 붙인다. 시각 파츠는 호출부가 반환된 transform의 자식으로 단다(지점 회전을 그대로 상속).
+        /// </summary>
+        private static Transform AddSalvagePoint(Transform parent, string name, string displayName,
+            Vector3 localCenter, Vector3 colliderSize, Quaternion localRotation,
+            AirlinerSalvagePoint.LootEntry[] loot)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localCenter + AlignOffset;
+            go.transform.localRotation = localRotation;
+            go.transform.localScale = Vector3.one;
+
+            var box = go.AddComponent<BoxCollider>();
+            box.center = Vector3.zero;
+            box.size = colliderSize;
+            box.isTrigger = false;
+
+            var point = go.AddComponent<AirlinerSalvagePoint>();
+            point.displayName = displayName;
+            point.loot = loot;
+            return go.transform;
+        }
+
         /// <summary>
         /// 타다 남은 연기 3곳: 전방 절단면 + 후방 절단면 + 뜯긴 엔진. 좌표는 명세 로컬값에
         /// AlignOffset을 더해 메시 좌표로 옮긴다(콜라이더와 같은 규칙).
@@ -359,9 +499,15 @@ namespace MakeGame.Systems
         /// <summary>
         /// 수색 지급표: (레지스트리 itemName, 개수). 이름은 전부 ItemDataRegistry에 실재하는
         /// 에셋으로 확인했다(Item_천조각/Item_금속조각/Item_비상식량/Item_생수.asset).
+        /// 표 형식은 내부 수거 지점(AirlinerSalvagePoint.LootEntry)과 공용이다.
         /// </summary>
-        private static readonly string[] SalvageNames = { "천조각", "금속조각", "비상식량", "생수" };
-        private static readonly int[] SalvageCounts = { 3, 3, 2, 2 };
+        private static readonly AirlinerSalvagePoint.LootEntry[] SalvageTable =
+        {
+            new AirlinerSalvagePoint.LootEntry("천조각", 3),
+            new AirlinerSalvagePoint.LootEntry("금속조각", 3),
+            new AirlinerSalvagePoint.LootEntry("비상식량", 2),
+            new AirlinerSalvagePoint.LootEntry("생수", 2),
+        };
 
         /// <summary>
         /// 아직 지급하지 않은 물자(아이템 1개당 항목 1개). null = 아직 수색 안 함.
@@ -392,7 +538,8 @@ namespace MakeGame.Systems
 
             if (pendingSalvage == null)
             {
-                var built = BuildSalvageList();
+                // 지급표 → ItemData 목록 전개는 내부 수거 지점과 공용 로직을 쓴다(규칙 단일 소스).
+                var built = AirlinerSalvagePoint.BuildLootList(SalvageTable, "[AirlinerWreck]");
                 if (built == null)
                     return false; // 레지스트리 로드 실패 - 수색 소모 없이 다음 시도에서 재시도한다.
                 pendingSalvage = built;
@@ -401,15 +548,8 @@ namespace MakeGame.Systems
             if (pendingSalvage.Count == 0)
                 return false; // 이미 다 털었다(프롬프트는 HasSalvage로 이 상태를 미리 보여준다).
 
-            int granted = 0;
-            while (pendingSalvage.Count > 0)
-            {
-                // 실패 시 TryAddItem이 실패음 + AddRejected + 경고를 스스로 낸다(추가 알림 불필요).
-                if (!inventory.TryAddItem(pendingSalvage[0]))
-                    break;
-                pendingSalvage.RemoveAt(0);
-                granted++;
-            }
+            // 실패 시 TryAddItem이 실패음 + AddRejected + 경고를 스스로 낸다(추가 알림 불필요).
+            int granted = AirlinerSalvagePoint.GrantPending(pendingSalvage, inventory);
 
             if (granted > 0)
             {
@@ -419,45 +559,7 @@ namespace MakeGame.Systems
             return granted > 0;
         }
 
-        /// <summary>
-        /// 지급표를 실제 ItemData 목록(아이템 1개당 항목 1개)으로 편다. 레지스트리 자체가 없으면
-        /// null(재시도 가능), 개별 이름이 없으면 그 항목만 빼고 경고를 남긴다.
-        /// rng는 소비하지 않는다 - 지급물은 고정 표다.
-        /// </summary>
-        private static List<ItemData> BuildSalvageList()
-        {
-            var registry = ItemDataRegistry.LoadFromResources();
-            if (registry == null || registry.allItems == null)
-            {
-                Debug.LogWarning("[AirlinerWreck] ItemDataRegistry를 불러오지 못해 수색 물자를 만들지 못했다.");
-                return null;
-            }
-
-            var list = new List<ItemData>();
-            for (int n = 0; n < SalvageNames.Length; n++)
-            {
-                ItemData found = null;
-                for (int i = 0; i < registry.allItems.Count; i++)
-                {
-                    var candidate = registry.allItems[i];
-                    if (candidate != null && candidate.itemName == SalvageNames[n])
-                    {
-                        found = candidate;
-                        break;
-                    }
-                }
-
-                if (found == null)
-                {
-                    Debug.LogWarning("[AirlinerWreck] 지급표의 '" + SalvageNames[n]
-                        + "'을(를) 레지스트리에서 찾지 못해 수색 물자에서 뺐다.");
-                    continue;
-                }
-
-                for (int c = 0; c < SalvageCounts[n]; c++)
-                    list.Add(found);
-            }
-            return list;
-        }
+        // BuildSalvageList는 AirlinerSalvagePoint.BuildLootList로 공용화되어 제거됐다 -
+        // 지급표 전개/지급 규칙이 외부 수색과 내부 수거 지점에서 두 벌로 갈라지지 않게 한다.
     }
 }

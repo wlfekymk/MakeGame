@@ -266,6 +266,13 @@ namespace MakeGame.UI
             if (wreck != null)
                 return BuildAircraftWreckPrompt(wreck, inventory, key, out main, out sub, out blocked);
 
+            // 여객기 내부 부품 수거 지점: InteractionController와 같은 이유로 **AirlinerWreck 분기보다
+            // 먼저** 검사한다 - 지점은 잔해의 자식이라 순서가 바뀌면 프롬프트가 항상 "잔해 수색"으로
+            // 나와 화면과 E키 동작이 갈라진다.
+            var salvagePoint = target.GetComponentInParent<AirlinerSalvagePoint>();
+            if (salvagePoint != null)
+                return BuildSalvagePointPrompt(salvagePoint, key, out main, out sub, out blocked);
+
             // 여객기 잔해: 콜라이더가 동체/날개 등 자식 파츠에 붙어 있으므로 InParent
             // (InteractionController의 AirlinerWreck 분기와 같은 기준·같은 우선순위 위치).
             var airliner = target.GetComponentInParent<AirlinerWreck>();
@@ -578,6 +585,30 @@ namespace MakeGame.UI
 
             main = "이미 수색한 여객기 잔해";
             sub = "더 나올 물자가 없다";
+            blocked = true;
+            return true;
+        }
+
+        /// <summary>
+        /// 여객기 내부 부품 수거 지점 프롬프트. 판정은 AirlinerSalvagePoint.HasLoot(TryCollect와 같은
+        /// 소스)만 읽어 문장으로 옮긴다. 이미 수거한 지점도 숨기지 않고 회색으로 사실을 알려준다
+        /// (여객기 잔해 수색/경비행기 수리 완료와 같은 방식 - "눌러도 아무 일이 없다"가 가장 나쁘다).
+        /// </summary>
+        private bool BuildSalvagePointPrompt(AirlinerSalvagePoint point, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            string name = string.IsNullOrEmpty(point.displayName) ? "부품 더미" : point.displayName;
+
+            if (point.HasLoot)
+            {
+                main = $"{key} {name} 수거";
+                sub = "1회 한정 - 부품을 챙긴다";
+                blocked = false;
+                return true;
+            }
+
+            main = $"이미 수거한 {name}";
+            sub = "더 나올 부품이 없다";
             blocked = true;
             return true;
         }

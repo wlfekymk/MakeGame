@@ -142,6 +142,17 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 여객기 내부 부품 수거 지점: 1회 한정 부품 수거. **반드시 AirlinerWreck 분기보다 먼저**
+            // 검사해야 한다 - 수거 지점은 잔해 시각 루트의 자식이라, 아래 AirlinerWreck의
+            // GetComponentInParent가 먼저 돌면 지점 콜라이더를 조준해도 부모 잔해 수색으로 흡수돼
+            // 지점이 영영 안 잡힌다. (지점 자체도 자식 시각 파츠에 레이가 맞을 수 있어 InParent.)
+            var salvagePoint = target.GetComponentInParent<AirlinerSalvagePoint>();
+            if (salvagePoint != null)
+            {
+                salvagePoint.TryCollect(inventory);
+                return;
+            }
+
             // 여객기 잔해(시작 섬 해안): 1회 한정 물자 수색. 콜라이더가 동체/날개 등 자식 파츠에
             // 붙어 있으므로 GetComponentInParent를 쓴다(BoatWorkbench와 같은 이유).
             var airliner = target.GetComponentInParent<AirlinerWreck>();
