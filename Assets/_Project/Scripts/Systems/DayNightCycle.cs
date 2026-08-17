@@ -24,8 +24,11 @@ namespace MakeGame.Systems
         [Tooltip("밤 동안의 최소 조명 강도 (완전한 암흑은 아니고 은은하게 남겨둔다)")]
         public float nightIntensity = 0.18f;
 
-        [Tooltip("한낮의 조명 색상 (밝은 백색광)")]
-        public Color dayColor = new Color(1f, 0.98f, 0.92f);
+        // [B23] 열대 바다 톤 미세조정: 종전 (1, 0.98, 0.92)는 온대 지방의 따뜻한 백색이었다.
+        // 산호초 바다의 한낮은 물/하늘 산란광이 섞여 살짝 청록이 도는 밝은 백색에 가깝다.
+        // 채도를 크게 올리면 피부·모래 색이 병들어 보이므로 녹/청 채널만 아주 조금 올렸다.
+        [Tooltip("한낮의 조명 색상 (살짝 청록이 도는 밝은 백색광)")]
+        public Color dayColor = new Color(0.96f, 1f, 0.98f);
 
         [Tooltip("일몰(황혼) 무렵의 조명 색상 (붉은 노을빛). [B22] 새벽은 아래 dawnColor를 따로 쓴다.")]
         public Color duskDawnColor = new Color(1f, 0.52f, 0.26f);
@@ -98,20 +101,66 @@ namespace MakeGame.Systems
         [Tooltip("켜면 시간대에 맞춰 환경광(Ambient)을 직접 제어한다. 끄면 씬의 조명 설정을 그대로 둔다.")]
         public bool driveAmbientLight = true;
 
-        [Tooltip("한낮의 환경광(하늘 반사광). 씬 기본 스카이박스 환경광과 비슷한 밝기로 맞춰둔 값.")]
-        public Color dayAmbient = new Color(0.45f, 0.48f, 0.52f);
+        // [B23] 단색(Flat) 환경광을 3색(Trilight)으로 확장하면서, 기존 day/duskDawn/nightAmbient
+        // 필드는 트라이라이트의 '하늘' 색으로 재활용한다(필드 이름을 유지해 씬/인스펙터 호환을 지킨다).
+        // 하늘/수평선/지면 3색이 갈라지면 윗면·옆면·아랫면이 서로 다른 반사광을 받아, 단색일 때의
+        // "플라스틱 같은 균일한 그늘"이 사라지고 형태가 공짜로 입체적으로 읽힌다.
+        [Tooltip("한낮 환경광의 '하늘' 색(Trilight Sky). 열대의 밝은 하늘색 반사광.")]
+        public Color dayAmbient = new Color(0.47f, 0.57f, 0.66f);
 
-        [Tooltip("일출/일몰 무렵의 환경광(따뜻하고 채도가 낮은 색)")]
+        [Tooltip("한낮 환경광의 '수평선' 색(Trilight Equator). 바다 위 대기 산란으로 하늘보다 따뜻하다.")]
+        public Color dayAmbientEquator = new Color(0.56f, 0.53f, 0.46f);
+
+        [Tooltip("한낮 환경광의 '지면' 색(Trilight Ground). 모래·식생에 튕겨 아랫면을 데우는 반사색.")]
+        public Color dayAmbientGround = new Color(0.40f, 0.36f, 0.28f);
+
+        [Tooltip("일출/일몰 무렵 환경광의 '하늘' 색(따뜻하고 채도가 낮은 색)")]
         public Color duskDawnAmbient = new Color(0.38f, 0.29f, 0.25f);
+
+        [Tooltip("골든아워 환경광의 '수평선' 색(진한 주황). 노을이 수평선 쪽 반사광을 물들인다.")]
+        public Color goldenAmbientEquator = new Color(0.66f, 0.33f, 0.16f);
+
+        [Tooltip("골든아워 환경광의 '지면' 색. 해가 낮게 깔리면 지면 반사는 급격히 어두워진다.")]
+        public Color goldenAmbientGround = new Color(0.15f, 0.11f, 0.09f);
 
         // [B22] 밝기 총량은 예전(0.16/0.18/0.26, 상대휘도 ≈0.176)과 거의 같게 두고 색상만 파랑 쪽으로
         // 민다(0.12/0.16/0.30, 상대휘도 ≈0.166). "밤 = 안 보임"이 아니라 "밤 = 푸른 어둠"이라는
         // 디렉터 지시를 지키면서, 실루엣 가독성(B4에서 확보한 것)은 그대로 유지하기 위한 값이다.
-        [Tooltip("한밤중의 환경광. 이 값이 밤의 '최소 가시성 바닥'이다 - 0에 가까우면 실루엣조차 안 보인다.")]
+        // [B23] Trilight에서 이 값은 '하늘' 색이 된다. 실루엣은 주로 하늘을 등지고 읽히므로
+        // "최소 가시성 바닥" 역할은 그대로 이 값이 진다(수평선/지면은 이보다 어두워도 된다).
+        [Tooltip("한밤중 환경광의 '하늘' 색(달빛 남색). 이 값이 밤의 '최소 가시성 바닥'이다 - 0에 가까우면 실루엣조차 안 보인다.")]
         public Color nightAmbient = new Color(0.12f, 0.16f, 0.30f);
+
+        [Tooltip("한밤 환경광의 '수평선' 색(어두운 남색).")]
+        public Color nightAmbientEquator = new Color(0.06f, 0.08f, 0.16f);
+
+        [Tooltip("한밤 환경광의 '지면' 색(거의 검정). 달빛은 지면 반사광을 거의 만들지 못한다.")]
+        public Color nightAmbientGround = new Color(0.02f, 0.03f, 0.05f);
 
         [Tooltip("비가 올 때 환경광이 섞여 들어갈 색(채도 빠진 차가운 회색). 젖은 날의 흐린 빛을 만든다.")]
         public Color rainAmbientTint = new Color(0.38f, 0.42f, 0.46f);
+
+        // [B23] 그림자의 어둡기는 "하늘 전체에서 오는 환경광이 그림자 속을 얼마나 채우는가"의 표현이다.
+        // 종전에는 씬 기본값(1.0) 고정이라 밤 달빛 그림자까지 한낮처럼 새까만 구멍으로 보였다.
+        // 한낮의 열대 태양은 짙은 그림자(1.0), 골든아워는 대기 산란으로 조금 풀리고(0.8),
+        // 밤은 하늘 전체가 약한 면광원이라 훨씬 옅다(0.5).
+        [Header("그림자 강도 주기")]
+        [Tooltip("한낮의 그림자 강도(1 = 완전 불투명 그림자)")]
+        [Range(0f, 1f)] public float dayShadowStrength = 1f;
+
+        [Tooltip("골든아워(일출/일몰)의 그림자 강도")]
+        [Range(0f, 1f)] public float goldenShadowStrength = 0.8f;
+
+        [Tooltip("밤(달빛)의 그림자 강도. 낮출수록 그림자 속에도 환경광이 남아 새까맣지 않다.")]
+        [Range(0f, 1f)] public float nightShadowStrength = 0.5f;
+
+        // [B23] 밤 광원 방향. 종전의 '궤도 접기'(Update 참고)는 전환 연속성은 지켰지만 밤의 대부분을
+        // 빛이 지평선 근처에 낮게 걸린 채 보내서, 그림자가 옆으로 길게 눕는 부자연스러움이 있었다.
+        // 밤에는 태양이 진 반대편 하늘의 고정 고도에 뜬 '달'로 부드럽게 전환한다.
+        [Header("달빛")]
+        [Tooltip("밤에 달이 떠 있는 고정 고도(도). 40~55도 권장 - 너무 낮으면 그림자가 눕고, 너무 높으면 정오처럼 보인다.")]
+        [Range(20f, 80f)]
+        public float moonAltitudeDeg = 48f;
 
         [Tooltip("켜면 하늘색과 같은 색의 옅은 거리 안개를 깔아 수평선에서 바다와 하늘이 이어지게 한다.")]
         public bool enableAtmosphericFog = true;
@@ -267,7 +316,22 @@ namespace MakeGame.Systems
             float lightPitch = Mathf.Repeat(sunAngle, 360f);
             if (lightPitch > 180f)
                 lightPitch = 360f - lightPitch;
-            sunLight.transform.rotation = Quaternion.Euler(lightPitch, 170f, 0f);
+
+            // [B23 달빛 방향] 위의 접기는 "지평선 아래에서 위로 비추는 빛"은 없앴지만, 밤 궤도가
+            // 일몰 지점에서 다시 떠올라 일출 지점으로 지는 모양이라 자정 전후를 빼면 달빛이 지평선에
+            // 낮게 걸려 그림자가 옆으로 길게 눕는 부자연스러움이 남아 있었다. 이제 태양 고도가
+            // 지평선 아래로 내려가면(sinAlt < 0) 태양이 진 쪽(반대 방위, yaw 350) 하늘의 고정 고도에
+            // 뜬 '달' 방향으로 Slerp 전환한다. sinAlt는 실제 태양 고도의 사인값(+1 정오, 0 지평선,
+            // -1 자정)이라 전환 창을 지평선 근처의 좁은 구간으로 정확히 잡을 수 있고, SmoothStep +
+            // Slerp라 전환 양 끝에서 각속도가 0으로 붙어 조명이 튀지 않는다. 일몰 쪽은 해가 진 바로
+            // 그 방위에서 달이 떠오르는 그림이 되고, 일출 쪽은 달빛이 하늘을 부드럽게 가로질러
+            // 떠오르는 해에게 자리를 넘긴다(이 구간은 조도가 최저라 스윕이 거의 눈에 띄지 않는다).
+            // 낮 구간(0~180도)의 태양 궤도는 여전히 예전과 100% 동일하다.
+            float sinAlt = Mathf.Sin(sunAngle * Mathf.Deg2Rad);
+            float moonBlend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.03f, -0.22f, sinAlt));
+            Quaternion sunRotation = Quaternion.Euler(lightPitch, 170f, 0f);
+            Quaternion moonRotation = Quaternion.Euler(moonAltitudeDeg, 350f, 0f);
+            sunLight.transform.rotation = Quaternion.Slerp(sunRotation, moonRotation, moonBlend);
 
             // [B22] 예전에는 IsRaining이 켜지는 프레임에 조도가 55%로 **한 프레임 만에 툭 떨어졌다**.
             // WeatherSystem이 0~1로 서서히 오르내리는 RainIntensity01을 공개하므로 그 값으로 보간해
@@ -289,6 +353,11 @@ namespace MakeGame.Systems
             bool isMorning = t < 0.5f;
             Color goldenLight = isMorning ? dawnColor : duskDawnColor;
             Color goldenSky = isMorning ? dawnSkyTint : duskDawnSkyTint;
+
+            // [B23] 그림자 강도 주기: 낮 1.0 → 골든아워 0.8 → 밤 0.5. dayFactor로 낮/밤을 잇고
+            // goldenHour로 일출/일몰 정점에서만 잠깐 0.8로 풀리게 한다(필드 주석 참고).
+            float shadowStrength = Mathf.Lerp(nightShadowStrength, dayShadowStrength, dayFactor);
+            sunLight.shadowStrength = Mathf.Lerp(shadowStrength, goldenShadowStrength, goldenHour);
 
             // 색상: 낮에는 백색광, 일출/일몰에는 노을빛, 밤에는 푸른 달빛으로 보간한다.
             Color baseColor = Color.Lerp(nightColor, dayColor, dayFactor);
@@ -356,32 +425,51 @@ namespace MakeGame.Systems
         /// 안 보인다"가 되어버린다. 그래서 Flat 모드로 바꾸고 밤 바닥값(nightAmbient)을 명시적으로
         /// 보장하는 쪽을 택했다 - ArtDirection 3장의 "밤은 어둡지만 실루엣은 읽혀야 한다"는 기준을
         /// 수치로 강제할 수 있는 유일한 방법이다.
+        ///
+        /// [B23] Flat(단색) → Trilight(하늘/수평선/지면 3색)로 확장. "SH 재계산 없이 코드가 환경광
+        /// 바닥값을 명시적으로 보장한다"는 위 결론은 그대로이고, 단색 하나 대신 3색을 보장한다는
+        /// 점만 다르다(Trilight도 Flat처럼 스카이박스와 무관하게 즉시 반영된다). 3색이 갈라지면
+        /// 윗면·옆면·아랫면이 서로 다른 반사광을 받아 단색 환경광 특유의 밋밋한 그늘이 사라진다.
         /// </summary>
         private void UpdateAmbientLight(float dayFactor, float goldenHour, float rainMultiplier)
         {
             if (!driveAmbientLight)
                 return;
 
-            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
 
-            Color ambient = Color.Lerp(nightAmbient, dayAmbient, dayFactor);
-            ambient = Color.Lerp(ambient, duskDawnAmbient, goldenHour * 0.6f);
+            // 하늘/수평선/지면을 각각 밤→낮으로 잇고, 골든아워 정점에서 따뜻한 색을 덮는다.
+            // 수평선/지면은 노을의 영향(0.85)을 하늘(0.6)보다 세게 받는다 - 실제로도 노을은
+            // 천정보다 지평선 쪽을 훨씬 진하게 물들인다.
+            Color sky = Color.Lerp(nightAmbient, dayAmbient, dayFactor);
+            sky = Color.Lerp(sky, duskDawnAmbient, goldenHour * 0.6f);
+            Color equator = Color.Lerp(nightAmbientEquator, dayAmbientEquator, dayFactor);
+            equator = Color.Lerp(equator, goldenAmbientEquator, goldenHour * 0.85f);
+            Color ground = Color.Lerp(nightAmbientGround, dayAmbientGround, dayFactor);
+            ground = Color.Lerp(ground, goldenAmbientGround, goldenHour * 0.85f);
 
             // [B22] 비가 오면 색까지 채도가 빠진 차가운 회색 쪽으로 민다. 예전에는 밝기만 곱해서
             // "그냥 어두운 맑은 날"이었는데, 흐린 날의 실제 특징은 어둡다는 것보다 **색이 빠진다**는 것이다.
             // 젖은 표면을 만들 셰이더가 없는 이 파이프라인에서 "비 오는 날처럼 보이게" 만드는 가장 싼 수단이다.
-            float rainBlend = Mathf.Clamp01(1f - rainMultiplier) * 1.6f;
-            ambient = Color.Lerp(ambient, rainAmbientTint, Mathf.Clamp01(rainBlend) * 0.5f);
+            // [B23] Trilight에서는 3색 모두 같은 회색으로 수렴시킨다 - 흐린 날은 하늘/수평선/지면의
+            // 색 차이 자체가 사라지는 것이 실제 모습이기도 하다.
+            float rainBlend = Mathf.Clamp01(Mathf.Clamp01(1f - rainMultiplier) * 1.6f) * 0.5f;
+            sky = Color.Lerp(sky, rainAmbientTint, rainBlend);
+            equator = Color.Lerp(equator, rainAmbientTint, rainBlend);
+            ground = Color.Lerp(ground, rainAmbientTint, rainBlend);
 
             // 비가 오면 태양광과 같은 비율로 환경광도 함께 죽인다. 다만 환경광까지 rainDimFactor를
             // 그대로 곱하면 낮인데도 시야가 지나치게 어두워지므로 절반만 적용한다.
             float ambientRainMultiplier = Mathf.Lerp(1f, rainMultiplier, 0.5f);
-            // Color * float는 알파까지 곱해버린다. 환경광 색의 알파는 1로 고정해 둔다.
-            RenderSettings.ambientLight = new Color(
-                ambient.r * ambientRainMultiplier,
-                ambient.g * ambientRainMultiplier,
-                ambient.b * ambientRainMultiplier,
-                1f);
+            RenderSettings.ambientSkyColor = ScaleRgb(sky, ambientRainMultiplier);
+            RenderSettings.ambientEquatorColor = ScaleRgb(equator, ambientRainMultiplier);
+            RenderSettings.ambientGroundColor = ScaleRgb(ground, ambientRainMultiplier);
+        }
+
+        /// <summary>RGB에만 배율을 곱한다. Color * float는 알파까지 곱해버리므로 알파는 1로 고정한다.</summary>
+        private static Color ScaleRgb(Color c, float multiplier)
+        {
+            return new Color(c.r * multiplier, c.g * multiplier, c.b * multiplier, 1f);
         }
 
         /// <summary>
@@ -393,7 +481,10 @@ namespace MakeGame.Systems
         private Color ResolveClearFogColor(Color skyColor, float dayFactor, float goldenHour, Color goldenLight)
         {
             Color fog = Color.Lerp(skyColor, Color.white, Mathf.Lerp(0.06f, 0.45f, dayFactor));
-            fog = Color.Lerp(fog, goldenLight, goldenHour * 0.45f);
+            // [B23] 태양색 혼합 0.45 → 0.55. goldenLight는 새벽(dawnColor)/황혼(duskDawnColor)이
+            // 이미 갈라져 있으므로, 이 한 줄로 아침 안개는 분홍빛·저녁 안개는 주황빛으로 물든다.
+            // 골든아워 정점의 수평선이 "살짝 데워진" 수준을 넘어 "노을에 잠긴" 수준으로 읽히게 했다.
+            fog = Color.Lerp(fog, goldenLight, goldenHour * 0.55f);
 
             // Color * float는 알파까지 곱하므로 채널을 직접 만든다.
             var moonFog = new Color(nightColor.r * 0.42f, nightColor.g * 0.42f, nightColor.b * 0.42f, 1f);
