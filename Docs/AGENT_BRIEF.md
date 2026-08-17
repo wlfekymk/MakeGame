@@ -1,9 +1,10 @@
 # 에이전트 필독 브리핑 (단일 진실 파일)
 
-> 갱신: v0.01.095 · **커밋할 때마다 디렉터가 갱신한다.**
+> 갱신: **v0.01.125** · **커밋할 때마다 디렉터가 갱신한다.**
 > 이 파일 하나만 읽고 시작하면 된다. 다른 문서보다 이 파일이 항상 최신이다.
-> 여기 적힌 값과 다른 것을 발견하면 **먼저 이 파일을 의심하지 말고 씬 YAML을 파싱해서 확인한 뒤**
+> 여기 적힌 값과 다른 것을 발견하면 **먼저 이 파일을 의심하지 말고 소스/씬 YAML을 확인한 뒤**
 > 보고서에 `[요청] 디렉터: AGENT_BRIEF 갱신` 으로 올려라.
+> 수치 옆의 `파일:줄` / `씬` 은 그 값을 실제로 읽어 온 곳이다. 낡았는지 의심되면 거기부터 봐라.
 
 ---
 
@@ -41,25 +42,31 @@
 | `scatterRadius` | 주석은 "규모별로 나눴다"인데 네 값이 전부 같았다 → 소형 섬 자원이 바다로 나갔다 |
 | 자원 배율 | 주석은 "면적비로 올렸다"인데 값은 선형 그대로였다 |
 | WaterStill 프리팹 | 코드/config는 0.1/12인데 프리팹이 0.3/20 → "고쳤는데 안 바뀐다" |
+| `slotCapacity` | 씬 텍스트에 키가 없어 "씬이 안 덮어쓴다"고 판단 → 실제로는 인스펙터에 30이 박혀 있었다 (4장 4번) |
 
 **규칙: 수치를 논할 때는 (1) 코드 기본값 (2) 씬 직렬화 값 (3) 프리팹 오버라이드 세 곳을 모두 확인한다.**
 **규칙: 주석이 "고쳤다"고 주장하면 값을 직접 확인한다. 이 프로젝트의 주석은 여러 번 거짓말했다.**
+**규칙: "씬 텍스트에 키가 없다"는 "씬이 안 덮어쓴다"가 아니다. 4장 4번을 반드시 읽어라.**
 
 ---
 
 ## 1. 프로젝트 형태
 
-- Unity 6 (6000.5.6f1), URP, 단일 씬(`Assets/Scenes/SampleScene.unity`)
-- **3D 모델 에셋 0개.** 전부 `GameObject.CreatePrimitive` / 내장 메시 조합으로 런타임 생성한다.
+- Unity 6.5 (6000.5.6f1), URP, 단일 씬(`Assets/Scenes/SampleScene.unity`)
+- **3D 모델 에셋은 곰 2개뿐이다** — `Resources/Models/bear_adult.obj`(12,000삼각형) / `bear_cub.obj`(6,999).
+  나머지는 여전히 `GameObject.CreatePrimitive` / 내장 메시 조합으로 런타임 생성한다.
   로우폴리·스타일라이즈드가 유일하게 가능한 아트 방향이다.
-- 오디오도 `ProceduralAudioClipGenerator` 절차 생성. 외부 오디오 파일 없음.
-- **텍스처는 있다.** `Assets/_Project/Resources/Textures/` 에 `leaf / sand / stone / wood / metal / water /
-  noise` 7종(png). 스테이징 스냅샷에 안 보인다고 "없다"고 단정하지 마라 — 실제 디스크에 있고
-  `Resources.Load<Texture2D>` 가 정상으로 잡는다. (2장 8번 규칙의 실제 사례다.)
-- **지형 본체 색은 모래가 아니라 Meadow Green이다**(v0.01.094 구조 변경). 모래는 `DrySandCap` /
-  `WetSandCap` 덮개로만 존재한다. 예전에는 반대였고, 그래서 덮개의 모든 틈이 모래 얼룩으로 새어
-  나왔다(섬 바닥 면적의 32%). 지금은 세 캡이 정확한 여집합이라 지형 본체가 노출될 수 없다.
+- 오디오는 `ProceduralAudioClipGenerator` 절차 생성이 기본이고, **외부 트랙이 하나 있다** —
+  `Resources/Audio/Music/BGM_StayHerePiano.mp3`(`BackgroundMusicPlayer.cs:23,95` 가 먼저 찾고 없으면 폴백).
+- **텍스처는 있다**(`Resources/Textures/`). 작업본에서 확인된 것은 `bamboo / bark / bearfur / bearpad /
+  bear_albedo / bear_normal / driftwood / frond / rock / thatch` 이고, 코드는 그 밖에
+  `water`(`WorldMapManager.cs:412`) · `leaf`(`:933`) · `UI/title_background`(`MainMenuController.cs:119`)도
+  로드한다. **작업본에 안 보여도 실제 디스크에는 있다** — 스크립트·씬·VERSION 외 에셋은 부분 스테이징이다.
+- **지형 본체 색은 모래가 아니라 Meadow Green**(#8AA84F, `StructureVisualBuilder.cs:45`). 모래는
+  `DrySandCap` / `WetSandCap` 덮개로만 존재하고, 세 캡이 정확한 여집합이라 본체가 노출되지 않는다.
 - UI도 전부 코드 생성(`UIBuilder.cs` 공통 팩토리). 프리팹 UI 없음.
+- **프리팹은 3개뿐이다**: `Prefabs/Campfire` · `Shelter` · `WaterStill`. 셋 다 씬에 인스턴스가 없고
+  런타임에 설치되므로 **프리팹 직렬화 값이 진실**이다(코드 기본값이 아니다).
 - `.asmdef` 없음 → 전부 `Assembly-CSharp` 단일 어셈블리(순환 참조 걱정 불필요).
 
 ---
@@ -67,6 +74,7 @@
 ## 2. 절대 금지 (전 역할 공통)
 
 1. **소유 파일 밖 편집 금지.** 매 웨이브 3~4명이 병렬 편집한다. 남의 파일을 건드리면 덮어쓰기 사고다.
+   → 단, **작업을 끝내려면 필요한데 금지된 파일이 있으면 조용히 우회하지 말고 보고해라**(4장 5번).
 2. **public 필드 제거·개명·타입변경 금지.** 씬 직렬화 값이 조용히 사라진다.
 3. **`.unity` / `.prefab` / `.asset` / `.meta` 편집 금지.** 디렉터가 직렬로 처리한다.
    → `[요청] 디렉터:` 로 **파일 · 필드(YAML 키 정확히) · 현재값 → 새값** 을 올려라.
@@ -74,87 +82,224 @@
    실제로 이것 때문에 GameOverUI가 통째로 안 보인 적이 있다. 현재 프로젝트 전체 `OnGUI` = 0개.
 5. **아직 없는 API를 호출하지 마라.** 컴파일이 깨지면 전원이 막힌다.
    필요하면 `[요청] <대상>:` 으로 정확한 시그니처를 적어라.
-6. **`UnityEngine.Random` 전역 사용 금지.** 섬별 시드 `System.Random` 스트림을 쓴다(재현성).
-7. **에이전트끼리 직접 대화 금지.** `[요청] <대상>: <내용>` 으로 보고서에 적으면 디렉터가 중계한다.
-8. **"스테이징에 없다 ≠ 프로젝트에 없다."** 파일이 안 보여도 없다고 단정하지 말고
+6. **월드 생성·배치에 `UnityEngine.Random` 금지.** 섬별 시드 `System.Random` 스트림을 쓴다
+   (`SeededRandomExtensions.CreateForIsland`, 재현성). 날씨·조리 확률 등 비생성 계열은 예외다.
+7. **`Cursor.lockState` 를 직접 만지지 마라.** `CursorLockController` 가 단독으로 결정한다(3장).
+8. **에이전트끼리 직접 대화 금지.** `[요청] <대상>: <내용>` 으로 보고서에 적으면 디렉터가 중계한다.
+9. **"스테이징에 없다 ≠ 프로젝트에 없다."** 파일이 안 보여도 없다고 단정하지 말고
    `[확인요청]` 으로 올려라. 새로 만들어 덮어쓰지 마라.
-9. **컴파일 가능한 코드만.** 세미콜론 2개가 빠져 커밋 2개가 빌드 깨진 채 올라간 전력이 있다.
-   특히 `UIBuilder.CreatePanel(...)` 같은 다중 줄 호출의 닫는 괄호·세미콜론을 눈으로 재확인해라.
+10. **컴파일 가능한 코드만.** 세미콜론 2개가 빠져 커밋 2개가 빌드 깨진 채 올라간 전력이 있다.
+    특히 `UIBuilder.CreatePanel(...)` 같은 다중 줄 호출의 닫는 괄호·세미콜론을 눈으로 재확인해라.
 
 ---
 
-## 3. 씬 실측값 (v0.01.093 기준)
+## 3. 씬 실측값 (v0.01.125 기준)
 
-### 생존 수치 (SurvivalStats)
+씬 `Assets/Scenes/SampleScene.unity` = **`--- !u!` 앵커 53개** (MonoBehaviour 34 · GameObject 5 ·
+Transform 5 · 나머지는 카메라/조명/렌더 설정). MonoBehaviour 34개 중 3개는 URP 내장이다.
+
+### 생존 수치 (SurvivalStats — 전부 씬)
 health/maxHealth 100 · hunger/thirst 시작 100
 `hungerDecayPerSecond 0.05` · `thirstDecayPerSecond 0.08` · `starvationDamagePerSecond 1`
-`sunstrokeGainPerSecond 0.25`(← 0.1에서 상향, 이전 값으로는 일사병 100 도달이 수학적으로 불가능했다)
-`sunstrokeRecovery 0.2` · `sunstrokeDamage 1.0`(← 0.5는 자연회복 0.5와 정확히 상쇄돼 일사병이 위협이 아니었다) · `poisonDamage 0.8` · `bleedingDamage 1.2`
+`sunstrokeGainPerSecond 0.25`(← 0.1로는 일사병 100 도달이 수학적으로 불가능했다)
+`sunstrokeRecoveryPerSecond 0.2` · `sunstrokeDamagePerSecond 1.0`(← 0.5는 회복 0.5와 정확히 상쇄됐다)
+`poisonDamagePerSecond 0.8` · `bleedingDamagePerSecond 1.2`
 `healthRegenThreshold 50` · `healthRegenPerSecond 0.5`
-`oxygenRecovery 25` · `oxygenDrain 5` · `drowningDamage 3`
+`oxygenRecoveryPerSecond 25` · `oxygenDrainPerSecond 5` · `drowningDamagePerSecond 3`
+`coconutOverdoseThreshold 100` · `crisisGraceSeconds 8`
 
 ### ⚠️ 씬에 **없는** 컴포넌트 (이 절에서 가장 자주 오판하는 지점)
-`RuntimeInitializeOnLoadMethod` 로 매 씬 로드마다 스스로 생성되는 것들은 **씬에 인스턴스가 없다.**
-즉 **코드 기본값이 유일한 소스**이고, "씬 값이 이긴다"는 대원칙이 적용되지 않는다.
-`DayNightCycle` · `WeatherSystem` · `Campfire` · `WaterStill` · `SurvivalHudUI` · `EndingUI` ·
+씬은 방금 재직렬화됐지만, **아래 목록은 여전히 씬에 인스턴스가 없다**(전부 `RuntimeInitializeOnLoadMethod`
+자기 부트스트랩 — 각 파일에서 그 속성을 직접 확인했다):
+`DayNightCycle` · `WeatherSystem` · `BuildingSystem` · `QuestSystem` · `CursorLockController` ·
+`BackgroundMusicPlayer` · `SurvivalHudUI` · `QuestUI` · `BuildMenuUI` · `ChestUI` · `EndingUI` ·
 `GameOverUI` · `CombatFeedbackUI` · `InteractionPromptUI`
-→ 이들의 값을 바꾸려면 **코드를 고쳐야 한다. 씬을 뒤져도 없다.**
+→ 이들은 **코드 기본값이 유일한 소스**다. 씬을 뒤져도 없다.
+
+**`Campfire` / `WaterStill` / `Shelter` 는 이 목록이 아니다.** 셋은 부트스트랩되지 않고 **프리팹**으로
+설치된다(`SaveLoadController` 의 `campfirePrefab`/`shelterPrefab`/`waterStillPrefab`) →
+**프리팹 값이 이긴다.** (0장의 WaterStill 사고가 정확히 이것이다. 현재 프리팹 = `waterPerSecond 0.1`
+/ `maxStorage 12` / `waterPerBottle 6` 로 코드와 일치한다.)
 
 ### 시간 / 월드
-`SurvivalClock.secondsPerDay 600` (실시간 10분 = 게임 1일)
-새 게임은 `DayNightCycle.newGameStartTimeOfDay 0.3`(아침)에 시작한다. **(씬 아님 — 코드 기본값)**
-**0(자정)이면 게임 시작 2분 30초가 새까맣다** — 예전에 "검은 하늘 버그"로 신고됐던 것이 이것이다.
-`WorldMapManager`: `baseDistanceStep 1200` · `oceanSize 40000` · `terrainMaxHeight 8` · `worldSeed 0`
+`SurvivalClock.secondsPerDay 600`(씬) — 실시간 10분 = 게임 1일. `sunsetWarningTimeOfDay 0.65`
+새 게임은 `DayNightCycle.newGameStartTimeOfDay 0.3`(아침)에 시작한다 — **씬 아님**(`DayNightCycle.cs:95`).
+**0(자정)이면 게임 시작 2분 30초가 새까맣다** — 예전 "검은 하늘 버그"가 이것이다.
+`WorldMapManager`(씬): `baseDistanceStep 1200` · `oceanSize 40000` · `terrainMaxHeight 8` · `worldSeed 0`
 `initialIslandCount 8` (+ 시작 섬 1 = **총 9개**)
-플레이어 시작 위치 `(0, 14, 0)` — terrainMaxHeight 8보다 높아야 한다. **5로 두면 지형 안에서 스폰돼 바다로 떨어진다.**
+플레이어 시작 위치 `(0, 14, 0)`(씬) — terrainMaxHeight 8보다 높아야 한다. **5로 두면 지형 안에서 스폰된다.**
+CharacterController(씬): 높이 2 · 반지름 0.5 · `stepOffset 0.3` · `skinWidth 0.08` · center (0,1,0).
+→ 계단·턱 관련 수치를 손대기 전에 이 네 값을 먼저 봐라(`BuildingSystem.cs:145` 주석이 이걸 전제한다).
 
-### 섬 규모 (`IslandSizeMetrics`, 코드가 단일 소스 — 씬 값 없음)
-지형 반지름 Small 50 / Medium 90 / Large 140 / ExtraLarge 200
-`IslandSize` enum = 0 / 1 / 2 / 3
+### 섬 규모 (`IslandSizeMetrics.cs:25`, 코드가 단일 소스 — 씬 값 없음)
+지형 반지름 Small 50 / Medium 90 / Large 140 / ExtraLarge 200 · `IslandSize` enum = 0 / 1 / 2 / 3
 
-### 스포너
+### 스포너 (전부 씬)
 | 컴포넌트 | 배율 (S/M/L/XL) | 산포 반경 |
 |---|---|---|
 | IslandResourceSpawner | 1 / 2 / 3 / 4 (선형 — 의도된 것) | 40 / 72 / 112 / 160 |
 | HazardSpawner | 1 / 1.75 / 2.5 / 3.25 | 40 / 72 / 112 / 160 |
 | CreatureSpawner | 1 / 1.5 / 2 / 2.5 | 40 / 72 / 112 / 160 |
 
-> ⚠️ **HazardSpawner에서 "배율 = 마릿수"가 아니다.** 마릿수는 면적 밀도로 정해진다:
-> `마릿수 = round(hazardsPerTenThousandSquareMeters(2.0) × π·r²/10,000 × 규모트림)`, 최소 1,
-> 상한 `maxHazardsPerIsland`(20, 0 이하면 상수 20). 배율은 종류 가중치 트림에 쓰인다.
-> 실측 마릿수 — 소형 1 / 중형 3 / 대형 8 / 특대 16.
-> 예전에는 엔트리 6종의 확률을 한 번씩 굴려 **섬당 최대 6마리**였고, 그래서 큰 섬일수록
-> 밀도가 옅어졌다(특대가 소형의 1/5). 지금은 실현 밀도가 규모와 무관하게 약 2.0으로 일정하다.
+> ⚠️ **HazardSpawner에서 "배율 = 마릿수"가 아니다.** 마릿수는 면적 밀도로 정해진다
+> (`HazardSpawner.ComputeHazardCount`):
+> `round(hazardsPerTenThousandSquareMeters(2.0) × π·r²/10,000 × 규모트림)`, 최소 1,
+> 상한 `maxHazardsPerIsland`(씬 20). **규모 트림은 현재 네 규모 모두 정확히 1.0**이라 배율 필드는
+> 마릿수에 영향을 주지 않고 종류 가중치에만 쓰인다.
+> 실측 마릿수 — 소형 1 / 중형 3 / 대형 8 / 특대 16. 시작 섬은 0(면제).
 
 산포 반경은 지형 반지름의 80%다. **씬의 낡은 `scatterRadius` 단일 키는 제거됐다.**
 자원 배율을 면적비(1:3.24:7.84:16)로 올리자는 주석이 있는데 **일부러 선형을 유지한다** —
 면적비면 특대 섬 노드가 96 → 380개가 된다. 큰 섬은 "빽빽한 곳"이 아니라 "특별한 자원이 있는 곳"이다.
 
-### 자원 노드 (씬 `resourceEntries`, 13종)
+### 위험 요소 (씬 `hazardEntries`, 7종)
+| type | 종류 | baseChance | minIslandSize | guaranteedCount |
+|---|---|---|---|---|
+| 1 | 독사 | 0.25 | 0 | 0 |
+| 2 | 전갈 | 0.20 | 0 | 0 |
+| 3 | **곰** | 0.15 | **1 (중형+)** | **1** |
+| 4 | 벌떼 | 0.20 | 0 | 0 |
+| 5 | 함정 | 0.20 | 0 | 0 |
+| 6 | 식인종 | 0.10 | 0 | 0 |
+| 9 | **대왕 크랩** | 0.12 | 0 | 0 |
+
+`HazardType`(`HazardType.cs`) = FoodShortage 0 / VenomousSnake 1 / Scorpion 2 / Bear 3 / BeeSwarm 4 /
+Trap 5 / Cannibal 6 / Dehydration 7 / Shark 8 / **GiantCrab 9**.
+**추가는 반드시 맨 끝에.** 씬이 정수로 들고 있어 중간 삽입하면 섬의 위험 요소가 통째로 뒤바뀐다.
+0/7(음식부족·탈수)은 `SurvivalStats` 가 담당하는 개념적 값이라 `hazardEntries` 에 넣지 마라(효과가 없다).
+
+보장 배치는 마릿수를 늘리지 않고 **앞자리를 덮어쓴다**(`HazardSpawner.cs:243-262`). rng는 자리마다
+정확히 1회 소비하므로 같은 worldSeed의 기존 월드가 밀리지 않는다.
+
+체력/접촉피해(`HazardSource.ConfigureForType`): 대왕 크랩 60/8 · 곰 50/10(기본값) · 식인종 35/10 ·
+상어 25/18 · 벌떼 12/10 · **새끼 곰 14/3**. 독사·전갈·함정은 전투 대상이 아니다(체력 없음).
+
+### 곰 (v0.01.093 이후 추가 — 문서에 없던 시스템)
+- **실물 모델 2벌.** `Resources/Models/bear_adult.obj`(12,000삼각형) / `bear_cub.obj`(6,999).
+  좌표 계약 = **미터 · +Y 위 · +Z 정면 · 발바닥 y=0 · X/Z 중심 정렬**. 새 모델도 이 계약을 지켜라.
+- **규격이 두 벌이고 모델 유무로 갈린다**(`CreatureVisualBuilder.cs:112-138`). 한 세션에서 섞이지 않는다.
+  모델 곰 `(0.86, 1.22, 2.56)`/`0.61`(실측 0.981×1.219×2.562) · 절차 폴백 `(0.86, 1.80, 2.56)`/`0.90` ·
+  새끼 `(0.45, 0.65, 1.73)`/`0.325`(실측 0.452×0.644×1.734). **x(0.86)·z(2.56)는 바꾸지 마라** —
+  추격 AI 접촉 사거리가 이 부피 전제다. 규격/groundOffset은 **함께만** 의미가 있다(따로 바꾸면 발이 뜬다).
+- **성체 AI**(`HazardSource.cs:66-99`, 전부 코드 기본값): `bearDetectRadius 18` · `bearLoseRadius 27` ·
+  `bearViewHalfAngle 65°` · `bearCloseSenseRadius 6` · `bearAttackRange 2.8` · `bearLeashRadius 42` ·
+  `bearChaseSpeed 5.3` · `bearWanderSpeed 1.2` · `bearAcceleration 3` · `bearDeceleration 6.5` ·
+  회전 추격 130°/s · 배회 65°/s. 추격 속도는 런타임에 `clamp(moveSpeed × 1.06, 1.5, 8)` 로 다시 잡힌다.
+- **새끼**(`HazardSource.cs:1461-1485`): 플레이어를 **쫓지 않는다**. 12m에서 도망(속도 4.2 · 회전 210°/s ·
+  이탈 후 3.5초 더 달림), **10m에 들어오거나 맞으면 반경 30m 성체를 시야각 무관하게 즉시 추격 상태로
+  깨운다**(쿨다운 4초). 출혈은 걸지 않는다.
+- **새끼가 될 확률 40%** — `(islandIndex, spawnOrder)` 해시(`HazardSpawner.cs:303,318`).
+  **보장 배치분(중형+ 섬의 곰 1마리)은 언제나 성체다.**
+
+### 자원 노드 (씬 `resourceEntries`, 13종 · 순서가 곧 세이브 키다)
 나뭇가지 4 · 돌조각 3 · 야자잎 3 · 코코넛 2 · 대나무 2 · 천조각 1 · 부싯돌 1 ·
 금속조각 2(**대형+ & 손도끼 필요**) · 부력통 2(대형+) · 비상식량 1 · 연료 1 ·
 엔진부품 2(**특대 전용**) · 생수 1(중형+)
 야자잎에 `bonusTool: 칼` / `bonusYieldPerHarvest: 1` (요구가 아니라 가산 — 칼이 없어도 채집된다)
 
-> ⚠️ **`resourceEntries` 순서를 바꾸거나 중간에 끼워 넣지 마라.**
-> `spawnOrder` 는 **엔트리 인덱스가 아니라 실제로 스폰된 노드의 러닝 카운터**다.
-> `island.size < minimumIslandSize` 인 엔트리는 통째로 건너뛰므로 섬 규모마다 매핑이 다르다
-> (즉 "N번 엔트리 = spawnOrder N" 이 아니다 — 이걸 오해하면 세이브를 깬다).
-> `SaveLoadController` 가 `(islandIndex, spawnOrder)` 를 세이브 키로 쓰기 때문에,
-> 중간 삽입 = 그 뒤 엔트리 전부의 번호가 밀림 = 기존 세이브의 채집 상태가 엉뚱한 노드에 복원된다.
-> 추가는 **반드시 맨 끝에.** 시작 섬 착륙 원 3노드도 같은 이유로 루프 뒤에 붙어 있다.
+> ⚠️ **`resourceEntries` 순서를 바꾸거나 중간에 끼워 넣지 마라.** `spawnOrder` 는 엔트리 인덱스가
+> 아니라 **실제로 스폰된 노드의 러닝 카운터**이고(규모 미달 엔트리는 통째로 건너뛴다),
+> `SaveLoadController` 가 `(islandIndex, spawnOrder)` 를 세이브 키로 쓴다. 중간 삽입 = 그 뒤 전부의
+> 번호가 밀림 = 기존 세이브의 채집 상태가 엉뚱한 노드에 복원된다. **추가는 반드시 맨 끝에.**
+> 시작 섬 착륙 원 3노드도 같은 이유로 루프 뒤에 붙어 있다.
+> `hazardEntries` · `HazardType` · `BuildPieceType` 도 정확히 같은 제약이다.
+
+### 사냥감 (씬 `creatureEntries`, **3개**)
+1. 생고기 — 요구 도구 있음 · baseCount 2 · 성공률 0.7 · 리스폰 90초
+2. 생선 — 도구 불필요 · baseCount 2 · 성공률 0.6 · 리스폰 60초 · `preferShoreline 1`
+3. **생선(게, `isCrab: 1`)** — 도구 불필요 · baseCount 2 · 성공률 0.65 · 리스폰 45초 · `preferShoreline 1`
+전부 `nightSuccessBonus 0.2` / `nightYieldBonus 1`.
+
+### 건축 (v0.01.093 이후 추가 — 문서에 없던 시스템)
+`BuildingSystem`(씬에 없음 · 자기 부트스트랩) + `BuildPieceCatalog`(규격·재료) +
+`BuildPieceVisualBuilder`(형상). 토글 **B** · 회전 **Q**(+휠) · 사거리 8m · 부품 선택 숫자키 **1~7**.
+
+`BuildPieceType`(`BuildPieceCatalog.cs:10`) = **Floor 0 / Wall 1 / Doorway 2 / Window 3 / Stair 4 /
+Roof 5 / Chest 6.** 값이 세이브에 정수로 들어간다 — **추가는 맨 끝에만.**
+격자: `CellSize 2m` · `LevelHeight 2.5m`(`BuildPieceCatalog.cs:73,76`). 격자 원점 = 월드 (0,0,0).
+좌표 공간 `BuildSpace` = **Ground 0 / Deck 1**(`BuildingSystem.cs:44`). 갑판 조각은 뗏목 로컬 좌표로
+저장돼 뗏목이 움직여도 집이 따라간다. 옛 세이브는 이 필드가 없어 0으로 읽히고, 그게 옛 동작이다.
+
+재료(`BuildPieceCatalog.cs:82-137`, 이름은 `ItemData.itemName` 과 **문자 그대로** 대조된다):
+| 부품 | 재료 |
+|---|---|
+| 바닥 | 나뭇가지 4 (**노끈 없음** — 첫 바닥은 제작대 없이 놓을 수 있어야 한다) |
+| 벽 | 나뭇가지 4 · 노끈 1 |
+| 문 | 나뭇가지 5 · 노끈 2 |
+| 창문 | 나뭇가지 4 · 대나무 2 · 노끈 1 |
+| 계단 | 나뭇가지 6 · 대나무 2 · 노끈 2 |
+| 지붕 | 나뭇가지 3 · 야자잎 3 · 노끈 1 |
+| 보관 상자(소형) | 나뭇가지 8 · 노끈 3 · 야자잎 4 |
+철거 반환은 **재료의 절반(내림)** 이고, 인벤토리가 가득 차면 철거 자체를 취소한다(아이템 증발 금지).
+
+**★ 되돌리면 안 되는 규칙 (전부 사고를 겪고 들어온 것이다 · 줄번호는 `BuildingSystem.cs`)**
+1. **바닥이 없어도 아래 벽이 있으면 벽 한 층을 더 올린다** — `TryGetWallSupport`(`:1178`).
+   "벽은 바닥이 있어야 한다"로 되돌리지 마라.
+2. **철거는 위층부터.** 위에 바닥·지붕·계단·상자·벽이 얹혀 있으면 거부한다(`:2087-2112`).
+3. **지붕 위에는 아무것도 쌓지 않는다.** 지붕은 `roofByKey`(`:218`)에 따로 들어가고 딛는 면 조회
+   (`TryGetFloorTopY`)·천장 조회·실내 판정에 섞이지 않는다.
+4. **상자는 지지 근거가 아니다.** `chestByKey`(`:227`)에만 들어간다 — 상자 위에 벽·지붕이 서면 안 된다.
+   **내용물이 남은 상자는 철거 거부**(`:2087`). 순서는 "비우기 → 상자 → 바닥".
+5. **뗏목 관통 차단** `BlockedByRaft`(`:37`). 판정 여유 `RaftBlockBias 0.05`(`:172`)가 없으면
+   반올림 오차 한 번에 갑판 건축 전체가 "막힘"으로 뒤집힌다.
+6. **계단 앞칸 통행 여유** `StairFrontClearance 0.25`(`:145`) — 0으로 되돌리면 6단에서 막혀 못 올라간다
+   (부족분이 정확히 0.037m였다). 씬의 CharacterController 값을 전제로 계산된 상수다.
+
+### 보관 상자
+`StorageChest` + `ChestUI`. 4등급 = **소형 50 / 중형 100 / 대형 150 / 특대 200칸**
+(`BuildPieceCatalog.cs:168`). **설치는 소형만 가능하고 상위는 이미 놓인 상자를 업그레이드해야 도달한다.**
+승급 재료(`BuildPieceCatalog.cs:139-160`):
+- 소→중: 나뭇가지 10 · 대나무 6 · 노끈 4
+- 중→대: 대나무 12 · 금속조각 4 · 노끈 6 · 천조각 3
+- 대→특대: 대나무 16 · 금속조각 10 · 노끈 8 · 천조각 6
+
+금속조각은 대형+ 섬 & 손도끼 필요라 대형 이상 상자는 확실히 중반 이후 목표다.
+상자는 **바닥/갑판 위에만** 놓이고, 조준 4m 안(`ChestFocusDistance`)에서 **E**로 연다.
+
+### 인벤토리 / 상자 UI
+`PlayerInventory.slotCapacity` = **100**(씬에 직렬화됨). 코드 상수 `DefaultSlotCapacity` = 100
+(`PlayerInventory.cs:44`). `SlotCapacity` 는 `slotCapacity > 0 ? slotCapacity : 100`.
+두 창 모두 공용 `VirtualSlotGrid`(`InventorySlotView.cs:69`) — ScrollRect + 칸 뷰 풀링을 쓴다.
+**창 높이는 고정이고 칸 뷰 개수에 상한이 있다**(`(visibleRows + SpareRows) × columns`, `:161`):
+인벤토리 6열×보이는 7줄 → **칸 뷰 최대 54개**, 상자 6열×보이는 6줄 → **최대 48개**.
+용량을 늘려도 **콘텐츠 높이만 바뀐다.** 칸을 전부 그리도록 되돌리지 마라 — 200칸이면 GameObject
+1,200개가 넘고 등급을 올릴 때마다 프레임이 튄다.
+
+### 커서 — `CursorLockController` 가 단독 결정한다
+게임 중에는 커서를 화면 중앙에 잠근다. **다른 어떤 파일도 `Cursor.lockState` 를 직접 만지면 안 된다.**
+푸는 조건(하나라도 성립하면): `Time.timeScale <= 0` / 타이틀·설정 화면 열림 / **활성 상태인
+`UIDragHandle` 이 하나라도 있음**(= 창이 열려 있음) / `LeftShift`(또는 RightShift)를 누름.
+새 창은 제목 표시줄에 `UIDragHandle` 을 붙이고 닫을 때 루트를 `SetActive(false)` 하는 것만으로
+커서가 알아서 풀리고 잠긴다. **건축 핫바(BuildMenuUI)만 의도적 예외** — 그걸 "열린 창"으로 세면
+건축 모드 내내 시야가 얼어붙는다.
+
+### 그 밖에 v0.01.093 이후 들어온 것
+- **뗏목 갑판 콜라이더**(`RaftStructure.cs`): 선체 `BoxCollider` 하나 + 갑판 윗면 전용 얇은 판
+  `DeckSurface`(`:67`). `DeckLength 8` · `DeckWidth 5.2` · `DeckSurfaceY 0.72` · `TotalBuildLevels 6`.
+  두 콜라이더 윗면이 **같은 평면**이라 위 건축 규칙 5번의 여유가 필요하다.
+- **날씨 실내 차폐**(`WeatherSystem.cs:86-100`): 지붕 아래에서 빗줄기·물튀김만 0으로 줄인다
+  (`indoorCheckInterval 0.25` · `indoorFadeSeconds 0.8`). **광량·안개와 `IsRaining` 은 실내에서도
+  그대로다** — 연출만이다. 판정은 `BuildingSystem.IsInsideEnclosedStructure`(`:2925`) + `Shelter.IsInsideHome`.
+- **타이틀 화면**(`MainMenuController.cs`): `Resources/UI/MainMenu_Background` 를 aspect-fill로 깔고
+  제목("무인도 탈출")·부제를 얹는다. 시작 시 `isMenuOpen 1`(씬).
+- **퀘스트 창 분리**: 판정은 `QuestSystem`(폴링 0.5초 · unscaled), 표시는 `QuestUI`(**J**). 묶음 순서는
+  **생존 → 정착 → 항해**(항해가 맨 위에 오지 않는다 — 현재 방향). 정착·항해만 완료 래치가 있다.
+
+### 키 배정 (전수)
+`E` 상호작용/상자 열기 · `R` 조리(+게임오버 재시작) · `C` 섭취 · `G` 설치 · `F` 인벤 필터 ·
+`Tab` 인벤토리 · `V` 제작 · `J` 퀘스트 · `M` 지도(`+`/`-` 확대) · `B` 건축 · `Q` 조각 회전 ·
+`Space` 엔딩 계속 · `Esc` 설정 · `LeftCtrl` 잠수 · `Shift` 커서 해제/한 칸 전부 버리기/물통에 담기 ·
+`F3` 디버그 HUD · `F4` 재료 지급 · `F5` 저장 · `F6/F7/F8` 엔딩·게임오버 미리보기 · `F9` 불러오기.
+**새 키를 만들기 전에 이 표를 확인해라.** 남는 키가 거의 없다.
 
 ### 엔딩
-배: 3단계 누적 + 도면 3장 + 비상식량 12 · 생수 12 · 연료 1 + **경과 15일**
-비행기: 엔진부품 2 · 금속조각 6 · 연료 3 · 노끈 4 + **경과 8일**
-  (엔진부품이 특대 전용이라 배 1단계를 반드시 거친다. 8일 조건이 없던 시절에는 실제 플레이 길이가
-   30분이 되어 30~90분 구간이 통째로 선택 사항이었다 — `aircraftRequiredElapsedDays = 8`, 코드 기본값.)
-`EndingChecker.survivalClock` 연결됨 · `requiredElapsedDays 15` 동작 중
-동시 성립 시 **배 엔딩이 이긴다(확정, 의도)** — `ResolveAchievableEnding()` + `GetEndingPriority()`(Boat 2 / Aircraft 1).
-두 검사의 코드 순서를 뒤바꿔도 결과가 안 뒤집힌다. 배가 15일 + 3단계 + 비축까지 요구하는 더 긴 경로라 그쪽을 보여준다.
+배: 3단계 누적 + 도면 3장 + 비상식량 12 · 생수 12 · 연료 1 + **경과 15일**(씬)
+비행기: 엔진부품 2 · 금속조각 6 · 연료 3 · 노끈 4 + **경과 8일**(씬 `aircraftRequiredElapsedDays 8`)
+동시 성립 시 **배 엔딩이 이긴다(확정, 의도)** — `GetEndingPriority()`(Boat 2 / Aircraft 1).
+두 검사의 코드 순서를 뒤바꿔도 결과가 안 뒤집힌다.
 
-### 도구 내구도
-칼 **-1(무한)** · 물통 -1 · 창 15 · 손도끼 20 · 라이터 5
+### 도구 내구도 (`ScriptableObjects/Item_*.asset`)
+칼 **-1(무한)** · 물통 -1 · 파이어스타터 -1 · 창 15 · 손도끼 20 · 라이터 5 · 나머지 전부 1
 `ItemData.IsUnlimited => maxUses < 0`
 
 ### 밸런스 SO
@@ -162,41 +307,76 @@ health/maxHealth 100 · hunger/thirst 시작 100
 **코드상 8개**가 참조하지만 **씬에서 실제로 배선된 것은 4개뿐**이다.
 - 씬 배선됨: `SurvivalStats` / `HazardSpawner` / `SurvivalClock` / `EndingChecker`
 - 미배선: `WeatherSystem` / `Campfire` / `WaterStill` — 씬에 인스턴스가 없어 `Active`(Resources 자동 로드)로 받는다
-- **`ConsumptionSystem` 은 `balanceConfig` 가 비어 있고, 폴백도 `<=0` 이 아니라 `useConfigPoisonChance`
-  명시 토글(기본 false)이다 → config의 `rawFoodPoisonChance` 는 현재 씬에서 한 번도 읽히지 않는다.**
+- **`ConsumptionSystem` 은 씬에서 `balanceConfig: {fileID: 0}` 이고 `useConfigPoisonChance: 0` 이다.
+  폴백이 `Active` 를 집어 오더라도 이 토글이 false면 config의 `rawFoodPoisonChance` 는 읽히지 않는다**
+  → 실제로 쓰이는 값은 씬의 `rawFoodPoisonChance 0.15` 다.
 
 > **"config만 고치면 반영된다"고 가정하지 마라.** 이 프로젝트 사고의 대표 유형이다(0장 표 참고).
 
 폴백 규칙: 필드가 미설정일 때만 config 값으로 채운다(씬 값이 이긴다).
 0이 유효값인 필드(`requiredElapsedDays` 등)는 `<=0` 이 아니라 **`<0`** 으로 판정한다.
-런타임 생성 컴포넌트(WeatherSystem/Campfire/WaterStill)는 인스펙터 연결이 불가능해서
-`SurvivalBalanceConfig.Active` (Resources 자동 로드)로 받는다.
 
 ### 세이브
 파일은 `makegame_save.json` + **`.bak`(직전 저장본)** 2개다. F5는 `.tmp` 에 쓰고 원자적으로 교체하며
 직전 저장본을 `.bak` 으로 남긴다. F9는 본 파일이 깨져 있으면 **`.bak` 으로 자동 폴백**한다.
 `.bak`/`.tmp` 를 잔여물로 오해해서 지우는 코드를 넣지 마라 — 세이브 복구 경로다.
 `JsonUtility` 는 없는 필드를 기본값으로 채우므로 **`SaveData` 필드 추가는 안전하지만 제거·개명은 파괴적**이다.
+건축은 `buildStructureJson`(문자열) + `storageChests`(`ChestSaveEntry`: space/cell/level/pos/yaw/tier/items).
 
 ---
 
 ## 4. 알려진 함정
 
+### ★ 오늘(v0.01.125 직전) 실제로 사고가 난 5가지 — 소스만 봐서는 유도할 수 없다 ★
+
+1. **Unity 6.5 API.**
+   - `GetInstanceID()` 는 **CS0619(에러)** 다. 쓰지 마라(`CameraShake.cs:90` 참고).
+   - `FindObjectsByType` 은 **1인자 형태만** 쓴다 — `FindObjectsByType<T>(FindObjectsInactive.Include)`.
+     `FindObjectsSortMode` 를 받는 오버로드는 **CS0618**이다. **2인자도 안 된다. 오늘 실제로 걸렸다.**
+
+2. **도메인 리로드는 직렬화 가능한 필드만 복원한다.**
+   플레이 중 스크립트가 재컴파일되면 `bool` 같은 플래그는 살아남지만 `System.Random` 처럼 직렬화
+   불가능한 필드는 **null로 돌아온다.** "플래그가 true면 이 참조는 반드시 있다"는 전제가 그대로 깨진다.
+   정적 검사로는 절대 안 잡힌다 — 실제로 새끼 곰 AI가 매 프레임 예외를 던져 콘솔이 999개를 넘겼다.
+   **초기화 플래그로 참조의 존재를 보증하지 마라. 언제든 다시 만들 수 있게 짜라.**
+   `static` 목록도 리로드에서 비워지는데 **이미 활성인 오브젝트의 `OnEnable` 은 다시 불리지 않는다.**
+
+3. **MonoBehaviour 필드 초기자에서 `Resources.Load` 금지.**
+   필드 초기자는 생성자에서 돌고 Unity는 그 시점의 `Load` 를 막고 null을 돌려준다. 그 null을
+   "에셋 없음"으로 확정하면 **세션 내내 에셋이 안 쓰인다**(실제로 곰 모델이 그렇게 죽었다).
+   **프로브 실패를 영구히 캐시하지 마라.** 현재 해법은 프레임당 한 번씩 다시 살피는 것이다
+   (`CreatureVisualBuilder.cs:153-172`).
+
+4. **★ 씬 텍스트에 키가 없어도 Unity는 값을 들고 있다 ★ — 오늘 최대 교훈이다.**
+   `SampleScene.unity` 를 grep해서 `slotCapacity` 가 없길래 "씬이 안 덮어쓴다"고 판단했는데,
+   **Inspector에는 30이 떠 있었고** 코드 상수 100이 영원히 무시되고 있었다. 스크립트에 필드가 추가된 뒤
+   **씬을 저장하기 전까지는 텍스트에 안 적히지만 Unity는 값을 갖고 있다.**
+   → **"씬 텍스트에 없음"을 "씬이 안 덮어씀"으로 읽지 마라.**
+   확실히 알려면 Inspector를 봐야 하고, **그건 디렉터만 할 수 있다.**
+   씬 직렬화가 걸린 값은 에이전트가 단정하지 말고 `[확인요청]` 으로 디렉터에게 확인을 요청해라.
+
+5. **파일 소유권 락은 디렉터가 손으로 쓴다 — 틀릴 수 있다.**
+   오늘 상자 작업에서 두 에이전트 모두에게 `BuildMenuUI.cs` 를 금지시켰고, 그래서 아무도 메뉴 슬롯을
+   추가하지 않았다. **기능은 전부 됐는데 버튼만 없었다.**
+   → 네 락 목록에 **"이 작업을 끝내려면 필요한데 금지된 파일"** 이 있으면 **조용히 우회하지 말고 보고해라.**
+
+### 그 밖의 상시 함정
+
 - **`Time.timeScale = 0`**: `EndingChecker.TriggerEnding` 과 `GameOverController` 가 즉시 건다.
   엔딩·사망 화면의 모든 연출은 **`unscaledDeltaTime` / `WaitForSecondsRealtime`** 이어야 한다.
   `Time.deltaTime` 을 하나라도 쓰면 연출 전체가 첫 프레임에서 멈춘다(실제 버그였다).
+  `InvokeRepeating` 도 timeScale 0에서 죽는다(볼륨 슬라이더 전례).
 - **눕힌 몸통의 로컬 축**: 일부 생물은 `rotationEuler(0,0,90)` 으로 누워 있어 **로컬 +X가 월드 위쪽**이다.
   이 착각으로 상어 지느러미·독사 혀·전갈 집게·함정 가시·식인종 창이 전부 엉뚱한 곳에 붙어 있었다.
-  파츠를 붙이기 전에 부모 회전을 반드시 확인하고, `CreateUprightPivot()` 을 써라.
+  파츠를 붙이기 전에 부모 회전을 확인하고 `CreateUprightPivot()` 을 써라.
 - **`Physics.autoSyncTransforms` 는 기본 false**: 방금 만든 콜라이더에 바로 레이캐스트하면 안 맞는다.
   `Physics.SyncTransforms()` 를 먼저 불러라(초목이 전부 해수면에 깔린 원인이었다).
-- **`TerrainSampler.SnapToGround` 는 이름이 `"Island_"` 로 시작하는 콜라이더만 지형으로 인정한다.**
-  초목·장식물에 콜라이더를 붙이면 배치 높이 계산이 깨진다. 붙이지 마라.
+- **`TerrainSampler.SnapToGround` 는 이름이 `"Island_"` 로 시작하는 콜라이더만 지형으로 인정한다**
+  (`BuildingSystem` 도 같은 규칙). 초목·장식물에 콜라이더를 붙이지 마라 — 배치 높이 계산이 깨진다.
 - **`Destroy()` 는 프레임 끝까지 지연된다.** 즉시 물리에서 빼려면 `SetActive(false)` 를 먼저 불러라.
 - **`GameObject.CreatePrimitive` 는 콜라이더를 자동으로 붙인다.** 시각 전용 파츠는 제거해야 한다.
-- **`Time.deltaTime` vs 스크립트 실행 순서**: 씬 컴포넌트와 런타임 생성 컴포넌트는 실행 순서가
-  지정돼 있지 않다. 같은 프레임에 상태를 주고받으면 실행마다 결과가 갈린다
-  (엔딩 건너뛰기 통지가 실제로 이 함정에 걸려 한 프레임 지연으로 해결했다).
+- **스크립트 실행 순서가 지정돼 있지 않다.** 씬 컴포넌트와 런타임 생성 컴포넌트가 같은 프레임에 상태를
+  주고받으면 실행마다 결과가 갈린다(엔딩 건너뛰기 통지가 한 프레임 지연으로 해결됐다).
 - **머티리얼을 파츠마다 만들지 마라.** 섬 하나에 400개가 넘으면 SRP 배처가 죽는다. 공유해라.
 
 ---
@@ -216,8 +396,11 @@ health/maxHealth 100 · hunger/thirst 시작 100
 [완료] 항목: 한두 줄 (수치·판단 근거 포함)
 [발견] 예상과 달랐던 것 (근거: 파일:줄)
 [요청] <대상>: <내용>          ← 시그니처·YAML 키는 정확히
-[확인요청] <내용>              ← 근거가 약한 것은 발견이 아니라 여기로
+[확인요청] <내용>              ← 근거가 약한 것, 씬 직렬화가 걸린 값은 전부 여기로
+[막힘] <파일>: <왜 필요한가>   ← 작업 완료에 필요한데 락에 걸린 파일 (필수 · 4장 5번)
 ```
 
-**코드 전문을 붙여넣지 마라. 짧게.**
+**결론만 써라. 유도 과정·대안 비교표 금지.** 코드 전문을 붙여넣지 마라. 짧게.
 **추측을 "발견"으로 올리지 마라.** 코드를 읽고 근거를 댈 수 있는 것만.
+**작업을 끝내려면 필요한데 금지된 파일이 있으면 `[막힘]` 으로 반드시 보고해라.** 조용히 우회하면
+"기능은 다 됐는데 버튼이 없는" 사고가 그대로 반복된다.
