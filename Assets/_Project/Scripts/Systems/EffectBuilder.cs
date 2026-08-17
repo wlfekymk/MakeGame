@@ -441,6 +441,57 @@ namespace MakeGame.Systems
             return ps;
         }
 
+        /// <summary>
+        /// 잠수 기포. 수중에서 카메라에 붙어 위로 떠오르는 작은 흰/청백 원 — 스프라이트 없이
+        /// 이 파일의 공용 소프트닷 텍스처/머티리얼(CreateSystem → GetParticleMaterial, URP 실측
+        /// 검증 경로)을 그대로 쓴다. 시뮬레이션은 World 공간: 에미터(카메라 자식)가 움직여도
+        /// 이미 뱉은 기포는 월드에 남아 제자리에서 떠올라야 "물속"으로 읽힌다(Local이면 기포가
+        /// 카메라에 끌려다녀 화면 스티커처럼 보인다). 흔들림은 노이즈 모듈의 약한 균일 강도로
+        /// 만든다 — 상승 속도(0.8~1.4)에 비해 충분히 작아 수직 성분은 묻히고 수평 흔들림만 남는다.
+        /// useUnscaledTime: 사망/엔딩으로 timeScale이 0이 되어도 얼어붙지 않게 한다(RainSplashes와 동일).
+        /// 비용: maxParticles 30(최대 방출 7/s × 수명 2.5s = 17.5개라 여유), 할당은 생성 1회뿐.
+        /// </summary>
+        public static ParticleSystem CreateDiveBubbles(Transform parent)
+        {
+            ParticleSystem ps = CreateSystem("DiveBubbles", parent, Vector3.zero, true);
+
+            var main = ps.main;
+            main.loop = true;
+            main.duration = 2f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(1.5f, 2.5f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0.8f, 1.4f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.08f);
+            // 흰색~청백 사이에서 입자마다 무작위(불꽃이 두 색을 섞는 것과 같은 이유의 입체감).
+            // 알파는 아래 ApplyFadeOut의 시작 알파(0.7)가 단독으로 정하게 1로 둔다
+            // (colorOverLifetime은 startColor를 "곱한다" — RainSplashes 주석의 함정과 동일).
+            main.startColor = new ParticleSystem.MinMaxGradient(Color.white, new Color(0.80f, 0.90f, 1f, 1f));
+            main.gravityModifier = 0f; // 상승은 startSpeed(에미터 위 방향)가 담당한다
+            main.maxParticles = 30;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.useUnscaledTime = true;
+
+            var emission = ps.emission;
+            emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 7f);
+
+            var shape = ps.shape;
+            shape.enabled = true;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 6f;      // 거의 수직으로만 올라가고
+            shape.radius = 0.06f;  // 입 주변의 좁은 점에서 나온다
+
+            // 약한 수평 흔들림. 균일 강도 0.12는 상승 속도의 1/7 수준이라 궤적이 좌우로만 살짝
+            // 비틀리고, 떠오르는 큰 흐름은 그대로 유지된다.
+            var noise = ps.noise;
+            noise.enabled = true;
+            noise.strength = 0.12f;
+            noise.frequency = 0.7f;
+            noise.quality = ParticleSystemNoiseQuality.Low;
+
+            ApplyFadeOut(ps, 0.7f); // 시작 알파 ~0.7, 위로 갈수록(수명 끝으로 갈수록) 페이드
+
+            return ps;
+        }
+
         /// <summary>수명이 다할수록 입자가 작아지게 한다(불꽃이 사그라들고, 튄 조각이 잦아드는 느낌).</summary>
         private static void ApplyShrinkOverLifetime(ParticleSystem ps)
         {

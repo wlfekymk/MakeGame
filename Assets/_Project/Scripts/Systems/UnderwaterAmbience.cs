@@ -80,6 +80,15 @@ namespace MakeGame.Systems
         private Light sunLight;
 
         /// <summary>
+        /// 잠수 기포 인스턴스(카메라 자식). 수중 최초 진입 때 EffectBuilder로 1회 생성한 뒤
+        /// 계속 재사용한다 — 수중/물 밖 전환마다 파괴/재생성하면 그때마다 GameObject+머티리얼
+        /// 바인딩 비용이 들고 오브젝트 누수 사고의 온상이 되므로 Play/Stop만 오간다.
+        /// 카메라 파괴·씬 전환 시 자식이라 함께 파괴되는데, 그때는 아래 null 프로브가 잡아
+        /// 다음 수중 진입에서 새로 만든다(파괴된 UnityEngine.Object == null 규칙).
+        /// </summary>
+        private ParticleSystem diveBubbles;
+
+        /// <summary>
         /// DayNightCycle.Bootstrap과 같은 패턴: AfterSceneLoad는 "플레이 시작 후 첫 씬 로드"에만
         /// 호출되고 재시작(SceneManager.LoadScene)에는 다시 호출되지 않아, 재시작한 게임에서
         /// 수중 연출이 조용히 사라진다(DayNightCycle.Bootstrap 주석에서 라이브 테스트로 확인된
@@ -159,6 +168,10 @@ namespace MakeGame.Systems
             float depth = worldMap.seaLevel - targetCamera.transform.position.y;
             IsUnderwater = depth > 0f;
 
+            // 기포는 안개와 달리 "물 밖에서 아무것도 안 하기"가 불가능하다(방출을 멈추는 것
+            // 자체가 행동이다). 그래서 물 밖 조기 return보다 먼저 구동한다.
+            UpdateDiveBubbles();
+
             // 물 밖: 아무것도 하지 않는다. DayNightCycle이 이번 프레임 Update에서 이미 안개/환경광을
             // 기록했고 다음 프레임에도 계속 기록하므로, 복원은 자연히 그쪽 몫이다(클래스 주석 참고).
             if (!IsUnderwater)
@@ -195,6 +208,34 @@ namespace MakeGame.Systems
             RenderSettings.ambientSkyColor = ScaleRgb(underwaterAmbientSky, brightness);
             RenderSettings.ambientEquatorColor = ScaleRgb(underwaterAmbientEquator, brightness);
             RenderSettings.ambientGroundColor = ScaleRgb(underwaterAmbientGround, brightness);
+        }
+
+        /// <summary>
+        /// 잠수 기포 구동. 수중 최초 진입 때 메인 카메라 앞 0.6m·아래 0.3m에 1회 생성해 붙이고,
+        /// 이후에는 인스턴스를 재사용해 수중이면 Play, 물 밖이면 Stop만 한다. Stop은
+        /// StopEmitting(Clear 아님)이라 수면 위로 나오는 순간에도 이미 뱉은 기포는 남은 수명
+        /// 동안 자연스럽게 떠오르다 사라진다. isEmitting으로 판정하는 이유: Stop(StopEmitting)
+        /// 후에도 잔여 입자가 살아 있는 동안 isPlaying은 true라, isPlaying으로 걸면 재진입 시
+        /// Play가 씹히는 프레임이 생긴다.
+        /// 호출 시점상 targetCamera는 null이 아님이 보장된다(LateUpdate 상단에서 걸러진다).
+        /// </summary>
+        private void UpdateDiveBubbles()
+        {
+            if (IsUnderwater)
+            {
+                if (diveBubbles == null)
+                {
+                    diveBubbles = EffectBuilder.CreateDiveBubbles(targetCamera.transform);
+                    diveBubbles.transform.localPosition = new Vector3(0f, -0.3f, 0.6f);
+                }
+
+                if (!diveBubbles.isEmitting)
+                    diveBubbles.Play();
+            }
+            else if (diveBubbles != null && diveBubbles.isEmitting)
+            {
+                diveBubbles.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+            }
         }
 
         /// <summary>RGB에만 배율을 곱한다. Color * float는 알파까지 곱하므로 알파는 1로 고정한다(DayNightCycle과 동일).</summary>

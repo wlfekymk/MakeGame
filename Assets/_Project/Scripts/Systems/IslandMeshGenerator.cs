@@ -816,6 +816,12 @@ namespace MakeGame.Systems
 
             Mesh source = sourceFilter.sharedMesh;
 
+            // [해저 스커트] 섬 메시가 확보된 직후, 같은 동기 흐름에서 섬 밖(r ≥ R) 해저 바닥을 깐다.
+            // 지형 수식·rng·기존 배치에 무영향인 근거는 SeabedGenerator 상단 주석에 있다(이름 "Seabed_"
+            // 접두사 → TerrainSampler의 "Island_" 필터에서 구조적으로 제외, 난수 소비 0, radius는
+            // 이 메서드가 받은 메시 반경 그대로라 footprint 계산도 없다).
+            SeabedGenerator.Build(islandObject, source, radius);
+
             // 지형 최대 높이는 WorldMapManager.terrainMaxHeight(인스펙터 값, 실기에서 2.5 → 8로 상향)라
             // 코드 상수로 가정하면 안 된다. 메시 바운즈에서 읽어 항상 실제 지형에 맞춘다.
             // [B15] HighlandCap 제거로 이 값을 읽는 곳이 사라졌지만, 캡 오프셋 주석과 진단 시
