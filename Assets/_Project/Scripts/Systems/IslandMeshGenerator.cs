@@ -822,6 +822,11 @@ namespace MakeGame.Systems
             // 이 메서드가 받은 메시 반경 그대로라 footprint 계산도 없다).
             SeabedGenerator.Build(islandObject, source, radius);
 
+            // [초지 잔디] 같은 훅 지점에서 잔디 인스턴스 배열을 굽는다(순수 위치 해시, rng 소비 0 -
+            // GrassFieldSystem 상단 주석). phaseA/B를 그대로 넘겨 초지 판정이 아래 모래 캡 경계
+            // (DryTop + BandWobble)와 정확히 같은 기준을 쓰게 한다. 셰이더(MG/Grass) 부재 시 무동작.
+            GrassFieldSystem.Build(islandObject, source, radius, phaseA, phaseB);
+
             // 지형 최대 높이는 WorldMapManager.terrainMaxHeight(인스펙터 값, 실기에서 2.5 → 8로 상향)라
             // 코드 상수로 가정하면 안 된다. 메시 바운즈에서 읽어 항상 실제 지형에 맞춘다.
             // [B15] HighlandCap 제거로 이 값을 읽는 곳이 사라졌지만, 캡 오프셋 주석과 진단 시

@@ -1,0 +1,564 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
+using MakeGame.Player;
+
+namespace MakeGame.Systems
+{
+    /// <summary>
+    /// 초지(내륙 풀밭) 잔디 필드. 섬 지형 위에 수만 개의 잔디 blade를 GPU 인스턴싱으로 깐다.
+    ///
+    /// ── 구조 (SeabedGenerator의 "생성 훅 + 정적 레지스트리" 패턴을 그대로 따른다) ──
+    ///  · 배치: 섬 메시 생성 직후 IslandMeshGenerator.BuildGroundCaps가 Build()를 1회 호출한다
+    ///    (SeabedGenerator.Build 호출 바로 다음 줄 - 같은 동기 흐름). 섬별 인스턴스 행렬 배열을
+    ///    한 번 구워 레지스트리에 담아 두고, 이후에는 절대 재계산하지 않는다.
+    ///  · 렌더: 씬마다 자동 생성되는 GrassFieldDriver(UnderwaterAmbience/AtmospherePostFX와 같은
+    ///    RuntimeInitializeOnLoadMethod + sceneLoaded 부트스트랩)가 LateUpdate에서
+    ///    Graphics.RenderMeshInstanced로 그린다. GameObject/MeshRenderer가 인스턴스마다 생기지
+    ///    않으므로 씬 오브젝트 수는 드라이버 1개뿐이다.
+    ///
+    /// ── 셰이더 계약 (같은 웨이브의 MG/Grass, Resources/Shaders/MGGrass) ──
+    ///  · Resources.Load&lt;Shader&gt;("Shaders/MGGrass") 실패 시 잔디 전체 생략(폴백 렌더 없음 -
+    ///    조용히 무동작). 배치 자체를 건너뛰므로 행렬 메모리도 쓰지 않는다.
+    ///  · _MG_WindTime(Time.time) / _MG_PlayerPos(플레이어 월드 위치)를 매 프레임 주입한다.
+    ///    바람/밟힘 애니메이션은 전부 셰이더 정점 단계 - C#은 행렬을 다시 만지지 않는다.
+    ///  · blade 메시는 계약 규격(교차 쿼드 2장, 폭 0.14m·높이 1m·피벗 밑동·UV.y 0뿌리~1끝)대로
+    ///    이 클래스가 코드로 생성한다. Cull Off 셰이더라 단면 지오메트리면 충분하다.
+    ///
+    /// ── 초지 판정 (IslandMeshGenerator의 실제 색 경계 규칙 재사용) ──
+    /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(≈1.30m + BandWobble(angle)
+    /// ± 디더 0.18m) 위가 지형 본체 = Meadow Green 초원, 아래는 모래 캡 3단이다(BuildGroundCaps).
+    /// 잔디는 y ≥ 1.30 + BandWobble(angle) + 0.18(디더 반폭)만 채택해 **어떤 디더 값에서도 모래
+    /// 삼각형 위에 서지 않는다.** BandWobble의 phaseA/phaseB는 훅에서 그대로 넘겨받으므로 경계가
+    /// 실제 모래 경계와 정확히 같은 위상으로 출렁인다. 수면 근처는 이 높이 조건이 자동으로 배제하고
+    /// (해수면 0m ≪ 1.48m), 바위 절벽 지대(P7 메사 등)는 경사 30도 초과 제외가 걸러낸다.
+    ///
+    /// ── 높이 샘플: 레이캐스트 0회 ──
+    /// 섬 메시는 런타임 생성이라 readable이고, 정점 배열이 결정적 극좌표 격자다
+    /// (index 0 = 중심, ring k(1..ringCount)의 seg s = 1+(k-1)*segments+s, 각도 = s/segments·2π,
+    /// 반경 = k/ringCount·R - IslandMeshGenerator.GenerateIslandMesh). 그 격자를 (ring, seg) 이중
+    /// 선형 보간으로 직접 읽는다. 후보 수만 개 × 섬 50개를 Physics.Raycast로 하면 수백만 캐스트라
+    /// 애초에 성립하지 않는 비용이고, 정점 보간은 곱셈 몇 번이다.
+    ///
+    /// ── rng 불변 (SeabedGenerator와 같은 근거) ──
+    /// System.Random/UnityEngine.Random을 만들지도 소비하지도 않는다. 지터·선별·회전·스케일 변주는
+    /// 전부 (격자 정수 좌표, 섬 월드 위치 유래 salt)만 입력으로 받는 순수 해시다
+    /// (IslandMeshGenerator.ComputeNoiseSeed / SeabedGenerator.LatticeHash01과 같은 finalizer 계열).
+    /// 따라서 자원/위험요소/초목의 추첨 순서는 한 칸도 밀리지 않는다.
+    ///
+    /// ── 성능 가드 ──
+    ///  · 행렬 배열은 섬당 1회 생성 후 재사용(프레임당 할당 0). RenderParams는 스택 구조체다.
+    ///  · 간이 LOD: 배치 시 위치 해시로 A/B 두 그룹(각 절반)으로 미리 갈라 두고, 카메라-섬 테두리
+    ///    거리 60m 이내면 A+B(전체), 60~300m면 A만(절반 밀도), 300m 밖이면 스킵한다.
+    ///    프레임당 인스턴스 단위 재계산은 없다 - 거리 비교는 섬당 1회다.
+    ///  · 비활성 섬(RegenerateWorld의 SetActive(false) → Destroy 흐름)은 그리지 않고, 파괴된 섬의
+    ///    레코드는 조회 시 걸러 제거한다(SeabedGenerator.TrySampleSeabed와 같은 정리 규칙).
+    /// </summary>
+    public static class GrassFieldSystem
+    {
+        // ── 밀도/배치 상수 ─────────────────────────────────────────────────────────
+
+        /// <summary>전체 잔디 밀도 배율. 성능 튜닝은 이 값 하나로 한다(0.5 = 절반, 0 = 잔디 끔).</summary>
+        public const float DensityMultiplier = 1f;
+
+        /// <summary>후보 격자 간격(m). 지터가 ±0.45×이 값이라 격자무늬가 눈에 남지 않는다.</summary>
+        private const float CellSpacing = 0.55f;
+
+        /// <summary>
+        /// 초지 최저 높이(m) = DryTop 기준 1.30 + 삼각형 디더 반폭 0.18(heightDither 0.36의 절반).
+        /// 여기에 BandWobble(angle)이 더해져 실제 모래 경계와 같은 위상으로 출렁인다.
+        /// </summary>
+        private const float GrassMinHeightBase = 1.30f + 0.18f;
+
+        /// <summary>경사 상한 tan(30°). 정점 격자 기울기가 이보다 크면 바위 절벽 지대로 보고 제외한다.</summary>
+        private const float MaxSlopeTan = 0.57735f;
+
+        /// <summary>경사 측정용 유한 차분 간격(m). 메시 삼각형(2~5m)보다 작아 국소 경사를 잡는다.</summary>
+        private const float SlopeProbeStep = 0.6f;
+
+        /// <summary>blade 밑동을 지면에 살짝 심는 깊이(m). 경사면에서 밑동이 뜨는 것을 가린다.</summary>
+        private const float RootSinkDepth = 0.04f;
+
+        // ── 렌더/LOD 상수 ──────────────────────────────────────────────────────────
+
+        /// <summary>이 거리(카메라→섬 테두리) 이내면 A+B 전체를 그린다.</summary>
+        private const float FullDetailDistance = 60f;
+
+        /// <summary>이 거리(카메라→섬 테두리) 밖이면 섬을 통째로 스킵한다.</summary>
+        private const float MaxRenderDistance = 300f;
+
+        /// <summary>Graphics.RenderMeshInstanced 1회 호출당 인스턴스 상한(계약: 1023개 단위 배치).</summary>
+        private const int InstancesPerBatch = 1023;
+
+        // ── 레지스트리 (SeabedGenerator.SkirtRecord와 같은 생명주기 규칙) ──────────────
+
+        private sealed class GrassRecord
+        {
+            public Transform root;        // 섬 지형 오브젝트. 파괴(RegenerateWorld) 감지용.
+            public Vector3 center;        // 섬 중심(월드)
+            public float radius;          // 섬 지형 반지름 R
+            public Matrix4x4[] groupA;    // LOD 그룹 A(약 절반). 원거리에서는 이것만 그린다.
+            public Matrix4x4[] groupB;    // LOD 그룹 B(나머지 절반). 근거리에서만 추가로 그린다.
+            public Bounds bounds;         // RenderParams.worldBounds(섬 단위)
+        }
+
+        private static readonly List<GrassRecord> registry = new List<GrassRecord>();
+
+        private static Mesh bladeMesh;
+        private static Material grassMaterial;
+        private static bool shaderMissing;      // 한 번 실패하면 이후 전부 조용히 무동작(계약)
+        private static int windTimeId;
+        private static int playerPosId;
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        //  배치 (섬당 1회, 결정적)
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// 섬 하나의 잔디 인스턴스 배열을 굽는다. IslandMeshGenerator.BuildGroundCaps에서
+        /// 섬 메시 확보 직후 같은 동기 흐름으로 호출된다(SeabedGenerator.Build와 같은 훅 지점).
+        /// </summary>
+        /// <param name="islandObject">섬 지형 오브젝트("Island_{id}_{size}").</param>
+        /// <param name="islandMesh">그 섬의 지형 메시(정점 높이를 직접 읽는 소스).</param>
+        /// <param name="radius">섬 지형 반지름 R(m). 메시 XZ 반경과 같다.</param>
+        /// <param name="phaseA">모래 경계 BandWobble 위상 A(BuildGroundCaps와 같은 값).</param>
+        /// <param name="phaseB">모래 경계 BandWobble 위상 B(BuildGroundCaps와 같은 값).</param>
+        public static void Build(GameObject islandObject, Mesh islandMesh, float radius,
+            float phaseA, float phaseB)
+        {
+            if (islandObject == null || islandMesh == null || radius <= 0f || DensityMultiplier <= 0f)
+                return;
+
+            // 셰이더가 없으면 배치 자체를 생략한다(폴백 렌더 없음 - 계약). 행렬 메모리도 아낀다.
+            if (!EnsureGrassAssets())
+                return;
+
+            Transform islandTransform = islandObject.transform;
+            for (int i = 0; i < registry.Count; i++)
+            {
+                if (registry[i].root == islandTransform)
+                    return; // 같은 섬에 두 번 불려도(방어) 잔디가 겹으로 깔리지 않게 한다.
+            }
+
+            // ── 메시 정점 격자 복원 ────────────────────────────────────────────────
+            // 정점 순서는 GenerateIslandMesh가 결정적으로 보장한다(클래스 주석). 최외곽 링의
+            // 정점 수를 세어 radialSegments를 얻고(SeabedGenerator.ExtractRimHeights와 같은
+            // 문턱 R-1m - 링 간격이 R/ringCount ≥ 5m라 오분류가 없다) 총 정점 수로 검산한다.
+            Vector3[] verts = islandMesh.vertices;
+            float rimThreshold = radius - 1f;
+            int segments = 0;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                Vector3 v = verts[i];
+                if (Mathf.Sqrt(v.x * v.x + v.z * v.z) >= rimThreshold)
+                    segments++;
+            }
+            if (segments < 8 || (verts.Length - 1) % segments != 0)
+                return; // 절차적 지형이 아닌 구성(placeholder 프리팹 등)이면 조용히 건너뛴다.
+            int rings = (verts.Length - 1) / segments;
+            if (rings < 2)
+                return;
+
+            Vector3 center = islandTransform.position;
+
+            // 섬별 해시 salt. 섬 월드 위치(worldSeed에 결정적)만 입력으로 받는 순수 해시라
+            // 같은 시드면 항상 같은 잔디가 나오고, 반지름이 같은 다른 섬과는 패턴이 갈린다.
+            uint islandSalt;
+            unchecked
+            {
+                islandSalt = Mix32((uint)(Mathf.RoundToInt(center.x * 4f) * 73856093)
+                    ^ (uint)(Mathf.RoundToInt(center.z * 4f) * 19349663) ^ 0x3D4A2C15u);
+            }
+
+            // 섬 크기별 목표 개수: Small(R50) ~12k / Medium(R90) ~20k / Large(R140) ~30k / XL(R200) ~40k.
+            // 반지름 선형 보간이 위 네 점을 ±4% 안으로 지나므로 별도 테이블이 필요 없다.
+            float targetCount = DensityMultiplier
+                * Mathf.Lerp(12000f, 40000f, Mathf.InverseLerp(50f, 200f, radius));
+            if (targetCount < 1f)
+                return;
+
+            int cellRange = Mathf.CeilToInt(radius / CellSpacing);
+            float maxPlaceRadiusSq = radius * 0.98f * radius * 0.98f;
+
+            // ── 1차 통과: 초지 조건을 만족하는 후보 셀 수만 센다(저장 없음) ─────────────
+            // 목표 개수 대비 채택 확률을 정확히 잡기 위한 사전 계수다. 경사 검사는 여기서 하지
+            // 않는다(비싼 검사라 채택된 소수에만 건다 - 목표는 "~" 근사치라 몇 % 미달은 허용).
+            int eligible = 0;
+            for (int iz = -cellRange; iz <= cellRange; iz++)
+            {
+                for (int ix = -cellRange; ix <= cellRange; ix++)
+                {
+                    float x, z, y;
+                    if (TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
+                            maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
+                        eligible++;
+                }
+            }
+            if (eligible == 0)
+                return;
+
+            float keepProbability = Mathf.Min(1f, targetCount / eligible);
+
+            // ── 2차 통과: 해시 선별 + 경사 검사 + 행렬 생성 ─────────────────────────────
+            int expected = Mathf.CeilToInt(targetCount * 0.55f) + 16;
+            var listA = new List<Matrix4x4>(expected);
+            var listB = new List<Matrix4x4>(expected);
+            float minY = float.MaxValue;
+            float maxY = float.MinValue;
+
+            for (int iz = -cellRange; iz <= cellRange; iz++)
+            {
+                for (int ix = -cellRange; ix <= cellRange; ix++)
+                {
+                    float x, z, y;
+                    if (!TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
+                            maxPlaceRadiusSq, phaseA, phaseB, out x, out z, out y))
+                        continue;
+
+                    if (Hash01(ix, iz, islandSalt ^ 0x9E3779B9u) > keepProbability)
+                        continue;
+
+                    // 경사 30도 초과 제외(유한 차분). 절벽(P7 메사)·수로 둑 상단 급경사를 걸러낸다.
+                    float gx = (SampleHeight(verts, rings, segments, radius, x + SlopeProbeStep, z)
+                              - SampleHeight(verts, rings, segments, radius, x - SlopeProbeStep, z))
+                              / (2f * SlopeProbeStep);
+                    float gz = (SampleHeight(verts, rings, segments, radius, x, z + SlopeProbeStep)
+                              - SampleHeight(verts, rings, segments, radius, x, z - SlopeProbeStep))
+                              / (2f * SlopeProbeStep);
+                    if (gx * gx + gz * gz > MaxSlopeTan * MaxSlopeTan)
+                        continue;
+
+                    // 인스턴스 변주(전부 위치 해시): yaw 0~360°, 높이 y 0.55~1.15, 폭 xz 0.8~1.1.
+                    float yaw = Hash01(ix, iz, islandSalt ^ 0x85EBCA6Bu) * 360f;
+                    float scaleY = Mathf.Lerp(0.55f, 1.15f, Hash01(ix, iz, islandSalt ^ 0xC2B2AE35u));
+                    float scaleXZ = Mathf.Lerp(0.8f, 1.1f, Hash01(ix, iz, islandSalt ^ 0x27D4EB2Fu));
+
+                    var worldPos = new Vector3(center.x + x, center.y + y - RootSinkDepth, center.z + z);
+                    var matrix = Matrix4x4.TRS(worldPos, Quaternion.Euler(0f, yaw, 0f),
+                        new Vector3(scaleXZ, scaleY, scaleXZ));
+
+                    // LOD 그룹 배정도 위치 해시(프레임에서 절대 재계산하지 않는다).
+                    if (Hash01(ix, iz, islandSalt ^ 0x165667B1u) < 0.5f)
+                        listA.Add(matrix);
+                    else
+                        listB.Add(matrix);
+
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+
+            if (listA.Count + listB.Count == 0)
+                return;
+
+            // worldBounds는 섬 단위 하나. 높이는 blade 최대 신장(스케일 1.15) + 바람 진폭 여유.
+            float boundsMinY = center.y + minY - RootSinkDepth - 0.2f;
+            float boundsMaxY = center.y + maxY + 1.35f;
+            var bounds = new Bounds(
+                new Vector3(center.x, (boundsMinY + boundsMaxY) * 0.5f, center.z),
+                new Vector3(radius * 2f + 2f, boundsMaxY - boundsMinY, radius * 2f + 2f));
+
+            registry.Add(new GrassRecord
+            {
+                root = islandTransform,
+                center = center,
+                radius = radius,
+                groupA = listA.ToArray(),
+                groupB = listB.ToArray(),
+                bounds = bounds,
+            });
+        }
+
+        /// <summary>
+        /// 격자 셀 (ix, iz) 하나를 초지 후보로 평가한다. 지터 위치가 산포 원 안이고 지형 높이가
+        /// 초지 경계(DryTop + 디더 반폭) 위면 true와 함께 섬 로컬 (x, z, y)를 돌려준다.
+        /// 1차(계수)와 2차(생성) 통과가 반드시 같은 판정을 내려야 하므로 한 함수로 공유한다.
+        /// </summary>
+        private static bool TryGetGrassCandidate(int ix, int iz, uint islandSalt, Vector3[] verts,
+            int rings, int segments, float radius, float maxPlaceRadiusSq, float phaseA, float phaseB,
+            out float x, out float z, out float y)
+        {
+            x = ix * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x51ED270Bu) - 0.5f) * 0.9f * CellSpacing;
+            z = iz * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x1B873593u) - 0.5f) * 0.9f * CellSpacing;
+            y = 0f;
+
+            float rSq = x * x + z * z;
+            if (rSq > maxPlaceRadiusSq)
+                return false;
+
+            float angle = Mathf.Atan2(z, x);
+            y = SampleHeightPolar(verts, rings, segments, radius, Mathf.Sqrt(rSq), angle);
+
+            // 초지 경계: BuildGroundCaps의 DryTop과 같은 식(1.30 + BandWobble) + 디더 반폭 0.18.
+            float minHeight = GrassMinHeightBase
+                + 0.22f * Mathf.Sin(angle * 2f + phaseA)
+                + 0.12f * Mathf.Sin(angle * 3f + phaseB);
+            return y >= minHeight;
+        }
+
+        // ── 메시 정점 격자 높이 샘플러 ────────────────────────────────────────────────
+
+        /// <summary>섬 로컬 (x, z)의 지형 높이. 극좌표로 바꿔 정점 격자를 이중 선형 보간한다.</summary>
+        private static float SampleHeight(Vector3[] verts, int rings, int segments, float radius,
+            float x, float z)
+        {
+            return SampleHeightPolar(verts, rings, segments, radius,
+                Mathf.Sqrt(x * x + z * z), Mathf.Atan2(z, x));
+        }
+
+        /// <summary>
+        /// (반경 r, 각도 angle)의 지형 높이. ring 0은 중심 정점(index 0), ring k(1..rings)의
+        /// seg s는 verts[1+(k-1)*segments+s]다(GenerateIslandMesh의 결정적 정점 순서).
+        /// </summary>
+        private static float SampleHeightPolar(Vector3[] verts, int rings, int segments, float radius,
+            float r, float angle)
+        {
+            float ringF = Mathf.Clamp(r / radius * rings, 0f, rings - 0.0001f);
+            int ring0 = (int)ringF;
+            float tRing = ringF - ring0;
+
+            float twoPi = Mathf.PI * 2f;
+            float a = angle - Mathf.Floor(angle / twoPi) * twoPi; // [0, 2π)
+            float segF = a / twoPi * segments;
+            int seg0 = (int)segF;
+            if (seg0 >= segments) seg0 = 0;
+            int seg1 = (seg0 + 1) % segments;
+            float tSeg = segF - (int)segF;
+
+            float h0 = RingHeight(verts, segments, ring0, seg0, seg1, tSeg);
+            float h1 = RingHeight(verts, segments, ring0 + 1, seg0, seg1, tSeg);
+            return Mathf.Lerp(h0, h1, tRing);
+        }
+
+        /// <summary>ring(0 = 중심 정점) 위 각도 보간 높이.</summary>
+        private static float RingHeight(Vector3[] verts, int segments, int ring, int seg0, int seg1, float tSeg)
+        {
+            if (ring <= 0)
+                return verts[0].y;
+            int baseIndex = 1 + (ring - 1) * segments;
+            return Mathf.Lerp(verts[baseIndex + seg0].y, verts[baseIndex + seg1].y, tSeg);
+        }
+
+        // ── 결정적 해시 (rng 소비 0 - SeabedGenerator.LatticeHash01과 같은 finalizer 계열) ──
+
+        /// <summary>격자 정수 좌표 + salt → [0,1). System.Random/UnityEngine.Random을 일절 쓰지 않는다.</summary>
+        private static float Hash01(int xi, int zi, uint salt)
+        {
+            unchecked
+            {
+                uint h = (uint)(xi * 73856093) ^ (uint)(zi * 19349663) ^ salt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return (h & 0xFFFFFFu) / (float)0x1000000u;
+            }
+        }
+
+        /// <summary>uint 하나를 섞는다(IslandMeshGenerator.Mix32와 같은 finalizer).</summary>
+        private static uint Mix32(uint h)
+        {
+            unchecked
+            {
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return h;
+            }
+        }
+
+        // ── 공유 에셋 (blade 메시 1개 + 머티리얼 1장, 월드 전체 공유) ─────────────────────
+
+        /// <summary>
+        /// 셰이더 로드/머티리얼/blade 메시를 준비한다. 셰이더가 없으면 false를 래치하고 이후
+        /// 모든 경로가 조용히 무동작한다(계약: 폴백 렌더 없음). 필드 초기화식이 아니라 호출 시
+        /// 로드한다(Unity 6.5: 필드 초기화식에서 Resources.Load 금지).
+        /// </summary>
+        private static bool EnsureGrassAssets()
+        {
+            if (shaderMissing)
+                return false;
+            if (grassMaterial != null && bladeMesh != null)
+                return true;
+
+            if (grassMaterial == null)
+            {
+                Shader shader = Resources.Load<Shader>("Shaders/MGGrass");
+                if (shader == null)
+                {
+                    shaderMissing = true;
+                    return false;
+                }
+
+                grassMaterial = new Material(shader) { name = "MGGrassFieldMaterial" };
+                grassMaterial.enableInstancing = true;
+                // 색 기본값(계약): 뿌리/끝/마른 풀. 나머지(_WindStrength/_TrampleRadius)는 셰이더
+                // Properties 기본값을 그대로 쓴다.
+                grassMaterial.SetColor("_RootColor", new Color(0.16f, 0.30f, 0.14f, 1f));
+                grassMaterial.SetColor("_TipColor", new Color(0.45f, 0.62f, 0.28f, 1f));
+                grassMaterial.SetColor("_DryTint", new Color(0.55f, 0.52f, 0.30f, 1f));
+                windTimeId = Shader.PropertyToID("_MG_WindTime");
+                playerPosId = Shader.PropertyToID("_MG_PlayerPos");
+            }
+
+            if (bladeMesh == null)
+                bladeMesh = CreateBladeMesh();
+            return true;
+        }
+
+        /// <summary>
+        /// blade 메시(계약 규격): 교차 쿼드 2장 = 정점 8개·삼각형 4개. 폭 0.14m·높이 1m·피벗 밑동,
+        /// UV.y 0(뿌리)~1(끝). Cull Off 셰이더라 단면이면 충분하다. 높이 변주는 인스턴스 행렬
+        /// 스케일 몫이므로 메시는 항상 1m 기준이다.
+        /// </summary>
+        private static Mesh CreateBladeMesh()
+        {
+            const float halfWidth = 0.07f;
+            var mesh = new Mesh { name = "GrassBlade" };
+
+            mesh.vertices = new[]
+            {
+                // 쿼드 1: XY 평면(법선 +Z)
+                new Vector3(-halfWidth, 0f, 0f), new Vector3(halfWidth, 0f, 0f),
+                new Vector3(-halfWidth, 1f, 0f), new Vector3(halfWidth, 1f, 0f),
+                // 쿼드 2: ZY 평면(법선 +X) - 90도 교차
+                new Vector3(0f, 0f, -halfWidth), new Vector3(0f, 0f, halfWidth),
+                new Vector3(0f, 1f, -halfWidth), new Vector3(0f, 1f, halfWidth),
+            };
+            mesh.uv = new[]
+            {
+                new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f),
+            };
+            mesh.normals = new[]
+            {
+                Vector3.forward, Vector3.forward, Vector3.forward, Vector3.forward,
+                Vector3.right, Vector3.right, Vector3.right, Vector3.right,
+            };
+            mesh.triangles = new[]
+            {
+                0, 2, 3, 0, 3, 1,
+                4, 6, 7, 4, 7, 5,
+            };
+            // 바람 진폭(0.12m)·스케일 상한(1.15)을 덮는 여유 바운즈. 컬링은 어차피
+            // RenderParams.worldBounds(섬 단위)가 담당하므로 넉넉해도 비용이 없다.
+            mesh.bounds = new Bounds(new Vector3(0f, 0.6f, 0f), new Vector3(0.6f, 1.5f, 0.6f));
+            return mesh;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        //  렌더 드라이버 (매 프레임)
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// 씬마다 자동 생성되는 렌더 드라이버. UnderwaterAmbience/AtmospherePostFX와 같은
+        /// SubsystemRegistration + sceneLoaded 부트스트랩 패턴이다(씬 수정 없음, 재시작 안전).
+        /// 렌더 상태(레지스트리/메시/머티리얼)는 정적이므로 이 컴포넌트는 순수한 프레임 펌프다.
+        /// SeabedGenerator.SeabedBatchLogger처럼 중첩 private MonoBehaviour로 둔다(AddComponent 전용).
+        /// </summary>
+        private sealed class GrassFieldDriver : MonoBehaviour
+        {
+            private Camera targetCamera;
+            private PlayerController player;
+
+            [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+            private static void Bootstrap()
+            {
+                SceneManager.sceneLoaded += (scene, mode) =>
+                {
+                    if (FindAnyObjectByType<GrassFieldDriver>() != null)
+                        return;
+
+                    var go = new GameObject("GrassFieldDriver");
+                    go.AddComponent<GrassFieldDriver>();
+                };
+            }
+
+            /// <summary>
+            /// LateUpdate인 이유: 플레이어/카메라 이동(Update)이 끝난 뒤의 최종 위치로
+            /// _MG_PlayerPos와 거리 컷을 계산해야 잔디 밟힘이 한 프레임 늦지 않는다
+            /// (UnderwaterAmbience의 "마지막 승자" 관례와 같은 자리).
+            /// </summary>
+            private void LateUpdate()
+            {
+                if (registry.Count == 0 || grassMaterial == null || bladeMesh == null)
+                    return; // 셰이더 실패 포함 - 조용히 무동작(계약)
+
+                // 카메라는 파괴/재생성될 수 있으므로 null이면 다시 집는다(파괴된 오브젝트 == null 규칙).
+                if (targetCamera == null)
+                {
+                    targetCamera = Camera.main;
+                    if (targetCamera == null)
+                        return;
+                }
+
+                // 플레이어 1회 캐시·null 저빈도 재시도(UnderwaterAmbience가 WorldMapManager를 찾는
+                // 것과 같은 규칙 - 정상 경로에서 탐색 비용/할당 0).
+                if (player == null && Time.frameCount % 60 == 0)
+                    player = FindAnyObjectByType<PlayerController>();
+
+                // 매 프레임 주입(계약). 플레이어를 아직 못 찾았으면 _MG_PlayerPos는 셰이더 기본값
+                // (지하 -10000)에 남아 밟힘이 없다 - 올바른 무동작이다.
+                grassMaterial.SetFloat(windTimeId, Time.time);
+                if (player != null)
+                {
+                    Vector3 p = player.transform.position;
+                    grassMaterial.SetVector(playerPosId, new Vector4(p.x, p.y, p.z, 0f));
+                }
+
+                Vector3 camPos = targetCamera.transform.position;
+
+                for (int i = registry.Count - 1; i >= 0; i--)
+                {
+                    GrassRecord record = registry[i];
+
+                    // 섬 파괴(RegenerateWorld) 시 정리: 유니티 == 오버로드로 감지해 레코드를 버린다
+                    // (행렬 배열은 관리 메모리라 이 제거로 GC 대상이 된다 - SeabedGenerator와 같은 규칙).
+                    if (record.root == null)
+                    {
+                        registry.RemoveAt(i);
+                        continue;
+                    }
+
+                    // RegenerateWorld는 Destroy 전에 SetActive(false)를 먼저 건다(WorldMapManager).
+                    // 비활성 섬의 잔디를 이번 프레임에 그리면 유령 잔디가 남으므로 함께 쉰다.
+                    if (!record.root.gameObject.activeInHierarchy)
+                        continue;
+
+                    // 거리 컷은 섬당 1회: 카메라 → 섬 테두리(중심 거리 - R).
+                    float edgeDistance = Vector3.Distance(camPos, record.center) - record.radius;
+                    if (edgeDistance > MaxRenderDistance)
+                        continue;
+
+                    var rparams = new RenderParams(grassMaterial)
+                    {
+                        worldBounds = record.bounds,
+                        shadowCastingMode = ShadowCastingMode.Off,
+                        receiveShadows = true,
+                    };
+
+                    // 간이 LOD: 미리 갈라 둔 그룹을 거리로 선택만 한다(인스턴스 단위 재계산 없음).
+                    RenderGroup(rparams, record.groupA);
+                    if (edgeDistance <= FullDetailDistance)
+                        RenderGroup(rparams, record.groupB);
+                }
+            }
+
+            /// <summary>행렬 배열을 1023개 단위로 잘라 그린다. 배열 재사용 - 프레임당 할당 0.</summary>
+            private static void RenderGroup(in RenderParams rparams, Matrix4x4[] matrices)
+            {
+                if (matrices == null)
+                    return;
+                for (int start = 0; start < matrices.Length; start += InstancesPerBatch)
+                {
+                    Graphics.RenderMeshInstanced(rparams, bladeMesh, 0, matrices,
+                        Mathf.Min(InstancesPerBatch, matrices.Length - start), start);
+                }
+            }
+        }
+    }
+}
