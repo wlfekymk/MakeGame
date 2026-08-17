@@ -6,6 +6,8 @@
 
 ```bash
 cd /path/to/MakeGame && python3 Tools/blender/units/rock.py
+cd /path/to/MakeGame && python3 Tools/blender/units/palm.py
+cd /path/to/MakeGame && python3 Tools/blender/units/bamboo.py
 ```
 
 - Blender GUI 가 필요 없다. `bpy` 가 pip 모듈로 설치돼 있다(Blender 5.0.1 / Python 3.11).
@@ -34,13 +36,37 @@ Unity 임포트 설정(디렉터): **Scale Factor 1 / Convert Units 꺼짐 / Gen
 - `clean_bmesh(bm)` — 겹친 정점 용접 + 면적 0 삼각형 제거(절단·불리언 뒤에는 항상)
 - `decimate_to_budget(obj, n)` — 삼각형 예산 맞추기. **UV 를 펴기 전에** 부른다
 - `box_uv(obj, tile)` — 박스(삼면) 투영 UV. 타일링 노이즈 텍스처 전용, 완전히 결정적
+- `cylinder_uv(obj, tile, wraps)` — 둘레 → U / 높이 → V. 줄기(bark·bamboo)용. 이음새를 면 단위로 푼다
+- `planar_uv(obj, axis, tile, offset)` — 평면 투영. `tile` 에 (U m, V m) 쌍을 줄 수 있다. **잎 전용**
+- `make_double_sided(bm)` — 두께 없이 뒷면을 굽는다(단면 잎이 백페이스 컬링에 사라지는 것을 막는다)
+- `swept_tube(bm, rings, sides)` — 줄기용 다각 튜브. 링마다 측면별 반지름을 줄 수 있다(비원형 단면)
+- `join_objects(objs, name)` — bmesh 누적으로 메시 한 장으로 합친다(UV·smooth 플래그 보존)
+- `enforce_contract_group(objs, ...)` / `export_obj([o1, o2], path)` — **조립체**(한 파일 · `o` 여럿)
 - `fit_size(obj, (w,h,d))` — 바운딩 박스를 정확한 미터 크기로
-- **`enforce_contract(obj, tri_budget, expect_size=...)`** — 밑면 y=0 / X·Z 중심 정렬을 **적용하고**,
+- `ground_center(objs, band)` — **접지 중심**(밑동의 XZ 중심). 아래 원점 규약 참고
+- **`enforce_contract(obj, tri_budget, expect_size=..., align=...)`** — 밑면 y=0 / X·Z 정렬을 **적용하고**,
   삼각형화·예산·접지·크기·퇴화면·잔여 변환을 **검사한다. 어기면 `ContractError` 로 죽는다.**
 - `export_obj(obj, path)` — 삼각형 + `vn` + `vt`, 머티리얼 없음
 - **`verify_obj_file(path, stats)`** — 내보낸 파일을 **다시 읽어** 삼각형 수·크기·접지·중심을 대조
 - `turntable(obj, png, ...)` — 정면/측면/후면/3-4 네 컷 + 1m 격자 + y=0 기준선 + 2m 플레이어 막대를
   PNG 한 장으로 합친다
+
+## 원점 규약 — 접지 중심 (2026-08-17 변경)
+
+`enforce_contract` / `enforce_contract_group` 의 `align` 이 정한다.
+
+| 값 | 뜻 | 쓰는 곳 |
+|---|---|---|
+| `"bbox"` | 바운딩 박스 중심 (`enforce_contract` 기본값) | 대칭 물체 — `rock_a/b/c` |
+| `"ground"` | **접지 중심** = 밑면에서 `ground_band` 안에 있는 정점의 XZ 중심 (`enforce_contract_group` 기본값) | 위가 비대칭인 물체 — 야자수·대나무 |
+
+계약 1장의 "X/Z 중심 정렬"을 오래 바운딩 박스 중심으로 읽어 왔는데, **비대칭 물체에서는 틀렸다.**
+휜 야자수는 크라운이 bbox 를 지배해서 줄기 밑동이 원점에서 **최대 0.74m 밀려났다**(실측 palm_c).
+지면에 닿는 것은 밑동이므로 밑동 중심이 원점이어야 한다. 바운딩 박스는 비대칭이어도 된다.
+
+`verify_obj_file` 도 같은 규약을 **파일에서 다시 계산해** 검사한다(`stats["align"]` 를 따라간다).
+`enforce_contract` 의 기본값이 여전히 `"bbox"` 인 이유는 하나뿐이다 — 이미 배포된 `rock_*.obj` 의
+바이트가 바뀌면 안 된다(재실행 md5 동일 확인함). **새 에셋은 대칭이 확실하지 않으면 `"ground"` 를 쓴다.**
 
 ## 이 파이프라인을 만들면서 실제로 걸린 함정 (지우지 마라)
 
@@ -57,6 +83,18 @@ Unity 임포트 설정(디렉터): **Scale Factor 1 / Convert Units 꺼짐 / Gen
 6. **수평 정사영 카메라에서 바닥판은 한 픽셀도 안 나온다**(정확히 옆으로 선다).
    접지를 눈으로 보려면 `turntable` 처럼 y=0 선을 계산해서 직접 그어야 한다.
    (1m 큐브로 픽셀 대응을 교정해 확인했다: 예측 361.9행 / 실제 362행)
+7. **`make_double_sided` 를 거친 메시에 `clean_bmesh`(remove_doubles)를 부르면 안 된다.**
+   겹쳐 놓은 복제 정점이 다시 녹아 뒷면이 통째로 사라진다.
+8. **잎 UV 는 휘기 전 평면 좌표로 뜬다.** 3D 로 휜 뒤 투영하면 늘어진 소엽이 위에서 봤을 때
+   납작해져 UV 가 뭉개진다. `_flat_frond` → `planar_uv` → `_bend_frond` 순서가 그 이유다.
+9. **한 오브젝트 = 한 머티리얼 = 한 색**이다(계약 4장: 머티리얼은 런타임 코드가 만든다).
+   줄기 갈색과 잎 초록을 같이 내려면 파일 하나에 `o` 오브젝트를 둘 둔다. 파일을 둘로 쪼개면
+   왕관 OBJ 가 제 밑면을 y=0 으로 맞추면서 조립 오프셋을 잃는다.
+10. **멀리서 안 보이는 디테일은 없는 것과 같다.** 대나무 마디를 굵기 변화로만 만들면 20m 밖에서
+   한 픽셀도 안 남는다. `swept_tube(smooth=[...])` 로 마디 칼라 띠만 **플랫 셰이딩**으로 두면
+   법선이 끊겨 밝기 링이 생기고, 그게 거리에서 마디를 읽게 하는 유일한 수단이다.
+11. **잎은 "식물학"이 아니라 "가독성"으로 크기를 정한다.** 실제 대나무 잎(폭 1~3cm)을 그대로
+   만들면 포기가 맨 막대로 보인다. 게임 코드도 같은 이유로 대나무 잎다발에 야자잎 메시를 쓴다.
 
 ## 현재 에셋
 
@@ -65,5 +103,24 @@ Unity 임포트 설정(디렉터): **Scale Factor 1 / Convert Units 꺼짐 / Gen
 | `units/rock.py` | `rock_a` | 3,366 | 1.85 × 1.20 × 1.60 | box, `rock.png` 1.15m 타일 |
 | | `rock_b` | 3,364 | 2.60 × 1.55 × 2.30 | 〃 |
 | | `rock_c` | 3,366 | 3.20 × 2.35 × 2.60 | 〃 |
+| `units/palm.py` | `palm_a` | 1,388 | 3.52 × 5.30 × 3.82 | 줄기 cylinder `bark.png` 0.55m · 잎 planar `frond.png` |
+| | `palm_b` | 1,652 | 4.39 × 6.79 × 4.75 | 〃 |
+| | `palm_c` | 1,784 | 5.55 × 7.95 × 5.30 | 〃 |
+| `units/bamboo.py` | `bamboo_a` | 1,356 | 3.06 × 3.35 × 2.18 | 줄기 cylinder `bamboo.png` 0.30m ×2 · 잎 planar `frond.png` |
+| | `bamboo_b` | 1,748 | 2.75 × 3.88 × 2.91 | 〃 |
+| | `bamboo_c` | 1,768 | 2.38 × 4.46 × 2.72 | 〃 |
 
-크기 근거와 게임 코드 실측값은 `units/rock.py` 파일 상단 주석에 있다.
+야자수·대나무는 **삼각형 예산을 계약표보다 보수적으로** 잡았다(야자수 2,500 / 대나무 1,800).
+섬당 야자수 4~16그루 · 대나무 포기 수 개가 깔리므로 개수 × 삼각형으로 봐야 하기 때문이다.
+
+야자수/대나무 OBJ 는 **파일 1개 안에 `o` 오브젝트 2개**다(줄기 / 잎). Unity 임포터가 자식
+GameObject 로 만들어 상대 위치를 보존하므로 파츠마다 다른 런타임 머티리얼을 물릴 수 있다.
+렌더러는 야자수 13 → 2, 대나무 최대 8 → 2 로 줄어든다.
+원점은 둘 다 **접지 중심**이다(위 "원점 규약"). 배치 코드가 보정할 오프셋이 없다.
+
+대나무 줄기 굵기는 게임의 "보이는 지름 13.2cm"가 아니라 **채집 콜라이더 지름 30cm** 쪽에 맞췄다
+(굵은 줄기 16~20cm). 세장비 32는 갈대로 읽힌다. 콜라이더 안에 들어가므로 조준 판정은 안 변한다.
+줄기가 어두운 것은 UV 가 아니라 런타임 틴트(Driftwood)다 — 제안 색과 비교 렌더는
+`units/bamboo.py` 헤더의 [색] 절과 `_preview/bamboo_tint_proposal.png` 참고.
+
+크기 근거와 게임 코드 실측값은 각 `units/*.py` 파일 상단 주석에 있다.

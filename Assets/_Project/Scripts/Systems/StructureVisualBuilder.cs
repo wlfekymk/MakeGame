@@ -21,6 +21,20 @@ namespace MakeGame.Systems
         /// <summary>Driftwood #8C6640 — 나뭇가지·대나무 등 목재 계열 전체.</summary>
         public static readonly Color Driftwood = new Color(0.549f, 0.400f, 0.251f);
 
+        /// <summary>
+        /// Bamboo Culm #B4BE64 — **살아 있는 대나무 줄기 전용**(자원 노드 대나무 · bamboo_a/b/c 모델).
+        ///
+        /// [B48] 대나무는 목재 계열이라는 이유로 Driftwood(#8C6640)를 쓰고 있었는데, Driftwood는
+        /// "물에 밀려와 마른 나무"의 색이라 살아 있는 대나무가 마른 나뭇가지로 보였다(디렉터 지적).
+        /// 실제 대나무 줄기는 갈색이 아니라 **황록색**이다. Driftwood를 고치지 않고 새 색을 더하는
+        /// 이유는 나뭇가지·표류물·궤짝이 같은 상수를 함께 쓰고 있어서다(그쪽은 마른 나무가 맞다).
+        ///
+        /// 팔레트 정합: 색상각 68°로 Meadow Green(80°)·Frond Green(95°)과 같은 황–녹 대역에 있으면서
+        /// 명도가 더 높아(상대휘도 약 180 vs 잎 147) 잎(Frond Green)을 앞에 세워도 줄기가 뒤로 물러난다.
+        /// Palm Fiber(#948C4C, 수확한 마른 섬유)와는 명도·채도가 함께 벌어져 아이템/월드가 섞이지 않는다.
+        /// </summary>
+        public static readonly Color BambooCulm = new Color(0.706f, 0.745f, 0.392f);
+
         /// <summary>Weathered Stone #808085 — 돌조각·부싯돌 등 석재 계열 전체.</summary>
         public static readonly Color WeatheredStone = new Color(0.502f, 0.502f, 0.522f);
 

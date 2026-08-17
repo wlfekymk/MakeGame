@@ -795,6 +795,13 @@ namespace MakeGame.Systems
         ///   저폴리 교체 전 157,824 대비 **-95%**
         ///   렌더러 508 (16×13 + 48×3 + 156×1) — 프리즘 교체로 **변하지 않았다**(줄기 파츠 수 동일).
         ///
+        /// [B48 모델 교체 후] 야자수가 그루당 렌더러 13 → **2**(줄기 1 + 크라운 1), 삼각형 204 →
+        /// 1,388~1,784(palm_a/b/c)가 됐다. 특대 섬 기준 렌더러 508 → **332**(16×2 + 48×3 + 156×1),
+        /// 삼각형 8,016 → 약 29,600(야자수 약 25,600 + 덤불 2,880 + 풀 1,872)이다. 바위 모델이
+        /// 같은 이유로 이미 40,392를 쓰고 있으므로(B45) 같은 자릿수 안이고, 야자수 1그루는
+        /// AssetPipeline 2장의 "대형 구조물 8,000" 상한 안이다.
+        /// **그루 수 16과 아래 상한 220은 건드리지 않는다** - 개수를 바꾸면 난수 소비가 밀린다.
+        ///
         /// [B10 그루 수를 올리지 않는 이유] 야자수 1그루가 360 → 204삼각형이 됐지만 그루 수 16은
         /// 그대로 둔다. 근거 두 가지다.
         ///   (1) 16을 정한 제약은 삼각형이 아니라 **렌더러 수**다(B8, 디렉터). 그루당 렌더러 13개는
@@ -1704,7 +1711,11 @@ namespace MakeGame.Systems
         private const int PalmFrondCount = 5;
 
         /// <summary>
-        /// 야자수 한 그루(줄기 8각 프리즘 3 + 잎 박스 5×2 = 렌더러 13개 / 204삼각형)를 만든다.
+        /// 야자수 한 그루를 만든다.
+        ///
+        /// [B48] 실물 모델(palm_a/b/c)이 있으면 **렌더러 2개**(줄기 1 + 크라운 1 / 1,388~1,784삼각형)이고,
+        /// 없으면 아래 절차 조립(줄기 8각 프리즘 3 + 잎 박스 5×2 = 렌더러 13개 / 204삼각형)으로 폴백한다.
+        /// 폴백 경로는 지우지 않는다 - 임포트 전이나 프로브 실패에서 야자수가 사라지면 안 된다.
         ///
         /// [B8 형태 개선] 이전 형태는 곧은 원기둥 1개 + 방사형으로 뻗은 평평한 판자 4개라서, 실기에서
         /// "가는 장대에 판자를 붙인 것"으로 보이고 야자수로 읽히지 않았다. 진짜 야자수의 실루엣을 만드는
@@ -1747,6 +1758,44 @@ namespace MakeGame.Systems
             // 뿌리는 yaw만. 휨은 아래 마디 누적이 만들기 때문에 밑동은 항상 지면에 수직으로 박힌다.
             palm.transform.rotation = Quaternion.Euler(0f, leanDirection, 0f);
 
+            // ── [B48] 실물 야자수 모델(palm_a/b/c) ────────────────────────────────────
+            //  · 렌더러가 13개(줄기 3 + 잎 5×2) → **2개**(줄기 1 + 크라운 1)가 된다. 모델에 줄기의 휨과
+            //    잎의 꺾임이 이미 구워져 있어, 아래 마디 누적/잎 2마디 조립이 통째로 필요 없어진다.
+            //  · **크기 규약**: 모델은 이미 미터 규격이다(밑면 y=0 · X/Z는 접지 중심). 절차 메시가
+            //    단위 규격이라 호출부가 미터 크기를 스케일로 곱하던 것과 규약이 정반대라, 그대로 곱하면
+            //    나무가 몇 배로 부푼다. 그래서 바위와 같이 **fit = 목표 높이 / 모델 실측 높이**의
+            //    균등 배율만 쓴다(0.87~1.14).
+            //  · 균등 배율 + 회전은 뿌리의 yaw뿐이라 전단이 원리적으로 없다(자식 회전은 identity).
+            //  · 콜라이더는 붙이지 않는다 - CreatePart는 프리미티브를 거치지 않고, 모델도 프리팹을
+            //    Instantiate하지 않고 sharedMesh만 꺼내 쓰므로 임포터가 붙였을 콜라이더가 씬에 안 들어온다.
+            //  · ★ 난수 ★ 변종 선택에 rng를 쓰지 않는다. 위에서 이미 뽑아 둔 height로 고른다. 그리고
+            //    아래 잎 루프의 draw는 **모델 경로에서도 전부 그대로 뽑는다**(파일 상단 [결정성] 주석).
+            Mesh palmTrunkMesh, palmCrownMesh;
+            float palmModelHeight;
+            bool useModel = TryGetPalmModel(height, out palmTrunkMesh, out palmCrownMesh, out palmModelHeight);
+            if (useModel)
+            {
+                float fit = height / Mathf.Max(0.01f, palmModelHeight);
+                var modelScale = new Vector3(fit, fit, fit);
+
+                var trunkPart = CreatePart(palm.transform, "Veg_PalmTrunk", palmTrunkMesh,
+                    Vector3.zero, modelScale, Quaternion.identity, trunkMaterial);
+
+                if (palmCrownMesh != null)
+                {
+                    CreatePart(palm.transform, "Veg_PalmCrown", palmCrownMesh,
+                        Vector3.zero, modelScale, Quaternion.identity, frondMaterial);
+                }
+                else if (palmTrunkMesh.subMeshCount >= 2)
+                {
+                    // 임포터가 `o` 2개를 한 메시의 서브메시로 합쳐 온 경우. 렌더러 하나에 머티리얼 두 장을
+                    // 주면 서브메시 0(줄기)/1(잎)이 각각 칠해진다 - 메시를 새로 만들지 않는 유일한 방법이다.
+                    var renderer = trunkPart != null ? trunkPart.GetComponent<MeshRenderer>() : null;
+                    if (renderer != null)
+                        renderer.sharedMaterials = new[] { trunkMaterial, frondMaterial };
+                }
+            }
+
             float segmentLength = height / PalmTrunkSegments;
             Vector3 cursor = Vector3.zero;      // 지금까지 쌓아 올린 줄기 끝(로컬)
             float lean = 0f;
@@ -1763,10 +1812,15 @@ namespace MakeGame.Systems
                 // 프리즘 메시는 내장 Cylinder와 동일한 로컬 규격(반지름 0.5·높이 2)이라 아래 스케일 식이
                 // 그대로 유효하다. localScale.y에 "마디 길이의 절반"을 넣고, 마디 사이가 벌어져 보이지
                 // 않게 길이를 6% 겹쳐 쌓는다.
-                CreatePart(palm.transform, $"Veg_PalmTrunk{i}", GetPalmTrunkPrismMesh(),
-                    cursor + direction * (segmentLength * 0.5f),
-                    new Vector3(segmentRadius * 2f, segmentLength * 0.53f, segmentRadius * 2f),
-                    rotation, trunkMaterial);
+                // [B48] 모델 경로에서는 파츠만 건너뛴다. 이 루프는 rng를 한 번도 쓰지 않으므로
+                // 건너뛰어도 난수 소비가 달라지지 않는다(아래 잎 루프는 사정이 다르다 - 거기 주석 참고).
+                if (!useModel)
+                {
+                    CreatePart(palm.transform, $"Veg_PalmTrunk{i}", GetPalmTrunkPrismMesh(),
+                        cursor + direction * (segmentLength * 0.5f),
+                        new Vector3(segmentRadius * 2f, segmentLength * 0.53f, segmentRadius * 2f),
+                        rotation, trunkMaterial);
+                }
 
                 cursor += direction * segmentLength;
             }
@@ -1781,6 +1835,12 @@ namespace MakeGame.Systems
                 float innerPitch = rng.NextFloat(-16f, 4f);
                 // 바깥 마디: 안쪽에서 40~68° 더 꺾여 아래로 늘어진다. 이 꺾임이 야자수 실루엣의 핵심이다.
                 float outerPitch = innerPitch + rng.NextFloat(40f, 68f);
+
+                // ★ [B48] 난수 소비 불변 ★ 위 세 draw(yaw / innerPitch / outerPitch)는 **모델 경로에서도
+                // 반드시 뽑는다.** 여기서 한 번이라도 덜 뽑으면 같은 worldSeed에서 뒤따르는 덤불·풀포기·
+                // 바위·표류물이 통째로 밀린다(파일 상단 [결정성] 주석 · 바위에서 쓴 방법과 같다).
+                if (useModel)
+                    continue;
 
                 float innerLength = frondLength * 0.44f;
                 float outerLength = frondLength * 0.64f;
@@ -2122,6 +2182,88 @@ namespace MakeGame.Systems
             }
 
             return mesh != null;
+        }
+
+        // ── [B48] 야자수 실물 모델 ──────────────────────────────────────────────────
+        //   위 바위 로더와 **같은 패턴**이다(프레임당 1회 프로브 · 실패를 영구 캐시하지 않음 ·
+        //   프리팹을 Instantiate하지 않고 공유 메시만 꺼냄 · 폴백 경로 유지).
+        //   다른 점은 하나뿐이다: 야자수 OBJ는 `o` 오브젝트가 **2개**(줄기 + 크라운)라 머티리얼이
+        //   둘(갈색 껍질 / 초록 잎)이고, 메시도 두 장을 꺼내야 한다.
+
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).</summary>
+        private static readonly string[] PalmModelResourcePaths =
+        {
+            "Models/palm_a", "Models/palm_b", "Models/palm_c"
+        };
+
+        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.</summary>
+        private static readonly float[] PalmModelHeights = { 5.295f, 6.789f, 7.954f };
+
+        private static readonly Mesh[] palmTrunkMeshes = new Mesh[3];
+        private static readonly Mesh[] palmCrownMeshes = new Mesh[3];
+        private static int palmModelProbeFrame = -1;
+
+        /// <summary>
+        /// 목표 높이에 가장 가까운 야자수 모델의 **공유 메시 두 장**(줄기 / 크라운)을 돌려준다.
+        /// 하나도 못 찾으면 false이고, 그때 호출부는 예전 절차 메시로 돌아간다.
+        ///
+        /// [로드 규칙] TryGetRockModel과 동일하다 - Resources.Load를 정적/필드 초기자에서 부르지 않고,
+        /// 실패를 영구히 캐시하지 않는다(그 null을 굳히면 세션 내내 절차 야자수만 나온다,
+        /// AGENT_BRIEF 4장 3번). 성공할 때까지 **프레임당 한 번만** 다시 살핀다 - 섬 하나가 야자수를
+        /// 최대 16그루 만들므로 프레임 가드가 없으면 한 프레임에 Load가 48번 불린다.
+        ///
+        /// [변종 선택] 난수를 쓰지 않는다. 이미 뽑아 둔 목표 높이(4.6~7.6m)에 **가장 가까운 기본 높이**를
+        /// 고르므로 결정적이고(같은 worldSeed면 같은 변종), 균등 배율이 0.87~1.14에 머물러 모델이
+        /// 늘어나 보이지 않는다.
+        /// </summary>
+        private static bool TryGetPalmModel(float targetHeight, out Mesh trunk, out Mesh crown, out float modelHeight)
+        {
+            trunk = null;
+            crown = null;
+            modelHeight = 1f;
+
+            bool anyMissing = false;
+            for (int i = 0; i < palmTrunkMeshes.Length; i++)
+            {
+                if (palmTrunkMeshes[i] == null)
+                    anyMissing = true;
+            }
+
+            if (anyMissing && palmModelProbeFrame != Time.frameCount)
+            {
+                palmModelProbeFrame = Time.frameCount;
+                for (int i = 0; i < palmTrunkMeshes.Length; i++)
+                {
+                    if (palmTrunkMeshes[i] != null)
+                        continue;
+
+                    // `o` 2개짜리 OBJ에서 줄기/잎 메시를 갈라 꺼내는 공용 로더(자원 노드의 대나무와 공유).
+                    Mesh loadedTrunk, loadedCrown;
+                    if (!ResourceVisualLibrary.TryLoadTwoPartModel(PalmModelResourcePaths[i], out loadedTrunk, out loadedCrown))
+                        continue;
+
+                    palmTrunkMeshes[i] = loadedTrunk;
+                    palmCrownMeshes[i] = loadedCrown;
+                }
+            }
+
+            float bestDelta = float.MaxValue;
+            for (int i = 0; i < palmTrunkMeshes.Length; i++)
+            {
+                if (palmTrunkMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(PalmModelHeights[i] - targetHeight);
+                if (delta >= bestDelta)
+                    continue;
+
+                bestDelta = delta;
+                trunk = palmTrunkMeshes[i];
+                crown = palmCrownMeshes[i];
+                modelHeight = PalmModelHeights[i];
+            }
+
+            return trunk != null;
         }
 
         /// <summary>

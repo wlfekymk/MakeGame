@@ -359,7 +359,7 @@ namespace MakeGame.Systems
             go.name = $"Resource_{itemName}";
 
             // 아이템 종류(무기/음식/음료/설치형/이동수단/일반 재료)에 맞는 색을 입혀 카테고리 단위로 구분한다.
-            Color color = UIBuilder.GetItemCategoryColor(yieldItem);
+            Color color = GetWorldSurfaceColor(itemName, UIBuilder.GetItemCategoryColor(yieldItem));
             string textureName = GetSurfaceTextureName(yieldItem);
 
             // [B28] 프리미티브 그대로는 표현할 수 없는 형태(마디 있는 대나무 줄기, 옹이 있는 나뭇가지,
@@ -634,6 +634,22 @@ namespace MakeGame.Systems
                         // [B29] groundY는 **미터**이고 루트 피벗이 지면 위 parentScale.y(=반높이)에 있으므로,
                         // 루트 스케일을 키워도 곁줄기 밑동은 자동으로 지면에 붙는다(계산을 다시 할 필요가 없다).
                         float groundY = -parentScale.y;
+
+                        // ── [B48] 실물 대나무 모델(bamboo_a/b/c) ────────────────────────────
+                        //  · 모델 하나가 이미 **한 포기**(줄기 여러 대 + 잎)라, 절차 곁줄기·잎다발을 통째로
+                        //    대체한다. 파츠는 최대 8개 → 2개다.
+                        //  · 목표 높이는 **이미 뽑아 둔 세로 지터**가 정한 루트 높이(parentScale.y × 2 =
+                        //    3.57~5.25m)다. 새 난수는 0회이고, 변종 선택도 그 값으로 결정론적으로 한다.
+                        //  · 크기 규약: 모델은 이미 미터 규격(밑면 y=0)이다. 그래서 AddMeshPart의 미터
+                        //    좌표계에 **fit = 목표 높이 / 모델 실측 높이**의 균등 배율만 곱한다(1.06~1.18).
+                        //  · ★ 채집 콜라이더는 손대지 않는다 ★ 루트 캡슐(지름 0.30m × 세로 지터)이 조준
+                        //    판정이고, 여기서 만드는 것은 콜라이더가 없는 순수 시각 파츠뿐이다.
+                        float clumpHeight = parentScale.y * 2f;
+                        Mesh bambooCulms, bambooLeaves;
+                        float bambooModelHeight;
+                        bool useBambooModel = ResourceVisualLibrary.TryGetBambooModel(
+                            clumpHeight, out bambooCulms, out bambooLeaves, out bambooModelHeight);
+
                         int culmCount = rng.NextInt(2, 5); // 루트 줄기 + 2~4 = 한 포기에 3~5줄기
                         for (int i = 0; i < culmCount; i++)
                         {
@@ -641,16 +657,25 @@ namespace MakeGame.Systems
                             // [B29] 0.07~0.19m → 0.12~0.34m. 줄기가 2배 길어졌는데 밑동 간격이 그대로면
                             // 한 다발로 뭉쳐 굵은 기둥 하나처럼 보인다(기울기도 함께 2배로 키웠다).
                             float dist = rng.NextFloat(0.12f, 0.34f);
+                            // ★ [B48] 난수 소비 불변 ★ 아래 두 draw(메시 변주 · 방위각)는 모델 경로에서도
+                            // **반드시 여기서 뽑는다.** 인자 안에서 뽑던 것을 지역변수로 끌어낸 이유가 그것이다
+                            // (바위에서 쓴 방법). 한 번이라도 덜 뽑으면 같은 worldSeed에서 뒤따르는 노드의
+                            // 위치·지터가 통째로 밀리고, spawnOrder가 세이브 키라 기존 월드가 어긋난다.
+                            int culmVariant = rng.NextInt(0, 5);
+                            float culmYaw = rng.NextFloat(0f, 360f);
+                            if (useBambooModel)
+                                continue;
+
                             Vector3 offset = new Vector3(Mathf.Cos(around) * dist, groundY, Mathf.Sin(around) * dist);
                             Material material = ResourceVisualLibrary.GetMaterial(
                                 ResourceVisualLibrary.Shade(color, CulmTints[i % CulmTints.Length]), textureName);
                             AddMeshPart(go, $"Culm{i}", offset, parentScale,
-                                ResourceVisualLibrary.BambooCulmMeters(rng.NextInt(0, 5)), material, rng.NextFloat(0f, 360f));
+                                ResourceVisualLibrary.BambooCulmMeters(culmVariant), material, culmYaw);
                         }
 
                         // 잎 다발: 실루엣 위쪽을 깨 주는 역할이라 성기게 붙인다(대나무 잎은 작고 성기다).
-                        // 살아 있는 잎이므로 팔레트의 Frond Green을 쓴다 - 줄기(Driftwood 계열)와 색이
-                        // 갈라져야 "줄기 + 잎"으로 읽힌다. 새 색을 만들지 않는다.
+                        // 살아 있는 잎이므로 팔레트의 Frond Green을 쓴다 - 줄기(B48 이후 Bamboo Culm
+                        // 황록색)와 색이 갈라져야 "줄기 + 잎"으로 읽힌다.
                         // [B29] 1~2 → 2~3. 4~5m 줄기 꼭대기에 잎다발이 하나뿐이면 위쪽이 텅 빈 장대가 된다.
                         // 파츠 예산은 루트 1 + 곁줄기 2~4 + 잎 2~3 = 최대 8로 ClumpVisualPrimitives(8)와 정확히 같다.
                         // 붙는 높이는 parentScale.y에 비례하는 식이라(아래) 루트가 커진 만큼 저절로 따라 올라간다.
@@ -658,9 +683,52 @@ namespace MakeGame.Systems
                         Material leafMaterial = ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.FrondGreen, "frond");
                         for (int i = 0; i < sprigCount; i++)
                         {
-                            float height = groundY + rng.NextFloat(0.62f, 0.94f) * parentScale.y * 2f;
+                            // ★ [B48] 난수 소비 불변 ★ 위 곁줄기 루프와 같은 이유로 두 draw를 먼저 뽑는다.
+                            float sprigT = rng.NextFloat(0.62f, 0.94f);
+                            float sprigYaw = rng.NextFloat(0f, 360f);
+                            if (useBambooModel)
+                                continue;
+
+                            float height = groundY + sprigT * parentScale.y * 2f;
                             AddMeshPart(go, $"Sprig{i}", new Vector3(0f, height, 0f), parentScale,
-                                ResourceVisualLibrary.FrondMeters(3 + (i % 2)), leafMaterial, rng.NextFloat(0f, 360f));
+                                ResourceVisualLibrary.FrondMeters(3 + (i % 2)), leafMaterial, sprigYaw);
+                        }
+
+                        if (useBambooModel)
+                        {
+                            // 루트 실린더(절차 줄기)는 **그리지 않는다.** 메시와 콜라이더는 그대로 둔 채
+                            // 렌더러만 끈다 - ResourceNode.RootTopLocalY와 GetHalfHeight가 루트 메시의
+                            // 경계상자에 걸려 있어서, 메시를 지우면 접지·파츠 높이 계산이 조용히 어긋난다.
+                            var rootRenderer = go.GetComponent<MeshRenderer>();
+                            if (rootRenderer != null)
+                                rootRenderer.enabled = false;
+
+                            float fit = clumpHeight / Mathf.Max(0.01f, bambooModelHeight);
+                            // 방위각은 0으로 둔다. 루트 오브젝트가 이미 무작위 Y 회전을 갖고 있어(SpawnSingleNode)
+                            // 포기 전체가 그대로 돌아간다 - 여기서 rng를 더 뽑을 이유가 없다.
+                            var culmPart = AddMeshPart(go, "BambooModelCulms", new Vector3(0f, groundY, 0f),
+                                parentScale, bambooCulms,
+                                ResourceVisualLibrary.GetMaterial(color, textureName), 0f, fit);
+
+                            if (bambooLeaves != null)
+                            {
+                                AddMeshPart(go, "BambooModelLeaves", new Vector3(0f, groundY, 0f),
+                                    parentScale, bambooLeaves, leafMaterial, 0f, fit);
+                            }
+                            else if (bambooCulms.subMeshCount >= 2 && culmPart != null)
+                            {
+                                // 임포터가 `o` 2개를 한 메시의 서브메시로 합쳐 온 경우 - 렌더러 하나에
+                                // 머티리얼 두 장을 주면 줄기/잎이 각각 칠해진다(메시를 새로 만들지 않는다).
+                                var culmRenderer = culmPart.GetComponent<MeshRenderer>();
+                                if (culmRenderer != null)
+                                {
+                                    culmRenderer.sharedMaterials = new[]
+                                    {
+                                        ResourceVisualLibrary.GetMaterial(color, textureName),
+                                        leafMaterial
+                                    };
+                                }
+                            }
                         }
                         break;
                     }
@@ -831,11 +899,11 @@ namespace MakeGame.Systems
         /// CreatePrimitive를 쓰지 않아 콜라이더가 **처음부터 생기지 않는다**(만들었다 지우는 낭비도 없다).
         /// 시각 파츠에는 콜라이더가 없어야 한다는 규칙을 구조적으로 보장하는 경로다.
         /// </summary>
-        private void AddMeshPart(GameObject parent, string name, Vector3 worldOffset, Vector3 parentScale,
-            Mesh mesh, Material material, float yawDegrees)
+        private GameObject AddMeshPart(GameObject parent, string name, Vector3 worldOffset, Vector3 parentScale,
+            Mesh mesh, Material material, float yawDegrees, float uniformScale = 1f)
         {
             if (mesh == null)
-                return;
+                return null;
 
             float sx = Mathf.Max(0.0001f, parentScale.x);
             float sy = Mathf.Max(0.0001f, parentScale.y);
@@ -845,13 +913,19 @@ namespace MakeGame.Systems
             part.transform.SetParent(parent.transform, false);
             part.transform.localPosition = new Vector3(worldOffset.x / sx, worldOffset.y / sy, worldOffset.z / sz);
             part.transform.localRotation = Quaternion.Euler(0f, yawDegrees, 0f);
-            part.transform.localScale = new Vector3(1f / sx, 1f / sy, 1f / sz);
+            // [B48] uniformScale은 **균등** 배율이다(기본 1 = 예전과 완전히 동일). S⁻¹에 균등 배율을
+            // 곱한 것이므로 위 주석의 성질이 그대로 유지된다: S·(R_y·k·S⁻¹)v = k·R_y·v - 배율이
+            // 균등하고 회전이 Y뿐이라 전단이 원리적으로 생기지 않는다. 미터 규격 OBJ를 목표 치수에
+            // 맞추는 fit 배율(= 목표 높이 / 모델 실측 높이)이 여기로 들어온다.
+            part.transform.localScale = new Vector3(uniformScale / sx, uniformScale / sy, uniformScale / sz);
 
             part.AddComponent<MeshFilter>().sharedMesh = mesh;
 
             var renderer = part.AddComponent<MeshRenderer>();
             if (material != null)
                 renderer.sharedMaterial = material;
+
+            return part;
         }
 
         /// <summary>
@@ -897,6 +971,27 @@ namespace MakeGame.Systems
         /// 텍스처를 씌우지 않고 단색으로 넘어가므로(StructureVisualBuilder.cs:152 가드) 예외도, 분홍색
         /// 머티리얼도 나오지 않는다. 즉 이 표는 텍스처가 들어오는 순간 저절로 켜진다.
         /// </summary>
+        /// <summary>
+        /// [B48] **월드에 서 있는 실물**의 표면색이 아이템 카테고리 색과 달라야 하는 종(種)만 여기서 덮는다.
+        /// 해당 없으면 넘겨받은 카테고리 색을 그대로 돌려준다.
+        ///
+        /// 왜 UIBuilder를 고치지 않는가: UIBuilder.GetItemCategoryColor는 인벤토리/제작 UI의 카테고리
+        /// 색까지 겸하고 있고(재질 계열 = 목재 = 갈색), 그 규칙은 UI에서 여전히 맞다. 반면 월드에 자라
+        /// 있는 대나무는 **살아 있는 식물**이라 마른 목재의 갈색(Driftwood #8C6640)이면 마른 나뭇가지로
+        /// 보인다(디렉터 지적). 그래서 UI 규칙은 그대로 두고 월드 표면만 황록색으로 가른다.
+        /// 잎(Sprig/모델 잎)은 예전 그대로 Frond Green이다 - 줄기와 잎이 색으로 갈려야 한다.
+        ///
+        /// 이 값은 루트 줄기·곁줄기·모델 줄기 · EffectBuilder.PlayHarvestPop의 채집 입자 색까지
+        /// 한 곳에서 따라간다(전부 이 색을 읽는다).
+        /// </summary>
+        private Color GetWorldSurfaceColor(string itemName, Color categoryColor)
+        {
+            if (itemName == "대나무")
+                return StructureVisualBuilder.BambooCulm;
+
+            return categoryColor;
+        }
+
         private string GetSpeciesTextureName(string itemName)
         {
             if (string.IsNullOrEmpty(itemName))
@@ -981,7 +1076,11 @@ namespace MakeGame.Systems
     /// <summary>
     /// [B28] 자원 노드가 **공유**하는 머티리얼/메시 보관소.
     ///
-    /// 이 프로젝트에는 3D 모델 에셋이 0개라 모든 형태를 런타임에 조립한다. 그런데 프리미티브만으로는
+    /// [B48] 여기에 **실물 OBJ 모델 로더**(TryLoadTwoPartModel / TryGetBambooModel)가 더 붙었다.
+    /// 모델이 있는 자원은 모델을 쓰고, 없으면 아래 절차 메시로 폴백한다 - 두 경로 다 살아 있어야 한다.
+    ///
+    /// (아래는 절차 메시 쪽 근거다) 이 프로젝트는 오랫동안 3D 모델 에셋이 0개라 모든 형태를 런타임에
+    /// 조립했다. 그런데 프리미티브만으로는
     /// 마디 있는 대나무 줄기·옹이 있는 잔가지·각진 돌 파편·잎맥 있는 야자잎을 만들 수 없고, 프리미티브를
     /// 겹쳐서 흉내 내면 파츠(=드로우콜)가 폭증한다. 여기서는 그 형태들을 **절차 메시 한 장**으로 만든다.
     /// 대나무 줄기 하나에 마디를 5개 넣어도 파츠는 그대로 1개다 - 굵기 변화는 메시 안에 있기 때문이다.
@@ -1042,6 +1141,139 @@ namespace MakeGame.Systems
             }
             materialCache[key] = created;
             return created;
+        }
+
+        // ── [B48] 실물 OBJ 모델 로더 (야자수 · 대나무 공용) ─────────────────────────────
+        /// <summary>
+        /// `o` 오브젝트가 **2개**(줄기 + 잎)인 OBJ에서 공유 메시 두 장을 꺼낸다. 못 찾으면 false다.
+        ///
+        /// [프리팹을 Instantiate하지 않는다] 바위(IslandMeshGenerator.TryGetRockModel)와 같다.
+        /// MeshFilter.sharedMesh만 꺼내 쓰면 임포터가 붙였을 수 있는 콜라이더가 씬에 **구조적으로**
+        /// 들어올 수 없다(초목·자원의 시각 파츠에 콜라이더가 생기면 TerrainSampler.SnapToGround와
+        /// 배치 높이 계산이 통째로 깨진다).
+        ///
+        /// [줄기/잎을 어떻게 가르나] Unity의 OBJ 임포터는 `o` 그룹을 자식 GameObject로 만들 수도,
+        /// 하나를 루트에 얹을 수도 있다. 그래서 **루트를 포함한 모든 MeshFilter를 순회**하고
+        ///   (1) 이름(메시 이름 + 오브젝트 이름)에 trunk/culm/stem이 있으면 줄기,
+        ///       crown/leaf/foliage/frond가 있으면 잎으로 본다.
+        ///   (2) 이름으로 못 가르면 **OBJ의 `o` 등장 순서**로 폴백한다(줄기가 항상 먼저다).
+        ///   (3) 메시가 하나뿐이면 그것을 줄기로 주고 잎은 null이다 - 호출부가 서브메시 2개짜리
+        ///       (임포터가 합쳐 온) 경우를 머티리얼 두 장으로 따로 처리한다.
+        ///
+        /// [로드 규칙] Resources.Load는 필드 초기자에서 부르지 않고(생성자 시점이라 null이 온다),
+        /// 실패를 영구히 캐시하지 않는다(AGENT_BRIEF 4장 3번). 프레임당 1회 재시도 가드는 호출부가 갖는다.
+        /// </summary>
+        public static bool TryLoadTwoPartModel(string resourcePath, out Mesh trunk, out Mesh foliage)
+        {
+            trunk = null;
+            foliage = null;
+
+            // 확장자를 붙이면 항상 null이다(AssetPipeline 3장).
+            var prefab = Resources.Load<GameObject>(resourcePath);
+            if (prefab == null)
+                return false;
+
+            var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
+            Mesh firstInOrder = null;
+            Mesh secondInOrder = null;
+
+            for (int i = 0; i < filters.Length; i++)
+            {
+                MeshFilter filter = filters[i];
+                if (filter == null || filter.sharedMesh == null)
+                    continue;
+
+                Mesh mesh = filter.sharedMesh;
+                string label = (mesh.name + "/" + filter.gameObject.name).ToLowerInvariant();
+
+                if (trunk == null && (label.Contains("trunk") || label.Contains("culm") || label.Contains("stem")))
+                    trunk = mesh;
+                else if (foliage == null && (label.Contains("crown") || label.Contains("leaf")
+                    || label.Contains("foliage") || label.Contains("frond")))
+                    foliage = mesh;
+
+                if (firstInOrder == null)
+                    firstInOrder = mesh;
+                else if (secondInOrder == null)
+                    secondInOrder = mesh;
+            }
+
+            if (trunk == null)
+                trunk = firstInOrder != foliage ? firstInOrder : secondInOrder;
+            if (foliage == null && secondInOrder != null)
+                foliage = secondInOrder != trunk ? secondInOrder : firstInOrder;
+
+            return trunk != null;
+        }
+
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음).</summary>
+        private static readonly string[] BambooModelResourcePaths =
+        {
+            "Models/bamboo_a", "Models/bamboo_b", "Models/bamboo_c"
+        };
+
+        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.</summary>
+        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f };
+
+        private static readonly Mesh[] bambooCulmMeshes = new Mesh[3];
+        private static readonly Mesh[] bambooLeafMeshes = new Mesh[3];
+        private static int bambooModelProbeFrame = -1;
+
+        /// <summary>
+        /// 목표 높이에 가장 가까운 대나무 모델의 **공유 메시 두 장**(줄기 다발 / 잎)을 돌려준다.
+        /// 하나도 못 찾으면 false이고, 그때 호출부는 예전 절차 포기(곁줄기 + 잎다발)로 돌아간다.
+        ///
+        /// 바위·야자수와 완전히 같은 규칙이다: 프레임당 1회만 프로브하고(섬 하나에 대나무 노드가
+        /// 최대 8개라 가드가 없으면 한 프레임에 Load가 24번 불린다), 실패를 영구 캐시하지 않으며,
+        /// 변종 선택에 난수를 쓰지 않는다(이미 뽑아 둔 세로 지터가 정한 높이로 고른다).
+        /// </summary>
+        public static bool TryGetBambooModel(float targetHeight, out Mesh culms, out Mesh leaves, out float modelHeight)
+        {
+            culms = null;
+            leaves = null;
+            modelHeight = 1f;
+
+            bool anyMissing = false;
+            for (int i = 0; i < bambooCulmMeshes.Length; i++)
+            {
+                if (bambooCulmMeshes[i] == null)
+                    anyMissing = true;
+            }
+
+            if (anyMissing && bambooModelProbeFrame != Time.frameCount)
+            {
+                bambooModelProbeFrame = Time.frameCount;
+                for (int i = 0; i < bambooCulmMeshes.Length; i++)
+                {
+                    if (bambooCulmMeshes[i] != null)
+                        continue;
+
+                    Mesh loadedCulms, loadedLeaves;
+                    if (!TryLoadTwoPartModel(BambooModelResourcePaths[i], out loadedCulms, out loadedLeaves))
+                        continue;
+
+                    bambooCulmMeshes[i] = loadedCulms;
+                    bambooLeafMeshes[i] = loadedLeaves;
+                }
+            }
+
+            float bestDelta = float.MaxValue;
+            for (int i = 0; i < bambooCulmMeshes.Length; i++)
+            {
+                if (bambooCulmMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(BambooModelHeights[i] - targetHeight);
+                if (delta >= bestDelta)
+                    continue;
+
+                bestDelta = delta;
+                culms = bambooCulmMeshes[i];
+                leaves = bambooLeafMeshes[i];
+                modelHeight = BambooModelHeights[i];
+            }
+
+            return culms != null;
         }
 
         // ── 대나무 ─────────────────────────────────────────────────────────────
