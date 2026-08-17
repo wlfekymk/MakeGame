@@ -440,6 +440,11 @@ namespace MakeGame.Systems
         /// 콜라이더는 붙이지 않는다(CreatePart 경로 = 프리미티브를 아예 거치지 않는다). 바위는 지금
         /// 통과할 수 있지만, 콜라이더를 붙이는 순간 TerrainSampler와 초목/자원 배치가 전부 영향을 받는다
         /// (파일 상단 [콜라이더 절대 금지] 주석). 물리를 주려면 디렉터 결정이 필요하다.
+        ///
+        /// [B45] 위 (1)"각진 면"은 **큰 덩어리에 한해** 실물 모델(rock_a/b/c)로 대체됐다. 곁돌은 그대로
+        /// 절차 메시다(삼각형 예산 근거는 아래 본문 주석). 모델이 없으면 큰 덩어리도 예전 경로로 돌아간다.
+        /// 자원 노드 "돌조각"(0.43~0.59m, IslandResourceSpawner)과는 아무 관계가 없다 - 그쪽은 채집
+        /// 조준·콜라이더가 걸려 있는 완전히 다른 오브젝트이고 이 변경이 한 줄도 닿지 않는다.
         /// </summary>
         private static void CreateRockCluster(Transform parent, Vector3 groundPosition, System.Random rng,
             Material[] materials, int index)
@@ -456,12 +461,51 @@ namespace MakeGame.Systems
             // 뿌리는 yaw만 + 스케일 1(균등). 자식이 비균일 스케일이라도 전단이 생기지 않는다.
             cluster.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
 
-            float mainSink = Mathf.Max(0.2f, mainHeight * rng.NextFloat(0.22f, 0.34f));
-            CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
-                new Vector3(0f, mainHeight * 0.5f - mainSink, 0f),
-                new Vector3(mainWidth, mainHeight, mainDepth),
-                Quaternion.Euler(rng.NextFloat(-7f, 7f), rng.NextFloat(0f, 360f), rng.NextFloat(-7f, 7f)),
-                materials[index % materials.Length]);
+            // [B45] 큰 덩어리의 난수는 **경로와 무관하게 여기서 전부 뽑는다.** 모델 경로가 회전 3회 중
+            // yaw 하나만 쓰더라도 소비 횟수는 폴백과 비트 단위로 같아야 한다 - 한 번이라도 덜 뽑으면
+            // 같은 worldSeed에서 이후의 곁돌·표류물이 통째로 밀린다(파일 상단 [결정성] 주석).
+            float mainSinkFraction = rng.NextFloat(0.22f, 0.34f);
+            float mainTiltX = rng.NextFloat(-7f, 7f);   // 폴백 전용(모델은 밑면이 평평해 기울이면 뜬다)
+            float mainSpin = rng.NextFloat(0f, 360f);   // 두 경로 공용 yaw
+            float mainTiltZ = rng.NextFloat(-7f, 7f);   // 폴백 전용
+
+            // [B45] 실물 바위 모델(rock_a/b/c)이 있으면 큰 덩어리만 모델로 바꾼다.
+            //  · 왜 큰 덩어리만인가: 모델은 하나가 3,366삼각형이다. 특대 섬의 큰 덩어리 12개만 해도
+            //    40,392삼각형이고, 곁돌(무리당 2~3개)까지 바꾸면 141,000이 되어 B9 이전의 초목
+            //    총량(157,824)으로 되돌아간다. 곁돌은 폭 0.44~2.16m라 ArtDirection 2장의 디테일 밀도
+            //    규칙상 20면 저폴리가 맞는 자리다(GetBoulderMesh 주석과 같은 근거).
+            //  · 모델은 **이미 미터 규격**이다(밑면 y=0 · X/Z 중심). 절차 메시가 [-0.5,0.5]^3 단위
+            //    규격이라 호출부가 미터 크기를 스케일로 곱하던 것과 규약이 정반대라, 그대로 곱하면
+            //    바위가 2~3배로 부푼다. 그래서 모델 경로는 **폭을 모델 실측 폭으로 나눈 균등 배율**만 쓴다.
+            //  · 균등 배율이므로 자식 회전과 곱해져도 전단이 생기지 않는다. 그래도 회전은 yaw만 준다 -
+            //    모델 밑면이 평면이라 x/z로 기울이면 한쪽 모서리가 지면에서 뜬다.
+            Mesh mainModelMesh;
+            Vector3 mainModelSize;
+            if (TryGetRockModel(mainWidth, out mainModelMesh, out mainModelSize))
+            {
+                // 뽑아 둔 mainWidth를 그대로 목표 폭으로 쓰므로 폭 분포(1.7~3.6m)가 1mm도 바뀌지 않는다.
+                // 세 모델의 기본 폭이 1.85 / 2.60 / 3.20이고 가장 가까운 것을 고르므로 배율은 0.86~1.21이다.
+                float fit = mainWidth / Mathf.Max(0.01f, mainModelSize.x);
+                float modelHeight = mainModelSize.y * fit;
+                // 매립 비율(높이의 22~34%, 최소 0.2m)은 그대로다. 모델 원점이 밑면이라 파묻는 깊이가
+                // 곧 -y이고, 절차 메시처럼 높이의 절반을 더할 필요가 없다.
+                float modelSink = Mathf.Max(0.2f, modelHeight * mainSinkFraction);
+                CreatePart(cluster.transform, "Deco_RockMain", mainModelMesh,
+                    new Vector3(0f, -modelSink, 0f),
+                    new Vector3(fit, fit, fit),
+                    Quaternion.Euler(0f, mainSpin, 0f),
+                    materials[index % materials.Length]);
+            }
+            else
+            {
+                // 모델이 없으면(임포트 전·프로브 실패) 예전 절차 메시 그대로다. 이 경로는 지우지 않는다.
+                float mainSink = Mathf.Max(0.2f, mainHeight * mainSinkFraction);
+                CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
+                    new Vector3(0f, mainHeight * 0.5f - mainSink, 0f),
+                    new Vector3(mainWidth, mainHeight, mainDepth),
+                    Quaternion.Euler(mainTiltX, mainSpin, mainTiltZ),
+                    materials[index % materials.Length]);
+            }
 
             for (int i = 0; i < satelliteCount; i++)
             {
@@ -1273,6 +1317,112 @@ namespace MakeGame.Systems
             return mesh;
         }
 
+        // ─────────────────────────────────────────────────────────────────────────
+        //  [B45] 실물 바위 모델 (rock_a / rock_b / rock_c)
+        // ─────────────────────────────────────────────────────────────────────────
+        //
+        // ── 좌표 계약(에셋이 이렇게 구워져 있다. 여기서 축·원점을 다시 만지지 않는다) ──────────
+        //   단위 = 미터 · +Y 위 · +Z 정면 · **밑면이 정확히 y = 0** · X/Z 중심 정렬 · UV 있음.
+        //   실측: rock_a 1.85×1.20×1.60 · rock_b 2.60×1.55×2.30 · rock_c 3.20×2.35×2.60 (W×H×D),
+        //   각각 3,366 / 3,364 / 3,366삼각형(AssetPipeline 2장 "중형 소품 4,000" 이내).
+        //
+        // ── 절차 메시와 규약이 반대다 ─────────────────────────────────────────────────
+        //   GetBoulderMesh는 [-0.5,0.5]^3 단위 규격이라 호출부가 (폭,높이,깊이)를 미터로 곱했다.
+        //   이 모델들은 이미 미터라 같은 스케일을 곱하면 2~3배로 부푼다. 모델 경로는 목표 폭을
+        //   모델 실측 폭으로 나눈 **균등 배율** 하나만 쓴다(CreateRockCluster 참고).
+        //
+        // ── 프리팹을 Instantiate하지 않는다 ──────────────────────────────────────────
+        //   OBJ는 Resources.Load<GameObject>로만 온다(Mesh로는 null). 하지만 필요한 것은 메시 한 장뿐이고,
+        //   이 파일의 파츠 생성 경로(CreatePart)가 이미 "빈 GameObject + MeshFilter + MeshRenderer"라
+        //   프리팹 인스턴스를 만들면 계층·컴포넌트·머티리얼 슬롯이 공짜로 딸려 온다. 게다가 임포터
+        //   설정에 따라 **MeshCollider가 딸려 올 수 있는데** 이 파일은 콜라이더가 한 프레임도 존재하면
+        //   안 된다(파일 상단 [콜라이더 절대 금지]). 메시만 꺼내 쓰면 그 위험이 구조적으로 없다.
+        //
+        // ── 머티리얼 ────────────────────────────────────────────────────────────────
+        //   새로 만들지 않는다. BuildIslandSurface가 만든 rockMaterials(WeatheredStone × "rock" 텍스처,
+        //   ResourceVisualLibrary.GetMaterial 공유 캐시 = "MG~" 접두사 · enableInstancing)를 그대로 받는다.
+
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).</summary>
+        private static readonly string[] RockModelResourcePaths =
+        {
+            "Models/rock_a", "Models/rock_b", "Models/rock_c"
+        };
+
+        /// <summary>각 모델의 실측 크기(m, W×H×D). 위 경로와 인덱스가 일대일로 대응한다.</summary>
+        private static readonly Vector3[] RockModelSizes =
+        {
+            new Vector3(1.85f, 1.20f, 1.60f),
+            new Vector3(2.60f, 1.55f, 2.30f),
+            new Vector3(3.20f, 2.35f, 2.60f),
+        };
+
+        private static readonly Mesh[] rockModelMeshes = new Mesh[3];
+        private static int rockModelProbeFrame = -1;
+
+        /// <summary>
+        /// 목표 폭에 가장 가까운 바위 모델의 **공유 메시**를 돌려준다. 하나도 못 찾으면 false다.
+        ///
+        /// [로드 규칙] Resources.Load는 정적 필드 초기자에서 부르지 않는다 - 초기자는 생성자 시점에
+        /// 돌 수 있고 Unity가 그 시점의 Load를 막아 null을 준다. 그리고 **실패를 영구히 캐시하지 않는다.**
+        /// 그 null을 "에셋 없음"으로 굳히면 세션 내내 절차 바위만 나온다(곰 모델이 실제로 그렇게 죽었다,
+        /// AGENT_BRIEF 4장 3번). 성공할 때까지 프레임당 한 번만 다시 살핀다 -
+        /// CreatureVisualBuilder.BearModelPrefab과 같은 패턴이고, 섬 하나가 바위를 최대 12개 만들므로
+        /// 프레임 가드가 없으면 한 프레임에 Load가 36번 불린다.
+        /// </summary>
+        private static bool TryGetRockModel(float targetWidth, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            bool anyMissing = false;
+            for (int i = 0; i < rockModelMeshes.Length; i++)
+            {
+                if (rockModelMeshes[i] == null)
+                    anyMissing = true;
+            }
+
+            if (anyMissing && rockModelProbeFrame != Time.frameCount)
+            {
+                rockModelProbeFrame = Time.frameCount;
+                for (int i = 0; i < rockModelMeshes.Length; i++)
+                {
+                    if (rockModelMeshes[i] != null)
+                        continue;
+
+                    // OBJ는 GameObject로 온다. 메시는 루트 또는 그 자식의 MeshFilter.sharedMesh다
+                    // (Unity의 OBJ 임포터는 `o` 그룹을 자식으로 만들 수도, 루트에 얹을 수도 있다).
+                    var prefab = Resources.Load<GameObject>(RockModelResourcePaths[i]);
+                    if (prefab == null)
+                        continue;
+
+                    var filter = prefab.GetComponent<MeshFilter>();
+                    if (filter == null || filter.sharedMesh == null)
+                        filter = prefab.GetComponentInChildren<MeshFilter>(true);
+                    if (filter != null)
+                        rockModelMeshes[i] = filter.sharedMesh;
+                }
+            }
+
+            // 변종 선택에 난수를 쓰지 않는다. 이미 뽑아 둔 목표 폭에 **가장 가까운 기본 폭**을 고르므로
+            // 결정적이고(같은 worldSeed면 같은 변종), 배율이 항상 1 근처(0.86~1.21)라 모델이 늘어나 보이지 않는다.
+            float bestDelta = float.MaxValue;
+            for (int i = 0; i < rockModelMeshes.Length; i++)
+            {
+                if (rockModelMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(RockModelSizes[i].x - targetWidth);
+                if (delta >= bestDelta)
+                    continue;
+
+                bestDelta = delta;
+                mesh = rockModelMeshes[i];
+                size = RockModelSizes[i];
+            }
+
+            return mesh != null;
+        }
+
         /// <summary>
         /// [B29] 큰 바위 / 곁에 붙는 작은 덩어리의 공유 메시(구 규격 [-0.5,0.5]^3).
         ///
@@ -1280,6 +1430,9 @@ namespace MakeGame.Systems
         /// ArtDirection 2장의 디테일 밀도 규칙 그대로다 - 3m짜리 바위는 화면을 크게 차지하니 20면이면
         /// 실루엣이 각져 보이고, 0.8m짜리 곁돌은 80면을 줘도 화면에 도달하지 않는다.
         /// 변주는 4종뿐이고 전부 정적 캐시라, 섬 9개의 바위 전부가 이 8장을 나눠 쓴다.
+        ///
+        /// [B45] large=true 경로는 이제 **폴백 전용**이다(모델이 없을 때만 큰 덩어리에 쓰인다).
+        /// large=false(곁돌)는 예전 그대로 항상 이 메시를 쓴다 - 지우지 마라, 두 경로 다 살아 있어야 한다.
         /// </summary>
         private static Mesh GetBoulderMesh(int variant, bool large)
         {
