@@ -63,3 +63,7 @@ _to_delete/
 
 # 스모크 테스트 결과 (실행마다 갱신, 이력 가치 없음)
 smoke_result.json
+
+# 스탠드얼론 빌드 산출물 (스팀 depot 루트 - 소스 저장소에 넣지 않는다)
+Builds/
+build_result.json
