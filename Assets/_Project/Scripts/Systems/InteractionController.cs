@@ -142,6 +142,15 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 여객기 잔해(시작 섬 해안): 1회 한정 물자 수색. 콜라이더가 동체/날개 등 자식 파츠에
+            // 붙어 있으므로 GetComponentInParent를 쓴다(BoatWorkbench와 같은 이유).
+            var airliner = target.GetComponentInParent<AirlinerWreck>();
+            if (airliner != null)
+            {
+                airliner.TrySearch(inventory);
+                return;
+            }
+
             var hazard = target.GetComponent<HazardSource>();
             if (hazard != null)
             {

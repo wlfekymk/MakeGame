@@ -1,10 +1,13 @@
+using System.Collections.Generic;
 using UnityEngine;
+using MakeGame.Data;
 
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 시작 섬 해안의 폭발한 여객기 잔해. 순수 배경 오브젝트라 상호작용/게임플레이 값이 하나도 없고,
-    /// 여기서 만드는 것은 시각 파츠 + 걸어 다닐 수 있는 BoxCollider들 + 연기뿐이다.
+    /// 시작 섬 해안의 폭발한 여객기 잔해. 시각 파츠 + 걸어 들어갈 수 있는 BoxCollider들 + 연기를
+    /// 만들고, 1회 한정 비상 물자 수색(TrySearch)을 제공한다. 수색은 InteractionController가
+    /// 부르고 프롬프트는 InteractionPromptUI가 HasSalvage로 판정한다.
     /// WorldMapManager가 AddComponent로 붙이며, 인스펙터에서 채울 필드는 없다.
     ///
     /// 경비행기 잔해(AircraftWreck)와 달리 형태를 절차 메시로 조립하지 않는다 - 여객기는 실물 OBJ
@@ -54,9 +57,10 @@ namespace MakeGame.Systems
         /// <summary>
         /// 콜라이더/연기 위치의 정렬 오프셋. 모델 빌드 단계에서 파츠 배치 좌표(로컬)를 최종 메시
         /// 좌표로 옮기며 생긴 값이라, 명세의 로컬 center에 이 값을 더해야 메시와 정확히 겹친다.
-        /// (연기 위치 상수에는 이미 반영돼 있다.)
+        /// v2 모델(실물급 37×9.6×39m) 재제작으로 값이 갱신됐다 - 메시를 다시 구우면 이 값과
+        /// 콜라이더 표도 같이 갱신해야 한다.
         /// </summary>
-        private static readonly Vector3 AlignOffset = new Vector3(1.8773f, 0.0473f, -1.2652f);
+        private static readonly Vector3 AlignOffset = new Vector3(2.8246f, 0f, -2.8362f);
 
         /// <summary>시각+콜라이더+연기를 이미 만들었는지(1회 빌드 가드). 시각 전용이라 세이브와 무관하다.</summary>
         private bool built = false;
@@ -218,13 +222,13 @@ namespace MakeGame.Systems
 
         private static void BuildVisualParts(Transform root)
         {
-            // 색 배합은 AircraftWreck과 같은 문법(팔레트 색의 명도 변주)이되, 여객기는 더 크고 하얗게 -
-            // 경비행기(1.08f)보다 밝은 1.15f라 두 잔해가 같은 금속 팔레트 안에서도 구분된다.
-            Color hull = ResourceVisualLibrary.Shade(StructureVisualBuilder.SalvageMetal, 1.15f);
-            Color dark = ResourceVisualLibrary.Shade(StructureVisualBuilder.SalvageMetal, 0.55f);
-            Color stripe = ResourceVisualLibrary.Shade(StructureVisualBuilder.DangerRed, 0.80f);
-            Color window = ResourceVisualLibrary.Shade(StructureVisualBuilder.SalvageMetal, 0.25f);
-            Color soot = ResourceVisualLibrary.Shade(StructureVisualBuilder.SalvageMetal, 0.16f);
+            // [사용자 피드백 "회색이다"] 팔레트 명도 변주(SalvageMetal 기반)를 버리고 명시 색으로 -
+            // 흰 동체 + 빨간 리버리가 여객기의 정체성이라 다른 잔해와의 팔레트 통일보다 우선한다.
+            Color hull = new Color(0.92f, 0.93f, 0.94f);   // 흰 동체
+            Color dark = new Color(0.24f, 0.26f, 0.28f);   // 엔진·파편·절단면
+            Color stripe = new Color(0.68f, 0.13f, 0.11f); // 빨간 리버리
+            Color window = new Color(0.08f, 0.10f, 0.13f); // 창
+            Color soot = new Color(0.05f, 0.05f, 0.05f);   // 지면 그을음
 
             // 머티리얼은 전부 월드 공유 캐시에서 받는다(여기서 새로 만들지 않는다 - CreateMeshPart 주석).
             Material[] materials =
@@ -262,31 +266,54 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 걸어 다닐 수 있는 BoxCollider 7개. 값은 모델 빌드에서 산출한 실측치를 코드에 박아 둔 것이라
+        /// BoxCollider 15개. 값은 v2 모델 빌드에서 산출한 실측치를 코드에 박아 둔 것이라
         /// 메시(airliner_wreck_a.obj)를 다시 구우면 이 표도 같이 갱신해야 한다.
+        ///
+        /// v2는 절단부가 개방된 양면 셸 + 내부 바닥판이라 **사람이 걸어 들어간다** - 그래서 예전
+        /// fuse_front 같은 동체 통짜 박스는 전부 버리고 바닥/벽/천장을 분해해서 깐다(통짜 박스가
+        /// 하나라도 남으면 입구가 보이는데 들어갈 수 없는 투명 벽 사고가 난다).
         /// 회전이 있는 박스는 BoxCollider가 회전을 못 가지므로 자식 transform의 회전으로 준다 -
         /// 자식 위치를 박스 중심에 두고 콜라이더 center를 0으로 두면 회전축이 곧 박스 중심이 된다.
-        /// 전부 기본 레이어 · isTrigger=false(플레이어가 밟고 올라가는 실제 충돌면이다).
+        /// 전부 기본 레이어 · isTrigger=false(플레이어가 밟고 걸어 다니는 실제 충돌면이다).
         /// </summary>
         private static void BuildColliders(Transform root)
         {
-            AddBoxCollider(root, "fuse_front", new Vector3(0.0f, 1.44f, 7.6f), new Vector3(2.7f, 2.75f, 12.4f),
-                Quaternion.identity);
-            AddBoxCollider(root, "fuse_rear", new Vector3(-4.6f, 1.52f, -5.0f), new Vector3(2.7f, 2.75f, 9.8f),
-                Quaternion.Euler(0f, 26f, 0f));
-            AddBoxCollider(root, "tail_fin", new Vector3(-7.5f, 4.6f, -9.4f), new Vector3(0.5f, 5.0f, 2.6f),
-                Quaternion.Euler(0f, 26f, 0f));
-            // 오른 날개는 올라갈 수 있는 경사로다. 날개 기울기(루트 y1.02 → 끝 y1.95 상승)를 X축 롤로
-            // 근사한다 - 끝이 +X 쪽으로 높으므로 z 롤은 음수다. 두툼한 박스(두께 0.4)라 경사면 위에서
-            // 발이 빠지지 않는다.
-            AddBoxCollider(root, "wing_right_ramp", new Vector3(5.8f, 1.42f, 4.9f), new Vector3(9.6f, 0.4f, 3.6f),
-                Quaternion.Euler(0f, 0f, -5.5f));
-            AddBoxCollider(root, "wing_left_torn", new Vector3(-11.6f, 0.22f, 6.2f), new Vector3(7.4f, 0.5f, 3.2f),
-                Quaternion.Euler(0f, -32f, 0f));
-            AddBoxCollider(root, "engine_attached", new Vector3(5.4f, 0.72f, 4.9f), new Vector3(1.4f, 1.4f, 2.8f),
-                Quaternion.identity);
-            AddBoxCollider(root, "engine_torn", new Vector3(-2.6f, 0.95f, 3.4f), new Vector3(1.4f, 1.4f, 2.8f),
-                Quaternion.Euler(0f, 55f, 0f));
+            // 전방 객실: 바닥(윗면 y=0.95가 보행면) + 양쪽 벽 + 천장 + 조종석 노즈 막음.
+            AddBoxCollider(root, "cabin_floor_front", new Vector3(0f, 0.435f, 9.4f),
+                new Vector3(3.2f, 1.03f, 14.4f), Quaternion.identity);
+            AddBoxCollider(root, "cabin_wall_front_L", new Vector3(-1.82f, 2.4f, 9.4f),
+                new Vector3(0.4f, 2.9f, 14.4f), Quaternion.identity);
+            AddBoxCollider(root, "cabin_wall_front_R", new Vector3(1.82f, 2.4f, 9.4f),
+                new Vector3(0.4f, 2.9f, 14.4f), Quaternion.identity);
+            AddBoxCollider(root, "cabin_ceiling_front", new Vector3(0f, 4.05f, 9.4f),
+                new Vector3(3.2f, 0.5f, 14.4f), Quaternion.identity);
+            AddBoxCollider(root, "nose_block", new Vector3(0f, 1.35f, 19.3f),
+                new Vector3(2.6f, 2.6f, 3.6f), Quaternion.identity);
+
+            // 후방 객실(yaw 24도로 꺾여 나뒹군 동체): 같은 바닥/벽/천장 구성 + 꼬리 막음 + 수직 꼬리날개.
+            AddBoxCollider(root, "cabin_floor_rear", new Vector3(-6.93f, 0.43f, -6.12f),
+                new Vector3(3.2f, 1.03f, 11.4f), Quaternion.Euler(0f, 24f, 0f));
+            AddBoxCollider(root, "cabin_wall_rear_L", new Vector3(-8.59f, 2.4f, -5.38f),
+                new Vector3(0.4f, 2.9f, 11.4f), Quaternion.Euler(0f, 24f, 0f));
+            AddBoxCollider(root, "cabin_wall_rear_R", new Vector3(-5.26f, 2.4f, -6.86f),
+                new Vector3(0.4f, 2.9f, 11.4f), Quaternion.Euler(0f, 24f, 0f));
+            AddBoxCollider(root, "cabin_ceiling_rear", new Vector3(-6.93f, 4.05f, -6.12f),
+                new Vector3(3.2f, 0.5f, 11.4f), Quaternion.Euler(0f, 24f, 0f));
+            AddBoxCollider(root, "tail_block", new Vector3(-10.14f, 2.6f, -13.34f),
+                new Vector3(2.4f, 2.4f, 4.6f), Quaternion.Euler(0f, 24f, 0f));
+            AddBoxCollider(root, "tail_fin", new Vector3(-10.71f, 6.6f, -14.62f),
+                new Vector3(0.6f, 6.2f, 3.2f), Quaternion.Euler(0f, 24f, 0f));
+
+            // 오른 날개는 올라갈 수 있는 경사로다 - 날개 기울기를 z 롤 -4.9도로 근사한다.
+            // 두툼한 박스(두께 0.5)라 경사면 위에서 발이 빠지지 않는다.
+            AddBoxCollider(root, "wing_right_ramp", new Vector3(8.2f, 2.28f, 7.0f),
+                new Vector3(13.6f, 0.5f, 4.6f), Quaternion.Euler(0f, -19f, -4.9f));
+            AddBoxCollider(root, "wing_left_torn", new Vector3(-16.8f, 0.31f, 10.4f),
+                new Vector3(10.4f, 0.7f, 4.4f), Quaternion.Euler(0f, -34f, 0f));
+            AddBoxCollider(root, "engine_attached", new Vector3(7.6f, 1.02f, 6.6f),
+                new Vector3(1.9f, 1.9f, 3.8f), Quaternion.identity);
+            AddBoxCollider(root, "engine_torn", new Vector3(-3.4f, 0.95f, 4.6f),
+                new Vector3(1.9f, 1.9f, 3.8f), Quaternion.Euler(0f, 50f, 0f));
         }
 
         /// <summary>명세의 로컬 center에 AlignOffset을 더해 메시 좌표로 옮긴 뒤 자식 박스를 하나 붙인다.</summary>
@@ -306,19 +333,131 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 타다 남은 연기 2곳: 전방 절단면 근처 + 뜯긴 엔진. 좌표에는 AlignOffset이 이미 반영돼 있다.
+        /// 타다 남은 연기 3곳: 전방 절단면 + 후방 절단면 + 뜯긴 엔진. 좌표는 명세 로컬값에
+        /// AlignOffset을 더해 메시 좌표로 옮긴다(콜라이더와 같은 규칙).
         /// 모닥불 연기(안전 신호)와 헷갈리지 않도록 옅고 느린 것은 CreateWreckSmoke가 보장한다
         /// (AircraftWreck 끝부분과 같은 사용법 - null 가드 후 Play).
         /// </summary>
         private static void BuildSmoke(Transform root)
         {
-            var frontSmoke = EffectBuilder.CreateWreckSmoke(root, new Vector3(1.9f, 1.6f, 0.6f));
-            if (frontSmoke != null)
-                frontSmoke.Play();
+            AddSmoke(root, new Vector3(0.6f, 2.3f, 1.2f));    // 전방 동체 절단면
+            AddSmoke(root, new Vector3(-4.21f, 2.3f, -0.76f)); // 후방 동체 절단면
+            AddSmoke(root, new Vector3(-3.4f, 1.7f, 4.6f));   // 뜯긴 엔진
+        }
 
-            var engineSmoke = EffectBuilder.CreateWreckSmoke(root, new Vector3(-0.7f, 1.1f, 2.1f));
-            if (engineSmoke != null)
-                engineSmoke.Play();
+        private static void AddSmoke(Transform root, Vector3 localPosition)
+        {
+            var smoke = EffectBuilder.CreateWreckSmoke(root, localPosition + AlignOffset);
+            if (smoke != null)
+                smoke.Play();
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // 수색 상호작용 (1회 한정 비상 물자)
+        // ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// 수색 지급표: (레지스트리 itemName, 개수). 이름은 전부 ItemDataRegistry에 실재하는
+        /// 에셋으로 확인했다(Item_천조각/Item_금속조각/Item_비상식량/Item_생수.asset).
+        /// </summary>
+        private static readonly string[] SalvageNames = { "천조각", "금속조각", "비상식량", "생수" };
+        private static readonly int[] SalvageCounts = { 3, 3, 2, 2 };
+
+        /// <summary>
+        /// 아직 지급하지 않은 물자(아이템 1개당 항목 1개). null = 아직 수색 안 함.
+        /// 인벤토리가 꽉 차 일부만 들어간 경우 넘친 아이템은 버리지 않고 여기 남아,
+        /// 다음 수색에서 이어서 지급된다.
+        ///
+        /// [한계] 수색 여부는 세이브에 저장하지 않는다 - 잔해는 월드 재생성마다 새로 만들어지는
+        /// 배경 오브젝트라 로드할 때마다 물자가 리셋된다. 부품 수거(잔해 해체) 시스템을 추후
+        /// 확장할 때 세이브 연동을 함께 넣을 예정이다.
+        /// </summary>
+        private List<ItemData> pendingSalvage;
+
+        /// <summary>아직 수색으로 얻을 물자가 남아 있는가(수색 전이면 true). InteractionPromptUI가 쓴다.</summary>
+        public bool HasSalvage => pendingSalvage == null || pendingSalvage.Count > 0;
+
+        /// <summary>
+        /// 잔해에서 비상 물자를 수색한다(1회 한정). InteractionController가 부른다.
+        /// DebugHud.GrantDevelopmentMaterials와 같은 패턴: 레지스트리에서 이름으로 ItemData를 찾아
+        /// TryAddItem으로 넣는다(용량 존중 - 이 프로젝트는 아이템이 조용히 사라진 사고가 4번 있었다).
+        /// 인벤토리가 차서 일부만 들어가면 성공(true) 처리하되, 못 넣은 아이템은 pendingSalvage에
+        /// 남겨 다음 수색에서 이어받는다. 하나도 못 넣었으면 false(TryAddItem이 실패음/경고를 낸다).
+        /// </summary>
+        /// <returns>아이템을 하나라도 지급했으면 true.</returns>
+        public bool TrySearch(MakeGame.Player.PlayerInventory inventory)
+        {
+            if (inventory == null)
+                return false;
+
+            if (pendingSalvage == null)
+            {
+                var built = BuildSalvageList();
+                if (built == null)
+                    return false; // 레지스트리 로드 실패 - 수색 소모 없이 다음 시도에서 재시도한다.
+                pendingSalvage = built;
+            }
+
+            if (pendingSalvage.Count == 0)
+                return false; // 이미 다 털었다(프롬프트는 HasSalvage로 이 상태를 미리 보여준다).
+
+            int granted = 0;
+            while (pendingSalvage.Count > 0)
+            {
+                // 실패 시 TryAddItem이 실패음 + AddRejected + 경고를 스스로 낸다(추가 알림 불필요).
+                if (!inventory.TryAddItem(pendingSalvage[0]))
+                    break;
+                pendingSalvage.RemoveAt(0);
+                granted++;
+            }
+
+            if (granted > 0)
+            {
+                Debug.Log("[AirlinerWreck] 잔해 수색: 물자 " + granted + "개 지급"
+                    + (pendingSalvage.Count > 0 ? " (가방이 차서 " + pendingSalvage.Count + "개는 잔해에 남음)" : " 완료"));
+            }
+            return granted > 0;
+        }
+
+        /// <summary>
+        /// 지급표를 실제 ItemData 목록(아이템 1개당 항목 1개)으로 편다. 레지스트리 자체가 없으면
+        /// null(재시도 가능), 개별 이름이 없으면 그 항목만 빼고 경고를 남긴다.
+        /// rng는 소비하지 않는다 - 지급물은 고정 표다.
+        /// </summary>
+        private static List<ItemData> BuildSalvageList()
+        {
+            var registry = ItemDataRegistry.LoadFromResources();
+            if (registry == null || registry.allItems == null)
+            {
+                Debug.LogWarning("[AirlinerWreck] ItemDataRegistry를 불러오지 못해 수색 물자를 만들지 못했다.");
+                return null;
+            }
+
+            var list = new List<ItemData>();
+            for (int n = 0; n < SalvageNames.Length; n++)
+            {
+                ItemData found = null;
+                for (int i = 0; i < registry.allItems.Count; i++)
+                {
+                    var candidate = registry.allItems[i];
+                    if (candidate != null && candidate.itemName == SalvageNames[n])
+                    {
+                        found = candidate;
+                        break;
+                    }
+                }
+
+                if (found == null)
+                {
+                    Debug.LogWarning("[AirlinerWreck] 지급표의 '" + SalvageNames[n]
+                        + "'을(를) 레지스트리에서 찾지 못해 수색 물자에서 뺐다.");
+                    continue;
+                }
+
+                for (int c = 0; c < SalvageCounts[n]; c++)
+                    list.Add(found);
+            }
+            return list;
         }
     }
 }

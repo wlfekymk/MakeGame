@@ -266,6 +266,12 @@ namespace MakeGame.UI
             if (wreck != null)
                 return BuildAircraftWreckPrompt(wreck, inventory, key, out main, out sub, out blocked);
 
+            // 여객기 잔해: 콜라이더가 동체/날개 등 자식 파츠에 붙어 있으므로 InParent
+            // (InteractionController의 AirlinerWreck 분기와 같은 기준·같은 우선순위 위치).
+            var airliner = target.GetComponentInParent<AirlinerWreck>();
+            if (airliner != null)
+                return BuildAirlinerWreckPrompt(airliner, key, out main, out sub, out blocked);
+
             var hazard = target.GetComponent<HazardSource>();
             if (hazard != null)
                 return BuildHazardPrompt(hazard, inventory, key, out main, out sub, out blocked);
@@ -551,6 +557,28 @@ namespace MakeGame.UI
             sub = string.IsNullOrEmpty(missing)
                 ? "재료 충족 - 지금 수리를 완료할 수 있다"
                 : $"부족: {missing}";
+            return true;
+        }
+
+        /// <summary>
+        /// 여객기 잔해 프롬프트. 수색 가능 여부 판정은 AirlinerWreck.HasSalvage(TrySearch와 같은 소스)만
+        /// 읽어 문장으로 옮긴다. 이미 수색을 마친 잔해도 프롬프트를 숨기지 않고 회색으로 사실을
+        /// 알려준다 - "눌러도 아무 일이 없다"가 가장 나쁜 경험이기 때문이다(경비행기 수리 완료와 같은 방식).
+        /// </summary>
+        private bool BuildAirlinerWreckPrompt(AirlinerWreck airliner, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            if (airliner.HasSalvage)
+            {
+                main = $"{key} 여객기 잔해 수색";
+                sub = "1회 한정 - 남은 물자를 챙긴다";
+                blocked = false;
+                return true;
+            }
+
+            main = "이미 수색한 여객기 잔해";
+            sub = "더 나올 물자가 없다";
+            blocked = true;
             return true;
         }
 

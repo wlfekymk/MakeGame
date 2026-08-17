@@ -52,7 +52,7 @@ namespace MakeGame.UI
         /// 없으므로 여기 한 곳에만 둔다(VERSION이 올라가면 이 값도 같이 올린다). PlayerSettings의
         /// bundleVersion이 VERSION과 동기화되어 있다면 Application.version으로 바꿔도 된다.
         /// </summary>
-        public const string DisplayVersion = "0.2.13";
+        public const string DisplayVersion = "0.2.14";
 
         /// <summary>
         /// 저장 파일 이름. SaveLoadController.cs:56의 SaveFileName과 같은 값이어야 한다(그쪽은 private).
