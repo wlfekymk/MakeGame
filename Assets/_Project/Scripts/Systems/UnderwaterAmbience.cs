@@ -89,6 +89,12 @@ namespace MakeGame.Systems
         private ParticleSystem diveBubbles;
 
         /// <summary>
+        /// 직전 프레임의 수중 여부(사운드 전환 감지용). AudioManager 호출은 상태가 바뀐 그 프레임에만
+        /// 한 번 이뤄져야 한다 - 매 프레임 Start/Stop을 부르면 페이드가 계속 리셋되고 낭비다.
+        /// </summary>
+        private bool wasUnderwaterForAudio;
+
+        /// <summary>
         /// DayNightCycle.Bootstrap과 같은 패턴: AfterSceneLoad는 "플레이 시작 후 첫 씬 로드"에만
         /// 호출되고 재시작(SceneManager.LoadScene)에는 다시 호출되지 않아, 재시작한 게임에서
         /// 수중 연출이 조용히 사라진다(DayNightCycle.Bootstrap 주석에서 라이브 테스트로 확인된
@@ -128,6 +134,16 @@ namespace MakeGame.Systems
         private void OnDestroy()
         {
             IsUnderwater = false;
+
+            // 수중에서 씬이 재로드되면 이 인스턴스는 파괴되지만 AudioManager는 DontDestroyOnLoad로
+            // 살아남아 수중 앰비언스가 물 밖(새 씬)에서 계속 울릴 수 있다 - 여기서 페이드 아웃을 걸어둔다.
+            if (wasUnderwaterForAudio)
+            {
+                wasUnderwaterForAudio = false;
+                var audio = AudioManager.Instance;
+                if (audio != null)
+                    audio.StopUnderwaterAmbient();
+            }
         }
 
         /// <summary>씬의 Light 중 Directional 타입 첫 번째를 찾는다(DayNightCycle과 동일한 방식).</summary>
@@ -162,6 +178,7 @@ namespace MakeGame.Systems
             if (targetCamera == null || worldMap == null)
             {
                 IsUnderwater = false;
+                SyncAmbienceAudio(); // 수중에서 카메라가 파괴된 경우에도 사운드는 페이드 아웃돼야 한다.
                 return;
             }
 
@@ -171,6 +188,9 @@ namespace MakeGame.Systems
             // 기포는 안개와 달리 "물 밖에서 아무것도 안 하기"가 불가능하다(방출을 멈추는 것
             // 자체가 행동이다). 그래서 물 밖 조기 return보다 먼저 구동한다.
             UpdateDiveBubbles();
+
+            // 수중 사운드도 같은 이유로 조기 return보다 먼저: 이탈 순간의 페이드 아웃 호출이 곧 행동이다.
+            SyncAmbienceAudio();
 
             // 물 밖: 아무것도 하지 않는다. DayNightCycle이 이번 프레임 Update에서 이미 안개/환경광을
             // 기록했고 다음 프레임에도 계속 기록하므로, 복원은 자연히 그쪽 몫이다(클래스 주석 참고).
@@ -236,6 +256,29 @@ namespace MakeGame.Systems
             {
                 diveBubbles.Stop(true, ParticleSystemStopBehavior.StopEmitting);
             }
+        }
+
+        /// <summary>
+        /// 수중 앰비언스 사운드 구동. IsUnderwater가 직전 프레임과 달라진 그 프레임에만 AudioManager를
+        /// 호출한다(진입 → 0.5초 페이드 인, 이탈 → 0.5초 페이드 아웃 - 페이드 자체는 AudioManager 몫).
+        /// AudioManager가 씬에 없으면 조용히 아무것도 하지 않는다(null 안전). 타이틀 화면에서는
+        /// 수중이 아니므로 상태 변화가 없어 자연히 무동작이고, 정상 경로 할당은 0이다.
+        /// </summary>
+        private void SyncAmbienceAudio()
+        {
+            if (IsUnderwater == wasUnderwaterForAudio)
+                return;
+
+            var audio = AudioManager.Instance;
+            if (audio == null)
+                return; // 다음 프레임에 다시 시도하도록 wasUnderwaterForAudio를 갱신하지 않는다.
+
+            if (IsUnderwater)
+                audio.StartUnderwaterAmbient();
+            else
+                audio.StopUnderwaterAmbient();
+
+            wasUnderwaterForAudio = IsUnderwater;
         }
 
         /// <summary>RGB에만 배율을 곱한다. Color * float는 알파까지 곱하므로 알파는 1로 고정한다(DayNightCycle과 동일).</summary>

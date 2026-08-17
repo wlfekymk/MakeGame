@@ -15,6 +15,9 @@ namespace MakeGame.Systems
     /// 하나도 붙이지 않으므로 SaveLoadController의 FindObjectsByType 순회(ResourceNode/Campfire/…)에
     /// 걸리지 않고, 저장 파일에 한 바이트도 들어가지 않는다. 불러오기(RegenerateWorld) 후에는 같은
     /// worldSeed → 같은 시드 → 같은 배치로 그냥 다시 생성될 뿐이다.
+    /// 단 하나의 예외가 침몰 화물(SpawnSunkenCargo)의 AirlinerSalvagePoint인데, 그 컴포넌트도
+    /// 세이브 비대상이라(수거 여부 미저장 - AirlinerSalvagePoint [한계] 주석과 같은 한계) 저장
+    /// 파일에는 여전히 한 바이트도 들어가지 않고, 로드할 때마다 화물이 리셋될 뿐이다.
     ///
     /// ── rng 격리 (최중요) ─────────────────────────────────────────────────────────
     /// 섬마다 `new System.Random(unchecked(worldSeed * 397 ^ islandId ^ 0x5EABED))` 로 만든
@@ -120,6 +123,20 @@ namespace MakeGame.Systems
         private const int SpireStart = 10;
         private const int SpireCount = 5;
 
+        // ── 침몰 화물 (잠수 보상 - crate_a/barrel_a 재사용) ─────────────────────────
+
+        /// <summary>침몰 화물 컨테이너 모델 2종. 인덱스 0=궤짝, 1=통(CargoModelSizes와 일대일).</summary>
+        private static readonly string[] CargoModelNames = { "crate_a", "barrel_a" };
+
+        /// <summary>컨테이너 실측 크기(m, W×H×D · 밑면 y=0). 뭍 표류물 로더(IslandMeshGenerator.
+        /// MeshLibrary의 DriftModelSizes)와 같은 값의 사본이다(RockModelSizes와 같은 사본 정책 -
+        /// 그쪽은 private라 참조할 수 없다).</summary>
+        private static readonly Vector3[] CargoModelSizes =
+        {
+            new Vector3(0.82f, 0.66f, 0.74f), // crate_a
+            new Vector3(0.60f, 0.86f, 0.60f), // barrel_a
+        };
+
         // ── 팔레트 (순수 Color 상수라 필드 초기화식에 두어도 안전하다 - Unity API 호출 없음) ────
 
         /// <summary>산호 12색 팔레트(핑크/주황/자홍/노랑/청록/보라 등). 변종 인덱스 % 12로 순환하고,
@@ -163,10 +180,100 @@ namespace MakeGame.Systems
         private static readonly Mesh[] coralSecondary = new Mesh[20];
         private static readonly Mesh[] kelpMeshes = new Mesh[10];
         private static readonly Mesh[] rockMeshes = new Mesh[20];
+        private static readonly Mesh[] cargoMeshes = new Mesh[2]; // crate_a / barrel_a (`o` 1개 = 단일 메시)
 
         /// <summary>프레임당 1회 프로브 가드(TryGetBambooModel/AirlinerWreck.probeFrame과 같은 규칙).
         /// 실패를 영구 래치하지 않으므로 임포트가 한 프레임 늦어도 다음 섬/다음 월드에서 자연 복구된다.</summary>
         private static int probeFrame = -1;
+
+        // ── 해초 흔들림(MGKelpSway) 머티리얼 경로 ──────────────────────────────────
+        // 해초만 커스텀 정점 스웨이 셰이더(Resources/Shaders/MGKelpSway)를 쓴다. 셰이더 로드가
+        // 실패하면 기존 GetMaterial(색, "leaf") URP Lit 경로 그대로다(폴백 필수 - MGOcean과 같은
+        // 계약). 산호/바위/화물의 GetMaterial 경로는 이 블록과 무관하게 불변이다.
+
+        /// <summary>MGKelpSway의 스웨이 시간 프로퍼티 ID. 셰이더는 내장 _Time 대신 이 값을 쓰므로
+        /// C#(KelpSwayDriver)이 넣는 Time.time이 곧 흔들림의 시계다(타이틀 화면 정지 관례 -
+        /// WorldMapManager.OceanWaveTimeProperty와 같은 설계).</summary>
+        private static readonly int SwayTimeProperty = Shader.PropertyToID("_MG_SwayTime");
+
+        /// <summary>MGKelpSway 셰이더 캐시. 로드 실패를 영구 래치하지 않는다(프레임 가드는 아래).</summary>
+        private static Shader kelpSwayShader;
+
+        /// <summary>셰이더 프로브 프레임 가드(probeFrame과 같은 규칙 - 같은 프레임의 해초 수십 개가
+        /// Resources.Load를 반복하지 않게 하되, 실패가 다음 프레임/다음 월드에서 자연 복구되게 한다).</summary>
+        private static int kelpShaderProbeFrame = -1;
+
+        /// <summary>스웨이 머티리얼 정적 캐시 - KelpPalette(4단 녹갈)와 일대일이라 월드 전체에서
+        /// 최대 4장이다. 파괴된 머티리얼은 Unity의 == 오버로드가 null로 알려주므로 다시 만든다
+        /// (ResourceVisualLibrary.GetMaterial과 같은 검사).</summary>
+        private static readonly Material[] kelpSwayMaterials = new Material[4];
+
+        /// <summary>스웨이 시간 갱신 프레임 가드 - 섬마다 KelpSwayDriver가 하나씩 붙어도 SetFloat는
+        /// 프레임당 머티리얼 4장 × 1회만 나간다.</summary>
+        private static int swayTimeFrame = -1;
+
+        /// <summary>
+        /// _MG_SwayTime을 매 프레임 넣는 최소 드라이버. 섬의 생태 루트(SeabedFlora_*)에 붙어
+        /// RegenerateWorld의 섬 파괴에 함께 편승한다(스포너의 "생명주기 편승" 원칙 - 별도 정리 불요).
+        /// Time.time은 timeScale = 0에서 멈추므로 타이틀 화면에서 해초도 바다처럼 정지한다.
+        /// </summary>
+        private sealed class KelpSwayDriver : MonoBehaviour
+        {
+            private void Update()
+            {
+                if (swayTimeFrame == Time.frameCount)
+                    return; // 다른 섬의 드라이버가 이번 프레임 몫을 이미 갱신했다
+                swayTimeFrame = Time.frameCount;
+
+                float time = Time.time;
+                for (int i = 0; i < kelpSwayMaterials.Length; i++)
+                {
+                    Material material = kelpSwayMaterials[i];
+                    if (material != null)
+                        material.SetFloat(SwayTimeProperty, time);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 해초 머티리얼 하나(변종 → 4단 녹갈 팔레트 순환은 기존과 동일). MGKelpSway 셰이더가
+        /// 로드되면 스웨이 머티리얼(정적 캐시, leaf 텍스처 + 팔레트 색 - 폴백 경로와 같은 외형 문법),
+        /// 아니면 기존 GetMaterial(색, "leaf") 폴백이다. 어느 경로든 rng를 일절 소비하지 않는다.
+        /// </summary>
+        private static Material GetKelpMaterial(int variant)
+        {
+            int paletteIndex = variant % KelpPalette.Length;
+            Color color = KelpPalette[paletteIndex];
+
+            Material cached = kelpSwayMaterials[paletteIndex];
+            if (cached != null)
+                return cached;
+
+            if (kelpSwayShader == null && kelpShaderProbeFrame != Time.frameCount)
+            {
+                kelpShaderProbeFrame = Time.frameCount;
+                kelpSwayShader = Resources.Load<Shader>("Shaders/MGKelpSway");
+            }
+
+            if (kelpSwayShader == null)
+                return ResourceVisualLibrary.GetMaterial(color, "leaf"); // 기존 경로 - 캐시는 그쪽이 가진다
+
+            var material = new Material(kelpSwayShader);
+            // 런타임 생성 표식(StructureVisualBuilder.CreateColorMaterial과 같은 근거).
+            material.name = StructureVisualBuilder.RuntimeMaterialPrefix + "KelpSway_" + paletteIndex;
+            material.color = color; // [MainColor] _BaseColor
+            // 폴백 경로(CreateColorMaterial)와 같은 표면 텍스처/타일링 - 셰이더 유무로 질감이 튀지 않게.
+            var leafTexture = Resources.Load<Texture2D>("Textures/leaf");
+            if (leafTexture != null)
+            {
+                material.mainTexture = leafTexture; // [MainTexture] _BaseMap
+                material.mainTextureScale = new Vector2(1.5f, 1.5f);
+            }
+            material.enableInstancing = true;
+            material.SetFloat(SwayTimeProperty, Time.time); // 첫 프레임부터 드라이버와 같은 시계
+            kelpSwayMaterials[paletteIndex] = material;
+            return material;
+        }
 
         /// <summary>
         /// 섬 하나의 해저 생태를 배치한다. SeabedGenerator.Build가 스커트 레코드를 등록한 직후
@@ -219,6 +326,23 @@ namespace MakeGame.Systems
             SpawnCoralPatches(rng, root.transform, center, rMin, rMax, seaLevel, scale);
             SpawnKelpGroves(rng, root.transform, center, rMin, rMax, seaLevel, scale);
             SpawnSeaRocks(rng, root.transform, center, rMin, rMax, seaLevel, scale);
+
+            // [맨 끝 draw 원칙] 침몰 화물은 반드시 산호/해초/바위 draw가 **전부 끝난 뒤**에만 뽑는다.
+            // 이 격리 스트림의 꼬리에 붙는 추가 소비라, 위 세 배치의 추첨 순서·결과는 1비트도 밀리지
+            // 않는다(PlaceLargeStones가 BuildIslandSurface 맨 끝에서만 불리는 것과 같은 원칙).
+            SpawnSunkenCargo(rng, root.transform, center, rMin, rMax, seaLevel, radius);
+
+            // 해초 스웨이 시간 구동: 스웨이 머티리얼이 하나라도 살아 있으면 이 섬의 생태 루트에
+            // 드라이버를 붙인다(rng 소비 없음 - 추첨 순서 불변). 프레임 가드 덕에 섬이 몇 개든
+            // SetFloat는 프레임당 4회 수준이고, 루트가 파괴되면 드라이버도 함께 사라진다.
+            for (int i = 0; i < kelpSwayMaterials.Length; i++)
+            {
+                if (kelpSwayMaterials[i] != null)
+                {
+                    root.AddComponent<KelpSwayDriver>();
+                    break;
+                }
+            }
         }
 
         // ── 배치 ────────────────────────────────────────────────────────────────────
@@ -355,6 +479,159 @@ namespace MakeGame.Systems
             }
         }
 
+        /// <summary>
+        /// 침몰 화물 더미(잠수 보상): 깊이 8m 이상 해저에 crate_a/barrel_a 2~4개를 비스듬히 쌓고
+        /// 주변에 searock 파편 1~2개를 흩은 뒤, 더미 루트에 BoxCollider + AirlinerSalvagePoint를
+        /// 붙여 E키 수거(InteractionController가 GetComponentInParent로 잡는다) 대상으로 만든다.
+        /// 대형 섬 1곳 / 특대 섬 1~2곳, 그 외 규모는 만들지 않는다(draw도 없다 - 스트림 꼬리라 무관).
+        ///
+        /// [결정성] 모든 rng draw(개수/위치/자세/지급표 선택)는 메시 로드 여부를 보기 **전에** 끝낸다.
+        /// 그래서 임포트가 한 프레임 늦어 이번 월드에서 화물이 안 보여도, 같은 시드의 다음 월드에서는
+        /// 같은 자리·같은 지급표로 나온다(PlaceCoral의 "래치 없음" 규칙과 같은 계열).
+        /// </summary>
+        private static void SpawnSunkenCargo(System.Random rng, Transform root, Vector3 center,
+            float rMin, float rMax, float seaLevel, float radius)
+        {
+            // 규모 판정은 SizeScale과 같은 반지름 중간값 경계(115/170)를 쓴다.
+            if (radius < 115f)
+                return; // 소형/중형: 화물 없음
+            int pileCount = radius < 170f ? 1 : rng.NextInt(1, 3); // 대형 1 / 특대 1~2
+
+            for (int p = 0; p < pileCount; p++)
+            {
+                // 깊이 8m 이상(스커트 최심 18m 언저리까지) 해저 접지. 실패하면 이 더미만 버린다.
+                if (!TryPickPoint(rng, center, rMin, rMax, seaLevel, 8f, 18.5f, 16,
+                        out Vector3 pos, out _))
+                    continue;
+
+                PlaceCargoPile(rng, root, center, pos, p);
+            }
+        }
+
+        /// <summary>
+        /// 화물 더미 하나를 조립한다. draw 전부 → 메시 확인 → 생성 순서(결정성 - SpawnSunkenCargo 주석).
+        /// 두 컨테이너 메시가 모두 미로드면 아무것도 만들지 않는다 - 보이지 않는 보물(콜라이더만 있는
+        /// 수거 지점)은 만들지 않는 것이 올바른 폴백이다.
+        /// </summary>
+        private static void PlaceCargoPile(System.Random rng, Transform root, Vector3 islandCenter,
+            Vector3 worldPos, int pileIndex)
+        {
+            // ── 1) draw 전부 (메시 로드 여부와 무관하게 항상 같은 횟수·순서로 소비) ──
+            int containerCount = rng.NextInt(2, 5); // 2~4
+            var kinds = new int[containerCount];    // 0=궤짝 1=통
+            var offsets = new Vector3[containerCount];
+            var yaws = new float[containerCount];
+            var leans = new float[containerCount];
+            var scales = new float[containerCount];
+            for (int i = 0; i < containerCount; i++)
+            {
+                kinds[i] = rng.NextValue01() < 0.55f ? 0 : 1;
+                float angle = rng.NextFloat(0f, Mathf.PI * 2f);
+                // 바닥층(처음 2개)은 중심 주변에 흩고, 그 위(3~4번째)는 중심 근처에 쌓아 올린다.
+                bool grounded = i < 2;
+                float dist = grounded ? rng.NextFloat(0.22f, 0.60f) : rng.NextFloat(0.05f, 0.30f);
+                float stackY = grounded ? 0f : 0.45f + 0.20f * (i - 2);
+                offsets[i] = new Vector3(Mathf.Cos(angle) * dist, stackY, Mathf.Sin(angle) * dist);
+                yaws[i] = rng.NextFloat(0f, 360f);
+                // 궤짝은 모서리로 처박힌 기울기, 통은 옆으로 굴러 누운 자세(뭍 표류물과 같은 문법).
+                leans[i] = kinds[i] == 0 ? rng.NextFloat(8f, 30f) : rng.NextFloat(68f, 98f);
+                scales[i] = rng.NextFloat(0.9f, 1.15f);
+            }
+
+            int fragmentCount = rng.NextInt(1, 3); // searock 파편 1~2
+            var fragVariants = new int[fragmentCount];
+            var fragOffsets = new Vector3[fragmentCount];
+            var fragYaws = new float[fragmentCount];
+            var fragScales = new float[fragmentCount];
+            for (int i = 0; i < fragmentCount; i++)
+            {
+                int pick = rng.NextInt(0, RockModelNames.Length - SpireCount); // 비첨탑 15종
+                fragVariants[i] = pick < SpireStart ? pick : pick + SpireCount;
+                float angle = rng.NextFloat(0f, Mathf.PI * 2f);
+                float dist = rng.NextFloat(0.9f, 1.7f);
+                fragOffsets[i] = new Vector3(Mathf.Cos(angle) * dist, 0f, Mathf.Sin(angle) * dist);
+                fragYaws[i] = rng.NextFloat(0f, 360f);
+                fragScales[i] = rng.NextFloat(0.45f, 0.75f);
+            }
+
+            float boxSize = rng.NextFloat(1.2f, 1.6f);
+            bool lootPlanA = rng.NextValue01() < 0.5f; // 지급표 2안 중 택1
+
+            // ── 2) 메시 확인 → 생성 ──
+            if (cargoMeshes[0] == null && cargoMeshes[1] == null)
+                return; // 둘 다 미로드 - 이번 월드는 이 더미를 통째로 건너뛴다(draw는 이미 소비됨)
+
+            // 물에 잠긴 어두운 나무/금속 틴트. GetMaterial 공유 캐시라 더미가 몇 개든 머티리얼은 2장.
+            Material woodMaterial = ResourceVisualLibrary.GetMaterial(new Color(0.24f, 0.19f, 0.14f), "wood");
+            Material metalMaterial = ResourceVisualLibrary.GetMaterial(new Color(0.22f, 0.24f, 0.26f), "metal");
+
+            // 더미 루트. "SunkenCargo_"는 "Island_"로 시작하지 않으므로 지형 판정에서 구조적으로 제외
+            // (SeaRock 콜라이더와 같은 안전 근거). root(SeabedFlora_*)의 자식 = 섬 루트의 자손이라
+            // RegenerateWorld의 섬 파괴에 함께 편승한다.
+            var pile = new GameObject("SunkenCargo_" + pileIndex);
+            pile.transform.SetParent(root, false);
+            pile.transform.localPosition = worldPos - islandCenter + new Vector3(0f, -0.06f, 0f);
+
+            for (int i = 0; i < containerCount; i++)
+            {
+                // 한쪽 메시만 로드됐으면 그쪽으로 대체한다(추가 draw 없음 - 자세 draw는 이미 확정).
+                int kind = cargoMeshes[kinds[i]] != null ? kinds[i] : 1 - kinds[i];
+                Mesh mesh = cargoMeshes[kind];
+                Vector3 worldSize = CargoModelSizes[kind] * scales[i];
+
+                // 접지 원점(밑면 y=0) 모델을 기울이면 밑면 가장자리가 원점 아래로 내려간다.
+                // 그 깊이(수평 반폭 × sin(lean))만큼 들어 올린 뒤 sink만큼 모래에 파묻는다
+                // (뭍 표류물 CreateDriftItem의 모델 분기와 같은 식).
+                float radians = leans[i] * Mathf.Deg2Rad;
+                float horizontalHalf = 0.5f * Mathf.Max(worldSize.x, worldSize.z);
+                float lift = horizontalHalf * Mathf.Abs(Mathf.Sin(radians));
+                float sink = Mathf.Min(0.12f, (0.5f * worldSize.y + lift) * 0.3f);
+
+                var rotation = Quaternion.Euler(0f, yaws[i], 0f)
+                    * Quaternion.AngleAxis(leans[i], Vector3.forward);
+                CreateVisualPart(pile.transform, "Cargo_" + CargoModelNames[kind], mesh,
+                    kind == 0 ? woodMaterial : metalMaterial,
+                    offsets[i] + Vector3.up * (lift - sink), rotation, scales[i]);
+            }
+
+            for (int i = 0; i < fragmentCount; i++)
+            {
+                Mesh rock = rockMeshes[fragVariants[i]];
+                if (rock == null)
+                    continue; // 파편은 순수 장식 - 미로드면 그 파편만 없다
+                Material rockMaterial = ResourceVisualLibrary.GetMaterial(
+                    ResourceVisualLibrary.Shade(RockPalette[0], 0.9f), "rock");
+                CreateVisualPart(pile.transform, "CargoRock_" + RockModelNames[fragVariants[i]], rock,
+                    rockMaterial, fragOffsets[i] + new Vector3(0f, -0.04f, 0f),
+                    Quaternion.Euler(0f, fragYaws[i], 0f), fragScales[i]);
+            }
+
+            // ── 3) 수거 지점 ──
+            // 더미 루트의 BoxCollider를 InteractionController 레이가 맞으면 GetComponentInParent로
+            // 같은 오브젝트의 AirlinerSalvagePoint가 잡힌다(여객기 잔해 지점과 같은 경로).
+            var box = pile.AddComponent<BoxCollider>();
+            box.center = new Vector3(0f, boxSize * 0.45f, 0f);
+            box.size = new Vector3(boxSize, boxSize * 0.9f, boxSize);
+
+            // [한계] 수거 여부는 세이브 미저장 - AirlinerSalvagePoint [한계] 주석과 동일한 한계다
+            // (월드 재생성 배경 오브젝트라 로드마다 리셋. 잔해 수거 세이브 연동 확장 때 함께 넣는다).
+            var salvage = pile.AddComponent<AirlinerSalvagePoint>();
+            salvage.displayName = "침몰 화물";
+            salvage.loot = lootPlanA
+                ? new[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 3),
+                    new AirlinerSalvagePoint.LootEntry("연료", 1),
+                    new AirlinerSalvagePoint.LootEntry("천조각", 2),
+                }
+                : new[]
+                {
+                    new AirlinerSalvagePoint.LootEntry("금속조각", 2),
+                    new AirlinerSalvagePoint.LootEntry("엔진부품", 1),
+                    new AirlinerSalvagePoint.LootEntry("생수", 1),
+                };
+        }
+
         // ── 개별 배치물 조립 ──────────────────────────────────────────────────────────
 
         /// <summary>
@@ -400,8 +677,8 @@ namespace MakeGame.Systems
             if (blade == null)
                 return;
 
-            Material material = ResourceVisualLibrary.GetMaterial(
-                KelpPalette[variant % KelpPalette.Length], "leaf");
+            // 해초만 스웨이 셰이더 머티리얼(로드 실패 시 기존 GetMaterial "leaf" 폴백 - GetKelpMaterial).
+            Material material = GetKelpMaterial(variant);
             Vector3 localPos = worldPos - islandCenter + new Vector3(0f, -0.06f, 0f);
             CreateVisualPart(root, "Kelp_" + KelpModelNames[variant], blade, material, localPos, yaw, scale);
         }
@@ -444,8 +721,16 @@ namespace MakeGame.Systems
         private static GameObject CreateVisualPart(Transform root, string name, Mesh mesh,
             Material material, Vector3 localPos, float yaw, float scale)
         {
+            return CreateVisualPart(root, name, mesh, material, localPos,
+                Quaternion.Euler(0f, yaw, 0f), scale);
+        }
+
+        /// <summary>침몰 화물처럼 요(yaw) 외 기울기가 필요한 파츠용 회전 지정 변형. 규칙은 동일하다.</summary>
+        private static GameObject CreateVisualPart(Transform root, string name, Mesh mesh,
+            Material material, Vector3 localPos, Quaternion localRotation, float scale)
+        {
             var go = StructureVisualBuilder.CreateMeshPart(root, name, mesh,
-                localPos, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f), material);
+                localPos, Vector3.one * scale, localRotation, material);
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
             {
@@ -540,6 +825,8 @@ namespace MakeGame.Systems
                 anyMissing = kelpMeshes[i] == null;
             for (int i = 0; i < rockMeshes.Length && !anyMissing; i++)
                 anyMissing = rockMeshes[i] == null;
+            for (int i = 0; i < cargoMeshes.Length && !anyMissing; i++)
+                anyMissing = cargoMeshes[i] == null;
 
             if (!anyMissing || probeFrame == Time.frameCount)
                 return;
@@ -573,6 +860,17 @@ namespace MakeGame.Systems
                 if (ResourceVisualLibrary.TryLoadTwoPartModel("Models/" + RockModelNames[i],
                         out Mesh rock, out _))
                     rockMeshes[i] = rock;
+            }
+
+            // 침몰 화물 컨테이너(crate_a/barrel_a). `o` 1개짜리 단일 메시라 TryLoadTwoPartModel의
+            // "메시 하나면 그것이 trunk" 규칙으로 그대로 온다(두 번째 out은 항상 null - 버린다).
+            for (int i = 0; i < CargoModelNames.Length; i++)
+            {
+                if (cargoMeshes[i] != null)
+                    continue;
+                if (ResourceVisualLibrary.TryLoadTwoPartModel("Models/" + CargoModelNames[i],
+                        out Mesh cargo, out _))
+                    cargoMeshes[i] = cargo;
             }
         }
 

@@ -25,6 +25,7 @@ namespace MakeGame.Systems
         private AudioSource sfxSource;
         private AudioSource bgmSource;
         private AudioSource rainSource;
+        private AudioSource underwaterSource;
 
         // 매 재생마다 새로 생성하지 않도록, Awake에서 한 번만 만들어 캐시해두는 절차적 효과음 클립들.
         private AudioClip clipPickup;
@@ -38,6 +39,7 @@ namespace MakeGame.Systems
         private AudioClip clipBreak;
         private AudioClip clipOceanAmbient;
         private AudioClip clipRainAmbient;
+        private AudioClip clipUnderwaterAmbient;
 
         // 품질 개선(#18): PlayCraftSuccess() 하나가 "치료 성공"/"취침 성공"/"모닥불 점화 성공" 3곳에서
         // 그대로 재사용되고 있어 상황이 구분되지 않던 문제를 보완하는 전용 클립들. 기존 clipCraftSuccess는
@@ -88,6 +90,13 @@ namespace MakeGame.Systems
             rainSource.loop = true;
             rainSource.playOnAwake = false;
 
+            // 수중 앰비언스 전용 소스. 비(rainSource)와 같은 이유로 별도 채널이다 - 잠수 중에도
+            // 수면 위의 파도/비 소리가 (앞으로 뭉개진 채로나마) 계속 깔려 있는 편이 자연스럽고,
+            // 페이드 인/아웃을 이 소스의 volume만 독립적으로 움직여 구현하기 위해서다.
+            underwaterSource = gameObject.AddComponent<AudioSource>();
+            underwaterSource.loop = true;
+            underwaterSource.playOnAwake = false;
+
             // 버그 수정: 설정 화면에서 조절한 볼륨이 AudioManager 필드에만 저장되고 디스크에는 전혀
             // 저장되지 않아, 게임을 다시 실행할 때마다 항상 기본값(효과음 0.7 / 배경음 0.3)으로
             // 리셋되던 문제. PlayerPrefs에 저장된 값이 있으면 그 값으로 덮어써 이전 설정을 이어간다.
@@ -137,6 +146,7 @@ namespace MakeGame.Systems
             clipBreak = ProceduralAudioClipGenerator.CreateBeep(420f, 0.16f, 70f); // 도구/무기 파손: 뚝 끊기듯 빠르게 떨어지는 저음
             clipOceanAmbient = ProceduralAudioClipGenerator.CreateOceanAmbientLoop(18f); // 파도 배경음 루프 (4초 -> 18초로 확장, 저주파 2중 주기로 불균일하게)
             clipRainAmbient = ProceduralAudioClipGenerator.CreateRainAmbientLoop(12f); // 비 배경음 루프 (4초 -> 12초로 확장. WeatherSystem이 비가 올 때만 재생)
+            clipUnderwaterAmbient = ProceduralAudioClipGenerator.CreateUnderwaterAmbientLoop(6f); // 수중 앰비언스 루프 (UnderwaterAmbience가 수중 진입/이탈 시 페이드로 켜고 끈다)
 
             // 품질 개선(#18): PlayCraftSuccess 재사용 대신 상황별로 구분되는 전용 SFX.
             clipHealSuccess = ProceduralAudioClipGenerator.CreateChord(new float[] { 392f, 494f, 587f }, 0.3f); // 치료 성공: 배 제작 완료(523/659/784)보다 한 옥타브 낮고 차분한 3화음
@@ -297,6 +307,64 @@ namespace MakeGame.Systems
         {
             if (rainSource != null)
                 rainSource.Stop();
+        }
+
+        /// <summary>수중 앰비언스 페이드 인/아웃에 걸리는 시간(초).</summary>
+        private const float UnderwaterFadeDuration = 0.5f;
+
+        /// <summary>수중 앰비언스 페이드 목표(0=끔, 1=켬)와 현재 페이드 레벨(0~1). Update가 매 프레임 목표로 수렴시킨다.</summary>
+        private float underwaterFadeTarget;
+        private float underwaterFadeLevel;
+
+        /// <summary>
+        /// UnderwaterAmbience가 카메라의 수중 진입 순간에 호출한다. 수중 앰비언스 루프를
+        /// 0.5초 페이드 인으로 재생하기 시작한다. 이미 재생/페이드 중이면 목표만 갱신하므로
+        /// 수면 근처에서 들락날락해도 소리가 겹치거나 뚝 끊기지 않고 현재 지점에서 이어 움직인다.
+        /// </summary>
+        public void StartUnderwaterAmbient()
+        {
+            if (clipUnderwaterAmbient == null || underwaterSource == null)
+                return;
+
+            underwaterFadeTarget = 1f;
+            if (!underwaterSource.isPlaying)
+            {
+                underwaterSource.clip = clipUnderwaterAmbient;
+                underwaterSource.volume = bgmVolume * underwaterFadeLevel;
+                underwaterSource.Play();
+            }
+        }
+
+        /// <summary>
+        /// UnderwaterAmbience가 카메라의 수중 이탈 순간에 호출한다. 0.5초 페이드 아웃 후
+        /// (Update에서 레벨이 0에 닿으면) 소스를 정지한다.
+        /// </summary>
+        public void StopUnderwaterAmbient()
+        {
+            underwaterFadeTarget = 0f;
+        }
+
+        /// <summary>
+        /// 수중 앰비언스의 페이드 구동. 재생 중이 아니면 즉시 return하므로 평상시(수중에 들어간 적
+        /// 없는 대부분의 프레임) 비용은 조건문 하나이고, 재생 중에도 산술 몇 줄뿐 할당은 0이다.
+        /// unscaledDeltaTime을 쓰는 이유: 수중에서 설정 화면 등으로 timeScale이 0이 되어도
+        /// 오디오 재생 자체는 계속되므로(엔딩 팡파르 주석 참고) 페이드도 실제 시간으로 움직여야 한다.
+        /// </summary>
+        private void Update()
+        {
+            if (underwaterSource == null || !underwaterSource.isPlaying)
+                return;
+
+            underwaterFadeLevel = Mathf.MoveTowards(
+                underwaterFadeLevel, underwaterFadeTarget,
+                Time.unscaledDeltaTime / UnderwaterFadeDuration);
+
+            // 매 프레임 bgmVolume을 다시 곱해 반영하므로, 잠수 중 설정 화면에서 배경음 슬라이더를
+            // 움직여도 별도 처리 없이 다음 프레임부터 수중 앰비언스에도 즉시 적용된다.
+            underwaterSource.volume = bgmVolume * underwaterFadeLevel;
+
+            if (underwaterFadeTarget <= 0f && underwaterFadeLevel <= 0f)
+                underwaterSource.Stop();
         }
 
         /// <summary>

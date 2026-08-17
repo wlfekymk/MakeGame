@@ -144,6 +144,101 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// 물속에서 귀가 먹먹해진 듯한 수중 앰비언스 루프를 생성한다(UnderwaterAmbience의 수중 진입 시 재생용).
+        ///
+        /// 구성:
+        ///  · 몸통: 브라운 노이즈(백색 노이즈를 1극 저역통과 필터 2단으로 거듭 다듬은 저역 웅웅거림).
+        ///    파도(CreateOceanAmbientLoop)의 밝은 노이즈와 달리 고역이 거의 없어 "물이 귀를 막은" 느낌이 난다.
+        ///  · 느린 진폭 LFO 2중 주기(0.11Hz/0.043Hz, 배수 관계 아님)를 섞어 웅웅거림이 일정하지 않고
+        ///    천천히 밀려왔다 물러나게 한다(파도 루프와 같은 불균일화 기법).
+        ///  · 간헐적 기포: 짧은 상승 사인 처프(0.05~0.12초, 저주파에서 위로 쓸어 올림) 몇 개를 루프 안
+        ///    무작위 위치에 흩뿌린다. 시드 고정 System.Random이라 매번 완전히 같은 파형이 나온다(결정적).
+        ///
+        /// 볼륨: 최종 파형의 피크를 -18dB(≈0.126)로 정규화한다. 앰비언스는 배경에 은은하게 깔리는 소리라
+        /// 다른 효과음(피크 0.3~0.5)보다 한참 낮게 잡는다 - AudioManager 쪽 bgmVolume이 다시 한 번 곱해진다.
+        /// 루프 이음매는 파도/비 루프와 같은 시작/끝 페이드로 클릭 없이 이어진다(기포 처프도 페이드 구간을
+        /// 피해 배치하므로 잘리지 않는다).
+        /// </summary>
+        public static AudioClip CreateUnderwaterAmbientLoop(float duration)
+        {
+            int sampleCount = Mathf.Max(1, Mathf.RoundToInt(SampleRate * duration));
+            float[] samples = new float[sampleCount];
+            var random = new System.Random(24680); // 시드 고정: 실행마다 항상 같은 파형(결정적)
+
+            // ── 몸통: 브라운 노이즈 웅웅거림 + 느린 진폭 LFO ─────────────────────────
+            float lp1 = 0f;
+            float lp2 = 0f;
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float t = i / (float)SampleRate;
+                float white = (float)random.NextDouble() * 2f - 1f;
+
+                // 1극 저역통과 2단 직렬: 계수 0.045(차단 약 320Hz)로 두 번 거르면 고역이 -24dB/oct로
+                // 깎여 나가 남는 것은 저역의 둔탁한 웅웅거림뿐이다(브라운 노이즈 질감).
+                lp1 += (white - lp1) * 0.045f;
+                lp2 += (lp1 - lp2) * 0.045f;
+
+                // 느린 진폭 LFO 2중 주기(약 9초/23초). 항상 양수(0.3~1.0)로 유지해 소리가 끊기진 않는다.
+                float lfoFast = Mathf.Sin(2f * Mathf.PI * 0.11f * t) * 0.5f + 0.5f;
+                float lfoSlow = Mathf.Sin(2f * Mathf.PI * 0.043f * t) * 0.5f + 0.5f;
+                float lfo = 0.3f + 0.7f * (lfoFast * 0.55f + lfoSlow * 0.45f);
+
+                samples[i] = lp2 * lfo;
+            }
+
+            // ── 간헐적 기포: 짧은 상승 사인 처프를 무작위 위치에 겹쳐 얹는다 ─────────
+            int fadeSamples = Mathf.Min(sampleCount / 10, SampleRate / 2);
+            int bubbleCount = 3 + Mathf.RoundToInt(duration); // 6초 루프 기준 9개 안팎
+            for (int b = 0; b < bubbleCount; b++)
+            {
+                int chirpLength = Mathf.RoundToInt(SampleRate * (0.05f + 0.07f * (float)random.NextDouble()));
+                // 루프 양끝 페이드 구간을 피해 배치해 처프가 페이드에 잘려 뭉개지지 않게 한다.
+                int placeable = sampleCount - 2 * fadeSamples - chirpLength;
+                if (placeable <= 0)
+                    break;
+                int start = fadeSamples + random.Next(placeable);
+
+                float freqStart = 350f + 450f * (float)random.NextDouble(); // 기포마다 다른 음높이
+                float freqEnd = freqStart * 2.1f; // 위로 쓸어 올리는 처프 = 물방울이 떠오르며 작아지는 소리
+                float bubbleAmp = 0.10f + 0.08f * (float)random.NextDouble();
+
+                for (int i = 0; i < chirpLength; i++)
+                {
+                    float p = i / (float)chirpLength;
+                    float freq = Mathf.Lerp(freqStart, freqEnd, p);
+                    float envelope = Mathf.Sin(Mathf.PI * p); // 처프 자체도 클릭 방지 엔벨로프
+                    samples[start + i] += Mathf.Sin(2f * Mathf.PI * freq * (i / (float)SampleRate))
+                                        * envelope * bubbleAmp;
+                }
+            }
+
+            // ── 피크를 -18dB(≈0.126)로 정규화: 은은한 배경 소리로 눌러 둔다 ─────────
+            float peak = 0f;
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float abs = Mathf.Abs(samples[i]);
+                if (abs > peak)
+                    peak = abs;
+            }
+            if (peak > 0f)
+            {
+                float gain = 0.126f / peak; // -18dB = 10^(-18/20) ≈ 0.126
+                for (int i = 0; i < sampleCount; i++)
+                    samples[i] *= gain;
+            }
+
+            // 루프 이음매 페이드(파도/비 루프와 동일한 방식).
+            for (int i = 0; i < fadeSamples; i++)
+            {
+                float fade = i / (float)fadeSamples;
+                samples[i] *= fade;
+                samples[sampleCount - 1 - i] *= fade;
+            }
+
+            return BuildClip("UnderwaterAmbient", samples);
+        }
+
+        /// <summary>
         /// 사각파(square wave)를 짧게 끊어 반복하는 "삐-삐" 부저음을 생성한다. 실패/거부/경고 신호 전용이다.
         ///
         /// 왜 사각파인가: 이 프로젝트의 다른 효과음은 전부 사인파 비프/화음(채집·제작·치료·취침·점화)
