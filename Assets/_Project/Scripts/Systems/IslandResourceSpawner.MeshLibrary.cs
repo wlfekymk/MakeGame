@@ -139,14 +139,18 @@ namespace MakeGame.Systems
         /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음).</summary>
         private static readonly string[] BambooModelResourcePaths =
         {
-            "Models/bamboo_a", "Models/bamboo_b", "Models/bamboo_c"
+            "Models/bamboo_a", "Models/bamboo_b", "Models/bamboo_c",
+            "Models/bamboo_d", "Models/bamboo_e", "Models/bamboo_f"
         };
 
-        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.</summary>
-        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f };
+        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.
+        /// d~f도 OBJ 정점의 maxY를 실측한 값이다(d 2.044 / e 5.070 / f 4.252).</summary>
+        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f, 2.044f, 5.070f, 4.252f };
 
-        private static readonly Mesh[] bambooCulmMeshes = new Mesh[3];
-        private static readonly Mesh[] bambooLeafMeshes = new Mesh[3];
+        // 배열 크기는 경로 배열 길이에서 온다(모델을 더 붙일 때 세 곳을 같이 고치는 실수 방지).
+        // 필드 초기자는 선언 순서대로 실행되므로 BambooModelResourcePaths(위)가 먼저 채워진다.
+        private static readonly Mesh[] bambooCulmMeshes = new Mesh[BambooModelResourcePaths.Length];
+        private static readonly Mesh[] bambooLeafMeshes = new Mesh[BambooModelResourcePaths.Length];
         private static int bambooModelProbeFrame = -1;
 
         /// <summary>

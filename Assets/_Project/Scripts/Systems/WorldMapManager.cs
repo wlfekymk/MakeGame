@@ -248,14 +248,28 @@ namespace MakeGame.Systems
         /// </summary>
         private Material oceanMaterial;
 
+        /// <summary>
+        /// 커스텀 바다 셰이더(MGOcean)의 파도 시간 프로퍼티 ID. 셰이더는 내장 _Time 대신 이 값을
+        /// 쓰므로, C#이 넣어주는 Time.time이 곧 파도의 시계다(타이틀 화면 정지 동작의 근거).
+        /// </summary>
+        private static readonly int OceanWaveTimeProperty = Shader.PropertyToID("_MG_WaveTime");
+
+        /// <summary>
+        /// oceanMaterial이 _MG_WaveTime 프로퍼티를 갖는지(= 커스텀 셰이더 경로인지).
+        /// CreateOceanMaterial()에서 한 번 판정해 두고, Update()가 매 프레임 HasProperty를
+        /// 부르지 않게 하는 캐시다. URP Lit 폴백 경로에서는 false.
+        /// </summary>
+        private bool oceanHasWaveTime;
+
         /// <summary>모든 섬이 공유하는 해안선 띠 머티리얼(색/텍스처가 같으므로 하나면 충분하다).</summary>
         private Material shorelineBandMaterial;
 
         /// <summary>
-        /// 퀄리티 개선(바다): 수면 텍스처의 UV를 아주 느리게 흘려보내 정지 화면 같던 바다에
-        /// 최소한의 움직임을 준다. 셰이더를 새로 만들 수 없는 파이프라인이라(3D/셰이더 에셋 0개)
-        /// 머티리얼 오프셋 애니메이션이 물살을 표현할 수 있는 유일한 수단이다.
-        /// Time.time을 쓰므로 타이틀 화면(Time.timeScale = 0)에서는 자연스럽게 멈춘다.
+        /// 퀄리티 개선(바다): 수면 텍스처의 UV를 아주 느리게 흘려보내 바다에 움직임을 준다.
+        /// 커스텀 셰이더(MGOcean) 경로에서는 추가로 파도 시간(_MG_WaveTime)을 매 프레임 넣는다 -
+        /// 셰이더가 내장 _Time을 쓰지 않기 때문에 이 값이 없으면 파도가 아예 움직이지 않는다.
+        /// 둘 다 Time.time 기반이므로 타이틀 화면(Time.timeScale = 0)에서는 UV 스크롤과 버텍스
+        /// 파도가 함께 자연스럽게 멈춘다(기존 동작 유지).
         /// </summary>
         private void Update()
         {
@@ -265,6 +279,9 @@ namespace MakeGame.Systems
             oceanMaterial.mainTextureOffset = new Vector2(
                 Mathf.Repeat(oceanScrollSpeed.x * Time.time, 1f),
                 Mathf.Repeat(oceanScrollSpeed.y * Time.time, 1f));
+
+            if (oceanHasWaveTime)
+                oceanMaterial.SetFloat(OceanWaveTimeProperty, Time.time);
         }
 
         /// <summary>
@@ -397,13 +414,38 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 바다 평면에 사용할 파란색 URP Lit 머티리얼을 만든다.
-        /// 버그 수정: 그동안 완전 단색 평면이라 거대한 바다가 하나의 색종이처럼 밋밋하게 보였다.
-        /// 물결 느낌의 흑백 그레인 텍스처(Resources/Textures/water.png)를 곱해 씌우고, 매끈하고
-        /// 살짝 금속성 있는 표면(Smoothness/Metallic)으로 설정해 햇빛이 비칠 때 반짝이는 느낌을 준다.
+        /// 바다 평면에 사용할 머티리얼을 만든다.
+        ///
+        /// 퀄리티 개선(바다 v2): 커스텀 URP 셰이더(Resources/Shaders/MGOcean)를 먼저 시도한다.
+        /// 버텍스 파도(진폭 합 0.24m, 시각 전용)·잔물결 노멀 2겹·프레넬 색 블렌드를 제공하며,
+        /// Opaque 유지라 ShorelineBand와의 정렬도 그대로다. 파도 시간은 Update()가 넣는
+        /// _MG_WaveTime으로만 흐른다(셰이더는 _Time을 안 쓴다 - 타이틀 화면 정지 유지).
+        ///
+        /// 셰이더 로드가 실패하면(에셋 누락/컴파일 실패) 예전 URP Lit 경로로 그대로 폴백한다 -
+        /// 어느 쪽이든 게임은 돌아가야 한다. 두 경로 모두 water.png를 [MainTexture]로 쓰고
+        /// mainTextureScale = oceanSize/10, 즉 "1타일 = 월드 10미터" 계약을 지킨다.
         /// </summary>
         private Material CreateOceanMaterial()
         {
+            var oceanShader = Resources.Load<Shader>("Shaders/MGOcean");
+            if (oceanShader != null)
+            {
+                var oceanMat = new Material(oceanShader);
+                // 색은 셰이더 프로퍼티 기본값(_DeepColor/_ShallowColor, 기존 0.1/0.35/0.55 근처)에
+                // 맡긴다. _BaseColor는 흰색 그대로 둬야 이중으로 어두워지지 않는다.
+                var customWaterTexture = Resources.Load<Texture2D>("Textures/water");
+                if (customWaterTexture != null)
+                {
+                    // [MainTexture] _BaseMap이므로 mainTexture/mainTextureScale이 그대로 통한다.
+                    oceanMat.mainTexture = customWaterTexture;
+                    oceanMat.mainTextureScale = new Vector2(oceanSize / 10f, oceanSize / 10f);
+                }
+                oceanHasWaveTime = oceanMat.HasProperty(OceanWaveTimeProperty);
+                return oceanMat;
+            }
+
+            // ---- 폴백: 기존 URP Lit 경로(커스텀 셰이더 도입 전과 동일) ----
+            oceanHasWaveTime = false;
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = new Color(0.1f, 0.35f, 0.55f);
