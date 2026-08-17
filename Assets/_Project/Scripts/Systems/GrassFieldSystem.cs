@@ -38,9 +38,19 @@ namespace MakeGame.Systems
     ///  · _MG_WindTime(Time.time) / _MG_PlayerPos(플레이어 월드 위치)를 매 프레임 주입한다
     ///    (잔디 머티리얼 - 꽃 머티리얼에도 같이 넣는다). 바람/밟힘 애니메이션은 전부 셰이더
     ///    정점 단계 - C#은 행렬을 다시 만지지 않는다.
-    ///  · 카드 메시는 계약 규격(교차 쿼드 2장, 폭 0.55m·높이 0.65m·피벗 밑동·UV.y 0뿌리~1끝)대로
-    ///    이 클래스가 코드로 생성한다(텍스처 폴백 시에는 v1 blade 규격 0.14m×1m).
-    ///    Cull Off 셰이더라 단면 지오메트리면 충분하다.
+    ///  · 카드 메시는 계약 규격([v4] 별모양 쿼드 3장 60도 간격, 폭 0.72m·높이 0.70m·피벗 밑동·
+    ///    UV.y 0뿌리~1끝)대로 이 클래스가 코드로 생성한다(텍스처 폴백 시에는 v1 blade 규격
+    ///    교차 2장 0.14m×1m). Cull Off 셰이더라 단면 지오메트리면 충분하다.
+    ///
+    /// ── [v4] 겹침·군집·융합 ("듬성듬성 조잡" 대응 - 실사 게임 표준 기법) ──
+    ///  · 겹침: 격자 간격 0.42m &lt; 카드 폭 0.72m라 이웃 카드가 항상 겹쳐 낱장 실루엣이 사라진다.
+    ///  · 다발 군집: 채택 셀 = 다발 앵커. 앵커당 카드 2~3장(위치 해시)을 반경 0.22m 안에 군집
+    ///    생성 - 균일 산포 대신 실측 잔디처럼 다발+자연 틈. 카드 목표 = 기존 목표 × 1.6
+    ///    (섬당 70k 클램프)을 평균 장수 2.5로 나눠 앵커 채택률을 역산하므로 기존 목표 개수
+    ///    계약·B52 섬별 비율 변주 구조는 그대로다.
+    ///  · 무작위 기울임 ±8도(축도 해시): 위에서 봐도 교차가 안 읽히고 윗선이 들쭉날쭉해진다.
+    ///  · 뿌리색-지면 융합: _RootColor 기본값을 지면색 MeadowGreen의 어두운 변주로 - 밑동이
+    ///    땅에 녹아든다(셰이더 기본값·머티리얼 세팅 양쪽).
     ///
     /// ── 초지 판정 (IslandMeshGenerator의 실제 색 경계 규칙 재사용) ──
     /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(기준 높이 + BandWobble(angle)
@@ -87,8 +97,12 @@ namespace MakeGame.Systems
         /// <summary>전체 잔디 밀도 배율. 성능 튜닝은 이 값 하나로 한다(0.5 = 절반, 0 = 잔디 끔).</summary>
         public const float DensityMultiplier = 1f;
 
-        /// <summary>후보 격자 간격(m). 지터가 ±0.45×이 값이라 격자무늬가 눈에 남지 않는다.</summary>
-        private const float CellSpacing = 0.55f;
+        /// <summary>
+        /// 후보 격자 간격(m). 지터가 ±0.45×이 값이라 격자무늬가 눈에 남지 않는다.
+        /// [v4] 0.55 → 0.42: 카드 폭(0.72m)보다 좁아 이웃 카드가 항상 겹친다 - 낱장 빌보드가
+        /// 개별로 읽히던 "듬성듬성" 실루엣이 사라진다(겹침은 실사 잔디의 기본 기법).
+        /// </summary>
+        private const float CellSpacing = 0.42f;
 
         /// <summary>
         /// 초지 경계 디더 반폭(m) = BuildGroundCaps heightDither 0.36의 절반. [B52] 기준 높이 자체는
@@ -136,6 +150,26 @@ namespace MakeGame.Systems
         /// <summary>솟은 다발의 폭(xz) 스케일 범위 - 키만 크면 빗자루 같아서 살짝 넓게.</summary>
         private const float TuftScaleXZMin = 1.0f;
         private const float TuftScaleXZMax = 1.25f;
+
+        // ── [v4] 다발(tuft cluster) 군집 배치 상수 (전부 순수 위치 해시, rng 소비 0) ──
+        // 실측 잔디는 균일 산포가 아니라 다발로 자란다. 채택된 격자 셀을 '다발 앵커'로 삼아
+        // 카드 2~3장을 앵커 주변 반경 0.22m 안에 군집 생성한다 - 군집 사이에 자연스러운 틈이
+        // 남고, 군집 안에서는 카드가 서로 겹쳐 낱장 실루엣이 완전히 사라진다.
+
+        /// <summary>목표 인스턴스 수 배율. 기존 목표 × 1.6이 카드 장수 목표가 된다.</summary>
+        private const float ClusterDensityBoost = 1.6f;
+
+        /// <summary>다발 앵커 주변 카드 산포 반경(m).</summary>
+        private const float ClusterRadius = 0.22f;
+
+        /// <summary>앵커당 카드 장수 기대값(2장 50% / 3장 50% = 평균 2.5). 앵커 채택률 역산용.</summary>
+        private const float ClusterCardsAvg = 2.5f;
+
+        /// <summary>카드 무작위 기울임 최대각(도). 축도 위치 해시 - 위에서 봐도 별모양이 안 읽힌다.</summary>
+        private const float MaxTiltDegrees = 8f;
+
+        /// <summary>섬당 인스턴스 수 상한(XL 기준 ~70개 × 1023 배치 - RenderMeshInstanced 허용 범위).</summary>
+        private const int MaxInstancesPerIsland = 70000;
 
         // ── 군락(패치니스)/꽃 무리 상수 (전부 순수 해시 노이즈 - rng 소비 0) ────────────
 
@@ -292,12 +326,18 @@ namespace MakeGame.Systems
             if (eligibleWeight <= 0f)
                 return;
 
-            // 패치 배율이 곱해진 채택 판정에서 총 기대 개수 = keepProbability × 배율 합.
-            // 1을 넘으면(작은 초지) 무성한 셀이 전부 채택될 뿐이라 클램프가 필요 없다.
-            float keepProbability = targetCount / eligibleWeight;
+            // [v4] 카드 장수 목표 = 기존 목표 × 1.6(겹침·군집으로 밀도감을 올린다) - 상한 70k
+            // 클램프(XL도 1023 배치 ~70개 - RenderMeshInstanced 허용 범위). 목표 개수 계약과
+            // B52 섬별 비율 변주는 targetCount에 이미 들어 있으므로 구조는 그대로다.
+            float cardTarget = Mathf.Min(targetCount * ClusterDensityBoost, MaxInstancesPerIsland);
 
-            // ── 2차 통과: 해시 선별(×패치 배율) + 경사 검사 + 행렬 생성 + 꽃 전환 ──────────
-            int expected = Mathf.CeilToInt(targetCount * 0.55f) + 16;
+            // 패치 배율이 곱해진 채택 판정에서 총 기대 앵커 수 = keepProbability × 배율 합.
+            // [v4] 앵커 하나가 카드 평균 2.5장을 만들므로 앵커 목표 = 카드 목표 / 2.5로 역산한다.
+            // 1을 넘으면(작은 초지) 무성한 셀이 전부 채택될 뿐이라 클램프가 필요 없다.
+            float keepProbability = cardTarget / ClusterCardsAvg / eligibleWeight;
+
+            // ── 2차 통과: 해시 선별(×패치 배율) + 경사 검사 + 다발 카드 생성 + 꽃 전환 ──────
+            int expected = Mathf.CeilToInt(cardTarget * 0.55f) + 16;
             var listA = new List<Matrix4x4>(expected);
             var listB = new List<Matrix4x4>(expected);
             List<Matrix4x4> flowerListA = null;
@@ -337,48 +377,75 @@ namespace MakeGame.Systems
                     if (gx * gx + gz * gz > MaxSlopeTan * MaxSlopeTan)
                         continue;
 
-                    // 인스턴스 변주(전부 위치 해시): yaw 0~360° + [v3] 이봉 스케일 -
-                    // 80%는 하층 짧은 풀(y 0.5~0.9), 20%는 솟은 다발(y 1.0~1.5, xz 1.0~1.25).
-                    // 균일 단봉 분포의 "고른 카펫"이 하층+다발 두 층으로 갈라진다.
-                    float yaw = Hash01(ix, iz, islandSalt ^ 0x85EBCA6Bu) * 360f;
+                    // [v4] 다발 군집: 이 셀은 '다발 앵커'다. 카드 2~3장(위치 해시)을 반경 0.22m
+                    // 안에 군집 생성한다. [v3] 이봉 스케일의 다발/하층 분류는 앵커 단위(한 다발이
+                    // 통째로 솟거나 낮다 - 실측 다발의 응집성), 나머지 변주는 카드 단위다.
                     bool isTuft = Hash01(ix, iz, islandSalt ^ 0x94D049BBu) < TuftFraction;
-                    float hY = Hash01(ix, iz, islandSalt ^ 0xC2B2AE35u);
-                    float hXZ = Hash01(ix, iz, islandSalt ^ 0x27D4EB2Fu);
-                    float scaleY = isTuft
-                        ? Mathf.Lerp(TuftScaleYMin, TuftScaleYMax, hY)
-                        : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY);
-                    float scaleXZ = isTuft
-                        ? Mathf.Lerp(TuftScaleXZMin, TuftScaleXZMax, hXZ)
-                        : Mathf.Lerp(UnderScaleXZMin, UnderScaleXZMax, hXZ);
+                    int cardCount = Hash01(ix, iz, islandSalt ^ 0x632BE59Bu) < 0.5f ? 2 : 3;
 
-                    var worldPos = new Vector3(center.x + x, center.y + y - RootSinkDepth, center.z + z);
-                    var matrix = Matrix4x4.TRS(worldPos, Quaternion.Euler(0f, yaw, 0f),
-                        new Vector3(scaleXZ, scaleY, scaleXZ));
-
-                    // 꽃 무리: 파장 ~11m 노이즈가 문턱(상위 ~12%)을 넘는 지대에서만, 채택된 잔디의
-                    // 8~15%(문턱 초과 정도로 보간)를 꽃 배치로 전환한다. 텍스처 폴백 시에는
-                    // flowerList가 null이라 이 분기 전체가 죽는다(v1과 같은 잔디-only).
-                    bool isFlower = false;
+                    // 꽃 무리 지대 판정은 앵커 단위 1회(파장 ~11m 노이즈, 문턱 = 면적 상위 ~12%).
+                    // 전환 자체는 카드 단위라 꽃도 다발 구조 안에서 무리 지어 핀다.
+                    // 텍스처 폴백 시에는 flowerList가 null이라 이 분기 전체가 죽는다(잔디-only).
+                    float flowerRatio = 0f;
                     if (flowerListA != null)
                     {
                         float zone = LatticeNoise(x, z, FlowerWavelength, islandSalt ^ 0x68E31DA4u);
                         if (zone > FlowerZoneThreshold)
-                        {
-                            float ratio = Mathf.Lerp(FlowerRatioMin, FlowerRatioMax,
+                            flowerRatio = Mathf.Lerp(FlowerRatioMin, FlowerRatioMax,
                                 (zone - FlowerZoneThreshold) / (1f - FlowerZoneThreshold));
-                            isFlower = Hash01(ix, iz, islandSalt ^ 0xB5297A4Du) < ratio;
-                        }
                     }
 
-                    // LOD 그룹 배정도 위치 해시(프레임에서 절대 재계산하지 않는다). 꽃도 같은 규칙.
-                    bool inGroupA = Hash01(ix, iz, islandSalt ^ 0x165667B1u) < 0.5f;
-                    if (isFlower)
-                        (inGroupA ? flowerListA : flowerListB).Add(matrix);
-                    else
-                        (inGroupA ? listA : listB).Add(matrix);
+                    for (int card = 0; card < cardCount; card++)
+                    {
+                        // 카드별 해시 salt: 같은 (ix, iz)에서 카드마다 독립 변주가 나오도록
+                        // 카드 인덱스를 섞는다(순수 해시 - rng 소비 0은 그대로다).
+                        uint cardSalt = Mix32(islandSalt + 0x68E31DA4u * (uint)(card + 1));
 
-                    if (y < minY) minY = y;
-                    if (y > maxY) maxY = y;
+                        // 앵커 주변 원판 균등 산포(sqrt로 반경 편중 제거).
+                        float offAngle = Hash01(ix, iz, cardSalt ^ 0x51ED270Bu) * (Mathf.PI * 2f);
+                        float offRadius = Mathf.Sqrt(Hash01(ix, iz, cardSalt ^ 0x1B873593u)) * ClusterRadius;
+                        float cx = x + Mathf.Cos(offAngle) * offRadius;
+                        float cz = z + Mathf.Sin(offAngle) * offRadius;
+                        // 카드 위치에서 높이를 다시 샘플해 경사면에서도 밑동이 뜨지 않는다.
+                        float cy = SampleHeight(verts, rings, segments, radius, cx, cz);
+
+                        // 카드 변주(전부 위치 해시): yaw 0~360° + 무작위 기울임 ±8도(축도 해시) +
+                        // [v3] 이봉 스케일. 기울임 덕에 위에서 봐도 별모양 교차가 안 읽히고
+                        // 다발 윗선이 들쭉날쭉해진다.
+                        float yaw = Hash01(ix, iz, cardSalt ^ 0x85EBCA6Bu) * 360f;
+                        float tiltDeg = (Hash01(ix, iz, cardSalt ^ 0xA511E9B3u) * 2f - 1f) * MaxTiltDegrees;
+                        float axisAngle = Hash01(ix, iz, cardSalt ^ 0x2545F491u) * (Mathf.PI * 2f);
+                        var tiltAxis = new Vector3(Mathf.Cos(axisAngle), 0f, Mathf.Sin(axisAngle));
+                        var rotation = Quaternion.AngleAxis(tiltDeg, tiltAxis)
+                            * Quaternion.Euler(0f, yaw, 0f);
+
+                        float hY = Hash01(ix, iz, cardSalt ^ 0xC2B2AE35u);
+                        float hXZ = Hash01(ix, iz, cardSalt ^ 0x27D4EB2Fu);
+                        float scaleY = isTuft
+                            ? Mathf.Lerp(TuftScaleYMin, TuftScaleYMax, hY)
+                            : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY);
+                        float scaleXZ = isTuft
+                            ? Mathf.Lerp(TuftScaleXZMin, TuftScaleXZMax, hXZ)
+                            : Mathf.Lerp(UnderScaleXZMin, UnderScaleXZMax, hXZ);
+
+                        var worldPos = new Vector3(
+                            center.x + cx, center.y + cy - RootSinkDepth, center.z + cz);
+                        var matrix = Matrix4x4.TRS(worldPos, rotation,
+                            new Vector3(scaleXZ, scaleY, scaleXZ));
+
+                        bool isFlower = flowerRatio > 0f
+                            && Hash01(ix, iz, cardSalt ^ 0xB5297A4Du) < flowerRatio;
+
+                        // LOD 그룹 배정도 카드별 위치 해시(프레임에서 절대 재계산하지 않는다).
+                        bool inGroupA = Hash01(ix, iz, cardSalt ^ 0x165667B1u) < 0.5f;
+                        if (isFlower)
+                            (inGroupA ? flowerListA : flowerListB).Add(matrix);
+                        else
+                            (inGroupA ? listA : listB).Add(matrix);
+
+                        if (cy < minY) minY = cy;
+                        if (cy > maxY) maxY = cy;
+                    }
                 }
             }
 
@@ -577,7 +644,10 @@ namespace MakeGame.Systems
                 grassMaterial.enableInstancing = true;
                 // 틴트 기본값(계약): 뿌리/끝/마른 풀. 나머지(_WindStrength/_TrampleRadius)는 셰이더
                 // Properties 기본값을 그대로 쓴다.
-                grassMaterial.SetColor("_RootColor", new Color(0.16f, 0.30f, 0.14f, 1f));
+                // [v4] 뿌리색-지면 융합: 지형 초지색 StructureVisualBuilder.MeadowGreen
+                // (0.541, 0.659, 0.310)의 ~0.56배 어두운 변주 - 카드 밑동이 MeadowGreen 지면과
+                // 같은 색상각의 그늘로 읽혀 땅에 녹아든다(밑동-지면 색 틈이 도드라지던 원인 제거).
+                grassMaterial.SetColor("_RootColor", new Color(0.30f, 0.37f, 0.17f, 1f));
                 grassMaterial.SetColor("_TipColor", new Color(0.45f, 0.62f, 0.28f, 1f));
                 grassMaterial.SetColor("_DryTint", new Color(0.55f, 0.52f, 0.30f, 1f));
                 // [v3] 음영: 풀끝 스페큘러 시트 + 역광 투과(셰이더 기본값과 같지만 명시 세팅이 계약).
@@ -618,54 +688,75 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 카드 메시(v2 계약 규격): 교차 쿼드 2장 = 정점 8개·삼각형 4개. 폭 0.55m·높이 0.65m·
-        /// 피벗 밑동, UV.y 0(뿌리)~1(끝). 카드 한 장에 텍스처 풀잎 수십 가닥이 실리므로 v1 blade보다
-        /// 넓고 낮다. Cull Off 셰이더라 단면이면 충분하고, 높이 변주는 인스턴스 행렬 스케일 몫이다.
+        /// 카드 메시([v4] 규격): 별모양 쿼드 3장(60도 간격) = 정점 12개·삼각형 6개.
+        /// 폭 0.72m·높이 0.70m·피벗 밑동, UV.y 0(뿌리)~1(끝). 폭이 격자 간격(0.42m)보다 넓어
+        /// 이웃 카드가 항상 겹치고, 3장 별모양은 어느 각도(위에서 포함)에서도 X자 교차가
+        /// 안 읽힌다. Cull Off 셰이더라 단면이면 충분하고, 높이 변주는 인스턴스 행렬 스케일 몫이다.
         /// </summary>
         private static Mesh CreateCardMesh()
         {
-            return CreateCrossQuadMesh("GrassCard", 0.275f, 0.65f);
+            return CreateQuadFanMesh("GrassCard", 0.36f, 0.70f, 3);
         }
 
         /// <summary>
-        /// v1 blade 메시(텍스처 폴백 규격): 폭 0.14m·높이 1m. grass_card가 없을 때 틴트
-        /// 그라데이션만으로 그리던 v1 모양을 그대로 유지한다.
+        /// v1 blade 메시(텍스처 폴백 규격): 교차 쿼드 2장, 폭 0.14m·높이 1m. grass_card가 없을 때
+        /// 틴트 그라데이션만으로 그리던 v1 모양을 그대로 유지한다.
         /// </summary>
         private static Mesh CreateBladeMesh()
         {
-            return CreateCrossQuadMesh("GrassBlade", 0.07f, 1f);
+            return CreateQuadFanMesh("GrassBlade", 0.07f, 1f, 2);
         }
 
-        /// <summary>교차 쿼드 2장 메시 공용 생성기. 피벗 밑동, UV.y 0(뿌리)~1(끝).</summary>
-        private static Mesh CreateCrossQuadMesh(string name, float halfWidth, float height)
+        /// <summary>
+        /// 세로 쿼드 planeCount장을 Y축 기준 180°/planeCount 간격으로 교차시킨 메시 공용 생성기.
+        /// (2장 = 기존 십자 교차, 3장 = 60도 별모양.) 피벗 밑동, UV.y 0(뿌리)~1(끝).
+        /// </summary>
+        private static Mesh CreateQuadFanMesh(string name, float halfWidth, float height, int planeCount)
         {
             var mesh = new Mesh { name = name };
 
-            mesh.vertices = new[]
+            var vertices = new Vector3[planeCount * 4];
+            var uv = new Vector2[planeCount * 4];
+            var normals = new Vector3[planeCount * 4];
+            var triangles = new int[planeCount * 6];
+
+            for (int p = 0; p < planeCount; p++)
             {
-                // 쿼드 1: XY 평면(법선 +Z)
-                new Vector3(-halfWidth, 0f, 0f), new Vector3(halfWidth, 0f, 0f),
-                new Vector3(-halfWidth, height, 0f), new Vector3(halfWidth, height, 0f),
-                // 쿼드 2: ZY 평면(법선 +X) - 90도 교차
-                new Vector3(0f, 0f, -halfWidth), new Vector3(0f, 0f, halfWidth),
-                new Vector3(0f, height, -halfWidth), new Vector3(0f, height, halfWidth),
-            };
-            mesh.uv = new[]
-            {
-                new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f),
-            };
-            mesh.normals = new[]
-            {
-                Vector3.forward, Vector3.forward, Vector3.forward, Vector3.forward,
-                Vector3.right, Vector3.right, Vector3.right, Vector3.right,
-            };
-            mesh.triangles = new[]
-            {
-                0, 2, 3, 0, 3, 1,
-                4, 6, 7, 4, 7, 5,
-            };
-            // 바람 진폭(0.12m)·스케일 상한(1.15)을 덮는 여유 바운즈. 컬링은 어차피
+                // 쿼드 p: XY 평면을 Y축으로 p × (180°/planeCount) 돌린 것. 가로 방향
+                // (cos, 0, -sin), 법선 (sin, 0, cos) - p = 0이면 기존 쿼드 1과 동일하다.
+                float a = Mathf.PI / planeCount * p;
+                var right = new Vector3(Mathf.Cos(a), 0f, -Mathf.Sin(a));
+                var normal = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a));
+                var up = new Vector3(0f, height, 0f);
+
+                int v = p * 4;
+                vertices[v + 0] = -right * halfWidth;
+                vertices[v + 1] = right * halfWidth;
+                vertices[v + 2] = -right * halfWidth + up;
+                vertices[v + 3] = right * halfWidth + up;
+                uv[v + 0] = new Vector2(0f, 0f);
+                uv[v + 1] = new Vector2(1f, 0f);
+                uv[v + 2] = new Vector2(0f, 1f);
+                uv[v + 3] = new Vector2(1f, 1f);
+                normals[v + 0] = normal;
+                normals[v + 1] = normal;
+                normals[v + 2] = normal;
+                normals[v + 3] = normal;
+
+                int t = p * 6;
+                triangles[t + 0] = v + 0;
+                triangles[t + 1] = v + 2;
+                triangles[t + 2] = v + 3;
+                triangles[t + 3] = v + 0;
+                triangles[t + 4] = v + 3;
+                triangles[t + 5] = v + 1;
+            }
+
+            mesh.vertices = vertices;
+            mesh.uv = uv;
+            mesh.normals = normals;
+            mesh.triangles = triangles;
+            // 바람 진폭(0.12m)·스케일 상한을 덮는 여유 바운즈. 컬링은 어차피
             // RenderParams.worldBounds(섬 단위)가 담당하므로 넉넉해도 비용이 없다.
             mesh.bounds = new Bounds(new Vector3(0f, height * 0.6f, 0f),
                 new Vector3(halfWidth * 2f + 0.5f, height * 1.5f, halfWidth * 2f + 0.5f));

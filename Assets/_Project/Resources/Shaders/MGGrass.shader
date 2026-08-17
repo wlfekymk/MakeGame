@@ -28,7 +28,7 @@
 //    사라진다 - GrassFieldSystem의 300m 하드 컷과 이어져 팝이 없다.
 //
 // 유지되는 설계 계약(GrassFieldSystem 쪽과 맞물린다):
-//  * 카드 메시: 교차 쿼드 2장(피벗 밑동, UV.y = 0(뿌리)~1(끝)). 높이 변주는 인스턴스 행렬
+//  * 카드 메시: 세로 쿼드 2~3장 교차(피벗 밑동, UV.y = 0(뿌리)~1(끝)). 높이 변주는 인스턴스 행렬
 //    스케일로 들어온다 - 셰이더는 UV.y 가중만 쓰므로 스케일과 무관하게 "뿌리 고정, 끝이 크게"
 //    굽는 형태가 유지된다(MGKelpSway의 y² 가중과 같은 발상, 기준만 UV).
 //  * 인스턴싱: multi_compile_instancing + UNITY_VERTEX_INPUT_INSTANCE_ID / UNITY_SETUP_INSTANCE_ID.
@@ -53,7 +53,9 @@ Shader "MG/Grass"
     Properties
     {
         _BaseMap("잔디 카드 텍스처(2×2 아틀라스, 알파 컷아웃)", 2D) = "white" {}
-        _RootColor("뿌리 틴트(어두운 초록)", Color) = (0.09, 0.22, 0.06, 1)
+        // [v4] 기본값 = 지형 초지색 MeadowGreen(0.541, 0.659, 0.310)의 어두운 변주 -
+        // 카드 밑동이 지면색에 녹아들어 밑동-지면 색 틈이 사라진다.
+        _RootColor("뿌리 틴트(지면 MeadowGreen의 어두운 변주)", Color) = (0.30, 0.37, 0.17, 1)
         _TipColor("끝 틴트(밝은 초록)", Color) = (0.38, 0.62, 0.18, 1)
         _DryTint("마른 풀 틴트(지터 혼합 목표)", Color) = (0.55, 0.52, 0.26, 1)
         _TintStrength("틴트 세기(0 = 텍스처 원색, 1 = 풀 틴트)", Range(0.0, 1.0)) = 0.65
