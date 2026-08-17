@@ -316,23 +316,38 @@ def build_soot(rng):
 
 # ── usemtl 주입 ───────────────────────────────────────────────────────────────
 def inject_usemtl(path):
-    """각 `o <이름>` 줄 뒤에 `usemtl <이름>`을 넣는다.
+    """각 `o <이름>` 줄 뒤에 `usemtl <이름>`을 넣고, 같은 이름의 .mtl 파일을 함께 쓴다.
 
-    Unity 6.5 OBJ 임포터는 서브메시를 **머티리얼 단위**로 만든다. usemtl이 없으면
-    o 오브젝트 5개가 서브메시 1개로 합쳐져 첫 머티리얼(회백)만 칠해진다 - 실사고
-    0.2.13("색상이 회색이야")의 근본 원인. 주입 후에는 서브메시 5개가 o 순서 그대로
-    생겨 AirlinerWreck.cs의 머티리얼 배열(hull/dark/stripe/window/soot)과 1:1이 된다.
+    [실사고 2건의 종착지] Unity 6.5 OBJ 임포터는 서브메시를 머티리얼 단위로 만드는데,
+    (1) usemtl이 아예 없으면 서브메시 1개로 병합되고(0.2.13 "색상이 회색"),
+    (2) usemtl이 있어도 mtllib가 가리키는 실제 .mtl에서 해석되지 않으면 무시되어
+        여전히 서브메시 1개다(0.2.21 검증에서 "병합 메시 sub1" 로그로 발각).
+    그래서 mtllib 선언 + newmtl 목록이 든 최소 .mtl을 동봉한다. 계약 3장("외부 .mtl 의존
+    금지")의 취지는 "머티리얼은 런타임 코드가 만든다"이고, 이 .mtl은 색을 정의하는 파일이
+    아니라 서브메시 구분자다(런타임이 어차피 MG~ 머티리얼로 갈아끼운다).
     """
     with open(path, "r") as fh:
         lines = fh.readlines()
+    base = os.path.basename(path)
+    mtl_name = base[:-4] + ".mtl"
+    names = []
     out = []
+    header_done = False
     for line in lines:
         out.append(line)
+        if not header_done and not line.startswith("#"):
+            out.insert(len(out) - 1, "mtllib " + mtl_name + chr(10))
+            header_done = True
         if line.startswith("o "):
-            out.append("usemtl " + line[2:].strip() + "\n")
+            name = line[2:].strip()
+            names.append(name)
+            out.append("usemtl " + name + chr(10))
     with open(path, "w") as fh:
         fh.writelines(out)
-
+    mtl_path = os.path.join(os.path.dirname(path), mtl_name)
+    with open(mtl_path, "w") as fh:
+        for n in names:
+            fh.write("newmtl " + n + chr(10) + "Kd 0.8 0.8 0.8" + chr(10) + chr(10))
 
 # ── 조립·계약·출력 ────────────────────────────────────────────────────────────
 def main():

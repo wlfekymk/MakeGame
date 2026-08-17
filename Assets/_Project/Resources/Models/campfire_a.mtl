@@ -1,0 +1,9 @@
+newmtl campfire_stone
+Kd 0.8 0.8 0.8
+
+newmtl campfire_wood
+Kd 0.8 0.8 0.8
+
+newmtl campfire_char
+Kd 0.8 0.8 0.8
+

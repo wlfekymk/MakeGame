@@ -276,6 +276,16 @@ namespace MakeGame.Systems
         /// </summary>
         private bool oceanHasWaveTime;
 
+        /// <summary>
+        /// 커스텀 바다 셰이더(MGOcean) 경로가 실제로 살아 있는지. CreateOceanMaterial()에서 판정한다.
+        /// [바다 v3] MGOcean이 반투명 + 깊이 기반 해안 거품을 그리므로, 이 값이 true면
+        /// CreateShorelineBand가 띠 생성을 건너뛴다(거품이 띠를 대체). URP Lit 폴백 경로에서는
+        /// false라 기존 띠가 그대로 생긴다 - 셰이더 부재 시에도 해안 가독성이 유지되는 폴백 보존.
+        /// 호출 순서 보장: Start()/RegenerateWorld() 모두 CreateOcean()을 섬 생성(→ 띠 생성)보다
+        /// 먼저 부르므로, 띠 생성 시점에는 이 판정이 항상 끝나 있다.
+        /// </summary>
+        private bool oceanCustomShaderActive;
+
         /// <summary>모든 섬이 공유하는 해안선 띠 머티리얼(색/텍스처가 같으므로 하나면 충분하다).</summary>
         private Material shorelineBandMaterial;
 
@@ -433,8 +443,18 @@ namespace MakeGame.Systems
         ///
         /// 퀄리티 개선(바다 v2): 커스텀 URP 셰이더(Resources/Shaders/MGOcean)를 먼저 시도한다.
         /// 버텍스 파도(진폭 합 0.24m, 시각 전용)·잔물결 노멀 2겹·프레넬 색 블렌드를 제공하며,
-        /// Opaque 유지라 ShorelineBand와의 정렬도 그대로다. 파도 시간은 Update()가 넣는
-        /// _MG_WaveTime으로만 흐른다(셰이더는 _Time을 안 쓴다 - 타이틀 화면 정지 유지).
+        /// 파도 시간은 Update()가 넣는 _MG_WaveTime으로만 흐른다(셰이더는 _Time을 안 쓴다 -
+        /// 타이틀 화면 정지 유지).
+        ///
+        /// [바다 v3 - 반투명 전환, 사용자 요청 "물속이 보이는 바다"]: MGOcean은 이제
+        /// Transparent 큐(셰이더 SubShader 태그가 지정, 머티리얼 renderQueue 추가 세팅 불필요)에
+        /// Blend SrcAlpha OneMinusSrcAlpha / ZWrite Off / Cull Off로 그려지고, URP 에셋에서 켜져
+        /// 있음을 확인한 _CameraDepthTexture로 물 기둥 깊이(흡수색·깊이 알파·해안 거품)를 계산한다.
+        /// 알려진 부작용(의도된 트레이드오프, 셰이더 헤더와 동일 명시):
+        ///   - Transparent는 메인 라이트 그림자를 받지 않는다(원래 그림자 수신이 없던 셰이더라 실질 무변화).
+        ///   - 반투명끼리 정렬 문제가 생길 수 있으나 바다는 월드에 평면 1장이라 실질 무해.
+        /// ShorelineBand는 셰이더의 깊이 기반 거품이 대체하므로 이 경로에서는 생성을 건너뛴다
+        /// (oceanCustomShaderActive, CreateShorelineBand 참고). 폴백 경로는 띠를 그대로 만든다.
         ///
         /// 셰이더 로드가 실패하면(에셋 누락/컴파일 실패) 예전 URP Lit 경로로 그대로 폴백한다 -
         /// 어느 쪽이든 게임은 돌아가야 한다. 두 경로 모두 water.png를 [MainTexture]로 쓰고
@@ -456,11 +476,16 @@ namespace MakeGame.Systems
                     oceanMat.mainTextureScale = new Vector2(oceanSize / 10f, oceanSize / 10f);
                 }
                 oceanHasWaveTime = oceanMat.HasProperty(OceanWaveTimeProperty);
+                // [바다 v3] 커스텀 셰이더 경로 확정 - 이 플래그가 ShorelineBand 생성을 건너뛰게 한다.
+                // 큐/블렌드/컬링은 전부 셰이더가 스스로 선언하므로(SubShader 태그 + Pass 스테이트)
+                // 여기서 renderQueue나 키워드를 만질 필요가 없다(URP Lit과 달리 키워드 분기가 없는 셰이더다).
+                oceanCustomShaderActive = true;
                 return oceanMat;
             }
 
             // ---- 폴백: 기존 URP Lit 경로(커스텀 셰이더 도입 전과 동일) ----
             oceanHasWaveTime = false;
+            oceanCustomShaderActive = false; // 폴백은 불투명 Lit - ShorelineBand가 계속 해안을 표시한다.
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             var material = new Material(shader != null ? shader : Shader.Find("Standard"));
             material.color = new Color(0.1f, 0.35f, 0.55f);
@@ -1120,9 +1145,17 @@ namespace MakeGame.Systems
         /// 텍스처 조합으로 "안쪽은 밝고 바깥으로 갈수록 스르르 사라지는 띠"를 만든다.
         /// 콜라이더가 없는 순수 시각 요소이고, 해수면(seaLevel) 판정은 PlayerController가 y좌표만으로
         /// 하므로 수영/잠수 판정에는 아무 영향이 없다.
+        ///
+        /// [바다 v3] MGOcean 셰이더가 살아 있으면(oceanCustomShaderActive) 이 띠를 만들지 않는다 -
+        /// 셰이더의 깊이 기반 해안 거품/얕은 물 흡수색이 "여기부터 얕다"를 실제 지형 깊이 그대로
+        /// 표현하므로 원형 고리 띠는 중복이고, 반투명 바다와 반투명 띠가 겹치면 정렬(소트) 문제도
+        /// 생긴다. 셰이더 로드 실패 폴백(URP Lit, 불투명)에서는 기존대로 띠를 만든다 - 폴백 경로 보존.
         /// </summary>
         private void CreateShorelineBand(Transform islandTransform, float radius, int radialSegments)
         {
+            if (oceanCustomShaderActive)
+                return;
+
             if (shorelineBandOuterScale <= 1f || radius <= 0f)
                 return;
 

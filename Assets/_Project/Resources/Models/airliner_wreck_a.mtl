@@ -1,0 +1,15 @@
+newmtl airliner_hull
+Kd 0.8 0.8 0.8
+
+newmtl airliner_dark
+Kd 0.8 0.8 0.8
+
+newmtl airliner_stripe
+Kd 0.8 0.8 0.8
+
+newmtl airliner_window
+Kd 0.8 0.8 0.8
+
+newmtl airliner_soot
+Kd 0.8 0.8 0.8
+

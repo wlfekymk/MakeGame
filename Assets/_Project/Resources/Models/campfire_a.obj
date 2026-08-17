@@ -1,5 +1,6 @@
 # Blender 5.0.1
 # www.blender.org
+mtllib campfire_a.mtl
 o campfire_stone
 usemtl campfire_stone
 v 0.500329 0.004364 0.157471
