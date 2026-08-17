@@ -735,11 +735,20 @@ namespace MakeGame.Systems
             int radialSegments = Mathf.Clamp(Mathf.RoundToInt(radius * 1.5f), 24, 90);
             // [B46] 노이즈 오프셋 시드. worldSeed와 islandId만 입력으로 받는 순수 해시라
             // (IslandMeshGenerator.ComputeNoiseSeed) 난수를 한 번도 소비하지 않는다.
-            // noiseScale/noiseAmplitude는 기본값 그대로 둔다 - 이번 배치는 "섬마다 다르다"만 만들고
-            // 형태 언어(옥타브·능선·석호)는 건드리지 않는다.
+            //
+            // [B47] 여기에 **지형 프로파일 번호**가 더해졌다. 프로파일은 섬의 형태 언어 자체를 바꾼다
+            // (완만한 초원 / 단봉 / 쌍봉 / 초승달 / 가운데 수로 / 석호 / 길쭉한 능선 / 고원+절벽).
+            //  · SelectShapeProfile도 (worldSeed, islandId) 순수 해시다 - 난수 스트림을 만들지 않으므로
+            //    자원·위험요소의 추첨 순서와 (islandIndex, spawnOrder) 세이브 키가 한 칸도 밀리지 않는다.
+            //  · islandId 0(시작 섬)은 그 함수가 항상 0번(가장 완만한 프로파일)을 돌려준다. 튜토리얼
+            //    구간이고, 경비행기 잔해(+6,-4)·배 작업대(-6,-3)가 중심 근처에 고정 배치되며,
+            //    사용자가 여기서 처음 집을 짓는다.
+            //  · terrainMaxHeight(씬 직렬화 값 8)는 그대로 넘긴다. 섬별 높이 차이는 프로파일의
+            //    heightScale(0.16~0.36)이 이 값에 곱해져 만들어진다 - 씬을 고치지 않고 높이를 가르는 경로다.
             var mesh = IslandMeshGenerator.GenerateIslandMesh(
                 radius, terrainMaxHeight, ringCount, radialSegments,
-                noiseSeed: IslandMeshGenerator.ComputeNoiseSeed(worldSeed, islandId));
+                noiseSeed: IslandMeshGenerator.ComputeNoiseSeed(worldSeed, islandId),
+                shapeProfile: IslandMeshGenerator.SelectShapeProfile(worldSeed, islandId));
 
             var meshFilter = go.AddComponent<MeshFilter>();
             meshFilter.sharedMesh = mesh;
