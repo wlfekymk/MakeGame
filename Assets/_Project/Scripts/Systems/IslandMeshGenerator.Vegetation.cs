@@ -88,15 +88,27 @@ namespace MakeGame.Systems
         /// 어디에도 없었다(WorldMapManager.CreateDefaultTerrainMaterial / CreateProceduralIslandTerrain).
         /// 그래서 실제 게임에 들어가면 반지름 50~200m짜리 모래색 평지만 보였다.
         ///
-        /// [콜라이더 절대 금지] 여기서 만드는 오브젝트에는 콜라이더를 단 하나도 붙이지 않는다.
-        /// TerrainSampler.SnapToGround가 이름이 "Island_"로 시작하는 콜라이더만 지형으로 인정하는데,
-        /// 초목에 콜라이더가 붙으면 (a) 이름 규칙상 지형으로 인정되지는 않더라도 물리 씬에 불필요한
-        /// 콜라이더가 수천 개 늘어나고, (b) 이후 누군가 판정 규칙을 손대는 순간 "불러오기 후 모든
-        /// 아이템이 하늘로 떠오르는" 사고가 재발한다. 그래서 프리미티브를 만들고 콜라이더를 지우는
-        /// (Destroy가 프레임 끝까지 지연되는) 방식조차 쓰지 않고, 아예 콜라이더가 생기지 않는 경로
-        /// (공유 메시 + 빈 GameObject + MeshFilter/MeshRenderer)로 만든다. 공유 메시는 내장 프리미티브
-        /// (GetPrimitiveMesh)이거나 이 클래스가 만든 저폴리 메시(GetBushClumpMesh/GetGrassBladeMesh 등)이며,
-        /// 후자는 프리미티브를 거치지 않으므로 콜라이더가 한 프레임도 존재하지 않는다.
+        /// [콜라이더 정책 — "절대 금지"에서 "선별 허용"으로 (디렉터 지시: 바위에 올라가고 부딪히게)]
+        /// 예전 규칙은 [콜라이더 절대 금지]였다. 원래 이유는 TerrainSampler.SnapToGround가 **단일**
+        /// Raycast이던 시절 장식 콜라이더가 지형으로 오인돼 "불러오기 후 모든 아이템이 하늘로 떠오르는"
+        /// 사고가 났기 때문이다. 그 전제는 이제 성립하지 않는다 — 지형을 조회하는 경로가 전부
+        /// **이름/구조 필터를 갖춘 RaycastAll 계열**로 바뀌었다(전수 확인):
+        ///   · TerrainSampler.SnapToGround: RaycastNonAlloc + "Island_" 접두사만 채택(TerrainSampler.cs:44-75)
+        ///   · BuildingSystem.CastBuildRay: 지형/조각/갑판 외 히트는 통과(BuildingSystem.cs:1436-1448),
+        ///     지면 프로브도 "Island_" 필터(BuildingSystem.cs:1727-1737)
+        ///   · HazardSource.BearAI.SampleGroundY: SnapToGround 경유 + 실패 감지(HazardSource.BearAI.cs:681-)
+        ///   · WeatherSystem.ProbeSplashSurfaceY: SnapToGround + "BuildPiece_" 필터(WeatherSystem.cs:567-585)
+        /// 따라서 장식 콜라이더가 배치·건축·곰 이동을 오염시킬 경로가 구조적으로 없다.
+        ///
+        /// 지금 규칙: **큰 바위 덩어리(convex MeshCollider)와 야자수 줄기(CapsuleCollider)에만** 붙인다.
+        ///   · 덤불·풀포기·곁돌·표류물·야자 크라운은 여전히 콜라이더 없음(통과) — 발에 걸리면 짜증나고,
+        ///     수백 개라 물리 씬만 무거워진다(예전 (a) 우려는 이 선별로 계속 막는다).
+        ///   · 새 콜라이더의 오브젝트 이름은 절대 "Island_"로 시작하면 안 된다(지형 오인 방지의 최후 보루).
+        ///   · 콜라이더 추가는 rng를 한 번도 소비하지 않는다 — 배치 재현성 불변([결정성] 주석).
+        ///   · BuildIslandSurface 끝에서 Physics.SyncTransforms()를 한 번 부른다(autoSyncTransforms=false,
+        ///     AGENT_BRIEF 4장 — 같은 프레임의 후속 레이캐스트가 물리 씬을 결정적으로 보게 한다).
+        /// 시각 파츠 생성은 여전히 콜라이더가 자동으로 생기지 않는 경로(공유 메시 + 빈 GameObject +
+        /// MeshFilter/MeshRenderer, CreatePart)를 쓴다 — 콜라이더는 위 두 자리에만 **명시적으로** 단다.
         ///
         /// [결정성] 배치에 UnityEngine.Random을 일절 쓰지 않는다. 호출자가 넘긴 섬별 System.Random
         /// 스트림만 소비하며, 소비 횟수도 (반지름 → 개수)가 정해지면 고정이라 같은 worldSeed면 항상
@@ -322,6 +334,37 @@ namespace MakeGame.Systems
                         DriftMinGroundY, DriftMaxGroundY),
                     rng, driftMaterials[i % driftMaterials.Length], i);
             }
+
+            // 위 루프들이 바위 큰 덩어리·야자수 줄기에 차단 콜라이더를 새로 달았다.
+            // Physics.autoSyncTransforms는 기본 false라(AGENT_BRIEF 4장 — 초목이 전부 해수면에 깔렸던
+            // 함정) 같은 프레임의 후속 레이캐스트는 이 콜라이더들을 아직 못 본다. 지형을 찾는 프로브는
+            // 전부 이름 필터라 못 봐도 무해하지만, "보이거나 안 보이거나"가 프레임 타이밍에 좌우되는
+            // 비결정성을 남기지 않기 위해 여기서 한 번 동기화한다(섬당 1회 — 비용 무시 가능).
+            Physics.SyncTransforms();
+        }
+
+        /// <summary>
+        /// 바위 큰 덩어리에 다는 차단용 convex MeshCollider. sourceMesh가 null이면 파츠의 MeshFilter
+        /// 메시(폴백 절차 메시)를 그대로 쓴다. convex는 PhysX가 255면 이하 헐로 자동 단순화하므로
+        /// 3,366삼각형 모델도 안전하고, 비균일 스케일(폴백 경로)도 지원된다.
+        /// rng를 소비하지 않고(배치 재현성 불변), 이름이 "Island_"로 시작하지 않아 지형으로 오인될 수 없다.
+        /// </summary>
+        private static void AddRockCollider(GameObject part, Mesh sourceMesh)
+        {
+            if (part == null)
+                return;
+
+            if (sourceMesh == null)
+            {
+                var filter = part.GetComponent<MeshFilter>();
+                sourceMesh = filter != null ? filter.sharedMesh : null;
+            }
+            if (sourceMesh == null)
+                return;
+
+            var collider = part.AddComponent<MeshCollider>();
+            collider.sharedMesh = sourceMesh;
+            collider.convex = true;
         }
 
         /// <summary>
@@ -338,9 +381,13 @@ namespace MakeGame.Systems
         ///  (3) 작은 덩어리가 큰 덩어리 쪽으로 기운다. 기울기 축은 두 덩어리를 잇는 방향에 수직인
         ///      수평축이라, 위쪽이 큰 바위 쪽으로 넘어가 "기대어 쌓인" 그림이 된다.
         ///
-        /// 콜라이더는 붙이지 않는다(CreatePart 경로 = 프리미티브를 아예 거치지 않는다). 바위는 지금
-        /// 통과할 수 있지만, 콜라이더를 붙이는 순간 TerrainSampler와 초목/자원 배치가 전부 영향을 받는다
-        /// (파일 상단 [콜라이더 절대 금지] 주석). 물리를 주려면 디렉터 결정이 필요하다.
+        /// [물리] 큰 덩어리에만 **convex MeshCollider**를 단다(디렉터 지시 "바위에 올라가고 부딪히게" —
+        /// 파일 상단 [콜라이더 정책] 주석 참고. 예전 "절대 금지"의 전제였던 지형 오인 경로는 전부
+        /// 이름 필터로 막혀 있음을 전수 확인했다). convex를 고른 이유: 바위는 형태가 거의 볼록해
+        /// 헐 근사 손실이 적고, PhysX가 255면 이하로 자동 단순화해 12개×9섬이어도 쿠킹·질의가 싸다.
+        /// 낮은 바위(노출 약 0.7~0.9m)는 헐 옆면 경사가 45° 이하인 자리로 걸어 오르거나 점프(0.9m)로
+        /// 올라서지고, 큰 바위(노출 약 1.7~2.1m)는 자연스럽게 막힌다. 곁돌(위성 덩어리)은 폭 0.44~2.16m로
+        /// 작아 발에 걸리면 짜증만 나므로 콜라이더 없음을 유지한다.
         ///
         /// [B45] 위 (1)"각진 면"은 **큰 덩어리에 한해** 실물 모델(rock_a/b/c)로 대체됐다. 곁돌은 그대로
         /// 절차 메시다(삼각형 예산 근거는 아래 본문 주석). 모델이 없으면 큰 덩어리도 예전 경로로 돌아간다.
@@ -391,21 +438,23 @@ namespace MakeGame.Systems
                 // 매립 비율(높이의 22~34%, 최소 0.2m)은 그대로다. 모델 원점이 밑면이라 파묻는 깊이가
                 // 곧 -y이고, 절차 메시처럼 높이의 절반을 더할 필요가 없다.
                 float modelSink = Mathf.Max(0.2f, modelHeight * mainSinkFraction);
-                CreatePart(cluster.transform, "Deco_RockMain", mainModelMesh,
+                var mainPart = CreatePart(cluster.transform, "Deco_RockMain", mainModelMesh,
                     new Vector3(0f, -modelSink, 0f),
                     new Vector3(fit, fit, fit),
                     Quaternion.Euler(0f, mainSpin, 0f),
                     materials[index % materials.Length]);
+                AddRockCollider(mainPart, mainModelMesh);
             }
             else
             {
                 // 모델이 없으면(임포트 전·프로브 실패) 예전 절차 메시 그대로다. 이 경로는 지우지 않는다.
                 float mainSink = Mathf.Max(0.2f, mainHeight * mainSinkFraction);
-                CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
+                var mainPart = CreatePart(cluster.transform, "Deco_RockMain", GetBoulderMesh(index, true),
                     new Vector3(0f, mainHeight * 0.5f - mainSink, 0f),
                     new Vector3(mainWidth, mainHeight, mainDepth),
                     Quaternion.Euler(mainTiltX, mainSpin, mainTiltZ),
                     materials[index % materials.Length]);
+                AddRockCollider(mainPart, null); // 절차 메시는 MeshFilter의 것을 그대로 쓴다(비균일 스케일도 convex는 지원)
             }
 
             for (int i = 0; i < satelliteCount; i++)
@@ -643,6 +692,20 @@ namespace MakeGame.Systems
             // 뿌리는 yaw만. 휨은 아래 마디 누적이 만들기 때문에 밑동은 항상 지면에 수직으로 박힌다.
             palm.transform.rotation = Quaternion.Euler(0f, leanDirection, 0f);
 
+            // [줄기 차단 캡슐 — 파일 상단 [콜라이더 정책] 주석] 플레이어가 나무를 통과해 걷지 않게
+            // 뿌리에 수직 캡슐 하나를 단다. 잎(크라운)은 통과 유지 — 콜라이더 없음.
+            //  · 반지름 = baseRadius(밑동 외접 반지름 0.266~0.388m). 모델 경로도 같은 값을 쓴다 -
+            //    모델 줄기 굵기가 이 분포에 맞춰 fit되므로 오차는 수 cm다.
+            //  · 높이 = 나무 높이의 60%. 줄기는 위로 갈수록 휘지만(마디당 4~9° 누적) 플레이어가 닿는
+            //    2m 아래에서는 수평 이탈이 0.2m 미만이라 수직 캡슐로 충분하다. 위쪽 40%를 비워
+            //    휜 상단 줄기·크라운에 보이지 않는 벽이 생기는 것을 막는다.
+            //  · rng 소비 0 — 이미 뽑힌 height/baseRadius만 쓴다(배치 재현성 불변).
+            var trunkBlocker = palm.AddComponent<CapsuleCollider>();
+            trunkBlocker.direction = 1; // Y축
+            trunkBlocker.radius = baseRadius;
+            trunkBlocker.height = height * 0.6f;
+            trunkBlocker.center = new Vector3(0f, height * 0.3f, 0f);
+
             // ── [B48] 실물 야자수 모델(palm_a/b/c) ────────────────────────────────────
             //  · 렌더러가 13개(줄기 3 + 잎 5×2) → **2개**(줄기 1 + 크라운 1)가 된다. 모델에 줄기의 휨과
             //    잎의 꺾임이 이미 구워져 있어, 아래 마디 누적/잎 2마디 조립이 통째로 필요 없어진다.
@@ -651,8 +714,9 @@ namespace MakeGame.Systems
             //    나무가 몇 배로 부푼다. 그래서 바위와 같이 **fit = 목표 높이 / 모델 실측 높이**의
             //    균등 배율만 쓴다(0.87~1.14).
             //  · 균등 배율 + 회전은 뿌리의 yaw뿐이라 전단이 원리적으로 없다(자식 회전은 identity).
-            //  · 콜라이더는 붙이지 않는다 - CreatePart는 프리미티브를 거치지 않고, 모델도 프리팹을
-            //    Instantiate하지 않고 sharedMesh만 꺼내 쓰므로 임포터가 붙였을 콜라이더가 씬에 안 들어온다.
+            //  · 콜라이더는 여기서 **자동으로 생기지 않는다** - CreatePart는 프리미티브를 거치지 않고,
+            //    모델도 프리팹을 Instantiate하지 않고 sharedMesh만 꺼내 쓰므로 임포터가 붙였을 콜라이더가
+            //    씬에 안 들어온다. 물리 차단은 위에서 뿌리에 명시적으로 단 줄기 캡슐 하나뿐이다.
             //  · ★ 난수 ★ 변종 선택에 rng를 쓰지 않는다. 위에서 이미 뽑아 둔 height로 고른다. 그리고
             //    아래 잎 루프의 draw는 **모델 경로에서도 전부 그대로 뽑는다**(파일 상단 [결정성] 주석).
             Mesh palmTrunkMesh, palmCrownMesh;

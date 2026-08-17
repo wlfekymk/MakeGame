@@ -77,6 +77,35 @@ VARIANTS = [
     ("palm_c", 70819, 7.05, 0.372, 0.74, 11, 3.35, 10),
 ]
 
+# ── 2026-08-17 확장 변종 d/e/f ────────────────────────────────────────────────
+# a/b/c 가 "중간 기울기 + 중간 처짐"의 크기 시리즈라 형태 축이 시드뿐이었다. d/e/f 는
+# 크기가 아니라 **자세**로 갈린다. 9번째 원소(style dict)가 build_crown/build_trunk 의
+# 기본값을 덮어쓴다 - 키가 없으면 a/b/c 와 정확히 같은 경로를 지나므로(기본값 = 기존 상수)
+# a/b/c 의 난수 소비·출력은 1바이트도 변하지 않는다(재실행 md5 대조함).
+#
+#   palm_d  어린 나무. 낮고(3m급) 잎 5장, 줄기 거의 곧음, 잎이 꼿꼿하게 위로 선다.
+#   palm_e  폭풍에 휜 노목. 꼭대기가 1.3m 밀린 강한 기울기 + 잎 13장이 축 늘어진다.
+#   palm_f  곧은 장년목. 휨이 줄기 전체에 얕게 깔리고(curve_exp 1.2 - 아래부터 휜다),
+#           잎 8장 전부가 young 층(위로 뻗음)이라 왕관이 셔틀콕처럼 서 있다.
+NEW_VARIANTS = [
+    ("palm_d", 91733, 2.95, 0.300, 0.12, 5, 1.85, 9, {
+        "old_launch": (18.0, 32.0), "old_turn": (66.0, 88.0),
+        "droop1": (0.28, 0.45), "young_mod": 2,
+    }),
+    ("palm_e", 84257, 6.55, 0.335, 1.30, 13, 3.05, 10, {
+        "old_turn": (104.0, 132.0), "droop0": (0.12, 0.22), "droop1": (0.55, 0.80),
+        "curve_exp": 1.9,
+    }),
+    ("palm_f", 77551, 5.60, 0.295, 0.30, 8, 2.60, 10, {
+        "young_mod": 1,                       # 전부 young: 왕관 전체가 위로 선다
+        # 1차 렌더에서 turn 64~86 은 잎끝이 수평까지 내려와 palm_d 와 같은 우산이 됐다.
+        # turn 을 48~66 으로 줄여 잎끝이 위를 향한 채 끝나게 한다(V자 왕관).
+        "young_launch": (32.0, 46.0), "young_turn": (48.0, 66.0),
+        "young_len": (0.90, 1.04),
+        "droop0": (0.05, 0.10), "droop1": (0.22, 0.36), "curve_exp": 1.2,
+    }),
+]
+
 # 계약표는 "대형 구조물 8,000"이지만 야자수는 섬당 4~16그루라 개수 × 삼각형으로 봐야 한다.
 # 특대 섬 16그루 × 2,500 = 40,000 이 상한선이고, 실제로는 그 절반 아래로 들어온다.
 TRI_BUDGET = 2500
@@ -92,18 +121,19 @@ FROND_GREEN = (0.420, 0.659, 0.247)    # StructureVisualBuilder.FrondGreen
 
 
 # ── 줄기 ──────────────────────────────────────────────────────────────────────
-def _spine(t, height, top_offset, wander, phase):
+def _spine(t, height, top_offset, wander, phase, curve_exp=2.2):
     """t(0~1) -> 줄기 중심선. y 는 정확히 height*t 라 총 높이가 파라미터와 1mm도 안 어긋난다.
 
-    z 는 t^2.2 - 밑동은 지면에 수직으로 박히고 위로 갈수록 휜다. 게임 코드가 마디마다
-    기울기를 누적시켜 얻는 모양과 같지만, 이쪽은 관절이 없는 연속 곡선이다.
+    z 는 t^curve_exp - 기본 2.2 는 밑동이 지면에 수직으로 박히고 위로 갈수록 휘는 모양이다.
+    지수를 낮추면(palm_f 1.2) 휨이 줄기 전체에 얕게 깔린다 - 휨의 '위치'가 변종 축이 된다.
+    게임 코드가 마디마다 기울기를 누적시켜 얻는 모양과 같지만, 이쪽은 관절이 없는 연속 곡선이다.
     """
     return Vector((wander * math.sin(2.4 * t + phase) * t,
                    height * t,
-                   top_offset * (t ** 2.2)))
+                   top_offset * (t ** curve_exp)))
 
 
-def build_trunk(seed, height, base_r, top_offset):
+def build_trunk(seed, height, base_r, top_offset, curve_exp=2.2):
     rng = mg.Rng(seed)
     wander = height * 0.014
     phase = rng.uniform(0.0, math.tau)
@@ -118,7 +148,7 @@ def build_trunk(seed, height, base_r, top_offset):
 
     rings = []
     for idx, t in enumerate(ts):
-        center = _spine(t, height, top_offset, wander, phase)
+        center = _spine(t, height, top_offset, wander, phase, curve_exp)
         taper = 1.0 - 0.38 * t                                  # 게임의 0.62배 테이퍼
         y = height * t
         flare = (1.0 + 0.55 * math.exp(-y / 0.13)               # 뿌리 보스
@@ -232,8 +262,23 @@ def _bend_frond(obj, length, launch_deg, turn_deg, droop0, droop1):
         vert.co = pos + binorm * x - normal * (droop * (abs(x) ** 1.4))
 
 
-def build_crown(seed, top, tangent, count, length, stations):
-    """잎 여러 장을 **메시 한 장**으로 합친다(mg.join_objects). 렌더러 1개."""
+def build_crown(seed, top, tangent, count, length, stations, style=None):
+    """잎 여러 장을 **메시 한 장**으로 합친다(mg.join_objects). 렌더러 1개.
+
+    style: d/e/f 변종용 오버라이드. **기본값이 기존 상수와 정확히 같아서** style 을 안 주면
+    (a/b/c) 난수 소비 횟수·범위가 1비트도 안 변한다 - 그게 md5 보존의 전제다.
+    """
+    style = style or {}
+    young_mod = style.get("young_mod", 3)
+    young_launch = style.get("young_launch", (30.0, 42.0))
+    young_turn = style.get("young_turn", (72.0, 92.0))
+    old_launch = style.get("old_launch", (2.0, 16.0))
+    old_turn = style.get("old_turn", (88.0, 116.0))
+    young_len = style.get("young_len", (0.80, 0.92))
+    old_len = style.get("old_len", (0.94, 1.06))
+    droop0_rng = style.get("droop0", (0.08, 0.18))
+    droop1_rng = style.get("droop1", (0.40, 0.62))
+
     rng = mg.Rng(seed).sub(77)
     align = Vector((0.0, 1.0, 0.0)).rotation_difference(tangent).to_matrix().to_4x4()
     fronds = []
@@ -241,10 +286,10 @@ def build_crown(seed, top, tangent, count, length, stations):
         # 나선 배치. 황금각에 가깝게 흔들어 잎이 겹쳐 부채 하나로 보이지 않게 한다.
         yaw = 360.0 * i / count + rng.uniform(-13.0, 13.0)
         # 2층: 안쪽(젊은) 잎은 위로 서고 바깥(늙은) 잎은 수평에서 시작해 더 늘어진다.
-        young = (i % 3 == 0)
-        launch = rng.uniform(30.0, 42.0) if young else rng.uniform(2.0, 16.0)
-        turn = rng.uniform(72.0, 92.0) if young else rng.uniform(88.0, 116.0)
-        ln = length * (rng.uniform(0.80, 0.92) if young else rng.uniform(0.94, 1.06))
+        young = (i % young_mod == 0)
+        launch = rng.uniform(*young_launch) if young else rng.uniform(*old_launch)
+        turn = rng.uniform(*young_turn) if young else rng.uniform(*old_turn)
+        ln = length * (rng.uniform(*young_len) if young else rng.uniform(*old_len))
 
         bm = bmesh.new()
         _flat_frond(bm, ln, stations, rng.sub(i))
@@ -258,7 +303,7 @@ def build_crown(seed, top, tangent, count, length, stations):
         mg.planar_uv(leaf, axis="Y", tile=(ln * 1.60, ln * 1.12), offset=(0.5, 0.0))
 
         _bend_frond(leaf, ln, launch, turn,
-                    droop0=rng.uniform(0.08, 0.18), droop1=rng.uniform(0.40, 0.62))
+                    droop0=rng.uniform(*droop0_rng), droop1=rng.uniform(*droop1_rng))
         leaf.matrix_world = (Matrix.Translation(top) @ align
                              @ Matrix.Rotation(math.radians(yaw), 4, "Y"))
         fronds.append(leaf)
@@ -266,22 +311,28 @@ def build_crown(seed, top, tangent, count, length, stations):
     return mg.join_objects(fronds, name="crown")
 
 
-def build_palm(name, seed, height, base_r, top_offset, fronds, frond_len, stations):
-    trunk, top = build_trunk(seed, height, base_r, top_offset)
+def build_palm(name, seed, height, base_r, top_offset, fronds, frond_len, stations,
+               style=None):
+    style = style or {}
+    curve_exp = style.get("curve_exp", 2.2)
+    trunk, top = build_trunk(seed, height, base_r, top_offset, curve_exp)
     # 왕관은 줄기 꼭대기의 접선을 따라 기운다(줄기가 휜 만큼 왕관도 기울어야 자연스럽다).
-    below = _spine(0.94, height, top_offset, height * 0.014, mg.Rng(seed).uniform(0.0, math.tau))
+    below = _spine(0.94, height, top_offset, height * 0.014,
+                   mg.Rng(seed).uniform(0.0, math.tau), curve_exp)
     tangent = (top - below).normalized()
-    crown = build_crown(seed, top, tangent, fronds, frond_len, stations)
+    crown = build_crown(seed, top, tangent, fronds, frond_len, stations, style)
     return trunk, crown
 
 
 def main():
-    print("[palm] 야자수 3종 생성")
+    print("[palm] 야자수 6종 생성")
     all_stats = []
-    for name, seed, height, base_r, top_offset, fronds, frond_len, stations in VARIANTS:
+    for entry in VARIANTS + NEW_VARIANTS:
+        name, seed, height, base_r, top_offset, fronds, frond_len, stations = entry[:8]
+        style = entry[8] if len(entry) > 8 else None
         mg.reset_scene()
         trunk, crown = build_palm(name, seed, height, base_r, top_offset,
-                                  fronds, frond_len, stations)
+                                  fronds, frond_len, stations, style)
         trunk.name, crown.name = f"{name}_trunk", f"{name}_crown"
 
         stats = mg.enforce_contract_group([trunk, crown], tri_budget=TRI_BUDGET,

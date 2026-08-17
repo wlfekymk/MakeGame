@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """
-바위(화강암 덩어리) 3종 - rock_a / rock_b / rock_c.
+바위(화강암 덩어리) 5종 - rock_a / rock_b / rock_c (+ 2026-08-17 확장: rock_d / rock_e).
 
     python3 Tools/blender/units/rock.py
 
-산출물 (덮어쓰기: 이 세 파일만 건드린다)
-  Assets/_Project/Resources/Models/rock_a.obj   (+ b, c)
-  Tools/blender/_preview/rock_a.png             (+ b, c)  ← 저장소에 넣지 않는다
+산출물 (덮어쓰기: 이 다섯 파일만 건드린다)
+  Assets/_Project/Resources/Models/rock_a.obj   (+ b, c, d, e)
+  Tools/blender/_preview/rock_a.png             (+ b, c, d, e)  ← 저장소에 넣지 않는다
+
+  ★ a/b/c 는 이미 게임에 연결돼 있다. 그 세 변종의 시드·파라미터·생성 경로는 한 글자도
+    건드리지 않았고, 재실행해도 바이트 단위로 같은 파일이 나온다(md5 대조함).
+    d/e 는 **별도 빌더**(build_shaped)를 쓴다 - build_rock 을 공유하다 실수로 a/b/c 의
+    출력이 바뀌는 사고를 구조적으로 막기 위해서다.
+
+변종 확장의 이유 (2026-08-17)
+  게임은 목표 폭에 가장 가까운 변종을 고른다(TryGetRockModel). a/b/c 는 전부 "둥그스름한
+  노두"라 시드 축으로만 갈렸다 - 실루엣 축이 없었다. d/e 가 그 축을 연다:
+    rock_d = **판석**(flat slab). 폭 대비 높이 0.32 - 납작하게 누운 퇴적판.
+    rock_e = **첨탑**(spire). 폭 대비 높이 1.5 - 위로 갈수록 좁아져 끝이 서는 뾰족 바위.
 
 ────────────────────────────────────────────────────────────────────────────────
 크기의 근거 (게임 코드 실측 — 이번 배치에서 코드는 못 고치므로 여기에 맞춘다)
@@ -51,6 +62,15 @@ VARIANTS = [
     ("rock_a", 20817, (1.85, 1.20, 1.60), 3, 5),
     ("rock_b", 41163, (2.60, 1.55, 2.30), 4, 6),
     ("rock_c", 60529, (3.20, 2.35, 2.60), 4, 4),
+]
+
+# 2026-08-17 확장 변종. a/b/c 와 **다른 빌더**를 쓴다(위 헤더 참고).
+# 폭은 a/b/c(1.85/2.60/3.20)와 겹치지 않게 사이를 메운다 - 게임/연결 코드가 목표 폭으로
+# 변종을 고를 때 다섯 실루엣이 전부 후보가 되게.
+SHAPED_VARIANTS = [
+    # 이름,     시드,   (W, H, D) 미터,        모양
+    ("rock_d", 81271, (2.95, 0.95, 2.45), "slab"),    # 판석: 납작하게 누운 퇴적판
+    ("rock_e", 92413, (2.15, 3.20, 1.90), "spire"),   # 첨탑: 위로 좁아지는 뾰족 바위
 ]
 
 TRI_BUDGET = mg.TRI_BUDGET["medium_prop"]   # 4,000 (중형 소품)
@@ -168,6 +188,104 @@ def build_rock(seed, terraces, lobe_count):
     return bm
 
 
+def build_shaped(seed, shape):
+    """rock_d(판석)/rock_e(첨탑) 전용 빌더. build_rock 은 건드리지 않는다(a/b/c 바이트 보존).
+
+    a/b/c 와 실루엣이 **한눈에** 갈리는 게 존재 이유다:
+      slab  - 위·아래 평행 절단이 지배한다. 수평 층리가 강하고, 옆면만 벽개면이다.
+              위에서 보면 다각 판이고 옆에서 보면 낮고 긴 띠다.
+      spire - 높이 방향으로 늘린 뒤 **위로 갈수록 심하게 좁힌다**(taper 0.62). 꼭대기는
+              평면 뚜껑 대신 가파른 절단 3장을 서로 다른 방위에서 쳐 끝이 선다.
+    """
+    rng = mg.Rng(seed)
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=7, radius=1.0)
+
+    # 로브: build_rock 과 같은 저주파 실루엣 파괴. 모양별로 축과 진폭을 제한한다.
+    # (1차 렌더에서 spire 가 로브에 밀려 달걀이 됐다 - 첨탑은 로브를 얕게 줘야 테이퍼가 이긴다.)
+    lobe_amp = (0.22, 0.44) if shape == "slab" else (0.10, 0.22)
+    lobes = []
+    for _ in range(5):
+        axis = rng.unit_vector()
+        axis.y *= 0.25 if shape == "slab" else 0.55
+        axis.normalize()
+        lobes.append((axis, rng.uniform(*lobe_amp), rng.uniform(1.2, 2.2)))
+    for v in bm.verts:
+        d = v.co.normalized()
+        v.co = d * _surface_radius(d, lobes, seed)
+
+    ys = [v.co.y for v in bm.verts]
+    ymin, ymax = min(ys), max(ys)
+    height = ymax - ymin
+
+    if shape == "slab":
+        # 수평 층리 3단 + 약한 테이퍼. 판석은 옆면이 층으로 갈라진 것이 정체성이다.
+        # (1차 렌더에서 층이 절단면에 다 깎여 안 보였다 - 진폭 0.13 → 0.20, 층 수 2 → 3.)
+        twist = rng.uniform(0.0, math.tau)
+        strata_dir = rng.uniform(0.0, math.tau)
+        for v in bm.verts:
+            t = (v.co.y - ymin) / height
+            around = math.atan2(v.co.z, v.co.x)
+            strata = 0.30 + 0.70 * (0.5 + 0.5 * math.cos(around - strata_dir)) ** 1.2
+            phase = (t * 3.0 + 0.10 * math.sin(t * 5.1 + twist)) % 1.0
+            lead = min(1.0, phase / 0.15)
+            f = 1.0 + 0.20 * strata * lead * (1.0 - phase) ** 0.5
+            f *= 1.0 - 0.10 * t                      # 테이퍼는 약하게(판이지 봉이 아니다)
+            v.co.x *= f
+            v.co.z *= f
+        # 위·아래를 평행하게 깎아 판을 만든다. 윗면은 살짝 기울인다(수평 뚜껑 금지).
+        _cut(bm, Vector((0.0, ymin + height * 0.20, 0.0)), Vector((0.0, -1.0, 0.0)))
+        top_n = Vector((rng.uniform(-0.14, 0.14), 1.0, rng.uniform(-0.14, 0.14))).normalized()
+        _slab_cut(bm, top_n, rng.uniform(0.58, 0.64))    # 깊게 - 납작함은 여기서 나온다
+        # 옆면 벽개면: 거의 수직으로 5~7장. 위에서 본 윤곽이 다각형이 된다.
+        for _ in range(rng.randint(5, 7)):
+            n = rng.unit_vector()
+            n.y = rng.uniform(-0.08, 0.10)
+            n.normalize()
+            _slab_cut(bm, n, rng.uniform(0.80, 0.90))
+        # 모서리 하나는 크게 떼어 낸다(깨져 나간 판 - 대칭 파괴).
+        chip = rng.unit_vector(); chip.y = 0.35; chip.normalize()
+        _slab_cut(bm, chip, rng.uniform(0.72, 0.78))
+    else:  # spire
+        lean_dir = rng.uniform(0.0, math.tau)
+        lean = rng.uniform(0.10, 0.16)               # 기둥이 살짝 기울어야 자연물로 읽힌다
+        for v in bm.verts:
+            t = (v.co.y - ymin) / height
+            f = 1.0 - 0.84 * (t ** 0.90)             # 강한 테이퍼: 첨탑의 정체성
+            if t < 0.26:                             # 밑동 플레어: 땅에 박힌 자세
+                f *= 1.0 + 0.34 * ((0.26 - t) / 0.26) ** 1.3
+            v.co.x *= f
+            v.co.z *= f
+            v.co.y *= 1.70                           # 높이 방향으로 늘린다
+            v.co.x += math.cos(lean_dir) * lean * v.co.y
+            v.co.z += math.sin(lean_dir) * lean * v.co.y
+        ys = [v.co.y for v in bm.verts]
+        ymin, ymax = min(ys), max(ys)
+        height = ymax - ymin
+        _cut(bm, Vector((0.0, ymin + height * 0.10, 0.0)), Vector((0.0, -1.0, 0.0)))
+        # 세로 벽개면: 거의 수직 절단 6~8장이 기둥 옆면에 각을 세운다.
+        for _ in range(rng.randint(6, 8)):
+            n = rng.unit_vector()
+            n.y = rng.uniform(-0.15, 0.15)
+            n.normalize()
+            _slab_cut(bm, n, rng.uniform(0.84, 0.93))
+        # 꼭대기: 평면 뚜껑 대신 가파른 절단 4장을 방위를 나눠 친다 → 끝이 뾰족하게 선다.
+        # (1차 렌더에서 깊이 0.86~0.92 는 어깨만 스쳐 달걀이 됐고, 2차의 0.70~0.80 도
+        #  능선이 남아 오벨리스크에 그쳤다 - 0.58~0.68 로 더 깊게, 두 바퀴로 나눠 친다.)
+        apex0 = rng.uniform(0.0, math.tau)
+        for k in range(4):
+            a = apex0 + math.tau * k / 4 + rng.uniform(-0.3, 0.3)
+            n = Vector((math.cos(a) * 0.95, 1.0, math.sin(a) * 0.95)).normalized()
+            _slab_cut(bm, n, rng.uniform(0.58, 0.68))
+        for k in range(3):                            # 두 번째 바퀴: 더 가파르게, 얕게
+            a = apex0 + math.tau * (k + 0.5) / 3 + rng.uniform(-0.3, 0.3)
+            n = Vector((math.cos(a) * 0.55, 1.0, math.sin(a) * 0.55)).normalized()
+            _slab_cut(bm, n, rng.uniform(0.78, 0.86))
+
+    mg.clean_bmesh(bm, dist=2e-4)
+    return bm
+
+
 def _slab_cut(bm, normal, depth):
     """방향 normal 의 두께에서 바깥 (1-depth) 만큼만 잘라 평평한 벽개면을 남긴다."""
     dots = [v.co.dot(normal) for v in bm.verts]
@@ -188,35 +306,46 @@ def _cut(bm, plane_co, plane_no):
         bmesh.ops.edgenet_fill(bm, edges=edges)
 
 
+def _finish(obj, name, seed, size, note):
+    """감면 → 크기 → UV → 계약 → 내보내기 → 렌더. 다섯 변종이 똑같이 지나는 공통 꼬리."""
+    mg.decimate_to_budget(obj, TRI_TARGET)   # UV 를 펴기 전에 감면한다
+    mg.fit_size(obj, size)
+    mg.shade_flat(obj)
+    mg.box_uv(obj, tile=UV_TILE)
+
+    stats = mg.enforce_contract(obj, tri_budget=TRI_BUDGET, tri_floor=TRI_FLOOR,
+                                expect_size=size, name=name)
+
+    obj_path = os.path.join(mg.MODELS_DIR, f"{name}.obj")
+    mg.export_obj(obj, obj_path)
+    stats = mg.verify_obj_file(obj_path, stats)
+
+    mg.assign_material(obj, mg.preview_material(
+        f"prev_{name}", texture_name="rock", base_color=STONE, roughness=0.82))
+    mg.turntable(obj, os.path.join(mg.PREVIEW_DIR, f"{name}.png"),
+                 title=f"{name}   seed {seed}",
+                 stats=stats,
+                 notes=note)
+    mg.report(stats)
+    return stats
+
+
 def main():
-    print("[rock] 바위 3종 생성")
+    print("[rock] 바위 5종 생성")
     all_stats = []
     for name, seed, size, terraces, lobes in VARIANTS:
         mg.reset_scene()
         bm = build_rock(seed, terraces, lobes)
         obj = mg.new_object(name, bm)
+        all_stats.append(_finish(obj, name, seed, size,
+                                 "tex rock.png / box UV %.2fm" % UV_TILE))
 
-        mg.decimate_to_budget(obj, TRI_TARGET)   # UV 를 펴기 전에 감면한다
-        mg.fit_size(obj, size)
-        mg.shade_flat(obj)
-        mg.box_uv(obj, tile=UV_TILE)
-
-        stats = mg.enforce_contract(obj, tri_budget=TRI_BUDGET, tri_floor=TRI_FLOOR,
-                                    expect_size=size, name=name)
-
-        obj_path = os.path.join(mg.MODELS_DIR, f"{name}.obj")
-        mg.export_obj(obj, obj_path)
-        stats = mg.verify_obj_file(obj_path, stats)
-
-        mg.assign_material(obj, mg.preview_material(
-            f"prev_{name}", texture_name="rock", base_color=STONE, roughness=0.82))
-        mg.turntable(obj, os.path.join(mg.PREVIEW_DIR, f"{name}.png"),
-                     title=f"{name}   seed {seed}",
-                     stats=stats,
-                     notes="tex rock.png / box UV %.2fm" % UV_TILE)
-
-        mg.report(stats)
-        all_stats.append(stats)
+    for name, seed, size, shape in SHAPED_VARIANTS:
+        mg.reset_scene()
+        bm = build_shaped(seed, shape)
+        obj = mg.new_object(name, bm)
+        all_stats.append(_finish(obj, name, seed, size,
+                                 "%s / tex rock.png / box UV %.2fm" % (shape, UV_TILE)))
 
     print("[rock] 완료 - 렌더: Tools/blender/_preview/rock_*.png")
     return all_stats

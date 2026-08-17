@@ -79,6 +79,35 @@ VARIANTS = [
     ("bamboo_c", 39887, 3, 5, 4.50, 4, 3, 3, 3),
 ]
 
+# ── 2026-08-17 확장 변종 d/e/f ────────────────────────────────────────────────
+# a/b/c 는 줄기 5~8개의 크기 시리즈라 형태 축이 시드뿐이었다. d/e/f 는 **구성과 자세**로
+# 갈린다. 10번째 원소(style dict)가 build_clump 의 기본값을 덮어쓴다 - 키가 없으면 기존
+# 상수 그대로라(기본값 = 기존 리터럴) a/b/c 의 난수 소비·출력은 1바이트도 안 변한다.
+#
+#   bamboo_d  어린 포기. 줄기 3개(1+2)뿐, 2.3m, 가늘고 곧다. 잎은 다발 2개로 성기다.
+#   bamboo_e  꽉 찬 노숲 포기. 줄기 8개(4+4), 5.05m - 게임 높이 대역(3.57~5.25)의 상단.
+#             잎다발 3×5 로 가장 무성하다.
+#   bamboo_f  바람 맞은 포기. 줄기 5개(2+3)가 **전부 같은 방향으로** 크게 기운다(wind_azim).
+#             잎다발 2×3 으로 성기다 - 기운 실루엣이 잎에 가려지지 않게.
+NEW_VARIANTS = [
+    ("bamboo_d", 52967, 1, 2, 2.30, 3, 2, 2, 4, {
+        "thick_radius": (0.052, 0.064), "thin_radius": (0.026, 0.038),
+        "thick_offset": (0.10, 0.16), "thin_offset": (0.12, 0.22),
+        "thick_lean": (0.06, 0.14), "thin_lean": (0.05, 0.12),
+        "thin_height": (0.62, 0.86),
+        "tri_floor": 380,      # 어린 포기는 줄기 3개가 정체성이다 - 공용 하한 600 을 못 채우는 게 맞다
+    }),
+    # 처음엔 4+4 / 마디 5/4 / 잎 3×5 로 잡았다가 2,576 삼각형으로 예산(1,800)을 뚫었다.
+    # 굵은 줄기 4개가 이 변종의 실루엣 축이므로 그쪽을 지키고 나머지로 줄였다(실측 1,684).
+    ("bamboo_e", 66101, 4, 3, 5.05, 4, 3, 3, 3, {
+        "thick_offset": (0.34, 0.55), "thin_offset": (0.28, 0.50),
+    }),
+    ("bamboo_f", 73019, 2, 3, 4.30, 4, 3, 2, 3, {
+        "wind_azim": 0.65,                     # 전 줄기가 이 방위로 기운다(라디안)
+        "thick_lean": (0.55, 0.85), "thin_lean": (0.40, 0.70),
+    }),
+]
+
 # 감독 승인으로 1,200 → 1,800. 굵기와 마디에 쓰는 편이 낫다는 판단.
 TRI_BUDGET = 1800
 TRI_FLOOR = 600
@@ -209,7 +238,19 @@ def build_leaves(seed, culms, clusters, per_cluster):
 
 
 def build_clump(seed, thick, thin, top_height, thick_nodes, thin_nodes,
-                clusters, per_cluster):
+                clusters, per_cluster, style=None):
+    # style: d/e/f 변종용 오버라이드. 기본값이 기존 리터럴과 정확히 같아서 style 을 안 주면
+    # (a/b/c) 난수 소비 횟수·범위가 1비트도 안 변한다 - 그게 md5 보존의 전제다.
+    style = style or {}
+    thick_radius = style.get("thick_radius", (0.080, 0.100))
+    thin_radius = style.get("thin_radius", (0.034, 0.052))
+    thick_offset = style.get("thick_offset", (0.30, 0.48))
+    thin_offset = style.get("thin_offset", (0.22, 0.44))
+    thick_lean = style.get("thick_lean", (0.22, 0.48))
+    thin_lean = style.get("thin_lean", (0.10, 0.30))
+    thin_height = style.get("thin_height", (0.52, 0.80))
+    wind_azim = style.get("wind_azim")      # 있으면 전 줄기가 이 방위로 기운다(바람 자세)
+
     rng = mg.Rng(seed)
     bm = bmesh.new()
     ring_lists = []
@@ -221,21 +262,24 @@ def build_clump(seed, thick, thin, top_height, thick_nodes, thin_nodes,
             # 방위를 나눠서 굵은 셋이 한쪽에 몰렸고(i=0 은 아예 중심), 정면에서 슬래브
             # 하나로 보였다. 굵은 것이 정면에서 따로 세어져야 "포기"로 읽힌다.
             azim = math.tau * i / thick + rng.uniform(-0.30, 0.30)
-            offset = 0.10 if i == 0 else rng.uniform(0.30, 0.48)
+            offset = 0.10 if i == 0 else rng.uniform(*thick_offset)
             height = top_height * rng.uniform(0.86, 1.0)
-            radius = rng.uniform(0.080, 0.100)      # 지름 16~20 cm (감독 지시)
+            radius = rng.uniform(*thick_radius)     # 기본 지름 16~20 cm (감독 지시)
             sides, nodes = THICK_SIDES, thick_nodes
-            lean = rng.uniform(0.22, 0.48)
+            lean = rng.uniform(*thick_lean)
         else:
             # 가는 줄기는 굵은 것 **사이**에 끼워 넣는다(방위를 반 칸 어긋나게).
             azim = math.tau * (i - thick + 0.5) / thin + rng.uniform(-0.35, 0.35)
-            offset = rng.uniform(0.22, 0.44)
-            height = top_height * rng.uniform(0.52, 0.80)
-            radius = rng.uniform(0.034, 0.052)      # 지름 6.8~10.4 cm (게임 곁줄기 대역)
+            offset = rng.uniform(*thin_offset)
+            height = top_height * rng.uniform(*thin_height)
+            radius = rng.uniform(*thin_radius)      # 기본 지름 6.8~10.4 cm (게임 곁줄기 대역)
             sides, nodes = THIN_SIDES, thin_nodes
-            lean = rng.uniform(0.10, 0.30)
+            lean = rng.uniform(*thin_lean)
         base = Vector((math.cos(azim) * offset, 0.0, math.sin(azim) * offset))
-        out = Vector((math.cos(azim), 0.0, math.sin(azim)))
+        if wind_azim is None:
+            out = Vector((math.cos(azim), 0.0, math.sin(azim)))     # 밖으로 벌어진다
+        else:
+            out = Vector((math.cos(wind_azim), 0.0, math.sin(wind_azim)))  # 한 방향(바람)
         ring_lists.append(build_culm(
             bm, base, height, radius, out, lean,
             nodes, sides, rng.uniform(0.0, math.tau)))
@@ -249,17 +293,20 @@ def build_clump(seed, thick, thin, top_height, thick_nodes, thin_nodes,
 
 
 def main():
-    print("[bamboo] 대나무 3종 생성")
+    print("[bamboo] 대나무 6종 생성")
     all_stats = []
-    for (name, seed, thick, thin, height, thick_nodes, thin_nodes,
-         clusters, per_cluster) in VARIANTS:
+    for entry in VARIANTS + NEW_VARIANTS:
+        (name, seed, thick, thin, height, thick_nodes, thin_nodes,
+         clusters, per_cluster) = entry[:9]
+        style = entry[9] if len(entry) > 9 else None
         mg.reset_scene()
         culms, leaves = build_clump(seed, thick, thin, height, thick_nodes,
-                                    thin_nodes, clusters, per_cluster)
+                                    thin_nodes, clusters, per_cluster, style)
         culms.name, leaves.name = f"{name}_culms", f"{name}_leaves"
 
+        floor = (style or {}).get("tri_floor", TRI_FLOOR)
         stats = mg.enforce_contract_group([culms, leaves], tri_budget=TRI_BUDGET,
-                                          tri_floor=TRI_FLOOR, name=name, align="ground")
+                                          tri_floor=floor, name=name, align="ground")
 
         # 접지 중심 정렬이 실제로 먹었는지 재측정한다(0 에 붙어야 한다).
         gc = mg.ground_center([culms, leaves])

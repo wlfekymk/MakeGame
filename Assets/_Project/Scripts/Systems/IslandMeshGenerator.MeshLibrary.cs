@@ -7,11 +7,13 @@ namespace MakeGame.Systems
     public static partial class IslandMeshGenerator
     {
         /// <summary>
-        /// 콜라이더가 전혀 붙지 않는 시각 전용 파츠를 만든다.
+        /// 콜라이더가 **자동으로는** 전혀 붙지 않는 시각 전용 파츠를 만든다.
         /// StructureVisualBuilder.CreateVisualPart는 GameObject.CreatePrimitive로 만든 뒤 콜라이더를
         /// Object.Destroy하는데, Destroy는 프레임 끝까지 지연되므로 그 사이에 실행되는 다른 스포너의
         /// SnapToGround 레이가 초목 콜라이더를 스칠 수 있다. 초목은 개수가 수백 개라 그 위험을 감수할
         /// 이유가 없어, 콜라이더가 애초에 생기지 않는 경로로 따로 만든다.
+        /// (물리 차단이 필요한 파츠 — 바위 큰 덩어리·야자수 줄기 — 는 호출부가 명시적으로만 단다.
+        ///  Vegetation.cs 상단 [콜라이더 정책] 주석 참고. 예전 [콜라이더 절대 금지]는 그 정책으로 대체됐다.)
         /// </summary>
         private static GameObject CreatePart(Transform parent, string name, PrimitiveType primitiveType,
             Vector3 localPosition, Vector3 localScale, Quaternion localRotation, Material material)
@@ -163,8 +165,10 @@ namespace MakeGame.Systems
         //   OBJ는 Resources.Load<GameObject>로만 온다(Mesh로는 null). 하지만 필요한 것은 메시 한 장뿐이고,
         //   이 파일의 파츠 생성 경로(CreatePart)가 이미 "빈 GameObject + MeshFilter + MeshRenderer"라
         //   프리팹 인스턴스를 만들면 계층·컴포넌트·머티리얼 슬롯이 공짜로 딸려 온다. 게다가 임포터
-        //   설정에 따라 **MeshCollider가 딸려 올 수 있는데** 이 파일은 콜라이더가 한 프레임도 존재하면
-        //   안 된다(파일 상단 [콜라이더 절대 금지]). 메시만 꺼내 쓰면 그 위험이 구조적으로 없다.
+        //   설정에 따라 **MeshCollider가 딸려 올 수 있는데** 이 파일은 콜라이더가 "임포터 설정에 따라
+        //   우연히" 생기면 안 된다 - 어떤 파츠가 물리를 갖는지는 호출부가 명시적으로 정한다
+        //   (Vegetation.cs 상단 [콜라이더 정책] - 예전 [콜라이더 절대 금지]의 후신). 메시만 꺼내 쓰면
+        //   그 우연이 구조적으로 없다.
         //
         // ── 머티리얼 ────────────────────────────────────────────────────────────────
         //   새로 만들지 않는다. BuildIslandSurface가 만든 rockMaterials(WeatheredStone × "rock" 텍스처,

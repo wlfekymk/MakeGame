@@ -5,9 +5,12 @@
 ## 다시 돌리는 법 (한 줄)
 
 ```bash
-cd /path/to/MakeGame && python3 Tools/blender/units/rock.py
-cd /path/to/MakeGame && python3 Tools/blender/units/palm.py
-cd /path/to/MakeGame && python3 Tools/blender/units/bamboo.py
+cd /path/to/MakeGame && python3 Tools/blender/units/rock.py       # rock_a~e
+cd /path/to/MakeGame && python3 Tools/blender/units/palm.py       # palm_a~f
+cd /path/to/MakeGame && python3 Tools/blender/units/bamboo.py     # bamboo_a~f
+cd /path/to/MakeGame && python3 Tools/blender/units/bush.py       # bush_a/b
+cd /path/to/MakeGame && python3 Tools/blender/units/grass.py      # grass_a/b
+cd /path/to/MakeGame && python3 Tools/blender/units/driftwood.py  # crate_a/barrel_a/plankpile_a
 ```
 
 - Blender GUI 가 필요 없다. `bpy` 가 pip 모듈로 설치돼 있다(Blender 5.0.1 / Python 3.11).
@@ -98,17 +101,42 @@ Unity 임포트 설정(디렉터): **Scale Factor 1 / Convert Units 꺼짐 / Gen
 
 ## 현재 에셋
 
+2026-08-17 확장: 기존 종의 변종을 늘리고(rock +2 / palm +3 / bamboo +3) 신규 3세트를
+추가했다(bush / grass / driftwood). **기존 a/b/c 9파일은 바이트 단위로 그대로다**(재실행
+md5 대조함) - 새 변종은 별도 빌더(rock) 또는 기본값이 기존 상수와 같은 style 오버라이드
+(palm/bamboo)로 만들어 기존 경로의 난수 소비를 건드리지 않는다.
+
 | 스크립트 | 산출 | 삼각형 | 크기 (W×H×D m) | UV |
 |---|---|---|---|---|
 | `units/rock.py` | `rock_a` | 3,366 | 1.85 × 1.20 × 1.60 | box, `rock.png` 1.15m 타일 |
 | | `rock_b` | 3,364 | 2.60 × 1.55 × 2.30 | 〃 |
 | | `rock_c` | 3,366 | 3.20 × 2.35 × 2.60 | 〃 |
+| | `rock_d` 판석 | 3,366 | 2.95 × 0.95 × 2.45 | 〃 |
+| | `rock_e` 첨탑 | 3,366 | 2.15 × 3.20 × 1.90 | 〃 |
 | `units/palm.py` | `palm_a` | 1,388 | 3.52 × 5.30 × 3.82 | 줄기 cylinder `bark.png` 0.55m · 잎 planar `frond.png` |
 | | `palm_b` | 1,652 | 4.39 × 6.79 × 4.75 | 〃 |
 | | `palm_c` | 1,784 | 5.55 × 7.95 × 5.30 | 〃 |
+| | `palm_d` 어린 나무 | 1,004 | 3.25 × 3.29 × 3.08 | 〃 |
+| | `palm_e` 폭풍 노목 | 2,024 | 5.10 × 7.41 × 4.57 | 〃 |
+| | `palm_f` 곧은 장년목 | 1,424 | 5.01 × 6.52 × 5.11 | 〃 |
 | `units/bamboo.py` | `bamboo_a` | 1,356 | 3.06 × 3.35 × 2.18 | 줄기 cylinder `bamboo.png` 0.30m ×2 · 잎 planar `frond.png` |
 | | `bamboo_b` | 1,748 | 2.75 × 3.88 × 2.91 | 〃 |
 | | `bamboo_c` | 1,768 | 2.38 × 4.46 × 2.72 | 〃 |
+| | `bamboo_d` 어린 포기 | 508 | 1.92 × 2.04 × 2.35 | 〃 |
+| | `bamboo_e` 꽉 찬 포기 | 1,668 | 2.57 × 5.07 × 2.88 | 〃 |
+| | `bamboo_f` 바람 포기 | 996 | 1.89 × 4.25 × 2.40 | 〃 |
+| `units/bush.py` | `bush_a` | 470 | 1.60 × 0.75 × 1.45 | box 0.60m · 런타임 절차 텍스처 `"leaf"` |
+| | `bush_b` | 566 | 2.10 × 0.95 × 1.90 | 〃 |
+| `units/grass.py` | `grass_a` | 84 | 0.46 × 0.34 × 0.42 | planar · `"leaf"` |
+| | `grass_b` | 120 | 0.62 × 0.45 × 0.56 | 〃 |
+| `units/driftwood.py` | `crate_a` | 252 | 0.82 × 0.66 × 0.74 | box 0.55m `driftwood.png` |
+| | `barrel_a` | 380 | 0.60 × 0.86 × 0.60 | cylinder 0.55m ×2 `driftwood.png` |
+| | `plankpile_a` | 84 | 2.10 × 0.22 × 0.86 | box 0.55m `driftwood.png` |
+
+신규/확장 에셋의 원점은 **전부 접지 중심**(`align="ground"`)이다. 예외는 rock 5종
+(`"bbox"` - 대칭이라 두 기준이 같고, a/b/c 의 바이트 보존이 우선이다).
+bush / grass / driftwood 는 `o` 오브젝트 1개(단색 - 런타임 틴트 1장)이고,
+palm / bamboo 는 기존처럼 `o` 2개(줄기/잎)다.
 
 야자수·대나무는 **삼각형 예산을 계약표보다 보수적으로** 잡았다(야자수 2,500 / 대나무 1,800).
 섬당 야자수 4~16그루 · 대나무 포기 수 개가 깔리므로 개수 × 삼각형으로 봐야 하기 때문이다.
