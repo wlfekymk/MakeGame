@@ -33,8 +33,23 @@ namespace MakeGame.Systems
         /// </summary>
         private static readonly Mesh[] partMeshes = new Mesh[5];
 
+        /// <summary>
+        /// [실사고 0.2.13] Unity 6.5 OBJ 임포터는 `o` 오브젝트 5개를 **"default" 메시 한 장의
+        /// 서브메시 5개**로 합쳐 온다(진단 덤프: "MeshFilter 1개 [default/default]"). 이때는
+        /// 렌더러 하나에 머티리얼 5장을 배열로 주면 파츠별 색이 살아난다 - 대나무/야자수의
+        /// subMeshCount>=2 분기(IslandResourceSpawner.Visuals.cs:349, Vegetation.cs:1052)와 같은 규칙.
+        /// 이름별 개별 메시(예전 임포터 동작)와 병합 메시 둘 다 지원한다.
+        /// </summary>
+        private static Mesh mergedMesh;
+
         /// <summary>프레임당 1회 프로브 가드(TryGetBambooModel과 같은 규칙). -1 = 아직 프로브 안 함.</summary>
         private static int probeFrame = -1;
+
+        /// <summary>프로브 시도 횟수. 진단 경고(아래) 발화 시점 판정용 - 도메인 리로드로 초기화돼도 무해.</summary>
+        private static int probeAttempts = 0;
+
+        /// <summary>진단 경고를 이미 냈는지(스팸 방지). 실사고 추적용 - 원인이 잡히면 이 진단은 유지비 0이다.</summary>
+        private static bool probeWarned = false;
 
         /// <summary>
         /// 콜라이더/연기 위치의 정렬 오프셋. 모델 빌드 단계에서 파츠 배치 좌표(로컬)를 최종 메시
@@ -86,6 +101,12 @@ namespace MakeGame.Systems
             BuildVisualParts(root.transform);
             BuildColliders(root.transform);
             BuildSmoke(root.transform);
+
+            // 빌드 확인 로그(정보 수준 - 스모크 경고 집계에 잡히지 않는다). 실사고 0.2.13
+            // "여객기가 없어" 추적에서 경고로 썼다가 원인(임포터 병합) 확정 후 강등했다.
+            Debug.Log("[AirlinerWreck] 시각 빌드 완료 @ " + transform.position
+                + " yaw " + transform.eulerAngles.y.ToString("F0")
+                + (mergedMesh != null ? " (병합 메시 sub" + mergedMesh.subMeshCount + ")" : " (개별 메시 5)"));
         }
 
         /// <summary>
@@ -105,6 +126,7 @@ namespace MakeGame.Systems
             if (anyMissing && probeFrame != Time.frameCount)
             {
                 probeFrame = Time.frameCount;
+                probeAttempts++;
 
                 // 로드는 반드시 Load<GameObject> + GetComponentsInChildren<MeshFilter> 경로다.
                 // 실사고(0.2.14 검증에서 발견): Resources.LoadAll<Mesh>(파일 경로)는 이 프로젝트의
@@ -115,6 +137,14 @@ namespace MakeGame.Systems
                 if (prefab != null)
                 {
                     var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
+
+                    // 병합 임포트(현재 Unity 6.5의 실제 동작): MeshFilter 1개 = 서브메시 5개.
+                    if (filters.Length == 1 && filters[0] != null && filters[0].sharedMesh != null)
+                    {
+                        mergedMesh = filters[0].sharedMesh;
+                    }
+
+                    // 개별 메시 임포트(임포터 동작이 되돌아올 경우의 방어): 이름으로 가른다.
                     for (int i = 0; i < partMeshes.Length; i++)
                     {
                         if (partMeshes[i] != null)
@@ -142,12 +172,48 @@ namespace MakeGame.Systems
             // 5장 전부 있어야 빌드한다 - 같은 OBJ의 서브에셋이라 일부만 로드되는 상황은 임포트가
             // 아직 끝나지 않았다는 뜻이고, 반쪽짜리 잔해를 만들었다가 다시 지우는 것보다 한 프레임
             // 더 기다리는 쪽이 싸다.
-            for (int i = 0; i < partMeshes.Length; i++)
+            bool complete = mergedMesh != null;
+            if (!complete)
             {
-                if (partMeshes[i] == null)
-                    return false;
+                complete = true;
+                for (int i = 0; i < partMeshes.Length; i++)
+                {
+                    if (partMeshes[i] == null)
+                        complete = false;
+                }
             }
-            return true;
+
+            // 진단(실사고 추적): 프로브 300회(에디터 기준 약 5초)가 지나도 5장이 안 모이면 원인을
+            // 한 번만 자세히 남긴다. 사용자 보고 "여객기가 없어"의 원인 후보는 (a) 프리팹 로드 실패
+            // (b) 임포터가 o 오브젝트를 합침/이름 변경 (c) 일부 파츠 누락 - 아래 덤프가 셋을 가른다.
+            if (!complete && !probeWarned && probeAttempts >= 300)
+            {
+                probeWarned = true;
+                var prefabDump = Resources.Load<GameObject>("Models/airliner_wreck_a");
+                if (prefabDump == null)
+                {
+                    Debug.LogWarning("[AirlinerWreck] 진단: Resources.Load<GameObject>(Models/airliner_wreck_a)가 null - 에셋 경로/임포트 문제.");
+                }
+                else
+                {
+                    var fs = prefabDump.GetComponentsInChildren<MeshFilter>(true);
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("[AirlinerWreck] 진단: 프리팹은 로드됨, MeshFilter ").Append(fs.Length).Append("개 [");
+                    for (int m = 0; m < fs.Length; m++)
+                    {
+                        Mesh mm = fs[m] != null ? fs[m].sharedMesh : null;
+                        // 주의: isReadable=0 메시라 triangles 접근은 에러 로그를 낸다 - 서브메시 수만 본다.
+                        sb.Append(fs[m] != null ? fs[m].gameObject.name : "?")
+                          .Append('/').Append(mm != null ? mm.name : "null")
+                          .Append("/sub").Append(mm != null ? mm.subMeshCount : 0).Append("; ");
+                    }
+                    sb.Append("] merged=").Append(mergedMesh != null ? "O" : "X").Append(" 매칭된 파츠: ");
+                    for (int i = 0; i < partMeshes.Length; i++)
+                        sb.Append(PartMeshNames[i]).Append('=').Append(partMeshes[i] != null ? "O" : "X").Append(' ');
+                    Debug.LogWarning(sb.ToString());
+                }
+            }
+            return complete;
         }
 
         private static void BuildVisualParts(Transform root)
@@ -169,6 +235,24 @@ namespace MakeGame.Systems
                 ResourceVisualLibrary.GetMaterial(window, "noise"),
                 ResourceVisualLibrary.GetMaterial(soot, "noise"),
             };
+
+            if (mergedMesh != null)
+            {
+                // 병합 임포트 경로: 렌더러 하나 + 머티리얼 배열. 서브메시 순서는 OBJ의 `o` 순서
+                // (hull, dark, stripe, window, soot)를 따른다 - airliner.py의 objs 순서가 그 근거다.
+                var part = StructureVisualBuilder.CreateMeshPart(root, "airliner_body", mergedMesh,
+                    Vector3.zero, Vector3.one, Quaternion.identity, materials[0]);
+                var renderer = part != null ? part.GetComponent<MeshRenderer>() : null;
+                if (renderer != null && mergedMesh.subMeshCount >= 2)
+                {
+                    int count = mergedMesh.subMeshCount;
+                    var slots = new Material[count];
+                    for (int s = 0; s < count; s++)
+                        slots[s] = materials[Mathf.Min(s, materials.Length - 1)];
+                    renderer.sharedMaterials = slots;
+                }
+                return;
+            }
 
             for (int i = 0; i < partMeshes.Length; i++)
             {
