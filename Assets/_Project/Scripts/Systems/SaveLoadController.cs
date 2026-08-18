@@ -634,6 +634,70 @@ namespace MakeGame.Systems
                     storedWater = ws.storedWater,
                 });
             }
+
+            // [제작 시설 3종] 위 셋과 달리 **FindObjectsByType을 쓰면 안 된다.** CraftStation은 설치 원본
+            // (템플릿) 3개를 DontDestroyOnLoad로 y = -5000에 세워 두는데, 그 원본들도 활성 오브젝트라
+            // FindObjectsByType에 그대로 잡힌다. 그러면 저장할 때마다 지하 -5000m에 제작대 3개가
+            // 기록되고 불러올 때마다 유령 시설이 3개씩 늘어난다.
+            // CraftStation.Active는 원본을 등록하지 않는 목록이므로(IsPlacementTemplate 검사) 이 함정을
+            // 구조적으로 피한다. 게다가 제작 시스템이 반경 판정에 쓰는 바로 그 목록이라, "제작에 쓰이는
+            // 시설"과 "저장되는 시설"이 정의상 항상 같아진다.
+            var stations = CraftStation.Active;
+            for (int i = 0; i < stations.Count; i++)
+            {
+                CraftStation station = stations[i];
+                if (station == null)
+                    continue;
+
+                data.structures.Add(new StructureSaveEntry
+                {
+                    type = ToStructureType(station.kind),
+                    posX = station.transform.position.x,
+                    posY = station.transform.position.y,
+                    posZ = station.transform.position.z,
+                    rotY = station.transform.eulerAngles.y,
+                    // 나머지 필드는 전부 기본값으로 둔다 - 제작 시설에는 연료도 내용물도 진행도도 없다.
+                });
+            }
+        }
+
+        /// <summary>
+        /// 제작 시설 종류를 세이브의 구조물 종류로 바꾼다(저장 방향).
+        /// 두 열거형을 하나로 합치지 않는 이유: CraftStationKind는 씬에 직렬화되는 런타임 값이고
+        /// StructureType은 세이브 파일에 직렬화되는 저장 값이라, 한쪽 사정으로 다른 쪽 정수가 밀리면
+        /// 안 된다(양쪽 다 "맨 끝에만 추가" 규칙을 각자 지킨다). 그 대가가 이 표 두 개다.
+        /// </summary>
+        private static StructureType ToStructureType(CraftStationKind kind)
+        {
+            switch (kind)
+            {
+                case CraftStationKind.Furnace: return StructureType.Furnace;
+                case CraftStationKind.Loom: return StructureType.Loom;
+                default: return StructureType.Workbench;
+            }
+        }
+
+        /// <summary>
+        /// 세이브의 구조물 종류가 제작 시설이면 그 종류를 알려준다(복원 방향, ToStructureType의 역).
+        /// 제작 시설이 아니면 false - 모닥불/쉼터/증류기는 각자의 복원 경로가 따로 있다.
+        /// </summary>
+        private static bool TryGetCraftStationKind(StructureType type, out CraftStationKind kind)
+        {
+            switch (type)
+            {
+                case StructureType.Workbench:
+                    kind = CraftStationKind.Workbench;
+                    return true;
+                case StructureType.Furnace:
+                    kind = CraftStationKind.Furnace;
+                    return true;
+                case StructureType.Loom:
+                    kind = CraftStationKind.Loom;
+                    return true;
+                default:
+                    kind = CraftStationKind.Workbench;
+                    return false;
+            }
         }
 
         /// <summary>
@@ -671,6 +735,12 @@ namespace MakeGame.Systems
                     case StructureType.WaterStill:
                         RestoreWaterStill(entry);
                         break;
+                    // [제작 시설 3종] 셋 다 복원 절차가 완전히 같고 종류만 다르므로 한 곳으로 모은다.
+                    case StructureType.Workbench:
+                    case StructureType.Furnace:
+                    case StructureType.Loom:
+                        RestoreCraftStation(entry);
+                        break;
                 }
             }
         }
@@ -690,6 +760,19 @@ namespace MakeGame.Systems
 
             foreach (var ws in Object.FindObjectsByType<WaterStill>(FindObjectsInactive.Include))
                 Destroy(ws.gameObject);
+
+            // [제작 시설 3종] 저장 때와 같은 이유로 여기서도 FindObjectsByType을 쓰지 않는다 - 그것을 쓰면
+            // DontDestroyOnLoad로 살아 있는 설치 원본(템플릿) 3개까지 지워버려, 불러오기 한 번 뒤부터는
+            // 세 키트를 아예 설치할 수 없게 된다(원본이 사라지면 placementPrefab이 파괴된 참조가 된다).
+            // 뒤에서부터 도는 이유는 관례상의 안전장치다 - Destroy는 프레임 끝에 반영되므로 이 반복문
+            // 도중에 목록이 줄지는 않지만, 목록을 건드리는 코드에서 앞에서부터 도는 습관을 남기지 않는다.
+            var stations = CraftStation.Active;
+            for (int i = stations.Count - 1; i >= 0; i--)
+            {
+                CraftStation station = stations[i];
+                if (station != null)
+                    Destroy(station.gameObject);
+            }
         }
 
         private bool campfirePrefabMissingWarned = false;
@@ -830,6 +913,39 @@ namespace MakeGame.Systems
             var waterStill = go.GetComponent<WaterStill>();
             if (waterStill != null)
                 waterStill.storedWater = entry.storedWater;
+        }
+
+        /// <summary>
+        /// 저장된 제작 시설(제작대/용광로/베틀) 하나를 되살린다.
+        ///
+        /// **프리팹 필드를 새로 만들지 않는다.** 위 세 구조물은 인스펙터에 배선된 프리팹을 Instantiate하지만
+        /// 제작 시설에는 프리팹 에셋 자체가 없다(CraftStation이 런타임에 원본을 만들어 쓴다). 그래서 설치
+        /// 경로인 InteractionController.TrySpawnCraftStation과 **완전히 같은 절차**로 코드로 세운다 -
+        /// 배치와 복원이 서로 다른 방법으로 시설을 만들면 언젠가 한쪽만 고쳐진다.
+        ///
+        /// 활성화 순서가 그 절차의 핵심이다: 비활성으로 만들어 위치·회전·kind를 채운 **다음** 켠다.
+        /// 활성 오브젝트에 AddComponent를 하면 그 자리에서 Awake가 돌아 (a) kind가 기본값(제작대)인 채로
+        /// 외형/콜라이더가 조립되고 (b) 아직 원점인 위치에서 지면 스냅이 일어난다.
+        /// 지면 스냅(Awake의 TerrainSampler.SnapToGround)이 복원 위치를 다시 건드리는 것은 문제가 되지
+        /// 않는다 - 저장된 좌표는 설치 때 이미 스냅된 값이라 같은 xz에서 같은 높이가 나온다(멱등).
+        /// 활성 목록 등록(OnEnable)도 SetActive가 알아서 한다.
+        /// </summary>
+        private void RestoreCraftStation(StructureSaveEntry entry)
+        {
+            if (!TryGetCraftStationKind(entry.type, out CraftStationKind kind))
+                return;
+
+            var go = new GameObject("CraftStation_" + kind);
+            go.SetActive(false);
+            go.transform.SetPositionAndRotation(
+                new Vector3(entry.posX, entry.posY, entry.posZ),
+                Quaternion.Euler(0f, entry.rotY, 0f));
+
+            var station = go.AddComponent<CraftStation>();
+            station.kind = kind;
+            station.useRadius = CraftStation.DefaultUseRadius;
+
+            go.SetActive(true);
         }
 
         /// <summary>

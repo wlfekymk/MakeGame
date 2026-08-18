@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_제작대키트
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: "제작대키트"
+  description: "나뭇가지와 노끈, 돌조각으로 만든 제작대 설치 키트. 설치한 제작대 근처에서만 정제 도구를 만들 수 있다."
+  icon: {fileID: 21300000, guid: f54a78ed0b778b89cf6277b19a131433, type: 3}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0
+  hungerRestoreAmount: 0
+  thirstRestoreAmount: 0
+  isRawFood: 0
+  cookedResult: {fileID: 0}
+  isCoconutWaterSource: 0
+  isPlaceable: 1
+  placementPrefab: {fileID: 0}

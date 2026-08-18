@@ -106,7 +106,17 @@ namespace MakeGame.UI
             public bool skillLocked;
             public int skillLevel;
 
-            /// <summary>정렬 키. 0 = 지금 만들 수 있다 · 1 = 재료 부족 · 2 = 기술 레벨 부족.</summary>
+            /// <summary>
+            /// 이 제작법이 설치형 제작 시설(제작대/용광로/베틀)을 요구하는데 지금 그 근처가 아닌지.
+            /// 판정은 CraftingSystem이 하고(IsMissingRequiredStation) 여기서는 결과만 들고 있는다 -
+            /// UI가 반경 판정을 따로 구현하면 화면과 실제 제작 결과가 갈라진다.
+            /// </summary>
+            public bool stationMissing;
+
+            /// <summary>stationMissing일 때 필요한 시설 종류(문구에 쓸 이름을 여기서 얻는다).</summary>
+            public CraftStationKind requiredStation;
+
+            /// <summary>정렬 키. 0 = 지금 만들 수 있다 · 1 = 재료 부족 · 2 = 기술 레벨 부족 · 3 = 제작대 없음.</summary>
             public int sortKey;
         }
 
@@ -578,7 +588,14 @@ namespace MakeGame.UI
                 entry.skillLocked = skills != null && entry.skillLevel < entry.recipe.requiredSkillLevel;
                 entry.canCraft = craftingSystem != null && craftingSystem.CanCraft(entry.recipe);
 
-                entry.sortKey = entry.canCraft ? 0 : (entry.skillLocked ? 2 : 1);
+                // 제작대 요구도 같은 규칙이다: 판정은 CraftingSystem 하나가 소유하고 UI는 물어보기만 한다.
+                // 이 값은 플레이어가 걸어 다니면 바뀌므로 매 갱신(0.2초 폴링)마다 다시 본다.
+                entry.stationMissing = craftingSystem != null
+                    && craftingSystem.IsMissingRequiredStation(entry.recipe, out entry.requiredStation);
+
+                // 제작대가 없어서 잠긴 칸은 목록의 **맨 끝**에 둔다(3). 기존 세 값(0/1/2)의 의미와
+                // 상대 순서는 한 글자도 바꾸지 않으므로 기존 제작법의 배치는 예전 그대로다.
+                entry.sortKey = entry.canCraft ? 0 : (entry.stationMissing ? 3 : (entry.skillLocked ? 2 : 1));
                 if (entry.canCraft)
                     readyCount++;
             }
@@ -753,7 +770,9 @@ namespace MakeGame.UI
         private void UpdateFooter()
         {
             var entry = selectedIndex >= 0 && selectedIndex < slots.Count ? slots[selectedIndex].entry : null;
-            int state = entry == null ? 0 : (entry.canCraft ? 1 : (entry.skillLocked ? 2 : 3));
+            int state = entry == null
+                ? 0
+                : (entry.canCraft ? 1 : (entry.stationMissing ? 4 : (entry.skillLocked ? 2 : 3)));
 
             if (craftButton != null)
                 craftButton.interactable = entry != null && entry.canCraft;
@@ -782,6 +801,14 @@ namespace MakeGame.UI
                 case 3:
                     selectionLabel.text = $"선택: {entry.displayName} - 재료가 부족하다";
                     selectionLabel.color = ShortageColor;
+                    break;
+
+                // 제작대 부족은 기술 레벨 부족과 같은 성격이다: 재료를 다 모아도 지금은 못 만들지만
+                // 조건을 채우면 풀린다. 그래서 색도 같은 SunstrokeGold를 쓴다(재료 부족의 붉은색은
+                // "더 모아라"라는 다른 지시다). 문구 형식은 기존 세 줄과 완전히 같다.
+                case 4:
+                    selectionLabel.text = $"선택: {entry.displayName} - {CraftStation.GetDisplayName(entry.requiredStation)} 필요";
+                    selectionLabel.color = SunstrokeGold;
                     break;
 
                 default:
@@ -918,7 +945,9 @@ namespace MakeGame.UI
         {
             unchecked
             {
-                int signature = entry.skillLevel * 31 + (entry.canCraft ? 1 : 0);
+                // 제작대 유무는 재료가 하나도 안 변해도 플레이어가 걸어가면 바뀌는 값이라, 서명에
+                // 넣지 않으면 시설 앞에 서도 툴팁 마지막 줄이 "제작대 필요"인 채로 굳는다.
+                int signature = entry.skillLevel * 31 + (entry.canCraft ? 1 : 0) + (entry.stationMissing ? 2 : 0);
 
                 var materials = entry.recipe.requiredMaterials;
                 for (int i = 0; materials != null && i < materials.Count; i++)
@@ -939,6 +968,11 @@ namespace MakeGame.UI
         {
             if (entry.canCraft)
                 return "우클릭 = 즉시 제작 · 클릭 = 선택";
+
+            // 제작대 부족을 기술 부족보다 먼저 말한다. 기술이 모자란 동시에 제작대도 없을 때, 기술은
+            // 시간이 지나면 저절로 오르지만 제작대는 플레이어가 만들어 놓지 않으면 영영 생기지 않는다.
+            if (entry.stationMissing)
+                return $"{CraftStation.GetDisplayName(entry.requiredStation)} 근처에서만 만들 수 있다";
 
             if (entry.skillLocked)
                 return "제작 기술 레벨이 오르면 풀린다";

@@ -55,6 +55,31 @@ namespace MakeGame.Systems
         [Tooltip("사냥 스킬 레벨 1당(Lv1 초과분) 성공 확률에 더할 값")]
         public float huntingLevelSuccessBonus = 0.03f;
 
+        // ── [전투 깊이 확장] 원거리 사냥 · 피격 반응 ────────────────────────────────
+        //
+        // 이 두 필드도 위 nightSuccessBonus와 같은 처지다: 씬/프리팹 어디에도 HuntableCreature
+        // 인스턴스가 없고(CreatureSpawner가 런타임에 만든다) CreatureSpawner.CreatureEntry에도
+        // 대응 필드가 없으므로 **이 코드 기본값이 곧 실동작값이다.**
+
+        [Tooltip("창을 던져 맞혔을 때 사냥 성공 확률에 더할 보너스.\n" +
+            "찔러서 잡는 근접(E)보다 조준해서 맞힌 쪽이 조금 유리해야 원거리를 쓸 이유가 생긴다.")]
+        public float projectileSuccessBonus = 0.15f;
+
+        [Tooltip("피격 시 뒤로 물러나는 거리(m). 타격감을 위한 짧은 반응이며 경직/무적과는 무관하다.")]
+        public float hitRetreatDistance = 0.6f;
+
+        /// <summary>피격 반응(물러남)이 진행되는 시간(초). 짧을수록 '맞았다'가 또렷하다.</summary>
+        private const float HitRetreatSeconds = 0.28f;
+
+        private Vector3 hitRetreatDirection;
+        private float hitRetreatTimer;
+
+        // 피격 반응으로 밀려나기 전의 제자리. 재등장할 때 여기로 되돌린다.
+        // 되돌리지 않으면 사냥 → 재등장을 반복할 때마다 0.6m씩 누적으로 밀려, 긴 세션에서 개체가
+        // 처음 자리에서 수 미터 떨어진 곳(심하면 바다 쪽)으로 걸어 나간 것처럼 보인다.
+        private Vector3 homePosition;
+        private bool homePositionCaptured;
+
         // B3-3: ResourceNode/HazardSource와 동일한 목적의 식별자.
         // [세이브 키 v2] 세이브 키는 (islandIndex, spawnOrder)가 아니라 (islandIndex, stableKey)다.
         // spawnOrder는 "스포너가 만든 개체" 판별(음수면 세이브 제외)과 디버깅 참고용으로만 남는다.
@@ -91,6 +116,11 @@ namespace MakeGame.Systems
         private void Start()
         {
             BuildHeadSilhouette();
+
+            // 제자리 기억. CreatureSpawner는 생성 직후(같은 프레임)에 위치를 잡으므로
+            // 한 프레임 뒤인 Start에서는 최종 좌표가 확정돼 있다.
+            homePosition = transform.position;
+            homePositionCaptured = true;
         }
 
         /// <summary>
@@ -131,6 +161,50 @@ namespace MakeGame.Systems
         private void Update()
         {
             Tick(Time.deltaTime);
+
+            // [피격 반응] 엔딩·사망 화면(timeScale 0)에서는 함께 멈춘다 - 게임 시간에 묶인 연출이다.
+            if (hitRetreatTimer > 0f && Time.timeScale > 0f)
+                UpdateHitRetreat(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장 - 피격 반응] 맞은 순간 반대쪽으로 짧게 물러난다.
+        ///
+        /// **수평(XZ)으로만 민다.** 사냥감은 스포너가 접지 보정을 해서 놓은 뒤 다시는 y를 건드리지
+        /// 않으므로(CreatureSpawner의 groundOffset 보정), y를 함께 움직이면 땅에 파묻히거나 뜬다.
+        /// 거리도 0.6m로 짧다 - 이건 이동 AI가 아니라 "맞았다"를 보여 주는 반응이다.
+        /// </summary>
+        private void UpdateHitRetreat(float deltaTime)
+        {
+            hitRetreatTimer = Mathf.Max(0f, hitRetreatTimer - deltaTime);
+
+            float speed = Mathf.Max(0f, hitRetreatDistance) / HitRetreatSeconds;
+            Vector3 step = hitRetreatDirection * (speed * deltaTime);
+            transform.position = new Vector3(
+                transform.position.x + step.x,
+                transform.position.y,
+                transform.position.z + step.z);
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장 - 피격 반응] 공격받은 사실을 시각/청각/움직임으로 알린다.
+        /// 성공/실패와 무관하게 "맞았다"는 항상 보여야 하므로 판정보다 먼저 부른다.
+        /// </summary>
+        /// <param name="fromPosition">공격이 날아온 지점(플레이어 또는 창의 위치).</param>
+        private void ReactToHit(Vector3 fromPosition)
+        {
+            Vector3 away = transform.position - fromPosition;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.0001f)
+                away = -transform.forward;
+            away.y = 0f;
+            hitRetreatDirection = away.sqrMagnitude > 0.0001f ? away.normalized : Vector3.forward;
+            hitRetreatTimer = HitRetreatSeconds;
+
+            // 타격 위치를 알려 주는 국소 이펙트 + 적중음. 화면 전체 이펙트가 아니라 월드 공간이며
+            // 공격한 그 순간에만 터진다(HazardSource.ApplyHazardEffect가 접촉 순간에만 부르는 것과 같은 규칙).
+            EffectBuilder.PlayHitBurst(transform.position + Vector3.up * 0.4f);
+            AudioManager.Instance?.PlayHit();
         }
 
         /// <summary>
@@ -146,6 +220,11 @@ namespace MakeGame.Systems
             {
                 isCaught = false;
                 respawnTimer = 0f;
+
+                // [전투 깊이 확장] 피격 반응으로 밀려난 만큼을 제자리로 되돌린다(누적 표류 방지).
+                hitRetreatTimer = 0f;
+                if (homePositionCaptured)
+                    transform.position = homePosition;
             }
         }
 
@@ -182,16 +261,62 @@ namespace MakeGame.Systems
                     return false;
             }
 
+            // [전투 깊이 확장] 맞은 반응을 판정보다 먼저 보여 준다(성공/실패와 무관하게 "때렸다"는 사실이다).
+            // 공격 방향은 인벤토리를 들고 있는 오브젝트 = 플레이어의 위치에서 구한다.
+            float feedbackDamage = toolItem != null && toolItem.data != null ? toolItem.data.weaponDamage : 0f;
+            ReactToHit(inventory.transform.position);
+
             isCaught = true;
             respawnTimer = 0f;
 
             if (toolItem != null)
                 inventory.UseItem(toolItem); // 시도 자체로 도구 내구도 소모 (성공 여부와 무관)
 
+            return ResolveHuntAttempt(inventory, skills, 0f, feedbackDamage);
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장 - 원거리] 던진 창에 맞았을 때의 사냥 판정.
+        ///
+        /// **내구도는 여기서 소모하지 않는다** - 던지는 순간 PlayerController가 이미 1회 소모시켰다
+        /// (그리고 창 자체가 인벤토리를 떠났다). 요구 도구(requiredTool) 검사도 하지 않는다: 창이
+        /// 날아와 몸에 박힌 상황에서 "가방에 창이 있는가"를 다시 묻는 것은 뜻이 없기 때문이다.
+        ///
+        /// 근접(E)보다 <see cref="projectileSuccessBonus"/>만큼 성공률이 높다. 대신 창을 주우러
+        /// 가야 하고 빗나갈 수 있다는 원거리 고유의 대가가 있다.
+        /// </summary>
+        /// <param name="damage">투척 피해량. 이 시스템에는 체력이 없어 판정에는 쓰이지 않고 피드백 세기에만 쓰인다.</param>
+        /// <param name="fromPosition">창이 날아온 지점(피격 반응 방향).</param>
+        /// <param name="inventory">수확물을 받을 인벤토리. 없으면 잡기만 하고 수확은 없다.</param>
+        /// <param name="skills">사냥 경험치를 받을 스킬(없어도 된다).</param>
+        /// <returns>사냥에 성공했으면 true.</returns>
+        public bool TakeProjectileHit(float damage, Vector3 fromPosition, PlayerInventory inventory, PlayerSkills skills)
+        {
+            if (!IsAvailable)
+                return false;
+
+            ReactToHit(fromPosition);
+
+            isCaught = true;
+            respawnTimer = 0f;
+
+            return ResolveHuntAttempt(inventory, skills, projectileSuccessBonus, damage);
+        }
+
+        /// <summary>
+        /// 사냥 성공 판정과 수확 지급. TryHunt(근접)와 TakeProjectileHit(원거리)의 **공통 본체**다.
+        /// 여기에 도구 소모/요구 도구 검사는 없다 - 그 둘은 진입 경로마다 다르므로 호출부가 맡는다.
+        /// 확률 계산·야간 보너스·수확 루프는 예전 TryHunt에서 한 줄도 바꾸지 않고 옮겨 온 것이다.
+        /// </summary>
+        /// <param name="extraSuccessChance">진입 경로별 추가 성공률(근접 0 / 원거리 projectileSuccessBonus).</param>
+        /// <param name="feedbackDamage">화면 적중 표시(CombatFeedbackUI)의 세기로만 쓰이는 값.</param>
+        private bool ResolveHuntAttempt(PlayerInventory inventory, PlayerSkills skills,
+            float extraSuccessChance, float feedbackDamage)
+        {
             // [B9] 성공 확률 = 기본값 + 사냥 레벨 보너스 + 야간 보너스. 세 항을 더한 뒤 반드시 클램프한다
             // (Lv10 + 밤이면 육상 사냥감이 0.7 + 0.27 + 0.2 = 1.17로 1을 넘는다).
             bool isNight = IsNightNow();
-            float chance = successChance;
+            float chance = successChance + extraSuccessChance;
             if (skills != null)
                 chance += huntingLevelSuccessBonus * (skills.GetLevel(SkillType.Hunting) - 1);
             if (isNight)
@@ -199,7 +324,14 @@ namespace MakeGame.Systems
             chance = Mathf.Clamp01(chance);
 
             bool success = Random.value < chance;
-            if (success && yieldItem != null)
+
+            // [전투 깊이 확장] 무엇을 때렸는지 화면 중앙에 짧게 표시한다(적중 표식).
+            // 성공하면 강한 표식, 실패(놓침)해도 "맞긴 했다"는 약한 표식이 뜬다.
+            MakeGame.UI.CombatFeedbackUI.Instance?.TriggerAttackConfirm(feedbackDamage, success);
+
+            // inventory가 null인 경로가 있다(던진 창의 주인을 못 찾은 경우 - ThrownWeapon.ownerInventory).
+            // 그때는 사냥감이 도망친 것으로만 처리하고 수확은 건너뛴다.
+            if (success && yieldItem != null && inventory != null)
             {
                 // 야간 수확량 보너스. 인벤토리 AddItem은 1개씩 넣는 API라 개수만큼 반복한다
                 // (스택 용량/무게 규칙을 우회하지 않기 위해 일부러 루프로 같은 경로를 통과시킨다).

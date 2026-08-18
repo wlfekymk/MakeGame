@@ -78,6 +78,16 @@ namespace MakeGame.Systems
 
         private float respawnTimer = 0f;
 
+        // [채집 스킬] 확률 수치 자체는 여기에 두지 않는다 - 스킬 효과 수치의 단일 소스는
+        // PlayerSkills(GetHarvestingBonusYieldChance)이며, Lv1 4% ~ Lv10 40%다. 곱배율이 아니라
+        // 확률 가산이라 기대 수확량은 최대 +40%에 그치고, 정제 도구의 2배와 곱해져도 폭주하지 않는다
+        // (정제 2배 × 스킬 기대 1.4배 = 2.8배가 상한).
+        //
+        // 이 확률은 GetEffectiveYield에 절대 들어가지 않는다 - 그 메서드는 조준 프롬프트가 매 프레임
+        // 부르는 **결정론적** 표시값이고(호출마다 숫자가 흔들리면 "1회당 N개" 표시가 깜빡인다),
+        // 인벤토리 여유 검사(GetHarvestFailure의 CanAccept)도 같은 값을 쓰기 때문이다. 실제 주사위는
+        // 채집이 성공한 뒤 Harvest() 안에서 딱 한 번 굴린다.
+
         /// <summary>이 노드에 실루엣 보강 파츠를 이미 붙였는지(중복 생성 방지용).</summary>
         private bool silhouetteBuilt = false;
 
@@ -433,6 +443,13 @@ namespace MakeGame.Systems
             for (int i = 0; i < totalYield; i++)
                 inventory.AddItem(yieldItem);
 
+            // [채집 스킬 효과] 확률 보너스 1개. GetEffectiveYield(= 실패 판정의 CanAccept가 쓴 값)에는
+            // 들어가지 않는 추가분이라 가방이 딱 맞게 찼을 수 있다. 그래서 굴리기 **전에** 여유를 먼저
+            // 확인한다 - 순서를 바꾸면 AddItem이 거부하면서 실패음과 경고 로그가 나와, 성공한 채집이
+            // 실패처럼 들린다(B18에서 고친 "수확물 증발"과 같은 유형의 사고).
+            if (inventory.CanAccept(yieldItem, 1) && RollHarvestingSkillBonus(skills))
+                inventory.AddItem(yieldItem);
+
             if (skills != null)
                 skills.AddExperience(SkillType.Harvesting, harvestExperience);
 
@@ -470,9 +487,67 @@ namespace MakeGame.Systems
                 bonus = bonusYieldPerHarvest;
             }
 
+            // [정제 도구 2배 배선] CombatSystem이 클래스 주석에 적어 둔 배선 방법 그대로다 - 곱이 아니라
+            // 가산항으로 넣는다(가산량 = GetRefinedBonusYield(기본 수확량) = 기본 수확량, 합이 정확히 2배).
+            // bonusTool 가산과는 서로 독립이며 둘 다 있으면 함께 붙는다(정제 칼 + 야자잎 칼 보너스처럼).
+            // 이 항은 확률이 아니라 확정값이라 프롬프트의 "1회당 N개" 표시에 그대로 드러난다.
+            if (HasRefinedHarvestTool(inventory))
+                bonus += CombatSystem.GetRefinedBonusYield(yieldPerHarvest);
+
             // yieldPerHarvest 자체는 손대지 않는다 - 이 메서드가 하는 일은 "기존 수확량에 가산항을
             // 더하는 것" 하나뿐이며, 보너스가 없을 때의 반환값은 예전 for 루프의 상한과 완전히 동일하다.
             return yieldPerHarvest + bonus;
+        }
+
+        /// <summary>
+        /// 인벤토리에 **정제 채집 도구**(정제 칼 / 정제 손도끼)가 한 자루라도 있는지.
+        /// 정제 창은 채집 도구가 아니라 제외한다(CombatSystem 수치표에서도 창의 채집 배율은 1.0이다).
+        ///
+        /// 판정은 CombatSystem의 이름 규약 상수 하나에만 의존한다 - ItemData에 등급 필드가 없어서
+        /// 문자열 규약이 유일한 소스이며(CombatSystem 클래스 주석), 여기서 따로 문자열을 적으면
+        /// 규약이 두 군데로 갈라진다. IsRefined를 먼저 통과시키는 이유는 접두어가 없는 이름에서
+        /// 문자열 비교 두 번을 아끼려는 것뿐이고 결과는 같다.
+        /// 이 메서드는 상태를 바꾸지 않아 매 프레임 호출해도 안전하다(GetEffectiveYield 경유).
+        /// </summary>
+        private static bool HasRefinedHarvestTool(PlayerInventory inventory)
+        {
+            if (inventory == null)
+                return false;
+
+            var items = inventory.items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                InventoryItem item = items[i];
+                if (item == null || !CombatSystem.IsRefined(item.data))
+                    continue;
+
+                if (item.data.itemName == CombatSystem.RefinedKnifeItemName
+                    || item.data.itemName == CombatSystem.RefinedHatchetItemName)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// [채집 스킬 효과] 채집 레벨에 따라 "이번 채집에 1개 더 나오는가"를 굴린다.
+        /// 확률은 PlayerSkills.GetHarvestingBonusYieldChance()가 정한다(Lv1 4% ~ Lv10 40%).
+        ///
+        /// rng는 <c>UnityEngine.Random</c>을 쓴다. 월드 생성 스트림(섬 시드 System.Random)은 재현성이
+        /// 걸려 있어 절대 건드리면 안 되고, 반대로 플레이 중 확률은 이 프로젝트가 이미 UnityEngine.Random을
+        /// 쓴다(ConsumptionSystem의 날음식 식중독 판정 = Random.value). 여기서 굴리는 주사위는 월드 생성이
+        /// 끝난 뒤 플레이어 입력에만 반응하므로 섬 배치 결과를 밀지 않는다.
+        /// </summary>
+        private bool RollHarvestingSkillBonus(PlayerSkills skills)
+        {
+            if (skills == null)
+                return false;
+
+            float chance = skills.GetHarvestingBonusYieldChance();
+            if (chance <= 0f)
+                return false;
+
+            return Random.value < chance;
         }
 
         /// <summary>

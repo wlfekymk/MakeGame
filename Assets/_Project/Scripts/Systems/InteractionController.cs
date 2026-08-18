@@ -298,6 +298,17 @@ namespace MakeGame.Systems
         /// <summary>
         /// 인벤토리에서 가장 먼저 발견되는 설치형(빌드) 아이템을 찾아 플레이어 정면 바닥에 설치한다.
         /// 설치에 성공하면 아이템을 인벤토리에서 소모한다(사용 횟수 1 차감, 대부분 그대로 소진됨).
+        ///
+        /// [설치 경로가 두 갈래인 이유 - 둘은 서로를 가리지 않는다]
+        ///  · 프리팹 경로(기존): 모닥불키트/물증류기키트/쉼터키트는 ItemData.placementPrefab에 실제
+        ///    프리팹이 배선돼 있다(실측 확인). 이 셋의 동작은 예전과 한 줄도 다르지 않다.
+        ///  · 런타임 생성 경로(신규): 제작대키트/용광로키트/베틀키트는 isPlaceable = 1 인데
+        ///    placementPrefab이 비어 있다 - 프리팹 에셋과 ItemData 에셋이 둘 다 이 작업의 락 밖이라
+        ///    채울 수 없다. 그래서 프리팹이 없을 때만 CraftStation을 코드로 세운다.
+        ///
+        /// 판정 순서가 곧 우선순위다: **placementPrefab이 있으면 언제나 그것을 쓴다.** 나중에 세 키트에
+        /// 진짜 프리팹이 배선되면(또는 CraftStation이 시작 시 원본을 채워 넣으면) 아래 폴백은 저절로
+        /// 꺼지고 모든 설치가 예전과 같은 단일 경로로 돌아간다.
         /// </summary>
         private void PlaceFirstPlaceableItem()
         {
@@ -307,23 +318,64 @@ namespace MakeGame.Systems
             InventoryItem placeableItem = null;
             foreach (var item in inventory.items)
             {
-                if (item.data != null && item.data.isPlaceable && item.data.placementPrefab != null)
-                {
-                    placeableItem = item;
-                    break;
-                }
+                if (item.data == null || !item.data.isPlaceable)
+                    continue;
+
+                // 프리팹이 비어 있는 설치형은 예전에는 통째로 건너뛰었다(그래서 세 키트는 영영 놓을 수
+                // 없었다). 이제는 **제작 시설 키트로 이름이 확인되는 것만** 추가로 받아들인다 - 프리팹도
+                // 없고 키트도 아닌 아이템은 예전 그대로 건너뛴다(놓을 방법이 없으므로).
+                if (item.data.placementPrefab == null
+                    && !CraftStation.TryGetKindForKitItem(item.data.itemName, out _))
+                    continue;
+
+                placeableItem = item;
+                break;
             }
 
             if (placeableItem == null)
                 return;
 
             Vector3 spawnPosition = transform.position + transform.forward * placementDistance;
-            Instantiate(placeableItem.data.placementPrefab, spawnPosition, Quaternion.identity);
+
+            if (placeableItem.data.placementPrefab != null)
+            {
+                Instantiate(placeableItem.data.placementPrefab, spawnPosition, Quaternion.identity);
+            }
+            else if (!TrySpawnCraftStation(placeableItem.data, spawnPosition))
+            {
+                // 세우지 못했으면 아이템을 먹지 않는다. 키트가 조용히 사라지는 것이 최악의 결과다.
+                return;
+            }
 
             inventory.UseItem(placeableItem);
 
             // 설치 완료 피드백음. 전용 효과음이 없어 제작 성공음을 재사용한다 (기존에는 설치 시 무음이었음).
             AudioManager.Instance?.PlayCraftSuccess();
+        }
+
+        /// <summary>
+        /// 제작 시설 키트를 프리팹 없이 코드로 세운다. 키트 아이템이 아니면 아무것도 만들지 않고 false.
+        ///
+        /// 활성화 순서가 중요하다: **비활성으로 만들어 kind를 채운 다음 켠다.** 활성 오브젝트에
+        /// AddComponent를 하면 그 자리에서 CraftStation.Awake가 돌아, kind가 기본값(제작대)인 채로
+        /// 외형과 콜라이더가 조립돼 용광로/베틀이 제작대 모습으로 서 버린다. 지면 스냅(TerrainSampler)과
+        /// 활성 목록 등록도 전부 Awake/OnEnable이 하므로 여기서 따로 손댈 것이 없다.
+        /// </summary>
+        private static bool TrySpawnCraftStation(ItemData kitItem, Vector3 spawnPosition)
+        {
+            if (kitItem == null || !CraftStation.TryGetKindForKitItem(kitItem.itemName, out CraftStationKind kind))
+                return false;
+
+            var go = new GameObject("CraftStation_" + kind);
+            go.SetActive(false);
+            go.transform.position = spawnPosition;
+
+            var station = go.AddComponent<CraftStation>();
+            station.kind = kind;
+            station.useRadius = CraftStation.DefaultUseRadius;
+
+            go.SetActive(true);
+            return true;
         }
 
         /// <summary>

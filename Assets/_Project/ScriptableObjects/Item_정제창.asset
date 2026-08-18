@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_정제창
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: "정제 창"
+  description: "강철 촉을 박아 다시 만든 창. 근접과 투척 모두 기본 창보다 훨씬 강하다."
+  icon: {fileID: 21300000, guid: f3ddccc1c81ffa1ee8105a8c1a3b92ab, type: 3}
+  maxUses: 25
+  blockedFromLargeIslandsByCurrent: 0
+  isWeapon: 1
+  weaponDamage: 25

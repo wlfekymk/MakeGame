@@ -144,10 +144,16 @@ namespace MakeGame.UI
             // 조작키 안내 6줄이 들어가면서 박스를 420x260 → 520x480으로 키웠다.
             // (내용 합계: 제목 40 + 음량 4줄 92 + 조작 제목 22 + 조작 본문 150 + 닫기 36 = 340,
             //  spacing 10 x 7 = 70, padding 상하 40 → 450. 480 안에 들어간다.)
+            //
+            // [전투 확장] 회피/투척 한 줄이 늘어 본문이 11줄이 되면서 520x520 / 본문 200으로 키웠다.
+            // 본문 라벨은 verticalOverflow=Overflow라 넘쳐도 잘리지는 않지만, 대신 아래 '닫기' 버튼을
+            // 파고든다(minHeight는 잘라내는 값이 아니라 자리를 잡아주는 값이다). 실측 기준 11줄 =
+            // 12pt × 줄간격 1.25 ≈ 17.4px × 11 ≈ 191px이므로 200이면 여유가 남는다.
+            // (새 합계: 40 + 92 + 22 + 200 + 36 = 390, spacing 70, padding 40 → 500. 520 안에 들어간다.)
             var box = UIBuilder.CreatePanel(
                 backdrop, "SettingsBox",
                 anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                offsetMin: new Vector2(-260f, -240f), offsetMax: new Vector2(260f, 240f),
+                offsetMin: new Vector2(-260f, -260f), offsetMax: new Vector2(260f, 260f),
                 color: new Color(0f, 0f, 0f, 0.85f));
 
             var vlg = box.gameObject.AddComponent<VerticalLayoutGroup>();
@@ -187,7 +193,7 @@ namespace MakeGame.UI
             controlsLabel = UIBuilder.CreateText(box, "ControlsBody", "", 12,
                 new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.UpperLeft);
             controlsLabel.lineSpacing = 1.25f;
-            controlsLabel.gameObject.AddComponent<LayoutElement>().minHeight = 150f;
+            controlsLabel.gameObject.AddComponent<LayoutElement>().minHeight = 200f;
 
             var closeButton = UIBuilder.CreateButton(box, "CloseButton", "닫기", Close);
             var closeLayout = closeButton.gameObject.AddComponent<LayoutElement>();
@@ -239,10 +245,22 @@ namespace MakeGame.UI
             KeyCode quest = questUI != null ? questUI.toggleKey : KeyCode.J;
             KeyCode build = BuildingSystem.Instance != null ? BuildingSystem.Instance.toggleKey : KeyCode.B;
             KeyCode dive = playerController != null ? playerController.diveKey : KeyCode.LeftControl;
+            // [전투 확장] 회피 구르기 / 창 투척. 다른 줄과 같은 규약으로 **씬의 실제 필드에서** 읽는다
+            // (PlayerController.dodgeKey = X, throwKey = T, throwMouseButton = 1(우클릭)이 코드 기본값).
+            KeyCode dodge = playerController != null ? playerController.dodgeKey : KeyCode.X;
+            KeyCode throwAlt = playerController != null ? playerController.throwKey : KeyCode.T;
+            int throwMouse = playerController != null ? playerController.throwMouseButton : 1;
 
             controlsBuilder.Clear();
             controlsBuilder.Append("이동 WASD · 시점 마우스 · 점프 Space\n");
             controlsBuilder.Append('[').Append(interact.ToString()).Append("] 상호작용 / 공격(무기 필요)\n");
+            // [전투 확장] 회피와 투척은 상호작용/공격 바로 아래에 둔다 - 셋 다 "곰을 만났을 때 쓰는 것"이라
+            // 한 덩어리로 읽혀야 한다. 투척은 마우스 버튼이 주력이고 T는 보조라 마우스를 먼저 적는다
+            // (throwMouseButton이 음수면 마우스 투척이 꺼진 상태이므로 보조 키만 적는다).
+            controlsBuilder.Append('[').Append(dodge.ToString()).Append("] 회피 구르기    ");
+            if (throwMouse >= 0)
+                controlsBuilder.Append('[').Append(DescribeMouseButton(throwMouse)).Append("]/");
+            controlsBuilder.Append('[').Append(throwAlt.ToString()).Append("] 창 투척(창 필요)\n");
             controlsBuilder.Append('[').Append(consume.ToString()).Append("] 섭취 · 치료    [")
                 .Append(cook.ToString()).Append("] 조리    [").Append(place.ToString()).Append("] 설치\n");
             controlsBuilder.Append('[').Append(inventory.ToString()).Append("] 인벤토리 (열린 상태에서 [")
@@ -267,6 +285,22 @@ namespace MakeGame.UI
             controlsBuilder.Append('[').Append(toggleKey.ToString()).Append("] 이 화면 열기 / 닫기");
 
             controlsLabel.text = controlsBuilder.ToString();
+        }
+
+        /// <summary>
+        /// 마우스 버튼 번호(Input.GetMouseButton 규약: 0 = 좌, 1 = 우, 2 = 휠)를 한글 표기로 바꾼다.
+        /// 키보드 키가 KeyCode.ToString()으로 저절로 읽히는 것과 달리 마우스 버튼은 그냥 정수라
+        /// 이름을 여기서 붙여줘야 한다. 알 수 없는 번호는 번호 그대로 보여준다(거짓 이름보다 낫다).
+        /// </summary>
+        private static string DescribeMouseButton(int button)
+        {
+            switch (button)
+            {
+                case 0: return "좌클릭";
+                case 1: return "우클릭";
+                case 2: return "휠클릭";
+                default: return "마우스" + button.ToString();
+            }
         }
 
         /// <summary>

@@ -42,6 +42,9 @@ namespace MakeGame.UI
 
         private InteractionController interaction;
 
+        /// <summary>제작 창 키를 읽어 오는 CraftingUI 캐시(제작대 프롬프트 전용). GetCraftToggleKey 참고.</summary>
+        private CraftingUI craftingUI;
+
         private GameObject panelRoot;
         private Text mainLabel;
         private Text subLabel;
@@ -212,6 +215,18 @@ namespace MakeGame.UI
             string key = $"[{interaction.interactKey}]";
             PlayerInventory inventory = interaction.inventory;
 
+            // [전투 깊이 확장 - 땅에 꽂힌 창] 이 분기는 **어떤 기존 분기도 가리지 않는다.**
+            // ThrownWeapon은 런타임에 자기 전용 오브젝트로만 생기고 그 오브젝트에는 다른 상호작용
+            // 컴포넌트가 붙지 않으므로, 순서를 앞에 둬도 채집/사냥/상자가 이 분기에 먹힐 수 없다.
+            //
+            // ⚠️ InteractionController에는 대응 분기가 **없다**(그 파일은 이 작업의 락 밖이다).
+            // 그래도 "화면과 E키가 갈라지는" 문제가 생기지 않는 이유: 여기서 안내하는 행동이 E가
+            // 아니라 **접근**이기 때문이다. 창을 겨눈 채 E를 눌러도 컨트롤러 쪽에서 아무 분기에도
+            // 걸리지 않아 조용히 지나가고, 화면은 처음부터 E를 약속하지 않는다.
+            var thrownWeapon = target.GetComponent<ThrownWeapon>();
+            if (thrownWeapon != null)
+                return BuildThrownWeaponPrompt(thrownWeapon, inventory, out main, out sub, out blocked);
+
             var resourceNode = target.GetComponent<ResourceNode>();
             if (resourceNode != null)
                 return BuildResourceNodePrompt(resourceNode, inventory, key, out main, out sub, out blocked);
@@ -232,7 +247,8 @@ namespace MakeGame.UI
                 }
                 else
                 {
-                    sub = $"성공률 {Mathf.RoundToInt(creature.successChance * 100f)}% · 실패해도 도망간다";
+                    sub = $"성공률 {Mathf.RoundToInt(creature.successChance * 100f)}% · 실패해도 도망간다"
+                        + BuildThrowHint(inventory);
                 }
                 return true;
             }
@@ -290,6 +306,17 @@ namespace MakeGame.UI
             if (shelter != null)
                 return BuildShelterPrompt(shelter, inventory, key, out main, out sub, out blocked);
 
+            // [제작대 3종] 조준하면 이름이라도 뜨게 한다. 자리는 **E 동사를 가진 분기 전부의 뒤,
+            // 폴백 분기(건축 부품 승급 / 조타 / 뗏목)의 앞**이다. 근거 두 가지:
+            //  (1) InteractionController에는 CraftStation 분기가 아예 없다(그 파일은 이 작업의 락 밖).
+            //      그래서 어떤 순서를 잡아도 "화면과 E키가 갈라지는" 문제는 생기지 않지만, 반대로 이
+            //      분기가 E 동사를 가진 분기보다 앞에 서면 실제로 E가 하는 일을 가릴 수 있다 - 뒤에 둔다.
+            //  (2) 폴백보다는 앞이어야 한다. 뗏목 분기는 GetComponentInParent라, 갑판 위에 놓인 제작대를
+            //      뒤에 두면 "제작대"가 아니라 "뗏목 제작"이 뜬다(살바지 지점을 여객기보다 앞에 둔 것과 같은 이유).
+            var craftStation = target.GetComponent<CraftStation>();
+            if (craftStation != null)
+                return BuildCraftStationPrompt(craftStation, inventory, out main, out sub, out blocked);
+
             // [건축 4티어] 건축 부품 조준 시 티어 승급 프롬프트. InteractionController와 같은 우선순위
             // 위치(모든 분기의 맨 뒤)이고, 부품 식별도 같은 소스(BuildingSystem.TryGetPieceTier -
             // 격자 역조회)만 쓴다 - UI가 부품 판정을 따로 만들지 않는다(클래스 주석의 원칙).
@@ -314,6 +341,98 @@ namespace MakeGame.UI
                 return BuildRaftPrompt(raft, key, out main, out sub, out blocked);
 
             return false;
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장] 땅에 꽂힌 창 프롬프트. 예: "창 회수" / "가까이 가면 줍는다 · 남은 사용 12회".
+        ///
+        /// **키를 안내하지 않는다.** 회수는 E가 아니라 접근으로 일어나기 때문이다(클래스 규칙:
+        /// 화면이 약속한 것과 실제 동작이 갈라지면 안 된다). 대신 어떻게 주우면 되는지를 문장으로 적는다.
+        /// 판정은 전부 ThrownWeapon/PlayerInventory가 이미 공개한 값만 읽는다 - 여기서 회수 조건을
+        /// 새로 구현하지 않는다(용량 판정은 실제 회수가 쓰는 CanAccept 그대로다).
+        /// </summary>
+        private bool BuildThrownWeaponPrompt(ThrownWeapon weapon, PlayerInventory inventory,
+            out string main, out string sub, out bool blocked)
+        {
+            main = $"{weapon.DisplayName} 회수";
+            sub = "";
+            blocked = false;
+
+            if (!weapon.IsStuck)
+            {
+                // 아직 날아가는 중이면 회수 안내가 뜻이 없다(콜라이더도 없어 사실상 도달하지 않는 경로).
+                sub = "날아가는 중";
+                blocked = true;
+                return true;
+            }
+
+            if (!weapon.IsRecoverable || weapon.WeaponData == null)
+            {
+                blocked = true;
+                sub = "부러져서 주울 수 없다";
+                return true;
+            }
+
+            if (inventory == null || !inventory.CanAccept(weapon.WeaponData, 1))
+            {
+                blocked = true;
+                sub = "가방이 가득 찼다 - Tab에서 정리하거나 저장궤에 넣어라";
+                return true;
+            }
+
+            sub = weapon.RemainingUses >= 0
+                ? $"가까이 가면 줍는다 · 남은 사용 {weapon.RemainingUses}회"
+                : "가까이 가면 줍는다";
+            return true;
+        }
+
+        /// <summary>
+        /// [제작대 3종] 제작 시설 프롬프트. 예: "제작대" / "여기서 [V] 제작 창을 열면 전용 제작법이 열린다".
+        ///
+        /// **상호작용 키(E)를 안내하지 않는다** - ThrownWeapon 프롬프트와 같은 이유다. 이 시설의 사용법은
+        /// "조준 + E"가 아니라 "반경 안에 서서 제작 창 열기"이고(CraftStation 클래스 주석),
+        /// InteractionController에는 대응 분기가 아예 없다. E를 약속하면 눌러도 아무 일이 없다.
+        ///
+        /// 이름은 CraftStation.GetDisplayName, 반경 판정은 CraftStation.IsNear만 쓴다 - 둘 다 제작 시스템이
+        /// 실제로 쓰는 바로 그 소스이며(CraftingSystem.HasRequiredStation이 같은 IsNear를 본다), 여기서
+        /// 거리 계산을 새로 만들면 "화면은 쓸 수 있다는데 제작 창은 아니라고 한다"가 된다.
+        /// 제작 키도 문자열로 박지 않고 씬의 CraftingUI.toggleKey에서 읽는다(SettingsMenuController와 같은 규약).
+        /// </summary>
+        private bool BuildCraftStationPrompt(CraftStation station, PlayerInventory inventory,
+            out string main, out string sub, out bool blocked)
+        {
+            main = CraftStation.GetDisplayName(station.kind);
+            blocked = false;
+
+            // 제작 시스템이 반경을 재는 기준점과 같은 위치를 쓴다(CraftingSystem.CraftPosition:
+            // 인벤토리를 들고 있는 오브젝트 = 플레이어. 없으면 조준을 맡은 컨트롤러 자신).
+            Vector3 playerPosition = inventory != null
+                ? inventory.transform.position
+                : (interaction != null ? interaction.transform.position : transform.position);
+
+            if (!CraftStation.IsNear(playerPosition, station.kind))
+            {
+                blocked = true;
+                sub = "조금 더 가까이 가야 쓸 수 있다";
+                return true;
+            }
+
+            sub = $"여기서 [{GetCraftToggleKey()}] 제작 창을 열면 전용 제작법이 열린다";
+            return true;
+        }
+
+        /// <summary>
+        /// 제작 창을 여는 키를 씬의 CraftingUI에서 읽어 온다(찾지 못하면 그 컴포넌트의 코드 기본값 V).
+        /// 한 번 찾으면 캐시한다 - 프롬프트는 0.1초마다 갱신되므로 매번 씬을 훑게 두면 안 되고, 반대로
+        /// Start에서 한 번만 찾으면 이 UI가 씬 로드 콜백으로 먼저 생길 때 놓칠 수 있다(그때는 다음
+        /// 갱신에서 다시 찾는다). 캐시는 인스턴스 필드라 R1 정적 상태 누수와 무관하다.
+        /// </summary>
+        private KeyCode GetCraftToggleKey()
+        {
+            if (craftingUI == null)
+                craftingUI = FindAnyObjectByType<CraftingUI>();
+
+            return craftingUI != null ? craftingUI.toggleKey : KeyCode.V;
         }
 
         /// <summary>
@@ -711,8 +830,28 @@ namespace MakeGame.UI
                 return true;
             }
 
-            sub = $"{weapon.data.itemName} 사용 · 남은 체력 {hazard.currentHealth:F0}/{hazard.maxHealth:F0}";
+            sub = $"{weapon.data.itemName} 사용 · 남은 체력 {hazard.currentHealth:F0}/{hazard.maxHealth:F0}"
+                + BuildThrowHint(inventory);
             return true;
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장] 창을 들고 있을 때만 붙는 "우클릭 투척" 안내 꼬리말.
+        ///
+        /// **이 게임에서 투척의 유일한 발견 경로다.** 새 입력은 어디에도 표시되지 않으면 없는 기능과
+        /// 같고(쉼터 취침 프롬프트가 같은 이유로 자세히 쓰여 있다), 조작 목록을 보여 주는
+        /// SettingsMenuController는 이 작업의 락 밖이라 손댈 수 없다(보고서의 [막힘] 항목).
+        ///
+        /// 던질 것이 없으면 빈 문자열이라 기존 문장이 한 글자도 달라지지 않는다.
+        /// 피해량은 CombatSystem이 계산한 값을 그대로 읽는다 - 여기서 다시 계산하지 않는다.
+        /// </summary>
+        private static string BuildThrowHint(PlayerInventory inventory)
+        {
+            InventoryItem throwable = CombatSystem.FindThrowable(inventory);
+            if (throwable == null || throwable.data == null)
+                return "";
+
+            return $" · 우클릭 투척 {CombatSystem.GetThrowDamage(throwable.data):F0}";
         }
 
         /// <summary>
@@ -807,6 +946,9 @@ namespace MakeGame.UI
                 case HazardType.Trap: return "함정";
                 case HazardType.Cannibal: return "식인종";
                 case HazardType.Shark: return "상어";
+                // [전투 깊이 확장] 대왕 크랩(HazardType 9)이 빠져 있어 조준하면 "위험 요소"로만 떴다.
+                // 순수 표시 문자열이라 게임 규칙에는 영향이 없다.
+                case HazardType.GiantCrab: return "대왕 크랩";
                 default: return "위험 요소";
             }
         }

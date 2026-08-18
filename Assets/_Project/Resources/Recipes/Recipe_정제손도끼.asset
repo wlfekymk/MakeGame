@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_정제손도끼
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "정제 손도끼"
+  description: "제작대에서 손도끼에 강철 날을 얹어 다시 벼린다. 채집량이 두 배가 된다. (제작대 필요)"
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: e78c2cccce274d2fac0d814667672602, type: 2}
+    quantity: 1
+  - item: {fileID: 11400000, guid: 8861d846d807d66a94691479b8080abb, type: 2}
+    quantity: 1
+  - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+    quantity: 2
+  resultItem: {fileID: 11400000, guid: 6e289f82d6054a6895572a21948ede7a, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 3
+  experienceReward: 32

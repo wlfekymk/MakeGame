@@ -38,6 +38,51 @@ namespace MakeGame.Systems
         [Tooltip("접촉 상태를 유지할 때 재피격 사이의 최소 간격(초). 붙어 있다고 매 프레임 피해를 입지 않게 한다.")]
         public float contactDamageCooldown = 1.5f;
 
+        // ── [전투 깊이 확장] 피격 반응 ──────────────────────────────────────────────
+        //
+        // 지금까지 위험 요소는 맞아도 체력 숫자만 줄었다(곰만 포효했다). 타격감이 없을 뿐 아니라,
+        // 독사·전갈처럼 전투 대상이 아닌 종류는 창을 던져도 **아무 일도 일어나지 않았다.**
+        // 여기서 붙이는 반응은 두 가지뿐이고 둘 다 아주 짧다:
+        //  (1) 경직 - 맞은 직후 짧게 AI가 멈춘다(곰에만 AI가 있으므로 실질적으로 곰 전용 효과).
+        //  (2) 넉백 - 맞은 방향 반대로 조금 밀린다.
+        //
+        // ⚠️ **곰은 밀지 않는다.** 곰은 자기 이동 코드가 지형/물가/장애물을 3중으로 검사하는데
+        // (HazardSource.BearAI.cs의 B53 주석) 밖에서 좌표를 밀면 그 검사를 전부 우회해 바다나
+        // 바위 속으로 들어갈 수 있다. 곰의 반응은 경직 + 기존 포효(PlayRoar)로 충분하다.
+        // ⚠️ **함정도 밀지 않는다.** 땅에 박아 둔 장치라 미끄러지면 안 된다.
+        // 밀 때도 **y는 절대 건드리지 않는다** - 스포너가 접지시킨 높이를 그대로 유지한다.
+
+        [Header("피격 반응(전투 깊이 확장)")]
+        [Tooltip("공격을 맞았을 때의 경직 시간(초). 이 동안 곰 추격 AI가 멈춘다.")]
+        public float hitStaggerSeconds = 0.4f;
+
+        [Tooltip("공격을 맞았을 때 뒤로 밀리는 거리(m). 곰과 함정은 이 값과 무관하게 밀리지 않는다.")]
+        public float hitKnockbackDistance = 0.45f;
+
+        /// <summary>
+        /// 경직을 다시 걸 수 있게 되기까지의 대기 배수(경직 시간 × 이 값). **곰이 E 연타에 잠기는 것을 막는 값이다.**
+        /// 3이면 최대 점유율이 1/3이라, 아무리 빨리 때려도 곰은 전체 시간의 2/3 동안 움직인다.
+        /// 이게 없으면 경직 0.4초짜리를 0.4초마다 갱신해 추격 AI를 영구히 정지시킬 수 있었다.
+        /// </summary>
+        private const float HitStaggerCooldownMultiplier = 3f;
+
+        /// <summary>
+        /// 넉백이 제자리에서 밀어낼 수 있는 최대 거리(m). 독사·전갈처럼 **물리칠 수 없는**(따라서 절대
+        /// 재등장하지 않는) 위험 요소는 되돌릴 계기가 없어서, 상한이 없으면 계속 던져서 섬 밖까지
+        /// 밀어낼 수 있다. 2m면 "한 발짝 물러난다"는 연출은 살고 밀어내기 악용은 막힌다.
+        /// </summary>
+        private const float MaxHitKnockbackDriftMeters = 2f;
+
+        private float hitStaggerTimer;
+        private float hitStaggerCooldownTimer;
+        private float hitKnockbackRemaining;
+        private Vector3 hitKnockbackDirection;
+
+        // 넉백 누적을 되돌리기 위한 제자리. 곰은 자기 AI가 복귀 좌표(bearHome)를 따로 갖고 있어
+        // 여기서 손대지 않는다(애초에 곰은 밀리지도 않는다).
+        private Vector3 hitHomePosition;
+        private bool hitHomeCaptured;
+
         // B3-3: ResourceNode와 동일한 목적의 식별자(생성 섬 번호 + 섬 안에서의 생성 순번). 섬에 속하지
         // 않는 스폰(SharkSpawner가 배치하는 상어)은 islandIndex를 -1로 둬 "섬에 속하지 않음"을 표시한다.
         //
@@ -303,6 +348,12 @@ namespace MakeGame.Systems
 
         private void Start()
         {
+            // [전투 깊이 확장] 넉백을 되돌릴 제자리를 기억한다. 스포너는 생성 직후(같은 프레임)에
+            // 좌표를 확정하므로 한 프레임 뒤인 Start에서는 최종 위치다. 곰보다 먼저 잡아야
+            // 아래 조기 반환에 걸리는 다른 종류들도 이 값을 갖는다.
+            hitHomePosition = transform.position;
+            hitHomeCaptured = true;
+
             if (hazardType != HazardType.Bear)
                 return;
 
@@ -373,13 +424,21 @@ namespace MakeGame.Systems
             if (breathParts != null && !isDefeated)
                 UpdateBearBreathing();
 
+            // [전투 깊이 확장] 피격 경직/넉백. 게임 시간에 묶인다(엔딩·사망 화면에서는 멈춘다).
+            if (!isDefeated && Time.timeScale > 0f
+                && (hitStaggerTimer > 0f || hitStaggerCooldownTimer > 0f || hitKnockbackRemaining > 0f))
+                UpdateHitReaction(Time.deltaTime);
+
             // [B35] 곰 추격 AI. 세 가지 조건에서 **아예 돌지 않는다**:
             //  · timeScale <= 0 (타이틀/설정/엔딩/사망 화면) - 이동도 상태 갱신도 전부 정지한다.
             //    숨쉬기(unscaledDeltaTime)와 달리 AI는 게임 시간에 묶여야 한다.
             //  · isDefeated (SetVisualActive(false) 구간) - 안 보이는 곰이 돌아다니면 안 된다.
             //  · 곰이 아닌 위험 요소 - bearAiReady가 곰에서만 true다.
             //  [B37] 새끼는 같은 세 조건 아래에서 **자기 몫의 AI**로 갈라진다(성체 경로는 손대지 않는다).
-            if (bearAiReady && !isDefeated && Time.timeScale > 0f)
+            //  [전투 깊이 확장] 네 번째 조건이 붙었다: **피격 경직 중에는 AI가 돌지 않는다.**
+            //  경직이 곧 넉백 구간이기도 해서, 여기서 막지 않으면 AI가 같은 프레임에 좌표를 다시 써
+            //  넉백이 한 프레임도 보이지 않는다(곰은 애초에 밀리지 않지만 경직은 그대로 적용된다).
+            if (bearAiReady && !isDefeated && Time.timeScale > 0f && hitStaggerTimer <= 0f)
             {
                 if (isBearCub)
                     UpdateBearCubAI(Time.deltaTime);
@@ -397,6 +456,12 @@ namespace MakeGame.Systems
                 currentHealth = maxHealth;
                 respawnTimer = 0f;
                 SetVisualActive(true);
+                ClearHitReaction();   // [전투 깊이 확장] 쓰러질 때 걸려 있던 경직/넉백을 들고 되살아나지 않게 한다
+
+                // 밀려난 만큼을 제자리로 되돌린다. 곰은 제외한다 - 바로 아래 ResetBearAI(true)가
+                // 곰 전용 복귀 좌표(bearHome)로 되돌리며, 그쪽이 지형/물가 판정을 함께 한다.
+                if (hazardType != HazardType.Bear && hitHomeCaptured)
+                    transform.position = hitHomePosition;
 
                 // [B34] 다시 나타났으니 모션도 되살린다(처치 시 원자세로 되돌린 뒤 꺼 뒀다).
                 if (bearMotion != null)
@@ -554,7 +619,63 @@ namespace MakeGame.Systems
             if (bestWeaponItem == null)
                 return false;
 
-            currentHealth = Mathf.Max(0f, currentHealth - bestWeaponItem.data.weaponDamage);
+            // [전투 깊이 확장] 근접 공격에도 피격 반응(경직/넉백 + 국소 이펙트)을 붙인다.
+            // 공격이 날아온 방향은 인벤토리를 들고 있는 오브젝트 = 플레이어의 위치에서 구한다.
+            ReactToHit(inventory.transform.position);
+
+            ApplyCombatDamageStart(bestWeaponItem.data.weaponDamage);
+
+            // 내구도 소모: 무제한(IsUnlimited) 무기는 자동으로 소모되지 않는다. 사용 횟수가 다하면
+            // UseItem이 인벤토리에서 자동으로 제거해 "무기가 파손되었다"를 자연스럽게 표현한다.
+            // ★ 순서 주의: 이 줄은 반드시 피해 적용(Start)과 후처리(End) **사이**에 있어야 한다.
+            //   예전 코드의 순서를 그대로 보존한 것이다.
+            inventory.UseItem(bestWeaponItem);
+
+            ApplyCombatDamageEnd(bestWeaponItem.data.weaponDamage, skills);
+            return true;
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장 - 원거리] 던진 창에 맞았을 때의 처리(ThrownWeapon이 부른다).
+        ///
+        /// TryAttack과 다른 점은 두 가지뿐이다:
+        ///  · **인벤토리를 전혀 거치지 않는다.** 무기 선택도 내구도 소모도 던지는 순간 이미 끝났다.
+        ///  · **전투 대상이 아닌 위험 요소도 반응한다.** 독사·전갈·함정은 체력이 없어 피해는 들어가지
+        ///    않지만, 맞았으면 물러나는 것이 맞다(감독 지시 "접촉 판정만 있는 것들이 피격에 반응").
+        ///    이 경우 false를 돌려준다 - "피해를 입혔는가"의 답은 아니오이기 때문이다.
+        /// </summary>
+        /// <param name="damage">투척 피해량(CombatSystem.GetThrowDamage).</param>
+        /// <param name="fromPosition">창이 날아온 지점. 넉백 방향과 이펙트 위치에 쓴다.</param>
+        /// <param name="skills">물리쳤을 때 경험치를 받을 스킬(없어도 된다).</param>
+        /// <returns>실제로 체력을 깎았으면 true.</returns>
+        public bool TakeProjectileHit(float damage, Vector3 fromPosition, PlayerSkills skills)
+        {
+            if (isDefeated)
+                return false;
+
+            ReactToHit(fromPosition);
+
+            if (!isCombatTarget)
+            {
+                // 체력이 없는 위험 요소. 물러나기만 하고 피해는 없다는 사실을 화면에도 알린다
+                // (0을 "적중 아님"으로 버리면 예전의 무반응 문제가 그대로 돌아온다 - GetContactDamage 주석).
+                CombatFeedbackUI.Instance?.TriggerAttackConfirm(0f, false);
+                return false;
+            }
+
+            ApplyCombatDamageStart(damage);
+            ApplyCombatDamageEnd(damage, skills);
+            return true;
+        }
+
+        /// <summary>
+        /// 피해 적용의 앞부분. 체력 차감 · 적중음 · 새끼 곰의 어미 호출까지다.
+        /// 근접(TryAttack)과 원거리(TakeProjectileHit)가 **같은 순서**를 밟도록 뽑아낸 것이며,
+        /// 내용은 예전 TryAttack에서 한 줄도 바꾸지 않았다.
+        /// </summary>
+        private void ApplyCombatDamageStart(float damage)
+        {
+            currentHealth = Mathf.Max(0f, currentHealth - damage);
             AudioManager.Instance?.PlayHit(); // 공격 적중 효과음
 
             // [B37] 새끼를 때리면 죽든 살든 **즉시** 어미가 온다. 쿨다운을 0으로 밀어 확실히 통과시킨다
@@ -564,10 +685,17 @@ namespace MakeGame.Systems
                 cubAlarmTimer = 0f;
                 AlarmNearbyAdults();
             }
+        }
 
-            // 내구도 소모: 무제한(IsUnlimited) 무기는 자동으로 소모되지 않는다. 사용 횟수가 다하면
-            // UseItem이 인벤토리에서 자동으로 제거해 "무기가 파손되었다"를 자연스럽게 표현한다.
-            inventory.UseItem(bestWeaponItem);
+        /// <summary>
+        /// 피해 적용의 뒷부분. 처치 판정 · 경험치 · 맞고 버틴 개체의 반응(도망/포효)이다.
+        /// 근접에서는 내구도 소모 뒤에 불려야 예전 동작과 100% 같다(TryAttack의 순서 주석 참고).
+        /// </summary>
+        private void ApplyCombatDamageEnd(float damage, PlayerSkills skills)
+        {
+            // [전투 깊이 확장] 무엇을 얼마나 때렸는지 화면 중앙에 짧게 표시한다(적중 표식).
+            // 처치한 순간에는 더 강한 표식으로 덮어써 "쓰러뜨렸다"가 따로 읽히게 한다.
+            CombatFeedbackUI.Instance?.TriggerAttackConfirm(damage, currentHealth <= 0f);
 
             if (currentHealth <= 0f)
             {
@@ -598,8 +726,91 @@ namespace MakeGame.Systems
                 // CreatureMotion이 알아서 무시하므로 연타로 눌러도 동작이 되감기지 않는다.
                 bearMotion.PlayRoar();
             }
+        }
 
-            return true;
+        /// <summary>
+        /// [전투 깊이 확장 - 피격 반응] 맞은 순간의 경직/넉백/국소 이펙트를 건다.
+        /// 피해 계산과는 완전히 분리돼 있어, 체력이 없는 위험 요소(독사·전갈·함정)도 이것만은 받는다.
+        ///
+        /// 넉백은 <see cref="hitStaggerSeconds"/> 동안 나눠서 밀린다(순간이동이 아니다).
+        /// 곰은 자기 이동 코드가 지형/물가/장애물을 검사하므로 밖에서 좌표를 밀지 않고 경직만 준다.
+        /// 함정은 땅에 박힌 장치라 역시 밀지 않는다. 나머지는 밀리되 **y는 유지**한다.
+        /// </summary>
+        /// <param name="fromPosition">공격이 날아온 지점(플레이어 또는 던진 창의 위치).</param>
+        private void ReactToHit(Vector3 fromPosition)
+        {
+            // 경직은 쿨다운이 지났을 때만 새로 걸린다(위 HitStaggerCooldownMultiplier 주석 - 연타 잠금 방지).
+            // 넉백과 이펙트는 쿨다운과 무관하게 매번 일어난다 - 그건 "맞았다"의 표현이지 제어권이 아니다.
+            if (hitStaggerCooldownTimer <= 0f)
+            {
+                hitStaggerTimer = Mathf.Max(0f, hitStaggerSeconds);
+                hitStaggerCooldownTimer = hitStaggerTimer * HitStaggerCooldownMultiplier;
+            }
+
+            Vector3 away = transform.position - fromPosition;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.0001f)
+                away = -transform.forward;
+            away.y = 0f;
+            hitKnockbackDirection = away.sqrMagnitude > 0.0001f ? away.normalized : Vector3.forward;
+
+            bool canPush = hazardType != HazardType.Bear && hazardType != HazardType.Trap;
+            hitKnockbackRemaining = canPush ? Mathf.Max(0f, hitKnockbackDistance) : 0f;
+
+            // 어디서 맞았는지 알려 주는 월드 공간 국소 이펙트. 화면 전체 연출이 아니고
+            // 공격이 적중한 그 순간에만 터지므로 ApplyHazardEffect의 PlayHitBurst와 규칙이 같다.
+            EffectBuilder.PlayHitBurst(transform.position + Vector3.up * 0.8f);
+        }
+
+        /// <summary>
+        /// 피격 반응 상태를 전부 초기화한다(재등장 · 세이브 복원 경로에서 부른다).
+        /// 남겨 두면 되살아난 개체가 첫 프레임부터 경직 상태이거나 남은 넉백만큼 미끄러진다.
+        /// </summary>
+        private void ClearHitReaction()
+        {
+            hitStaggerTimer = 0f;
+            hitStaggerCooldownTimer = 0f;
+            hitKnockbackRemaining = 0f;
+        }
+
+        /// <summary>
+        /// 경직 타이머를 줄이고 넉백을 조금씩 적용한다. **y는 절대 바꾸지 않는다** - 스포너가
+        /// 접지시켜 놓은 높이를 유지해야 위험 요소가 땅에 파묻히거나 뜨지 않는다.
+        /// </summary>
+        private void UpdateHitReaction(float deltaTime)
+        {
+            if (hitStaggerTimer > 0f)
+                hitStaggerTimer = Mathf.Max(0f, hitStaggerTimer - deltaTime);
+
+            if (hitStaggerCooldownTimer > 0f)
+                hitStaggerCooldownTimer = Mathf.Max(0f, hitStaggerCooldownTimer - deltaTime);
+
+            if (hitKnockbackRemaining <= 0f)
+                return;
+
+            float duration = Mathf.Max(0.05f, hitStaggerSeconds);
+            float step = Mathf.Min(hitKnockbackRemaining, Mathf.Max(0f, hitKnockbackDistance) / duration * deltaTime);
+            hitKnockbackRemaining -= step;
+
+            Vector3 offset = hitKnockbackDirection * step;
+            Vector3 next = new Vector3(
+                transform.position.x + offset.x,
+                transform.position.y,
+                transform.position.z + offset.z);
+
+            // 제자리에서 너무 멀어졌으면 더 밀지 않는다(위 MaxHitKnockbackDriftMeters 주석).
+            if (hitHomeCaptured)
+            {
+                float dx = next.x - hitHomePosition.x;
+                float dz = next.z - hitHomePosition.z;
+                if (dx * dx + dz * dz > MaxHitKnockbackDriftMeters * MaxHitKnockbackDriftMeters)
+                {
+                    hitKnockbackRemaining = 0f;
+                    return;
+                }
+            }
+
+            transform.position = next;
         }
 
         /// <summary>
@@ -614,6 +825,7 @@ namespace MakeGame.Systems
         {
             isDefeated = defeated;
             respawnTimer = 0f;
+            ClearHitReaction();   // [전투 깊이 확장] 세이브 복원은 전투 이전 상태다 - 경직/넉백을 남기지 않는다
             currentHealth = defeated ? 0f : maxHealth;
             SetVisualActive(!defeated);
 

@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_정제칼
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "정제 칼"
+  description: "제작대에서 칼에 강철 날을 박아 다시 벼린다. 채집량이 두 배가 된다. (제작대 필요)"
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 57c8b75b1a78d9b45ae04aaa7355d08a, type: 2}
+    quantity: 1
+  - item: {fileID: 11400000, guid: 8861d846d807d66a94691479b8080abb, type: 2}
+    quantity: 1
+  - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+    quantity: 1
+  resultItem: {fileID: 11400000, guid: 8543ca8aed7c4af0b3a5355adf146321, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 3
+  experienceReward: 30

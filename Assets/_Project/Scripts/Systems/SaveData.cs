@@ -83,7 +83,7 @@ namespace MakeGame.Systems
         public List<ItemCountEntry> aircraftCollectedMaterials = new List<ItemCountEntry>();
 
         [Header("설치 구조물 (B2-15 1단계)")]
-        [Tooltip("플레이어가 설치한 모닥불/쉼터/물 증류기 각각의 위치·회전·상태 목록.")]
+        [Tooltip("플레이어가 설치한 모닥불/쉼터/물 증류기/제작대·용광로·베틀 각각의 위치·회전·상태 목록.")]
         public List<StructureSaveEntry> structures = new List<StructureSaveEntry>();
 
         [Header("자원 노드 채집 상태 (B3-4)")]
@@ -280,7 +280,15 @@ namespace MakeGame.Systems
     }
 
     /// <summary>
-    /// 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기) 하나의 저장 항목.
+    /// 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기/제작대·용광로·베틀) 하나의 저장 항목.
+    ///
+    /// [제작 시설 3종 - 필드를 하나도 늘리지 않았다] 제작대/용광로/베틀은 위치·회전 외에 저장할 상태가
+    /// 없다(연료도, 내용물도, 진행도도 없다). 그래서 StructureType에 값 셋을 **맨 끝에** 추가하는 것으로
+    /// 끝났고, 이 클래스의 필드 목록은 예전과 완전히 동일하다 - 즉 세이브 파일의 JSON 스키마 자체가
+    /// 바뀌지 않아, 새 세이브를 옛 빌드에서 열어도(그럴 일은 없지만) 깨지는 필드가 없다.
+    /// 옛 세이브는 그저 type이 3~5인 항목이 없을 뿐이라 마이그레이션도, 버전 상승도 필요 없다
+    /// (saveContentVersion을 올리지 않은 이유 - 그 값은 "복원 규칙이 달라졌다"는 신호이고, 여기서는
+    /// 기존 항목의 복원 규칙이 한 줄도 달라지지 않았다. storageChests를 처음 넣을 때와 같은 판단이다).
     /// 세 종류 모두 필요한 필드가 조금씩 달라(Campfire는 점화 상태, WaterStill은 저장된 물), 종류별로
     /// 클래스를 나누는 대신 하나의 평평한(flat) 구조체에 전부 담고 type으로 구분한다 - JsonUtility는
     /// 다형성(상속 기반 직렬화)을 지원하지 않으므로, 이 프로젝트의 기존 저장 항목들(SkillSaveEntry,

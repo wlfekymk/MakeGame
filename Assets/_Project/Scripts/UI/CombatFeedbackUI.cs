@@ -57,6 +57,57 @@ namespace MakeGame.UI
         private RectTransform topRt, bottomRt, leftRt, rightRt;
         private Image topImage, bottomImage, leftImage, rightImage;
 
+        // ── [전투 깊이 확장] 적중 표식(hit marker) ──────────────────────────────────
+        //
+        // 위의 비네트가 "내가 맞았다"라면 이것은 **"내가 맞혔다"**이다. 두 신호는 절대 섞이면 안 되므로
+        // 채널을 완전히 갈라 둔다: 비네트는 화면 가장자리 + Danger Red, 표식은 화면 정중앙 + 흰색이며
+        // 처치한 순간에만 붉은색으로 바뀐다. 서로 다른 타이머를 쓰므로 동시에 떠도 간섭하지 않는다.
+        //
+        // 왜 필요한가: 지금까지 공격의 유일한 피드백은 효과음(PlayHit) 하나였다. 원거리(창 투척)가
+        // 생기면서 "맞았는지 빗나갔는지"가 처음으로 불확실해졌는데, 소리만으로는 몇 미터 앞의
+        // 명중 여부를 확신할 수 없다. 화면 정중앙 = 조준점 자리가 그 답을 두기에 가장 정확한 곳이다.
+
+        [Tooltip("적중 표식이 사라지기까지 걸리는 시간(초)")]
+        public float hitMarkerDuration = 0.18f;
+
+        [Tooltip("대상을 쓰러뜨렸을 때 적중 표식이 사라지기까지 걸리는 시간(초). 보통 적중보다 길게 남는다.")]
+        public float hitMarkerDefeatDuration = 0.34f;
+
+        [Tooltip("적중 표식 네 조각이 화면 중앙에서 벌어져 나가는 시작/끝 거리(px)")]
+        public float hitMarkerInnerRadius = 9f;
+
+        [Tooltip("적중 표식이 다 벌어졌을 때의 거리(px)")]
+        public float hitMarkerOuterRadius = 17f;
+
+        /// <summary>적중 표식 조각 하나의 크기(px). 얇은 막대 네 개가 X자를 이룬다.</summary>
+        private static readonly Vector2 HitMarkerDashSize = new Vector2(13f, 3f);
+
+        /// <summary>보통 적중 색(따뜻한 흰색 - Danger Red 계열과 절대 헷갈리지 않는다).</summary>
+        private static readonly Color HitMarkerNormalColor = new Color(0.96f, 0.94f, 0.86f, 1f);
+
+        /// <summary>처치 적중 색(ArtDirection의 Danger Red).</summary>
+        private static readonly Color HitMarkerDefeatColor = new Color(0.8f, 0.2f, 0.2f, 1f);
+
+        private GameObject hitMarkerRoot;
+        private readonly RectTransform[] hitMarkerRts = new RectTransform[4];
+        private readonly Image[] hitMarkerImages = new Image[4];
+        private float hitMarkerTimer;
+        private float currentHitMarkerDuration = 0.18f;
+        private float currentHitMarkerScale = 1f;
+        private Color currentHitMarkerColor = new Color(0.96f, 0.94f, 0.86f, 1f);
+
+        /// <summary>네 조각의 중심 방향(대각선 네 방향). 여기에 반지름을 곱해 anchoredPosition을 만든다.</summary>
+        private static readonly Vector2[] HitMarkerDirections =
+        {
+            new Vector2(0.7071f, 0.7071f),    // 우상
+            new Vector2(-0.7071f, 0.7071f),   // 좌상
+            new Vector2(-0.7071f, -0.7071f),  // 좌하
+            new Vector2(0.7071f, -0.7071f)    // 우하
+        };
+
+        /// <summary>각 조각의 기울기(도). 막대가 대각선 방향을 따라 눕도록 45도씩 준다.</summary>
+        private static readonly float[] HitMarkerAngles = { 45f, -45f, 45f, -45f };
+
         /// <summary>
         /// 씬에 이 컴포넌트가 아직 없으면 스스로 생성해 DontDestroyOnLoad로 등록한다.
         /// AudioManager/GameManager처럼 Managers 오브젝트에 미리 붙여둘 필요 없이,
@@ -124,6 +175,43 @@ namespace MakeGame.UI
             leftRt = CreateEdgePanel(panelRoot.transform, "LeftEdge", new Vector2(0f, 0f), new Vector2(0f, 1f), out leftImage);
             // 우: 오른쪽 변에 붙어 위아래로 꽉 참.
             rightRt = CreateEdgePanel(panelRoot.transform, "RightEdge", new Vector2(1f, 0f), new Vector2(1f, 1f), out rightImage);
+
+            BuildHitMarker(canvas.transform);
+        }
+
+        /// <summary>
+        /// [전투 깊이 확장] 화면 정중앙에 X자 적중 표식 네 조각을 만든다.
+        /// 비네트(panelRoot)와 **형제**로 두고 따로 켜고 끈다 - 두 연출의 수명이 서로 다르기 때문이다.
+        /// 조각은 클릭을 절대 받으면 안 되므로 raycastTarget을 끈다(화면 정중앙이라 위험하다).
+        /// </summary>
+        private void BuildHitMarker(Transform canvasTransform)
+        {
+            hitMarkerRoot = new GameObject("HitMarkerRoot", typeof(RectTransform));
+            hitMarkerRoot.transform.SetParent(canvasTransform, false);
+
+            var rootRt = hitMarkerRoot.GetComponent<RectTransform>();
+            rootRt.anchorMin = new Vector2(0.5f, 0.5f);
+            rootRt.anchorMax = new Vector2(0.5f, 0.5f);
+            rootRt.sizeDelta = Vector2.zero;
+            rootRt.anchoredPosition = Vector2.zero;
+
+            Vector2 half = HitMarkerDashSize * 0.5f;
+            for (int i = 0; i < hitMarkerRts.Length; i++)
+            {
+                RectTransform rt = UIBuilder.CreatePanel(hitMarkerRoot.transform, "Dash" + i,
+                    new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
+                    -half, half, Color.clear);
+
+                rt.localRotation = Quaternion.Euler(0f, 0f, HitMarkerAngles[i]);
+                hitMarkerRts[i] = rt;
+
+                Image image = rt.GetComponent<Image>();
+                if (image != null)
+                    image.raycastTarget = false;
+                hitMarkerImages[i] = image;
+            }
+
+            hitMarkerRoot.SetActive(false);
         }
 
         /// <summary>
@@ -217,8 +305,77 @@ namespace MakeGame.UI
         /// 매 프레임 플래시 타이머를 감소시키고, 타이머가 남아있는 동안만 가장자리 네 조각의
         /// 두께/알파를 갱신한다. 타이머가 다 되면 패널 전체를 꺼서 더 이상 갱신하지 않는다.
         /// </summary>
+        /// <summary>
+        /// [전투 깊이 확장 · 내가 맞혔을 때] 플레이어의 공격이 대상에 적중한 순간 호출한다.
+        /// 화면 정중앙(조준점 자리)에 X자 표식이 짧게 번쩍이고 사라진다.
+        ///
+        /// **이것은 위 TriggerHit(내가 맞았을 때)과 완전히 다른 신호다.** 색·위치·타이머를 전부
+        /// 분리해 두었으니 두 메서드를 서로 대신 쓰지 마라 - 공격이 화면 가장자리를 붉게 물들이면
+        /// 플레이어는 자기가 피해를 입은 줄 안다.
+        ///
+        /// ArtDirection.md 4.2의 3단계 기준으로는 C(위협)가 아니라 **B(성취)에 가까운 신호**라,
+        /// 세기를 일부러 작게 잡았다(화면 12% 남짓의 얇은 막대 네 개, 0.18초).
+        /// </summary>
+        /// <param name="damage">이번 공격이 입힌 피해량. 0도 유효하다(체력이 없는 위험 요소를 맞힌 경우).</param>
+        /// <param name="defeated">이 공격으로 대상을 쓰러뜨렸는지. true면 더 크고 길고 붉게 표시한다.</param>
+        public void TriggerAttackConfirm(float damage, bool defeated)
+        {
+            if (hitMarkerRoot == null)
+                return;
+
+            currentHitMarkerDuration = Mathf.Max(0.05f, defeated ? hitMarkerDefeatDuration : hitMarkerDuration);
+            currentHitMarkerColor = defeated ? HitMarkerDefeatColor : HitMarkerNormalColor;
+
+            // 피해가 클수록 표식이 조금 커진다. 상한을 두어 화면을 뒤덮지 않게 한다
+            // (기준 18 = 창의 근접 피해량. 그보다 세면 1.35배에서 멈춘다).
+            float weight = Mathf.Clamp01(Mathf.Max(0f, damage) / 18f);
+            currentHitMarkerScale = defeated ? 1.5f : Mathf.Lerp(0.85f, 1.35f, weight);
+
+            hitMarkerTimer = currentHitMarkerDuration;
+        }
+
+        /// <summary>
+        /// 적중 표식을 매 프레임 갱신한다. 비네트와 **완전히 독립된 타이머**를 쓰며, 같은 이유로
+        /// unscaledDeltaTime을 쓴다(사망/엔딩 화면이 timeScale 0을 걸면 표식이 화면에 얼어붙는다).
+        /// </summary>
+        private void UpdateHitMarker()
+        {
+            if (hitMarkerRoot == null)
+                return;
+
+            if (hitMarkerTimer > 0f)
+                hitMarkerTimer -= Time.unscaledDeltaTime;
+
+            bool active = hitMarkerTimer > 0f;
+            if (hitMarkerRoot.activeSelf != active)
+                hitMarkerRoot.SetActive(active);
+
+            if (!active)
+                return;
+
+            // t = 1(방금 맞힘) → 0(사라짐). 알파는 t를 따라 줄고, 네 조각은 바깥으로 벌어진다.
+            float t = Mathf.Clamp01(hitMarkerTimer / Mathf.Max(0.01f, currentHitMarkerDuration));
+            float radius = Mathf.Lerp(hitMarkerOuterRadius, hitMarkerInnerRadius, t) * currentHitMarkerScale;
+            Color color = new Color(currentHitMarkerColor.r, currentHitMarkerColor.g, currentHitMarkerColor.b, t);
+
+            for (int i = 0; i < hitMarkerRts.Length; i++)
+            {
+                RectTransform rt = hitMarkerRts[i];
+                if (rt == null)
+                    continue;
+
+                rt.anchoredPosition = HitMarkerDirections[i] * radius;
+                rt.sizeDelta = HitMarkerDashSize * currentHitMarkerScale;
+
+                if (hitMarkerImages[i] != null)
+                    hitMarkerImages[i].color = color;
+            }
+        }
+
         private void Update()
         {
+            UpdateHitMarker();
+
             // 버그 수정(Design_Ending.md 1장 제약 A): Time.deltaTime을 쓰면 timeScale = 0인 동안 타이머가
             // 절대 줄지 않는다. 플레이어가 피격과 동시에 죽으면 GameOverController가 즉시 timeScale = 0을
             // 걸기 때문에, 이 붉은 비네트가 최대 알파 그대로 화면에 영구히 얼어붙어 사망 화면을 덮고 있었다
