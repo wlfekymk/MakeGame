@@ -36,37 +36,56 @@ namespace MakeGame.Systems
         [Header("수중 안개")]
         // [설계] 주간 만수면 기준의 깊은 청록. 열대 바다의 물속은 붉은 파장이 수 미터 안에 흡수되어
         // 청록만 남는다 - 채도를 과하게 올리지 않아도 이 색 하나로 "물속"이 즉시 읽힌다.
-        [Tooltip("주간 · 수심 0m 기준의 수중 안개 색(깊은 청록). 실제 색은 현재 조명 강도와 수심에 비례해 어두워진다.")]
-        public Color underwaterFogColor = new Color(0.07f, 0.25f, 0.33f);
+        [Tooltip("주간 · 수심 0m 기준의 수중 안개 색(맑은 청록). 실제 색은 현재 조명 강도와 수심에 비례해 어두워지고, 깊어질수록 deepFogColor 쪽으로 간다.")]
+        public Color underwaterFogColor = new Color(0.10f, 0.34f, 0.40f);
 
-        // ExponentialSquared 0.055 기준 잔여 시야: 10m 74% · 15m 51% · 20m 30% · 30m 6.5%.
-        // "약 15~20m 앞까지 형체가 읽히고 그 너머는 물빛에 잠긴다"는 목표 수치다.
+        // [탁도 v2] 얕은 곳과 깊은 곳의 **색까지** 갈랐다. 예전에는 색이 하나뿐이라 깊이 감쇠가
+        // "같은 색을 어둡게" 하는 것밖에 못 했는데, 실제 바다는 깊어질수록 청록의 녹색 성분이
+        // 먼저 죽고 짙은 남청만 남는다. 색이 함께 변해야 "더 깊이 들어왔다"가 밝기와 무관하게 읽힌다.
+        [Tooltip("최대 수심에서 수렴하는 수중 안개 색(짙은 남청). 얕은 곳의 underwaterFogColor에서 이 색으로 보간된다.")]
+        public Color deepFogColor = new Color(0.02f, 0.09f, 0.15f);
+
+        // [탁도 v2] 0.055 → 0.034. ExponentialSquared 0.034 기준 잔여 시야:
+        //   10m 89% · 20m 63% · 30m 35% · 45m 9.6%  →  "얕은 열대 바다는 30m 앞까지 맑게 보인다".
+        // 예전 0.055는 수심 0m에서도 15~20m에서 시야가 막혀, 카우스틱/갓레이 같은 새 연출이
+        // 보이기도 전에 물빛에 잠겼다. 대신 깊이 배율을 1.6 → 2.8로 크게 올려(아래) 깊은 곳의
+        // 답답함은 오히려 강해진다 - "얕으면 맑고 깊으면 짙다"의 대비를 밀도로 만든 것이다.
         // DayNightCycle의 clearFogDensity(0.0016)와는 자릿수가 다른 별개 값이라 헷갈릴 일이 없다.
-        [Tooltip("수심 0m 기준의 수중 안개 밀도(ExponentialSquared). 시야 약 15~20m.")]
-        public float underwaterFogDensity = 0.055f;
+        [Tooltip("수심 0m 기준의 수중 안개 밀도(ExponentialSquared). 얕은 곳 시야 약 30m.")]
+        public float underwaterFogDensity = 0.034f;
 
         [Header("수중 환경광 (Trilight 3색)")]
         // DayNightCycle이 Trilight로 몰고 있으므로 같은 모드의 3색을 전부 덮는다(하나라도 남기면
         // 물 밖의 하늘/노을 반사광이 물속 오브젝트에 그대로 얹혀 어색하다). 물속의 빛은 전부
         // 수면에서 내려오므로 하늘>수평선>지면 순으로 급격히 어두워지는 것이 실제 모습이다.
+        // [탁도 v2] 얕은 물의 밝기를 조금 올렸다(0.16 → 0.19 등). 얕은 산호밭이 "맑은 청록"으로
+        // 읽히려면 안개 밀도만 낮춰서는 부족하고, 물체에 닿는 환경광 자체가 밝아야 한다.
         [Tooltip("수중 환경광 '하늘' 색(수면 쪽에서 내려오는 빛). 주간 · 수심 0m 기준.")]
-        public Color underwaterAmbientSky = new Color(0.16f, 0.38f, 0.46f);
+        public Color underwaterAmbientSky = new Color(0.19f, 0.44f, 0.52f);
 
         [Tooltip("수중 환경광 '수평선' 색. 주간 · 수심 0m 기준.")]
-        public Color underwaterAmbientEquator = new Color(0.07f, 0.20f, 0.27f);
+        public Color underwaterAmbientEquator = new Color(0.08f, 0.22f, 0.29f);
 
         [Tooltip("수중 환경광 '지면' 색(아래는 빛이 거의 닿지 않는다). 주간 · 수심 0m 기준.")]
         public Color underwaterAmbientGround = new Color(0.02f, 0.07f, 0.10f);
 
         [Header("깊이 감쇠")]
+        // [탁도 v2] 20 → 28m. 스커트 외곽 수심이 -18m이고 그 너머 골이 더 깊으므로, 20m에서
+        // 이미 최대 감쇠에 닿으면 "해저에 도착한 순간부터 계속 최악의 시야"가 된다.
+        // 28m로 늘리면 산호밭(수심 3~15m)이 감쇠 곡선의 앞쪽 절반에 들어와 밝게 남는다.
         [Tooltip("깊이 감쇠가 최대치에 도달하는 수심(m).")]
-        public float maxAttenuationDepth = 20f;
+        public float maxAttenuationDepth = 28f;
 
+        // [탁도 v2] 1.6 → 2.8. 최대 수심에서 밀도 0.0952 → 잔여 시야 10m 40% · 15m 13% · 20m 2.7%.
+        // 얕은 곳 30m / 깊은 곳 12m로 시야거리 자체가 깊이에 따라 크게 줄어든다.
         [Tooltip("최대 수심에서 안개 밀도에 곱할 배율(깊을수록 시야가 좁아진다).")]
-        public float depthDensityMultiplier = 1.6f;
+        public float depthDensityMultiplier = 2.8f;
 
+        // [탁도 v2] 0.4 → 0.45. 밀도 쪽을 크게 올렸으므로 밝기까지 세게 낮추면 "깊은 곳은
+        // 그냥 검은 화면"이 된다(밤 잠수가 이미 어둡다는 피드백). 어두워지는 연출은 색 보간
+        // (deepFogColor)과 밀도가 담당하고, 밝기는 물체 식별이 가능한 선에서 멈춘다.
         [Tooltip("최대 수심에서 밝기(안개색/환경광)에 곱할 배율(깊을수록 어두워진다).")]
-        public float depthBrightnessMultiplier = 0.4f;
+        public float depthBrightnessMultiplier = 0.45f;
 
         /// <summary>
         /// 이번 프레임 메인 카메라가 해수면 아래에 있는지. 다음 웨이브의 해저 연출/수중 사운드
@@ -200,8 +219,15 @@ namespace MakeGame.Systems
             if (sunLight != null && dayNight != null && dayNight.dayIntensity > 0f)
                 lightFactor = Mathf.Clamp01(sunLight.intensity / dayNight.dayIntensity);
 
-            // 깊이 감쇠: 수심 0m → maxAttenuationDepth(20m)에서 밀도 1.6배 · 밝기 0.4배.
-            float depth01 = Mathf.Clamp01(depth / Mathf.Max(1f, maxAttenuationDepth));
+            // 깊이 감쇠: 수심 0m → maxAttenuationDepth(28m)에서 밀도 2.8배 · 밝기 0.45배 ·
+            // 색은 underwaterFogColor → deepFogColor.
+            // [탁도 v2] 선형이 아니라 **smoothstep**을 쓴다. 선형이면 수면 바로 아래(수심 1~3m,
+            // 물놀이/얕은 산호밭)에서부터 이미 탁해지기 시작해 "맑은 얕은 물"이 성립하지 않는다.
+            // smoothstep은 양 끝이 평평해서 얕은 구간을 넓게 맑게 남기고, 중간 수심(10~20m)에서
+            // 빠르게 짙어졌다가, 깊은 구간에서 다시 완만해진다 - 잠수하면서 "어느 순간 깊은
+            // 물로 들어왔다"가 분명히 느껴지는 곡선이다.
+            float depthT = Mathf.Clamp01(depth / Mathf.Max(1f, maxAttenuationDepth));
+            float depth01 = depthT * depthT * (3f - 2f * depthT);
             float density = Mathf.Max(0f, underwaterFogDensity)
                 * Mathf.Lerp(1f, depthDensityMultiplier, depth01);
             float brightness = lightFactor * Mathf.Lerp(1f, depthBrightnessMultiplier, depth01);
@@ -210,7 +236,8 @@ namespace MakeGame.Systems
             // 물빛에 잠긴다(DayNightCycle이 같은 모드를 쓰는 이유와 동일).
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogColor = ScaleRgb(underwaterFogColor, brightness);
+            RenderSettings.fogColor = ScaleRgb(
+                Color.Lerp(underwaterFogColor, deepFogColor, depth01), brightness);
             RenderSettings.fogDensity = density;
 
             // 수중 환경광. DayNightCycle과 같은 Trilight 모드로 3색 전부 덮는다(필드 주석 참고).

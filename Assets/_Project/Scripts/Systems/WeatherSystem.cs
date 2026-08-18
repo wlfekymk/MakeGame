@@ -116,6 +116,33 @@ namespace MakeGame.Systems
         /// </summary>
         public float RainIntensity01 { get; private set; }
 
+        // ── 바다 거칠기 (OceanWaves 연동) ────────────────────────────────────────
+        // 이 시스템의 논리 상태는 예전 그대로 **맑음/비 두 개뿐**이다. 폭풍 상태를 새로 만들지 않았다 —
+        // 상태를 늘리면 전환 확률/지속시간 표(minClear~maxRain)와 그것을 읽는 balanceConfig 폴백,
+        // 그리고 DayNightCycle의 IsRaining/RainIntensity01 계약까지 함께 흔들리기 때문이다.
+        // 대신 "거친 바다"를 아래 세 구간의 **연속값 하나**로 유도한다(전환 확률·세이브 포맷 불변, rng 소비 0):
+        //   맑음(잔잔)  : 맑음 단계 전반           → 0
+        //   흐림(보통)  : 맑음 단계 끝 preStormSeconds → 0에서 preStormRoughness까지 상승
+        //   비(거칠다)  : 비 단계                  → preStormRoughness에서 1까지 상승
+        // "흐림"은 비가 오기 직전 예고 구간을 그대로 쓴 것이라 phaseTimer/phaseDuration만 읽고,
+        // 단계 길이도 난수도 전혀 건드리지 않는다.
+
+        [Header("바다 거칠기 (OceanWaves가 읽는다)")]
+        [Tooltip("비가 오기 전 '흐림' 예고 구간의 길이(초). 이 구간 동안 바다가 서서히 거칠어진다.")]
+        public float preStormSeconds = 35f;
+
+        [Tooltip("'흐림'(비 직전) 구간에서 도달하는 거칠기 0~1. 비가 시작되면 여기서 1까지 이어서 오른다.")]
+        public float preStormRoughness = 0.45f;
+
+        [Tooltip("거칠기 변화의 최소 소요 시간(초). 급변을 막는 안전 보간이다(0이면 즉시 반영).")]
+        public float seaRoughnessFadeSeconds = 8f;
+
+        /// <summary>
+        /// 바다 거칠기 0~1(0 = 맑고 잔잔, 1 = 비/폭풍으로 거칠다). OceanWaves가 이 값 하나로
+        /// 파도 진폭·속도를 보간한다. **게임플레이 수치에는 전혀 관여하지 않는다**(RainIntensity01과 같은 위치).
+        /// </summary>
+        public float SeaRoughness01 { get; private set; }
+
         [Header("퀄리티 개선: 비 오는 동안의 안개")]
         [Tooltip("비가 올 때 켤 안개 색(축축하고 뿌연 느낌)")]
         public Color rainFogColor = new Color(0.55f, 0.6f, 0.65f, 1f);
@@ -421,12 +448,54 @@ namespace MakeGame.Systems
                     RainIntensity01, target, Time.unscaledDeltaTime / rainFadeSeconds);
             }
 
+            UpdateSeaRoughness();
+
             RefreshFollowTarget();
             UpdateShelterFactor();
             UpdateRainVisuals();
 
             if (IsRaining)
                 ApplyRainGameplayEffects(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// 바다 거칠기(SeaRoughness01)를 갱신한다. OceanWaves가 이 값 하나로 파도 진폭·속도를 정한다.
+        ///
+        /// 목표값 = max(비 세기, 사전 예고 바닥값)이다.
+        ///  * 비 단계에서는 바닥값을 preStormRoughness로 **유지**한다. 그러지 않으면 비가 시작되는
+        ///    순간 예고값(0.45)이 사라지고 RainIntensity01(0에서 출발)이 목표가 되어 거칠기가 한 번
+        ///    푹 꺼졌다가 다시 오르는 부자연스러운 골이 생긴다.
+        ///  * 맑음 단계에서는 남은 시간이 preStormSeconds 안으로 들어왔을 때만 0 → preStormRoughness로
+        ///    선형 상승한다. phaseTimer/phaseDuration을 읽기만 하므로 단계 길이도 난수도 바뀌지 않는다.
+        /// 마지막으로 MoveTowards로 한 겹 더 완만하게 만든다(급변 금지 요구). 진행은 unscaledDeltaTime —
+        /// RainIntensity01과 같은 이유로, timeScale이 0이 되어도 진행 중이던 보간이 굳지 않게 한다.
+        /// </summary>
+        private void UpdateSeaRoughness()
+        {
+            float floorValue;
+            if (IsRaining)
+            {
+                floorValue = Mathf.Clamp01(preStormRoughness);
+            }
+            else if (preStormSeconds > 0f && phaseDuration > 0f)
+            {
+                float remaining = phaseDuration - phaseTimer;
+                floorValue = remaining >= preStormSeconds
+                    ? 0f
+                    : Mathf.Clamp01(1f - remaining / preStormSeconds) * Mathf.Clamp01(preStormRoughness);
+            }
+            else
+            {
+                floorValue = 0f;
+            }
+
+            float target = Mathf.Max(RainIntensity01, floorValue);
+
+            if (seaRoughnessFadeSeconds <= 0f)
+                SeaRoughness01 = target;
+            else
+                SeaRoughness01 = Mathf.MoveTowards(
+                    SeaRoughness01, target, Time.unscaledDeltaTime / seaRoughnessFadeSeconds);
         }
 
         /// <summary>

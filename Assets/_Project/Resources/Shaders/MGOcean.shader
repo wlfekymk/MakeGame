@@ -22,8 +22,24 @@
 //      - ZWrite Off라 뎁스 프리패스/포스트가 수면을 "표면"으로 보지 않는다(수중 지형이 그대로 보임 - 의도).
 //  * Cull Off - 잠수 중 아래에서 올려다볼 때 수면 뒷면이 보여야 한다. 뒷면 렌더 시에는
 //    SV_IsFrontFace로 노멀을 뒤집고, 깊이차가 음수가 될 수 있으므로 클램프한다(아티팩트 방지).
-//  * 버텍스 파도 진폭 합계 0.24m(_WaveAmplitude=1 기준) ≤ 0.25m - 수영/잠수 판정이
-//    y = seaLevel 하나로 이뤄지는 시각 전용 파도라, 크게 두면 판정과 어긋나 보인다.
+//  * [파도 v4 - OceanWaves.cs 단일 소스] 파도 파라미터(진폭·파수·각속도·방향)는 더 이상 이 파일에
+//    상수로 박혀 있지 않다. C#의 MakeGame.Systems.OceanWaves가 Shader.SetGlobalVector로 밀어주는
+//    전역 6개(_MG_WaveAmp / _MG_WaveK / _MG_WaveOmega / _MG_WaveDirX / _MG_WaveDirZ / _MG_SeaState)를
+//    읽는다. 같은 수를 C#도 읽어 부력·뗏목 흔들림·수영 수면 판정을 계산하므로, 파라미터를 한 곳
+//    (OceanWaves의 상수 표)만 고치면 물리와 시각이 함께 움직인다.
+//    ※ 이 전역들은 반드시 Properties 블록 **밖**·UnityPerMaterial CBUFFER **밖**에 선언한다.
+//      Properties에 넣으면 머티리얼 프로퍼티가 되어 전역 설정이 무시되고(머티리얼 값이 이긴다),
+//      CBUFFER 안에 넣으면 SRP Batcher 레이아웃과 충돌한다.
+//    ※ 드라이버(OceanWaves)가 없으면 전역이 0이라 바다가 평평하게 보인다(우아한 열화). 런타임에는
+//      SubsystemRegistration 시점에 기본값이 즉시 밀리므로 실제로 0인 프레임은 없다. 에디터
+//      씬 뷰(비플레이)에서만 평평하게 보인다.
+//  * [파도 v4] **버텍스 파도를 쓰지 않는다.** 바다 메시는 WorldMapManager.GenerateOceanMesh가
+//    만든 40,000m / 64칸 격자라 **한 칸이 625m**다. 나이퀴스트상 표현 가능한 최단 파장이 1,250m인데
+//    실제 파장은 21~118m이므로, 정점을 옮기면 파도가 아니라 625m짜리 삼각형이 통째로 들썩이는
+//    에일리어싱이 된다. 그래서 정점은 평면 그대로 두고, 같은 파고 함수의 **해석적 기울기로 픽셀
+//    단위 노멀만** 흔든다(격자 밀도와 무관). 높이 함수는 C#(OceanWaves)에서만 실제로 쓰인다 -
+//    부력·뗏목·수영 판정이 거기서 나오므로 파도의 체감은 전부 살아 있다.
+//    (이전 v2/v3의 "진폭 합계 0.24m 버텍스 파도" 계약은 이 근거로 폐기했다.)
 //  * 파도 시간은 셰이더 내장 _Time이 아니라 C#(Update)이 매 프레임 넣는 _MG_WaveTime을 쓴다.
 //    Time.time은 Time.timeScale = 0에서 멈추므로 타이틀 화면에서 바다가 정지하는 기존 동작이
 //    그대로 유지된다(UV 스크롤도 같은 이유로 C#에서 멈춘다).
@@ -48,7 +64,7 @@ Shader "MG/Ocean"
         _FresnelPower("프레넬 지수(클수록 깊은색이 수평선에 몰린다)", Range(0.5, 8.0)) = 3.0
         _Smoothness("스페큘러 매끄러움", Range(0.0, 1.0)) = 0.85
         _SpecularStrength("스페큘러 세기", Range(0.0, 2.0)) = 0.7
-        _WaveAmplitude("버텍스 파도 진폭 배율(1 = 합계 0.24m)", Range(0.0, 1.0)) = 1.0
+        _WaveAmplitude("큰 파도 노멀 세기 배율(1 = OceanWaves가 밀어준 진폭 그대로)", Range(0.0, 2.0)) = 1.0
         _RippleStrength("잔물결 노멀 퍼터베이션 세기", Range(0.0, 2.0)) = 1.0
         _MG_WaveTime("파도 시간(C#이 매 프레임 Time.time을 넣는다)", Float) = 0.0
     }
@@ -106,6 +122,17 @@ Shader "MG/Ocean"
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
+            // ---- [파도 v4] OceanWaves.cs가 Shader.SetGlobalVector로 밀어주는 파도 파라미터 ----
+            // 성분 4개가 각 float4의 x/y/z/w 채널에 하나씩 들어간다(C# 쪽 Vector4 채널 매핑과 동일).
+            // CBUFFER(UnityPerMaterial) 밖 = 전역 상수 버퍼. SRP Batcher는 머티리얼 프로퍼티만
+            // UnityPerMaterial에 있으면 되므로 이 선언은 배칭을 깨지 않는다.
+            float4 _MG_WaveAmp;     // A_i (m)
+            float4 _MG_WaveK;       // k_i = 2π / 파장 (rad/m)
+            float4 _MG_WaveOmega;   // ω_i = sqrt(g·k_i) · 속도배율 (rad/s)
+            float4 _MG_WaveDirX;    // D_i.x (단위벡터)
+            float4 _MG_WaveDirZ;    // D_i.z (단위벡터)
+            float4 _MG_SeaState;    // x = 바다 거칠기 0~1, y = 평균 해수면 y(m)
+
             // 알파 계약(v3): 내려다볼 때 ~0.5(바닥이 보인다) → 스치는 각 ~0.95(수평선은
             // 하늘 반사처럼 사실상 불투명). 프레넬 색 블렌드와 같은 항(fresnel)을 재사용한다.
             #define MG_ALPHA_DOWN  0.5
@@ -126,39 +153,33 @@ Shader "MG/Ocean"
                 float  fogFactor  : TEXCOORD2;
             };
 
-            // ---- 버텍스 파도: 방향 사인 3겹 합성. 진폭 0.10 + 0.08 + 0.06 = 0.24m(≤ 0.25m). ----
-            // 파장은 121m / 71m / 40m - 바다 격자 칸이 625m라 근거리에서는 정점 단위로 샘플링되는
-            // 저주파 일렁임으로 보이고, 진폭이 작아 어떤 경우에도 판정(y = seaLevel)과 크게 어긋나지 않는다.
-            #define MG_WAVE_DIR1 float2( 0.913,  0.408)
-            #define MG_WAVE_DIR2 float2(-0.500,  0.866)
-            #define MG_WAVE_DIR3 float2( 0.197, -0.980)
-            #define MG_WAVE_K1 0.052   // 2*PI / 121m
-            #define MG_WAVE_K2 0.089   // 2*PI / 71m
-            #define MG_WAVE_K3 0.157   // 2*PI / 40m
-            #define MG_WAVE_A1 0.10
-            #define MG_WAVE_A2 0.08
-            #define MG_WAVE_A3 0.06
-            #define MG_WAVE_S1 0.80
-            #define MG_WAVE_S2 1.10
-            #define MG_WAVE_S3 1.50
+            // ---- [파도 v4] Gerstner 성분 4개 합성(수평 압축항 Q = 0 → 방향성 정현파 합) ----
+            // 파라미터는 전부 전역이다. C#(OceanWaves.SampleWaveOffset / SampleSlope)이 아래 두 식을
+            // **문자 그대로 같은 형태로** 구현하고, 같은 전역값을 쓰므로 두 쪽 결과가 일치한다.
+            //   h(p,t)  = Σ A_i · sin( k_i · dot(D_i, p) + ω_i · t )
+            //   ∂h/∂p   = Σ D_i · (A_i · k_i) · cos( k_i · dot(D_i, p) + ω_i · t )
+            // Q를 0으로 둔 이유: 수평 압축은 정점을 옮겨야만 보이는데 바다 격자(625m)가 그것을
+            // 표현할 수 없고(헤더 참고), Q > 0이면 C#(높이 역산 반복 필요)과 셰이더(평면 픽셀 셰이딩)
+            // 사이에 위상 불일치만 생긴다.
 
+            // 성분 i의 위상 θ_i = k_i·dot(D_i, p) + ω_i·t 를 4개 한꺼번에 구한다.
+            float4 MGWavePhase(float2 p, float t)
+            {
+                return _MG_WaveK * (_MG_WaveDirX * p.x + _MG_WaveDirZ * p.y) + _MG_WaveOmega * t;
+            }
+
+            // 파고(평균 해수면 기준 편차, m). 셰이더에서는 직접 쓰지 않지만(정점 변위 미채택)
+            // C# 쪽 식과의 대조를 위해 같은 자리에 남겨 둔다.
             float MGWaveHeight(float2 p, float t)
             {
-                float h = 0.0;
-                h += MG_WAVE_A1 * sin(dot(p, MG_WAVE_DIR1) * MG_WAVE_K1 + t * MG_WAVE_S1);
-                h += MG_WAVE_A2 * sin(dot(p, MG_WAVE_DIR2) * MG_WAVE_K2 + t * MG_WAVE_S2);
-                h += MG_WAVE_A3 * sin(dot(p, MG_WAVE_DIR3) * MG_WAVE_K3 + t * MG_WAVE_S3);
-                return h;
+                return dot(_MG_WaveAmp, sin(MGWavePhase(p, t)));
             }
 
             // 파고 함수의 해석적 기울기(dH/dx, dH/dz). 프래그먼트에서 큰 파도의 노멀 성분으로 쓴다.
             float2 MGWaveSlope(float2 p, float t)
             {
-                float2 s = float2(0.0, 0.0);
-                s += MG_WAVE_DIR1 * (MG_WAVE_A1 * MG_WAVE_K1) * cos(dot(p, MG_WAVE_DIR1) * MG_WAVE_K1 + t * MG_WAVE_S1);
-                s += MG_WAVE_DIR2 * (MG_WAVE_A2 * MG_WAVE_K2) * cos(dot(p, MG_WAVE_DIR2) * MG_WAVE_K2 + t * MG_WAVE_S2);
-                s += MG_WAVE_DIR3 * (MG_WAVE_A3 * MG_WAVE_K3) * cos(dot(p, MG_WAVE_DIR3) * MG_WAVE_K3 + t * MG_WAVE_S3);
-                return s;
+                float4 c = _MG_WaveAmp * _MG_WaveK * cos(MGWavePhase(p, t));
+                return float2(dot(_MG_WaveDirX, c), dot(_MG_WaveDirZ, c));
             }
 
             // ---- 잔물결 노멀 퍼터베이션 2겹: 스크롤 방향/스케일/속도를 서로 다르게. ----
@@ -191,10 +212,11 @@ Shader "MG/Ocean"
             {
                 Varyings OUT;
 
-                // 파도 위상은 월드 위치 기반 - 메시가 원점 고정이지만, 계약상 오브젝트 공간이 아니라
-                // 월드 공간을 기준으로 계산한다(TransformObjectToWorld).
+                // [파도 v4] 정점은 옮기지 않는다. 바다 격자 한 칸이 625m라(WorldMapManager.GenerateOceanMesh,
+                // 64칸 × 40,000m) 파장 21~118m의 파도를 정점에 실으면 파도가 아니라 에일리어싱이 된다
+                // (나이퀴스트 최단 표현 파장 1,250m). 파도의 시각 표현은 프래그먼트의 해석적 노멀이
+                // 전부 담당하고(격자 밀도와 무관), 실제 높이는 C#(OceanWaves)이 물리에만 쓴다.
                 float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
-                positionWS.y += MGWaveHeight(positionWS.xz, _MG_WaveTime) * _WaveAmplitude;
 
                 OUT.positionWS = positionWS;
                 OUT.positionCS = TransformWorldToHClip(positionWS);
@@ -212,9 +234,15 @@ Shader "MG/Ocean"
                 float viewDist = length(toCamera);
                 float3 viewDir = toCamera / max(viewDist, 0.0001);
 
+                // [파도 v4] 바다 거칠기(0 맑음 ~ 1 폭풍). OceanWaves가 WeatherSystem의 상태에서 보간해
+                // 밀어준다. 큰 파도의 진폭·속도는 이미 전역 파라미터에 반영돼 있고, 여기서는 잔물결
+                // 세기와 화이트캡만 추가로 태운다.
+                half seaRough = saturate(_MG_SeaState.x);
+
                 // 노멀 = 큰 파도 기울기 + 잔물결 2겹. 진폭이 작아도 기울기는 스페큘러를 충분히 흔든다.
-                float2 slope = MGWaveSlope(IN.positionWS.xz, t) * _WaveAmplitude;
-                slope += MGRippleSlope(IN.positionWS.xz, t, viewDist) * _RippleStrength;
+                float2 waveSlope = MGWaveSlope(IN.positionWS.xz, t) * _WaveAmplitude;
+                float2 slope = waveSlope;
+                slope += MGRippleSlope(IN.positionWS.xz, t, viewDist) * (_RippleStrength * (1.0 + 0.8 * seaRough));
                 float3 normalWS = normalize(float3(-slope.x, 1.0, -slope.y));
                 // [v3] 수중 처리: Cull Off로 그려지는 뒷면(카메라가 물속에서 위를 올려다볼 때)은
                 // 노멀을 뒤집어야 프레넬/라이팅이 성립한다. 뒤집지 않으면 dot(N,V)가 음수로 포화되어
@@ -252,6 +280,18 @@ Shader "MG/Ocean"
                 half foam = 1.0 - smoothstep(0.0, max(_FoamDepth, 0.001), waterColumn + foamNoise * 0.18);
                 foam *= (0.75 + 0.25 * foamNoise) * frontGate;
                 foam = saturate(foam);
+
+                // [파도 v4] 화이트캡: 거친 바다에서 **큰 파도의 마루(기울기가 가장 가파른 곳)** 에만
+                // 흰 거품을 얹는다. 판정에 waveSlope(잔물결 제외)를 쓰는 것이 핵심이다 - 잔물결까지
+                // 넣으면 근거리 전체가 하얘진다. 잔잔한 바다의 최대 기울기가 0.024라 임계 0.030에
+                // 닿지 않아 맑은 날에는 한 점도 나오지 않고, 폭풍(최대 0.066)에서만 마루가 하얘진다.
+                // 임계값(0.030)이 half의 유효 자릿수 경계에 가까운 작은 수라 float으로 계산한다.
+                float waveSteep = length(waveSlope);
+                float whitecap = saturate((waveSteep - 0.030) / 0.032) * seaRough;
+                // 거품 가장자리를 같은 노이즈로 흩뜨리고, 깊이 거품과 같은 이유로 앞면 전용으로 막는다
+                // (수중에서 올려다볼 때 흰 반점이 알파를 불투명 쪽으로 밀면 하늘이 가려진다).
+                whitecap *= (0.7 + 0.3 * foamNoise) * frontGate;
+                foam = saturate(max(foam, whitecap * 0.6));
 
                 half3 grain = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv).rgb;
                 half3 albedo = grain * waterColor * _BaseColor.rgb;

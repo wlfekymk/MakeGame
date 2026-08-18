@@ -15,7 +15,8 @@ namespace MakeGame.EditorTools
     /// 씬 참조 깨짐)를 배포 전에 잡는다. 콘솔 에러/예외/경고를 종류별로 집계하고
     /// 매 5초마다 씬 핵심 오브젝트(Player · Managers · Island_0_* 지형 · SurvivalHudUI ·
     /// Ocean · DayNightCycle · BuildingSystem · CursorLockController · GrassFieldDriver ·
-    /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual · UnderwaterCave_* 수중 동굴) 존재를 확인한다.
+    /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual · UnderwaterCave_* 수중 동굴 ·
+    /// MarineLife_* 해양 생물) 존재를 확인한다.
     ///
     /// ★ 도메인 리로드 생존 구조 ★
     /// 플레이 진입/이탈(및 플레이 중 재컴파일) 때마다 에디터 static이 전부 초기화된다.
@@ -67,6 +68,9 @@ namespace MakeGame.EditorTools
         // 해저 전용이지만 월드 생성(WorldMapManager.Start의 동기 전체 섬 루프 → SeabedGenerator.Build →
         // SeabedFloraSpawner.Spawn) 때 일괄 생성되므로 시작 직후부터 존재한다(거리 지연 생성 아님).
         // airlinerWreck = AirlinerWreck.TryBuild의 "AirlinerWreckVisual"(시작 섬 해안, 모델 로드 후 생성).
+        // marineLife = MarineLifeSpawner.Spawn의 "MarineLife_{섬 이름}" 배치 루트 - 모든 규모의 섬에
+        // 최소 1개(sunkenCargo와 같은 동기 생성 경로: SeabedGenerator.Build → MarineLifeSpawner.Spawn)라
+        // 시작 직후부터 존재한다. 거리 컷은 자식 컨테이너만 끄므로 이 루트는 항상 활성이다.
         private static readonly (string key, string objectName, bool prefix)[] Checks =
         {
             ("player", "Player", false),
@@ -82,6 +86,7 @@ namespace MakeGame.EditorTools
             ("sunkenCargo", "SunkenCargo_", true),
             ("airlinerWreck", "AirlinerWreckVisual", false),
             ("underwaterCave", "UnderwaterCave_", true),
+            ("marineLife", "MarineLife_", true),
         };
 
         // ---- 도메인 로컬 상태 (리로드 직후 SessionState에서 복원) ----
@@ -376,6 +381,7 @@ namespace MakeGame.EditorTools
             public bool sunkenCargo;
             public bool airlinerWreck;
             public bool underwaterCave;
+            public bool marineLife;
         }
 
         [Serializable]
@@ -422,6 +428,7 @@ namespace MakeGame.EditorTools
                 sunkenCargo = SessionState.GetBool(KeyCheckPrefix + "sunkenCargo", false),
                 airlinerWreck = SessionState.GetBool(KeyCheckPrefix + "airlinerWreck", false),
                 underwaterCave = SessionState.GetBool(KeyCheckPrefix + "underwaterCave", false),
+                marineLife = SessionState.GetBool(KeyCheckPrefix + "marineLife", false),
             };
 
             var result = new SmokeResult

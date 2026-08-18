@@ -35,6 +35,14 @@ namespace MakeGame.Player
         [Tooltip("입력이 없을 때 수면 쪽으로 떠오르는 부력 속도(m/s)")]
         public float buoyancy = 1f;
 
+        [Tooltip("수영 판정에 쓰는 수면 높이가 파도(OceanWaves)를 따라가게 할지.\n" +
+            "끄면 예전처럼 평평한 waterLevel 상수만 쓴다(동작 100% 회귀).")]
+        public bool followOceanWaves = true;
+
+        [Tooltip("파도를 얼마나 따라갈지(1 = 파고 그대로). 바다 평면 메시가 실제로 출렁이지는 못하므로" +
+            "(OceanWaves 주석의 나머지 근거 참고) 1로 두면 수면 그림과 판정이 크게 벌어질 수 있다.")]
+        public float oceanWaveFollowScale = 0.75f;
+
         [Tooltip("잠수(더 깊이 내려가기) 키")]
         public KeyCode diveKey = KeyCode.LeftControl;
 
@@ -231,6 +239,9 @@ namespace MakeGame.Player
                 return;
 
             bool inPocket = false;
+            // 여기는 **일부러 평평한 waterLevel 그대로** 둔다(CurrentWaterSurfaceY를 쓰지 않는다).
+            // 산소/에어포켓은 이 작업의 범위 밖이고, 수면 근처에서 파도를 태우면 이 게이트가 매 프레임
+            // 켜졌다 꺼지며 존 순회가 깜빡인다. 파도는 이동(수영/보행) 판정에만 반영한다.
             if (transform.position.y < waterLevel)
             {
                 // 판정 기준점은 카메라(=머리) 위치. 카메라가 연결 안 된 씬에서는 SurvivalTickDriver의
@@ -288,6 +299,32 @@ namespace MakeGame.Player
         }
 
         /// <summary>
+        /// 지금 발밑의 수면 높이(m). 파도 연동이 켜져 있으면 평평한 waterLevel 대신 그 지점의 파고를 쓴다.
+        ///
+        /// **평균 해수면은 waterLevel 그대로 두고 파도 "편차"만 더한다**(SampleHeight가 아니라
+        /// SampleWaveOffset을 쓰는 이유). PlayerController.waterLevel은 씬 직렬화 값(0)이고
+        /// WorldMapManager.seaLevel과 별개의 필드이므로, 절대 높이를 통째로 갈아치우면 두 값이
+        /// 갈라진 구성에서 수영 판정 기준이 조용히 바뀐다. 편차만 얹으면 기존 기준선이 100% 보존된다.
+        ///
+        /// **적용 범위(경계)**: 이 값은 오직 HandleMove의 수영/보행 전환에만 쓴다.
+        ///  * 산소·잠수·에어포켓 판정(PushAirPocketState, SurvivalTickDriver.IsUnderwater)은 그대로
+        ///    평평한 waterLevel을 쓴다 - 요청 범위 밖이고, 그쪽은 머리 높이 기준이라 파도를 태우면
+        ///    수면 근처에서 산소가 깜빡인다.
+        ///  * 월드 생성 경로(IslandMeshGenerator.Vegetation의 VegetationSeaLevelY, SeabedFloraSpawner ·
+        ///    UnderwaterCaveSpawner의 seaLevel, HazardSpawner의 육상 판정)의 **평면 해수면 가정은
+        ///    한 글자도 건드리지 않았다.** 그쪽에 파도를 넣으면 같은 worldSeed에서 배치가 달라져
+        ///    월드 생성 결정성이 깨진다. 파도는 런타임 체감 전용이다.
+        /// </summary>
+        private float CurrentWaterSurfaceY()
+        {
+            if (!followOceanWaves)
+                return waterLevel;
+
+            return waterLevel
+                + MakeGame.Systems.OceanWaves.SampleWaveOffset(transform.position) * oceanWaveFollowScale;
+        }
+
+        /// <summary>
         /// WASD 입력으로 수평 이동을 처리하고, 중력/점프로 수직 이동을 처리한다.
         /// 골절 상태이면 이동 속도가 느려진다. 해수면보다 낮은 위치(섬 밖 바다)에서는 수영 모드로 전환된다.
         /// </summary>
@@ -300,7 +337,7 @@ namespace MakeGame.Player
             float h = Input.GetAxis("Horizontal");
             float v = Input.GetAxis("Vertical");
 
-            if (transform.position.y < waterLevel)
+            if (transform.position.y < CurrentWaterSurfaceY())
             {
                 HandleSwimMove(h, v);
                 return;

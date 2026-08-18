@@ -81,6 +81,24 @@ namespace MakeGame.Systems
         [Tooltip("진행도를 다시 읽어 외형을 맞추는 주기(초). 이벤트를 놓치는 경로(F9 불러오기)의 안전망이다.")]
         public float refreshInterval = 0.2f;
 
+        // ── 파도 흔들림 (OceanWaves 연동) ──────────────────────────────────────────
+        [Header("파도 흔들림")]
+        [Tooltip("파도에 따라 뗏목이 뜨고 기울지. 끄면 예전처럼 고정된 자리에 가만히 있는다.")]
+        public bool waveMotionEnabled = true;
+
+        [Tooltip("파도 높이를 얼마나 따라갈지(1 = 그대로). 뗏목은 8×5.2m 판이라 마루/골을 평균내므로" +
+            " 1보다 작게 두는 편이 자연스럽고, 갑판이 수면 아래로 내려가는 것도 막는다.")]
+        public float waveHeaveScale = 0.75f;
+
+        [Tooltip("상하 흔들림 상한(m). 정박한 뗏목이라 승선 발판이 해변에서 너무 떨어지지 않게 묶어 둔다.")]
+        public float maxHeaveMeters = 0.45f;
+
+        [Tooltip("기울기 상한(도, 피치/롤 각각). 멀미·조작 불능 방지용 하드 리밋이다.")]
+        public float maxTiltDegrees = 6f;
+
+        [Tooltip("흔들림 저역통과 강도(1/초). 클수록 파도를 즉각 따라가고, 작을수록 둔하게 움직인다.")]
+        public float waveMotionDamping = 5f;
+
         /// <summary>지금 화면에 지어져 있는 단계. -1이면 아직 아무것도 안 지었다.</summary>
         private int builtLevel = -1;
 
@@ -89,6 +107,20 @@ namespace MakeGame.Systems
 
         private float refreshTimer;
         private bool subscribed;
+
+        // ── 파도 흔들림 상태 ──────────────────────────────────────────────────────
+        /// <summary>정박이 확정된 시점의 기준 위치/회전. 파도 흔들림은 항상 이 기준에 대한 오프셋이다.</summary>
+        private Vector3 anchorPosition;
+        private Quaternion anchorRotation = Quaternion.identity;
+
+        /// <summary>저역통과를 거친 현재 오프셋(m, 도, 도).</summary>
+        private float smoothedHeave;
+        private float smoothedPitchDeg;
+        private float smoothedRollDeg;
+
+        /// <summary>갑판에 올라탄 플레이어를 함께 옮기기 위한 캐시. 없으면 주기적으로 다시 찾는다.</summary>
+        private CharacterController riderController;
+        private float riderRescanTimer;
 
         private WorldMapManager worldMap;
         private Transform visualRoot;
@@ -269,6 +301,8 @@ namespace MakeGame.Systems
                 return;
             }
 
+            UpdateWaveMotion();
+
             // 이벤트를 못 받는 경로(SaveLoadController.Load가 필드를 직접 대입한다)를 위한 안전망.
             // Time.timeScale이 0인 엔딩/사망 화면에서도 멈추지 않도록 unscaled를 쓴다.
             refreshTimer -= Time.unscaledDeltaTime;
@@ -357,6 +391,7 @@ namespace MakeGame.Systems
             {
                 // 월드 매니저가 없는 테스트 씬 등: 지금 있는 자리에 그대로 짓는다.
                 rampFootLocalY = 0f;
+                CaptureWaveAnchor();
                 anchored = true;
                 ApplyProgress();
                 return;
@@ -405,9 +440,158 @@ namespace MakeGame.Systems
                 ? Mathf.Clamp(groundY - center.y, -0.25f, DeckSurfaceY - 0.08f)
                 : 0f;
 
+            CaptureWaveAnchor();
             anchored = true;
             ApplyProgress();
         }
+
+        /// <summary>
+        /// 파도 흔들림의 기준(정박 위치/회전)을 기억한다. 흔들림은 매 프레임 이 기준에 오프셋을 얹어
+        /// **절대 좌표로 다시 대입**하는 방식이라, 오차가 프레임마다 누적되지 않는다(뗏목이 떠내려가지 않는다).
+        /// </summary>
+        private void CaptureWaveAnchor()
+        {
+            anchorPosition = transform.position;
+            anchorRotation = transform.rotation;
+            smoothedHeave = 0f;
+            smoothedPitchDeg = 0f;
+            smoothedRollDeg = 0f;
+        }
+
+        /// <summary>
+        /// 파도에 맞춰 뗏목을 위아래로 띄우고 살짝 기울인다(OceanWaves.SampleHeight 사용).
+        ///
+        /// [무엇을 움직이나] **뗏목 루트(transform) 하나만** 움직인다. 갑판(DeckRoot) · 건축 컨테이너
+        /// (PlacedStructures / BuildDeckPieces) · 파츠(RaftVisual) · 선체·갑판 콜라이더가 전부 루트의
+        /// 자식이고 로컬 좌표로 배치돼 있으므로(EnsureDeckRoot / BuildingSystem.SyncRaftBinding),
+        /// 갑판 위에 지은 집·상자는 뗏목과 통째로 같이 움직이며 1mm도 어긋나지 않는다.
+        /// 세이브도 갑판 조각을 뗏목 로컬 좌표로 저장하므로 저장/복원 결과가 달라지지 않는다.
+        ///
+        /// [샘플 수] 프레임당 SampleHeight 4회(뱃머리/고물/좌현/우현)뿐이다. 평균으로 상하 이동을,
+        /// 앞뒤/좌우 차이로 피치/롤을 만든다 - 8×5.2m 판이 파면을 평균내는 물리와 같은 모양이다.
+        /// (법선 1점 샘플보다 이쪽이 배 크기를 반영해 자연스럽고, 마루 하나에 과민 반응하지 않는다.)
+        ///
+        /// [멀미/조작 방지] 기울기는 maxTiltDegrees(기본 ±6°)로, 상하 이동은 maxHeaveMeters(기본
+        /// ±0.45m)로 하드 클램프한다. 현재 파도 파라미터로 300초 × 24방위를 훑어 본 실측 최대치는
+        /// **맑음 피치 0.72°/롤 0.76° · 폭풍 피치 2.02°/롤 2.14°** 라 기울기 상한은 사실상 안전망이고
+        /// 평소에 클램프가 걸리지 않는다(걸리면 그 순간 움직임이 뚝 끊겨 오히려 어색해진다).
+        /// 상하 이동 실측 최대치는 맑음 0.15m · 폭풍 0.42m로, 상한 0.45m에 폭풍 마루에서만 닿는다.
+        /// 추가로 저역통과(waveMotionDamping)를 한 겹 걸어 프레임 간 급변을 막는다.
+        ///
+        /// [정지 계약] 진행에 Time.deltaTime을 쓰고 파도 시계도 Time.time이므로, timeScale = 0인
+        /// 타이틀/일시정지/엔딩에서는 바다와 함께 뗏목도 완전히 멈춘다.
+        ///
+        /// [승선 발판] 뗏목은 고물이 물가에 걸친 정박 상태고 발판이 해변에 닿아 있다. 상하 이동이
+        /// 커지면 발판 끝이 모래에서 뜨거나 파묻히므로 maxHeaveMeters를 0.45m로 묶어 뒀다
+        /// (실측 최대 진폭은 잔잔 ±0.15m · 폭풍 ±0.42m다).
+        ///
+        /// [갑판 침수 없음] 갑판 윗면은 뗏목 원점 위 0.72m다. 뗏목이 골에 내려앉는 순간에도 그 자리의
+        /// 파고와 뗏목 상하 이동이 같은 파도에서 나오므로 서로 상쇄된다 - 갑판 25개 지점 × 300초
+        /// 시뮬레이션에서 "갑판 윗면 − 플레이어 수영 판정 수면"의 최소 여유가 폭풍에서도 0.54m였다.
+        /// 즉 갑판 위에 서 있다가 수영 모드로 뒤집히는 일은 생기지 않는다.
+        /// </summary>
+        private void UpdateWaveMotion()
+        {
+            if (!waveMotionEnabled)
+                return;
+
+            float halfLength = DeckLength * 0.5f;
+            float halfWidth = DeckWidth * 0.5f;
+            Vector3 forward = anchorRotation * Vector3.forward;
+            Vector3 right = anchorRotation * Vector3.right;
+
+            float yBow = OceanWaves.SampleHeight(anchorPosition + forward * halfLength);
+            float yStern = OceanWaves.SampleHeight(anchorPosition - forward * halfLength);
+            float yStarboard = OceanWaves.SampleHeight(anchorPosition + right * halfWidth);
+            float yPort = OceanWaves.SampleHeight(anchorPosition - right * halfWidth);
+
+            float scale = Mathf.Max(0f, waveHeaveScale);
+            float heaveLimit = Mathf.Max(0f, maxHeaveMeters);
+            float tiltLimit = Mathf.Max(0f, maxTiltDegrees);
+
+            float average = (yBow + yStern + yStarboard + yPort) * 0.25f;
+            float targetHeave = Mathf.Clamp((average - OceanWaves.SeaLevel) * scale, -heaveLimit, heaveLimit);
+
+            // 부호: Unity에서 로컬 X축 양의 회전은 +Z(뱃머리)를 아래로 내린다 → 뱃머리가 높으면 음수.
+            float targetPitch = Mathf.Clamp(
+                -Mathf.Atan2((yBow - yStern) * scale, DeckLength) * Mathf.Rad2Deg, -tiltLimit, tiltLimit);
+            // 로컬 Z축 양의 회전은 +X(우현)를 위로 올린다 → 우현이 높으면 양수.
+            float targetRoll = Mathf.Clamp(
+                Mathf.Atan2((yStarboard - yPort) * scale, DeckWidth) * Mathf.Rad2Deg, -tiltLimit, tiltLimit);
+
+            // 지수 저역통과(프레임률 독립). deltaTime이 0이면(일시정지) 계수도 0이라 그대로 멈춘다.
+            float blend = waveMotionDamping > 0f
+                ? 1f - Mathf.Exp(-waveMotionDamping * Time.deltaTime)
+                : 1f;
+            smoothedHeave = Mathf.Lerp(smoothedHeave, targetHeave, blend);
+            smoothedPitchDeg = Mathf.Lerp(smoothedPitchDeg, targetPitch, blend);
+            smoothedRollDeg = Mathf.Lerp(smoothedRollDeg, targetRoll, blend);
+
+            Vector3 newPosition = anchorPosition + Vector3.up * smoothedHeave;
+            Quaternion newRotation = anchorRotation * Quaternion.Euler(smoothedPitchDeg, 0f, smoothedRollDeg);
+
+            // 플레이어를 **먼저** 옮긴 뒤 뗏목을 옮긴다. 순서를 뒤집으면 갑판 콜라이더가 캡슐을 파고든
+            // 상태에서 CharacterController.Move가 호출되어 밀려나거나 끼일 수 있다.
+            CarryRider(newPosition, newRotation);
+
+            transform.SetPositionAndRotation(newPosition, newRotation);
+        }
+
+        /// <summary>
+        /// 갑판에 올라타 있는 플레이어를 뗏목과 같은 양만큼 옮긴다.
+        ///
+        /// CharacterController는 움직이는 콜라이더에 밀려나지 않으므로(캐릭터 컨트롤러는 스스로
+        /// Move한 만큼만 움직인다), 이 처리가 없으면 뗏목만 오르내리고 플레이어는 제자리에 남아
+        /// 갑판을 뚫거나 허공에 뜬다. 플레이어의 **뗏목 로컬 좌표를 보존**하는 방식이라, 기울기까지
+        /// 반영된 정확한 자리로 따라간다(회전은 건드리지 않는다 - 시야를 억지로 돌리면 조작감이 깨진다).
+        ///
+        /// 판정은 뗏목 로컬 상자 하나뿐이라 비용이 없고, 승선 중이 아니면 아무 일도 하지 않는다.
+        /// </summary>
+        private void CarryRider(Vector3 newPosition, Quaternion newRotation)
+        {
+            riderRescanTimer -= Time.unscaledDeltaTime;
+            if (riderController == null && riderRescanTimer <= 0f)
+            {
+                riderRescanTimer = RiderRescanInterval;
+                var player = FindAnyObjectByType<MakeGame.Player.PlayerController>();
+                if (player != null)
+                    riderController = player.GetComponent<CharacterController>();
+            }
+
+            if (riderController == null || !riderController.enabled || !riderController.gameObject.activeInHierarchy)
+                return;
+
+            Vector3 riderWorld = riderController.transform.position;
+            // 강체 변환이므로 스케일과 무관하게 역회전 + 평행이동으로 로컬 좌표를 구한다.
+            Vector3 local = Quaternion.Inverse(transform.rotation) * (riderWorld - transform.position);
+
+            bool onboard = Mathf.Abs(local.x) <= DeckWidth * 0.5f + RiderBoundsMargin
+                && Mathf.Abs(local.z) <= DeckLength * 0.5f + RiderBoundsMargin
+                && local.y >= RiderMinLocalY
+                && local.y <= DeckSurfaceY + RiderHeadroom;
+            if (!onboard)
+                return;
+
+            Vector3 delta = (newRotation * local + newPosition) - riderWorld;
+            if (delta.sqrMagnitude > 1e-10f)
+                riderController.Move(delta);
+        }
+
+        /// <summary>승선 판정 상자의 여유(m). 난간 바깥에 반쯤 걸친 자세까지 태운다.</summary>
+        private const float RiderBoundsMargin = 0.7f;
+
+        /// <summary>
+        /// 승선으로 인정하는 최저 로컬 높이(발 기준, m). 갑판 윗면이 0.72, 골조 단계의 선체 윗면이
+        /// 0.5이므로 0.25면 "올라타 있다"를 모두 덮으면서, 뗏목 옆에서 헤엄치는 상태(발이 수면 아래)는
+        /// 배제한다. 이 아래로 내리면 옆에서 수영 중인 플레이어까지 뗏목이 끌고 다닌다.
+        /// </summary>
+        private const float RiderMinLocalY = 0.25f;
+
+        /// <summary>승선 판정 상자의 높이 여유(m). 갑판 윗면 기준 - 점프 중에도 판정이 끊기지 않을 정도.</summary>
+        private const float RiderHeadroom = 2.6f;
+
+        /// <summary>플레이어 참조를 다시 찾는 주기(초). 프레임당 전역 검색을 하지 않기 위한 값이다.</summary>
+        private const float RiderRescanInterval = 1f;
 
         /// <summary>
         /// 뗏목을 놓을 방향(섬 중심 → 물가). 플레이어가 게임을 시작할 때 바라보는 방향

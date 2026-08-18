@@ -223,6 +223,11 @@ namespace MakeGame.Systems
             // 독립 rng 스트림(0xCA7E) - 기존 스트림의 draw 순서에 영향 없음.
             UnderwaterCaveSpawner.Spawn(islandObject, radius);
 
+            // [해양 생물] 동굴 직후, 같은 동기 흐름에서 물고기 떼/거북/가오리/해파리/문어/돌고래를 놓는다
+            // (유영 고도·해저 추종이 TrySampleSeabed 접지에 의존하므로 스커트 등록 이후여야 한다).
+            // 독립 rng 스트림(0x1A9E) - 기존 스트림의 draw 순서에 영향 없음. 순수 배경(세이브 무관).
+            MarineLifeSpawner.Spawn(islandObject, radius);
+
             // 정점 수 총합 로그 예약(프레임당 1줄). 로거의 Start는 이 프레임의 모든 섬 생성이 끝난 뒤 돈다.
             pendingVertexTotal += vertexCount;
             pendingSkirtCount++;
