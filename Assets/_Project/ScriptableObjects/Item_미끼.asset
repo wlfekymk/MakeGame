@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_미끼
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 미끼
+  description: "생고기를 잘게 썰어 만든 낚시 미끼. 낚싯대에 꿰면 입질이 빨라지고 낚아 올릴 확률이 크게 오른다. 찌를 던질 때마다 하나씩 쓴다."
+  icon: {fileID: 0}
+  maxUses: 1
+  maxStackSize: 20
+  blockedFromLargeIslandsByCurrent: 0

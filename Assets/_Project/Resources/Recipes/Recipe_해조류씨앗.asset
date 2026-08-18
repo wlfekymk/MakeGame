@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_해조류씨앗
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "해조류 씨앗"
+  description: "미역 홀씨를 노끈에 붙여 말린다. 밭에 심으면 하루 반 만에 해조류가 자란다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 1c008376dbd4e226d19a273c455f82db, type: 2}
+    quantity: 1
+  resultItem: {fileID: 11400000, guid: d874cbdbc2d847f8948e8940e6e0ef10, type: 2}
+  resultQuantity: 2
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 5

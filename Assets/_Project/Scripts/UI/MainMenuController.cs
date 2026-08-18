@@ -1,4 +1,3 @@
-using System.IO;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -52,14 +51,27 @@ namespace MakeGame.UI
         /// 없으므로 여기 한 곳에만 둔다(VERSION이 올라가면 이 값도 같이 올린다). PlayerSettings의
         /// bundleVersion이 VERSION과 동기화되어 있다면 Application.version으로 바꿔도 된다.
         /// </summary>
-        public const string DisplayVersion = "0.2.49";
+        public const string DisplayVersion = "0.2.50";
 
-        /// <summary>
-        /// 저장 파일 이름. SaveLoadController.cs:56의 SaveFileName과 같은 값이어야 한다(그쪽은 private).
-        /// SaveLoadController에는 "저장 파일이 있는가"를 묻는 public API가 없어서, 이어하기 활성 여부는
-        /// 이 이름으로 Application.persistentDataPath를 직접 확인해 판정한다.
-        /// </summary>
-        private const string SaveFileName = "makegame_save.json";
+        // [슬롯 3개] 예전에는 저장 파일 이름("makegame_save.json")을 여기에 복사해 두고 직접 File.Exists로
+        // 확인했다. 같은 문자열이 두 파일에 살아 있는 것은 이 프로젝트가 반복해서 낸 사고 유형이라,
+        // 슬롯이 생기면서 판정을 파일의 주인(SaveLoadController.SlotHasSave)에게 넘겼다.
+        // 이제 이 파일에는 저장 경로 지식이 한 글자도 없다.
+
+        /// <summary>세이브 슬롯 버튼들(길이 = SaveLoadController.SlotCount). 아트/폴백 화면 양쪽에서 쓴다.</summary>
+        private Button[] slotButtons;
+        private Text[] slotButtonLabels;
+
+        // 슬롯을 바꾸면 "이어하기" 버튼의 활성/잠금 표시도 같이 바뀌어야 하므로 참조를 들고 있는다.
+        private Button continueButton;
+        private Image continueBorder;
+        private Text continueKoreanLabel;
+        private Text continueEnglishLabel;
+        private GameObject continueLockIcon;
+
+        /// <summary>슬롯 버튼의 평소 색과 "지금 쓰는 슬롯" 색.</summary>
+        private static readonly Color SlotIdleColor = new Color(0.20f, 0.26f, 0.24f, 1f);
+        private static readonly Color SlotSelectedColor = new Color(0.25f, 0.55f, 0.3f, 1f);
 
         // ── 타이틀 아트에 그려져 있는 버튼 4개의 자리(정규화 좌표, 원점 좌하단). 픽셀이 아니라 비율이므로
         //    화면 비율이 바뀌어 아트가 잘려도 우리 버튼은 그림 속 버튼과 함께 움직인다.
@@ -188,15 +200,159 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 이어할 저장 파일이 있는지 판정한다. SaveLoadController에는 존재 여부를 묻는 public API가 없고
-        /// SavePath/BackupSavePath가 private이므로(SaveLoadController.cs:56-65), 같은 규칙으로 직접 확인한다.
-        /// Load()가 본 파일이 깨졌을 때 .bak으로 폴백하므로(SaveLoadController.cs:272-284) .bak만 있어도
-        /// 이어하기는 성립한다.
+        /// 지금 고른 슬롯에 이어할 저장이 있는지 판정한다. 판정은 파일의 주인인 SaveLoadController가 한다
+        /// (본 파일이 깨졌을 때 .bak으로 폴백하는 Load의 규칙까지 그쪽 한 곳에 모여 있다).
         /// </summary>
         private static bool HasSaveFile()
         {
-            string savePath = Path.Combine(Application.persistentDataPath, SaveFileName);
-            return File.Exists(savePath) || File.Exists(savePath + ".bak");
+            return SaveLoadController.SlotHasSave(GameSettings.SaveSlot);
+        }
+
+        /// <summary>
+        /// [슬롯 3개] 슬롯을 고른다. 고른 슬롯은 PlayerPrefs에 남아 F5/F9와 다음 실행까지 그대로 이어진다.
+        /// </summary>
+        private void SelectSlot(int slot)
+        {
+            GameSettings.SaveSlot = slot;
+            RefreshSlotButtons();
+        }
+
+        /// <summary>
+        /// [슬롯 3개] 슬롯 버튼 3개의 라벨(요약)과 선택 표시, 그리고 "이어하기" 버튼 상태를 다시 그린다.
+        /// **화면을 만들 때와 슬롯을 바꿀 때만 호출한다** - 안에서 세이브 파일을 읽으므로 매 프레임 호출 금지다.
+        /// </summary>
+        private void RefreshSlotButtons()
+        {
+            if (slotButtons == null)
+                return;
+
+            // 타이틀이 이미 닫힌 뒤(플레이 중 설정 화면에서 슬롯을 바꾼 경우)에는 다시 그릴 화면이 없다.
+            // 여기서 막지 않으면 슬롯을 바꿀 때마다 보이지도 않는 패널 때문에 세이브 파일 3개를 다시 읽는다.
+            if (!isMenuOpen)
+                return;
+
+            var loader = ResolveSaveLoadController();
+            int currentSlot = GameSettings.SaveSlot;
+
+            for (int i = 0; i < slotButtons.Length; i++)
+            {
+                int slot = i + 1;
+                bool hasSave;
+                string summary = null;
+
+                // 요약(경과 일수·발견한 섬·저장 시각)은 세이브를 읽을 수 있는 쪽이 만든다. 씬에
+                // SaveLoadController가 없으면(있어야 정상) 존재 여부만이라도 알려준다.
+                if (loader != null)
+                    hasSave = loader.TryGetSlotSummary(slot, out summary);
+                else
+                    hasSave = SaveLoadController.SlotHasSave(slot);
+
+                string body = hasSave
+                    ? (string.IsNullOrEmpty(summary) ? "저장됨" : summary)
+                    : "비어 있음";
+
+                if (slotButtonLabels[i] != null)
+                    slotButtonLabels[i].text = slot == currentSlot
+                        ? $"슬롯 {slot} (사용 중)\n{body}"
+                        : $"슬롯 {slot}\n{body}";
+
+                var background = slotButtons[i] != null ? slotButtons[i].GetComponent<Image>() : null;
+                if (background != null)
+                    background.color = slot == currentSlot ? SlotSelectedColor : SlotIdleColor;
+            }
+
+            RefreshContinueButton();
+        }
+
+        /// <summary>
+        /// [슬롯 3개] 고른 슬롯이 비어 있으면 "이어하기"를 잠근다(그림과 같은 어두운 바탕 + 자물쇠).
+        /// 예전에는 화면을 만들 때 한 번만 판정했지만, 이제 슬롯을 바꿀 때마다 다시 판정해야 한다.
+        /// </summary>
+        private void RefreshContinueButton()
+        {
+            if (continueButton == null)
+                return;
+
+            bool hasSave = HasSaveFile();
+            continueButton.interactable = hasSave;
+
+            if (continueBorder != null)
+                continueBorder.color = hasSave ? BorderIdleColor : BorderLockedColor;
+
+            if (continueKoreanLabel != null)
+                continueKoreanLabel.color = hasSave ? LabelKoreanColor : LabelKoreanLockedColor;
+
+            if (continueEnglishLabel != null)
+                continueEnglishLabel.color = hasSave ? LabelEnglishColor : LabelEnglishLockedColor;
+
+            if (continueLockIcon != null)
+                continueLockIcon.SetActive(!hasSave);
+        }
+
+        /// <summary>
+        /// [슬롯 3개] 화면 좌하단에 슬롯 선택 패널을 만든다.
+        ///
+        /// **타이틀 아트(artRt)가 아니라 화면 전체 패널(root)에 붙인다.** 아트는 화면 비율에 따라 좌우가
+        /// 잘리도록(EnvelopeParent) 늘어나므로, 아트를 부모로 삼으면 좁은 화면에서 이 패널이 화면 밖으로
+        /// 밀려난다. 그림 속 버튼 자리에 겹쳐야 하는 오른쪽 버튼 4개와 달리, 이 패널은 아트에 대응하는
+        /// 그림이 없는 새 UI라 화면 기준으로 두는 것이 맞다.
+        /// </summary>
+        private void BuildSlotSelector(RectTransform root)
+        {
+            var panel = UIBuilder.CreatePanel(root, "SlotSelector",
+                anchorMin: new Vector2(0.030f, 0.070f), anchorMax: new Vector2(0.345f, 0.360f),
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: new Color(0.05f, 0.08f, 0.12f, 0.85f), addTopBorder: true);
+
+            var vlg = panel.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(14, 14, 12, 12);
+            vlg.spacing = 6f;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+
+            var title = UIBuilder.CreateText(panel, "SlotTitle", "세이브 슬롯 (F5 저장 / F9 불러오기)", 15,
+                new Color(0.90f, 0.88f, 0.82f, 1f), TextAnchor.MiddleLeft);
+            title.gameObject.AddComponent<LayoutElement>().minHeight = 24f;
+
+            int slotCount = SaveLoadController.SlotCount;
+            slotButtons = new Button[slotCount];
+            slotButtonLabels = new Text[slotCount];
+
+            for (int i = 0; i < slotCount; i++)
+            {
+                // 클로저가 캡처할 지역 변수는 반복문 안에서 새로 만든다(밖의 i를 캡처하면 전부 마지막 값이 된다).
+                int slot = i + 1;
+                var button = UIBuilder.CreateButton(panel, "SlotButton" + slot, "", () => SelectSlot(slot));
+                button.gameObject.AddComponent<LayoutElement>().minHeight = 44f;
+
+                var label = button.GetComponentInChildren<Text>();
+                if (label != null)
+                {
+                    label.fontSize = 14;
+                    label.alignment = TextAnchor.MiddleCenter;
+                }
+
+                slotButtons[i] = button;
+                slotButtonLabels[i] = label;
+            }
+
+            RefreshSlotButtons();
+        }
+
+        /// <summary>
+        /// 설정 화면에서도 슬롯을 바꿀 수 있으므로(플레이 중 F5 대상 변경), 그쪽에서 바뀐 값이 타이틀
+        /// 화면에도 즉시 반영되도록 구독한다. 설정을 아무도 만지지 않으면 한 번도 발행되지 않아 비용이 0이다.
+        /// </summary>
+        private void OnEnable()
+        {
+            GameSettings.Changed += RefreshSlotButtons;
+        }
+
+        /// <summary>정적 이벤트 구독을 반드시 푼다(파괴된 컴포넌트가 계속 불려 나오는 것을 막는다).</summary>
+        private void OnDisable()
+        {
+            GameSettings.Changed -= RefreshSlotButtons;
         }
 
         /// <summary>
@@ -255,12 +411,26 @@ namespace MakeGame.UI
             CreateMenuButton(artRt, "NewGameButton", "새 게임", "NEW GAME",
                 NewGameYMin, NewGameYMax, true, StartGame);
 
-            var continueButton = CreateMenuButton(artRt, "ContinueButton", "이어하기", "CONTINUE",
+            continueButton = CreateMenuButton(artRt, "ContinueButton", "이어하기", "CONTINUE",
                 ContinueYMin, ContinueYMax, hasSave, ContinueGame);
 
-            // 저장 파일이 없으면 그림과 같은 "잠긴" 모습(어두운 바탕 + 자물쇠)으로 남는다.
-            if (!hasSave)
-                CreateLockIcon(continueButton.GetComponent<RectTransform>());
+            // [슬롯 3개] 슬롯을 바꾸면 이 버튼의 잠금 상태가 그때그때 달라지므로, 갱신에 필요한
+            // 부품(테두리·라벨 2줄·자물쇠)의 참조를 들고 있는다. 자물쇠는 "없을 때만 만들던 것"을
+            // **항상 만들어 두고 보였다 숨겼다** 하는 방식으로 바꿨다 - 슬롯을 바꿀 때마다 오브젝트를
+            // 만들고 지우면 그때부터 자물쇠가 두 개 겹치거나 사라지는 경로가 생긴다.
+            continueBorder = continueButton.GetComponent<Image>();
+
+            var continueTexts = continueButton.GetComponentsInChildren<Text>(true);
+            for (int i = 0; i < continueTexts.Length; i++)
+            {
+                if (continueTexts[i].gameObject.name == "LabelEn")
+                    continueEnglishLabel = continueTexts[i];
+                else if (continueKoreanLabel == null)
+                    continueKoreanLabel = continueTexts[i];
+            }
+
+            continueLockIcon = CreateLockIcon(continueButton.GetComponent<RectTransform>());
+            continueLockIcon.SetActive(!hasSave);
 
             // settingsMenu가 비어 있으면 그림 속 설정 버튼을 눌러도 열 것이 없으므로 잠긴 상태로 덮는다.
             bool hasSettings = settingsMenu != null;
@@ -275,6 +445,9 @@ namespace MakeGame.UI
                 QuitYMin, QuitYMax, true, QuitGame);
 
             CreateVersionLabel(artRt);
+
+            // [슬롯 3개] 왼쪽 아래에 슬롯 선택 패널. 그림 속 버튼 열(오른쪽)과 겹치지 않는 빈 자리다.
+            BuildSlotSelector(root);
         }
 
         /// <summary>
@@ -395,8 +568,9 @@ namespace MakeGame.UI
         /// <summary>
         /// 잠긴 "이어하기" 버튼 오른쪽에 그림과 같은 자물쇠 표시를 그린다. 아이콘 에셋이 없으므로
         /// 몸통 1개 + 고리 3개(좌/상/우)의 작은 사각형 조합으로 만든다. 전부 raycastTarget=false다.
+        /// [슬롯 3개] 만든 오브젝트를 돌려준다 - 호출부가 슬롯 상태에 따라 보였다 숨겼다 한다.
         /// </summary>
-        private void CreateLockIcon(RectTransform buttonRt)
+        private GameObject CreateLockIcon(RectTransform buttonRt)
         {
             var lockRoot = new GameObject("LockIcon", typeof(RectTransform));
             lockRoot.transform.SetParent(buttonRt, false);
@@ -414,6 +588,8 @@ namespace MakeGame.UI
             CreateLockPart(lockRt, "ShackleLeft", new Vector2(0.22f, 0.55f), new Vector2(0.36f, 0.9f), lockColor);
             CreateLockPart(lockRt, "ShackleRight", new Vector2(0.64f, 0.55f), new Vector2(0.78f, 0.9f), lockColor);
             CreateLockPart(lockRt, "ShackleTop", new Vector2(0.22f, 0.86f), new Vector2(0.78f, 1f), lockColor);
+
+            return lockRoot;
         }
 
         /// <summary>자물쇠를 이루는 작은 사각형 하나.</summary>
@@ -500,11 +676,18 @@ namespace MakeGame.UI
             var startButton = UIBuilder.CreateButton(root, "StartButton", "시작하기", StartGame);
             PositionCentered(startButton.GetComponent<RectTransform>(), yOffset: 20f, width: 240f, height: 48f);
 
-            // 폴백 화면에도 이어하기를 둔다. 저장 파일이 없으면 눌리지 않는 상태로 남는다.
-            var continueButton = UIBuilder.CreateButton(root, "ContinueButton", "이어하기", ContinueGame);
+            // 폴백 화면에도 이어하기를 둔다. 고른 슬롯이 비어 있으면 눌리지 않는 상태로 남는다.
+            continueButton = UIBuilder.CreateButton(root, "ContinueButton", "이어하기", ContinueGame);
             PositionCentered(continueButton.GetComponent<RectTransform>(), yOffset: -40f, width: 240f, height: 48f);
             continueButton.targetGraphic = continueButton.GetComponent<Image>();
             continueButton.interactable = HasSaveFile();
+
+            // 폴백 화면에는 아트 화면의 테두리/영문 라벨/자물쇠가 없다. 참조를 비워 두면
+            // RefreshContinueButton이 interactable만 갱신한다(null 검사로 나머지를 건너뛴다).
+            continueBorder = null;
+            continueKoreanLabel = null;
+            continueEnglishLabel = null;
+            continueLockIcon = null;
 
             if (settingsMenu != null)
             {
@@ -514,6 +697,9 @@ namespace MakeGame.UI
 
             var quitButton = UIBuilder.CreateButton(root, "QuitButton", "종료", QuitGame);
             PositionCentered(quitButton.GetComponent<RectTransform>(), yOffset: -160f, width: 240f, height: 48f);
+
+            // [슬롯 3개] 아트 화면과 같은 자리(좌하단)에 같은 패널을 둔다.
+            BuildSlotSelector(root);
         }
 
         /// <summary>

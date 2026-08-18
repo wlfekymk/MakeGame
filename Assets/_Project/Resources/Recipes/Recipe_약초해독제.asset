@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_약초해독제
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "약초 해독제"
+  description: "밭에서 기른 약초를 짓이겨 천에 싼다. 코코넛으로 만드는 것보다 한 번에 두 개가 나온다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 78d4850a65434f04b80a2b8c42c7f7e6, type: 2}
+    quantity: 2
+  - item: {fileID: 11400000, guid: b86d36da6d5b45bba13e7d0c24e6a66e, type: 2}
+    quantity: 1
+  resultItem: {fileID: 11400000, guid: 4a241ab5170140758aae80e111c89ccf, type: 2}
+  resultQuantity: 2
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 8

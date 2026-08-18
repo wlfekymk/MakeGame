@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_약초
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 약초
+  description: "밭에서 기른 쓴 잎. 그대로 먹을 수는 없지만 짓이겨 천에 싸면 독을 빨아내는 약이 된다."
+  icon: {fileID: 0}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0
+  hungerRestoreAmount: 0
+  thirstRestoreAmount: 0
+  isRawFood: 0
+  cookedResult: {fileID: 0}
+  isCoconutWaterSource: 0
+  isPlaceable: 0
+  placementPrefab: {fileID: 0}

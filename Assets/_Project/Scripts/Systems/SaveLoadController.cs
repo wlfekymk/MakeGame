@@ -23,6 +23,9 @@ namespace MakeGame.Systems
     /// [세이브 키 v2] 대조 키가 (islandIndex, spawnOrder=생성 순서 러닝 카운터)에서 (islandIndex,
     /// stableKey=Hash(섬, 종류, 종류 내 순번))로 바뀌었다(SaveData.StableSpawnKey / saveKeyVersion 참고).
     /// 옛(v1) 세이브는 로드 시 채집/처치/포획 목록만 버리고 나머지는 전부 살린다(Load의 버전 검사).
+    /// [슬롯 3개] 저장 위치가 슬롯 1~3으로 늘었다. **슬롯 1은 기존 단일 세이브 파일(makegame_save.json)
+    /// 그 자체**라 기존 진행이 아무 작업 없이 그대로 이어진다(SlotFilePath 주석). 파일 내용 형식은
+    /// 한 글자도 바뀌지 않았고, F5/F9는 항상 "현재 슬롯"(GameSettings.SaveSlot)에 작용한다.
     /// </summary>
     public class SaveLoadController : MonoBehaviour
     {
@@ -50,21 +53,56 @@ namespace MakeGame.Systems
         public GameObject waterStillPrefab;
 
         [Header("단축키")]
-        [Tooltip("빠른 저장 단축키")]
+        [Tooltip("빠른 저장 단축키. 저장되는 곳은 언제나 '현재 슬롯'이다(설정/타이틀에서 고른다).")]
         public KeyCode saveKey = KeyCode.F5;
-        [Tooltip("빠른 불러오기 단축키")]
+        [Tooltip("빠른 불러오기 단축키. 불러오는 곳도 '현재 슬롯'이다.")]
         public KeyCode loadKey = KeyCode.F9;
 
+        // ── 세이브 슬롯 3개 ──────────────────────────────────────────────────────────────────────
+        //
+        // [기존 세이브 호환 - 마이그레이션을 하지 않는 이유] 슬롯 1의 파일 이름을 **기존 단일 세이브
+        // 파일 이름 그대로** 둔다. 그러면 이미 게임을 하던 사용자의 makegame_save.json이 아무것도
+        // 옮기지 않아도 그 순간부터 "슬롯 1"로 읽힌다 - 파일을 복사·개명하는 마이그레이션 코드는
+        // 도중에 죽으면 진행이 사라질 수 있는데, 이 방식은 파일을 단 한 번도 건드리지 않으므로
+        // 사라질 경로 자체가 없다. .bak/.tmp 규약(WriteSaveFileSafely)도 슬롯마다 그대로 적용된다.
+        //
+        // 슬롯 2·3만 이름 뒤에 번호가 붙는다(makegame_save_slot2.json). 옛 빌드로 되돌아가도
+        // 옛 빌드는 슬롯 1 파일만 보므로 조용히 예전처럼 동작한다.
+
+        /// <summary>슬롯 1 = 기존 단일 세이브 파일. 이 이름은 절대 바꾸지 않는다(옛 세이브가 곧 슬롯 1이다).</summary>
         private const string SaveFileName = "makegame_save.json";
 
-        /// <summary>저장 파일의 전체 경로 (플랫폼별 영구 저장 폴더 아래).</summary>
-        private string SavePath => Path.Combine(Application.persistentDataPath, SaveFileName);
+        /// <summary>슬롯 2 이상의 파일 이름 형식.</summary>
+        private const string SlotFileNameFormat = "makegame_save_slot{0}.json";
 
-        /// <summary>기록 중인 임시 파일. 다 쓰고 나서야 SavePath로 이름이 바뀐다(WriteSaveFileSafely 참고).</summary>
-        private string TempSavePath => SavePath + ".tmp";
+        /// <summary>슬롯 개수(1 ~ SlotCount). 값의 주인은 GameSettings다 - 여기서 다시 정의하지 않는다.</summary>
+        public const int SlotCount = GameSettings.SaveSlotCount;
 
-        /// <summary>직전 저장본. 본 파일이 깨졌을 때 Load가 여기로 폴백한다.</summary>
-        private string BackupSavePath => SavePath + ".bak";
+        /// <summary>지금 F5/F9와 타이틀 "이어하기"가 쓰는 슬롯 번호. 설정/타이틀에서 바꾼다.</summary>
+        public static int CurrentSlot => GameSettings.SaveSlot;
+
+        /// <summary>슬롯의 저장 파일 전체 경로 (플랫폼별 영구 저장 폴더 아래).</summary>
+        public static string SlotFilePath(int slot)
+        {
+            int clamped = GameSettings.ClampSlot(slot);
+            string fileName = clamped <= 1 ? SaveFileName : string.Format(SlotFileNameFormat, clamped);
+            return Path.Combine(Application.persistentDataPath, fileName);
+        }
+
+        /// <summary>슬롯의 직전 저장본(.bak). 본 파일이 깨졌을 때 Load가 여기로 폴백한다.</summary>
+        public static string SlotBackupPath(int slot) => SlotFilePath(slot) + ".bak";
+
+        /// <summary>슬롯의 기록 중 임시 파일. 다 쓰고 나서야 본 파일로 이름이 바뀐다(WriteSaveFileSafely 참고).</summary>
+        private static string SlotTempPath(int slot) => SlotFilePath(slot) + ".tmp";
+
+        /// <summary>
+        /// 그 슬롯에 이어할 것이 있는지. 본 파일이 깨져도 .bak만 있으면 Load가 되살리므로 둘 중 하나면 참이다
+        /// (Load의 폴백 경로와 같은 판정 - 타이틀의 "이어하기" 활성 여부가 이 값을 쓴다).
+        /// </summary>
+        public static bool SlotHasSave(int slot)
+        {
+            return File.Exists(SlotFilePath(slot)) || File.Exists(SlotBackupPath(slot));
+        }
 
         /// <summary>가장 최근 저장/불러오기 결과 메시지 (디버그 HUD 등에서 표시할 수 있도록 보관).</summary>
         public string lastStatusMessage = "";
@@ -80,11 +118,30 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 현재 게임 상태(플레이어 위치, 생존 수치, 스킬, 인벤토리, 배 제작 진행, 경과 일수, 현재 섬, 엔딩 달성 여부,
-        /// 월드 시드)를 SaveData로 모아 JSON 파일로 기록한다.
+        /// 현재 슬롯(GameSettings.SaveSlot)에 저장한다. F5와 기존 호출부가 쓰는 진입점이다.
         /// </summary>
         public void Save()
         {
+            SaveToSlot(CurrentSlot);
+        }
+
+        /// <summary>
+        /// 현재 슬롯에서 불러온다. F9와 타이틀 "이어하기"가 쓰는 진입점이다.
+        /// </summary>
+        public void Load()
+        {
+            LoadFromSlot(CurrentSlot);
+        }
+
+        /// <summary>
+        /// 현재 게임 상태(플레이어 위치, 생존 수치, 스킬, 인벤토리, 배 제작 진행, 경과 일수, 현재 섬, 엔딩 달성 여부,
+        /// 월드 시드)를 SaveData로 모아 지정한 슬롯의 JSON 파일로 기록한다.
+        /// **저장 내용(SaveData의 형식)은 슬롯이 생겨도 1비트도 바뀌지 않는다** - 달라지는 것은 파일 이름뿐이다.
+        /// </summary>
+        public void SaveToSlot(int slot)
+        {
+            slot = GameSettings.ClampSlot(slot);
+
             var data = new SaveData
             {
                 worldSeed = worldMapManager != null ? worldMapManager.worldSeed : 0,
@@ -107,6 +164,12 @@ namespace MakeGame.Systems
                         data.discoveredIslandIds.Add(island.islandId);
                 }
             }
+
+            // [카토그래피] 지도에 남긴 섬 표식을 함께 저장한다. 발견 목록과 완전히 같은 이유다 -
+            // RegenerateWorld가 IslandInstance를 전부 새로 만들기 때문에, 따로 적어 두지 않으면
+            // 불러오기 한 번에 표식이 통째로 사라진다. 표식이 없는 섬은 항목을 만들지 않으므로
+            // (MinimapUI.WriteMarksTo) 섬이 50개여도 실제로 표시한 몇 개만 파일에 실린다.
+            MakeGame.UI.MinimapUI.WriteMarksTo(data.islandMarks);
 
             if (player != null)
             {
@@ -199,20 +262,21 @@ namespace MakeGame.Systems
 
             SaveStructures(data);
             SaveSmokers(data); // [식량 루프] 훈연기는 StructureType을 늘리지 않으려고 별도 목록으로 나간다.
+            SaveFarmPlots(data); // [농사] 밭도 같은 이유로 별도 목록이다(SaveData.farmPlots 주석 참고).
             SaveResourceNodes(data);
             SaveHazardsAndCreatures(data);
             SaveBossProgress(data);
 
             string json = JsonUtility.ToJson(data, true);
-            if (!WriteSaveFileSafely(json))
+            if (!WriteSaveFileSafely(json, slot))
             {
-                lastStatusMessage = "저장에 실패했습니다(파일 기록 오류).";
+                lastStatusMessage = $"슬롯 {slot} 저장에 실패했습니다(파일 기록 오류).";
                 return;
             }
 
-            lastStatusMessage = $"저장 완료 ({System.DateTime.Now:HH:mm:ss})";
+            lastStatusMessage = $"슬롯 {slot} 저장 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 저장 완료 확인음
-            Debug.Log($"[SaveLoadController] 게임을 저장했습니다: {SavePath}");
+            Debug.Log($"[SaveLoadController] 게임을 저장했습니다: {SlotFilePath(slot)}");
         }
 
         /// <summary>
@@ -220,24 +284,30 @@ namespace MakeGame.Systems
         /// 순서로 기록한다. 성공하면 true.
         /// 예전에는 File.WriteAllText가 기존 파일을 먼저 잘라내고 그 자리에 바로 썼기 때문에, 쓰는 도중에
         /// 게임이 죽거나(크래시/강제 종료) 디스크가 꽉 차면 하나뿐인 세이브 파일이 반쯤 잘린 채 남아
-        /// 그 판이 통째로 사라졌다. 이 순서라면 어느 순간에 멈추더라도 SavePath 또는 BackupSavePath 중
+        /// 그 판이 통째로 사라졌다. 이 순서라면 어느 순간에 멈추더라도 본 파일 또는 .bak 중
         /// 최소 한 쪽은 항상 온전한 파일이다(Load가 본 파일 → .bak 순으로 시도한다).
         /// [세이브 호환성] 파일의 "내용" 형식은 1비트도 바뀌지 않는다 - 기존 makegame_save.json을 그대로
         /// 읽고 그대로 쓴다. 늘어나는 것은 옆에 생기는 .bak/.tmp 파일뿐이다.
         /// </summary>
-        private bool WriteSaveFileSafely(string json)
+        private bool WriteSaveFileSafely(string json, int slot)
         {
+            // 슬롯마다 본 파일 / .tmp / .bak 세 짝이 따로 존재한다. 규약 자체는 한 글자도 바뀌지 않았고,
+            // 대상 경로만 슬롯에서 나온다(슬롯 1은 기존 makegame_save.json 그대로).
+            string savePath = SlotFilePath(slot);
+            string tempSavePath = SlotTempPath(slot);
+            string backupSavePath = SlotBackupPath(slot);
+
             try
             {
-                File.WriteAllText(TempSavePath, json);
+                File.WriteAllText(tempSavePath, json);
 
-                if (File.Exists(SavePath))
+                if (File.Exists(savePath))
                 {
                     // File.Replace가 가장 깔끔하지만 플랫폼/파일시스템에 따라 지원되지 않을 수 있어
                     // 실패하면 "기존 파일을 .bak으로 옮기고 임시 파일을 본 파일로 옮기는" 방식으로 떨어진다.
                     try
                     {
-                        File.Replace(TempSavePath, SavePath, BackupSavePath);
+                        File.Replace(tempSavePath, savePath, backupSavePath);
                         return true;
                     }
                     // [B12 qa 지적] IOException 한정이면 File.Replace가 UnauthorizedAccessException /
@@ -245,13 +315,13 @@ namespace MakeGame.Systems
                     // 빠져 매번 저장 실패한다. 본 파일은 안 깨지지만 .tmp 잔여물만 쌓인다.
                     catch (System.Exception)
                     {
-                        if (File.Exists(BackupSavePath))
-                            File.Delete(BackupSavePath);
-                        File.Move(SavePath, BackupSavePath);
+                        if (File.Exists(backupSavePath))
+                            File.Delete(backupSavePath);
+                        File.Move(savePath, backupSavePath);
                     }
                 }
 
-                File.Move(TempSavePath, SavePath);
+                File.Move(tempSavePath, savePath);
                 return true;
             }
             catch (System.Exception e)
@@ -286,22 +356,27 @@ namespace MakeGame.Systems
         /// 저장 파일이 있으면 읽어와 현재 게임 상태(플레이어 위치, 생존 수치, 스킬, 인벤토리, 배 제작 진행,
         /// 경과 일수, 현재 섬, 엔딩 달성 여부)에 되돌려 적용한다. 파일이 없으면 아무 것도 하지 않는다.
         /// </summary>
-        public void Load()
+        public void LoadFromSlot(int slot)
         {
-            SaveData data = ReadSaveData(SavePath);
+            slot = GameSettings.ClampSlot(slot);
+            string savePath = SlotFilePath(slot);
+
+            SaveData data = ReadSaveData(savePath);
 
             // 본 파일이 없거나 깨졌으면 직전 저장본(.bak)으로 되살려 본다. 저장이 쓰다 만 채로 중단돼도
             // 한 판이 통째로 날아가지 않게 하는 마지막 방어선이다(WriteSaveFileSafely 참고).
             if (data == null)
             {
-                data = ReadSaveData(BackupSavePath);
+                data = ReadSaveData(SlotBackupPath(slot));
                 if (data != null)
                     Debug.LogWarning("[SaveLoadController] 본 저장 파일을 읽지 못해 직전 백업(.bak)으로 불러옵니다.");
             }
 
             if (data == null)
             {
-                lastStatusMessage = File.Exists(SavePath) ? "저장 파일을 읽는 데 실패했습니다." : "저장 파일이 없습니다.";
+                lastStatusMessage = File.Exists(savePath)
+                    ? $"슬롯 {slot}의 저장 파일을 읽는 데 실패했습니다."
+                    : $"슬롯 {slot}에 저장 파일이 없습니다.";
                 Debug.LogWarning($"[SaveLoadController] {lastStatusMessage}");
                 return;
             }
@@ -354,6 +429,12 @@ namespace MakeGame.Systems
                 foreach (int islandId in data.discoveredIslandIds)
                     worldMapManager.DiscoverIsland(islandId);
                 worldMapManager.DiscoverIsland(data.currentIslandId);
+
+                // [카토그래피] 표식도 **RegenerateWorld 직후**에 되돌린다. 이 호출이 표식 저장소의
+                // 기준 worldSeed까지 함께 세우므로, 미니맵이 다음 프레임에 하는 월드 대조
+                // (MinimapUI.SyncMarkWorld)에서 방금 복원한 표식이 "다른 월드 것"으로 오해받아
+                // 지워지는 일이 없다. 표식 필드가 없는 옛 세이브는 빈 목록 = 표식 없음이 된다.
+                MakeGame.UI.MinimapUI.ReadMarksFrom(data.islandMarks, data.worldSeed);
             }
 
             // [엔드게임 보스] 보스 진행도는 **RegenerateWorld 직후**에 되돌린다. 위 재생성이
@@ -486,12 +567,72 @@ namespace MakeGame.Systems
             // [식량 루프] 반드시 RestoreStructures **뒤**여야 한다 - 그 안의 ClearExistingStructures가
             // 씬에 남아 있던 훈연기를 먼저 지운다(순서가 뒤집히면 방금 되살린 훈연기가 그대로 지워진다).
             RestoreSmokers(data);
+            // [농사] 훈연기와 같은 이유로 RestoreStructures **뒤**여야 한다 - 그 안의
+            // ClearExistingStructures가 씬에 남아 있던 밭을 먼저 지운다.
+            RestoreFarmPlots(data);
             RestoreResourceNodes(data);
             RestoreHazardsAndCreatures(data);
 
-            lastStatusMessage = $"불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
+            lastStatusMessage = $"슬롯 {slot} 불러오기 완료 ({System.DateTime.Now:HH:mm:ss})";
             AudioManager.Instance?.PlaySaveOrLoadFeedback(); // 불러오기 완료 확인음
-            Debug.Log("[SaveLoadController] 게임을 불러왔습니다.");
+            Debug.Log($"[SaveLoadController] 게임을 불러왔습니다(슬롯 {slot}).");
+        }
+
+        /// <summary>
+        /// 슬롯 하나의 요약("3일차 · 발견한 섬 4곳 · 08/18 21:40")을 만든다. 저장된 것이 없으면 false.
+        /// 타이틀/설정 화면이 슬롯 버튼을 만들 때만 호출한다(파일을 읽으므로 매 프레임 호출 금지).
+        ///
+        /// 경과 일수는 **씬의 SurvivalClock.secondsPerDay로 나눈다** - 하루 길이를 여기에 숫자로 적어두면
+        /// 씬 값이 바뀌는 날 조용히 어긋난다(이 프로젝트의 반복 사고 유형). 시계를 못 찾으면 일수를
+        /// 빼고 저장 시각만 보여준다 - 틀린 일수를 보여주는 것보다 낫다.
+        /// </summary>
+        public bool TryGetSlotSummary(int slot, out string summary)
+        {
+            summary = "";
+
+            string path = SlotFilePath(slot);
+            if (!File.Exists(path))
+                path = SlotBackupPath(slot);
+            if (!File.Exists(path))
+                return false;
+
+            string savedAt;
+            try
+            {
+                savedAt = File.GetLastWriteTime(path).ToString("MM/dd HH:mm");
+            }
+            catch (System.Exception)
+            {
+                savedAt = "";
+            }
+
+            SaveData data = ReadSaveData(path);
+            if (data == null)
+            {
+                // 파일은 있는데 못 읽는다. Load는 본 파일 → .bak 순으로 한 번 더 시도하므로 여기서
+                // "없음"으로 단정하지 않고, 사용자에게 상태만 알린다.
+                summary = string.IsNullOrEmpty(savedAt) ? "손상됨" : $"손상됨 · {savedAt}";
+                return true;
+            }
+
+            var clock = survivalClock != null ? survivalClock : FindAnyObjectByType<SurvivalClock>();
+            int islandCount = data.discoveredIslandIds != null ? data.discoveredIslandIds.Count : 0;
+
+            if (clock != null && clock.secondsPerDay > 0f)
+            {
+                int day = Mathf.FloorToInt(data.elapsedSeconds / clock.secondsPerDay) + 1;
+                summary = string.IsNullOrEmpty(savedAt)
+                    ? $"{day}일차 · 섬 {islandCount}곳"
+                    : $"{day}일차 · 섬 {islandCount}곳 · {savedAt}";
+            }
+            else
+            {
+                summary = string.IsNullOrEmpty(savedAt)
+                    ? $"섬 {islandCount}곳"
+                    : $"섬 {islandCount}곳 · {savedAt}";
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -796,6 +937,18 @@ namespace MakeGame.Systems
                     Destroy(smoker.gameObject);
             }
 
+            // [농사] 밭도 훈연기/제작 시설과 같은 이유로 FindObjectsByType을 쓰지 않는다 - 그것을 쓰면
+            // DontDestroyOnLoad로 살아 있는 설치 원본(FarmPlotTemplate)까지 지워버려, 불러오기 한 번
+            // 뒤부터는 밭키트를 아예 설치할 수 없게 된다(원본이 사라지면 placementPrefab이 파괴된
+            // 참조가 되고, EnsureKitPlacementTemplate은 "비어 있을 때만" 다시 채운다).
+            var farmPlots = FarmPlot.Active;
+            for (int i = farmPlots.Count - 1; i >= 0; i--)
+            {
+                FarmPlot plot = farmPlots[i];
+                if (plot != null)
+                    Destroy(plot.gameObject);
+            }
+
             foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Include))
                 Destroy(sh.gameObject);
 
@@ -1068,6 +1221,76 @@ namespace MakeGame.Systems
                     ToItemDataList(entry.pendingRaw),
                     ToItemDataList(entry.readyOutput),
                     entry.progressSeconds);
+            }
+        }
+
+        // ── 밭 (농사) ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 설치된 밭을 전부 data.farmPlots에 기록한다.
+        ///
+        /// **FindObjectsByType을 쓰지 않는다.** FarmPlot도 CraftStation/Smoker처럼 설치 원본(템플릿)을
+        /// DontDestroyOnLoad로 y = -5000에 세워 두는데, 그 원본까지 잡히면 저장할 때마다 지하에 밭이
+        /// 한 칸씩 기록되고 불러올 때마다 유령이 늘어난다. FarmPlot.Active는 원본을 등록하지 않는
+        /// 목록이라 그 함정을 구조적으로 피한다(SaveSmokers와 같은 규약).
+        ///
+        /// 아이템 이름은 한 글자도 싣지 않는다 - 작물 종류(int) 하나로 씨앗·수확물이 모두 결정되므로
+        /// (FarmPlot의 작물 표) 이름을 저장하면 같은 사실이 두 곳에 적혀 갈라질 자리만 생긴다.
+        /// </summary>
+        private void SaveFarmPlots(SaveData data)
+        {
+            var plots = FarmPlot.Active;
+            for (int i = 0; i < plots.Count; i++)
+            {
+                FarmPlot plot = plots[i];
+                if (plot == null)
+                    continue;
+
+                data.farmPlots.Add(new FarmPlotSaveEntry
+                {
+                    posX = plot.transform.position.x,
+                    posY = plot.transform.position.y,
+                    posZ = plot.transform.position.z,
+                    rotY = plot.transform.eulerAngles.y,
+                    hasCrop = plot.HasCrop,
+                    cropKind = (int)plot.CropKind,
+                    growthSeconds = plot.GrowthSeconds,
+                    wateredSecondsRemaining = plot.WateredSecondsRemaining,
+                });
+            }
+        }
+
+        /// <summary>
+        /// 저장된 밭을 되살린다. **RestoreStructures 뒤에 불러야 한다** - 그 안의
+        /// ClearExistingStructures가 씬에 남아 있던 밭을 먼저 정리하기 때문이다.
+        ///
+        /// 프리팹 필드를 새로 만들지 않는다(프리팹 에셋 자체가 없다 - AGENT_BRIEF 1장). 설치 경로와
+        /// 완전히 같은 절차로 코드로 세운다: 비활성으로 만들어 위치·회전을 채운 **다음** 켠다.
+        /// 활성 오브젝트에 AddComponent를 하면 그 자리에서 Awake가 돌아 아직 원점인 위치에서 지면
+        /// 스냅이 일어난다(RestoreSmokers/RestoreCraftStation과 같은 이유). 작물 상태는 Awake가
+        /// 외형을 조립한 **뒤**라야 포기가 제대로 서므로 SetActive 다음에 넣는다.
+        /// </summary>
+        private void RestoreFarmPlots(SaveData data)
+        {
+            if (data.farmPlots == null)
+                return;
+
+            foreach (var entry in data.farmPlots)
+            {
+                if (entry == null)
+                    continue;
+
+                var go = new GameObject("FarmPlot");
+                go.SetActive(false);
+                go.transform.SetPositionAndRotation(
+                    new Vector3(entry.posX, entry.posY, entry.posZ),
+                    Quaternion.Euler(0f, entry.rotY, 0f));
+
+                var plot = go.AddComponent<FarmPlot>();
+                go.SetActive(true);
+
+                plot.ApplySavedState(entry.hasCrop, entry.cropKind, entry.growthSeconds,
+                    entry.wateredSecondsRemaining);
             }
         }
 

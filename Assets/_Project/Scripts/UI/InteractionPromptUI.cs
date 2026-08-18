@@ -165,19 +165,30 @@ namespace MakeGame.UI
 
             // 조준 판정은 InteractionController가 실제 상호작용에 쓰는 그 메서드를 그대로 부른다
             // (UI 전용 레이캐스트 사본 금지 - 클래스 주석 참고).
-            if (!interaction.TryGetLookTarget(out GameObject target))
+            // 조준 대상이 없거나(바다를 바라보는 경우 - 바다 평면은 콜라이더가 지워져 있고 레이도
+            // 4m뿐이다) 대상에 붙일 문구가 없을 때만 낚시 안내가 들어간다.
+            //
+            // [낚시 - 분기 순서 규약] 이 자리는 **기존 어떤 분기도 가리지 않는다.** TryBuildPrompt가
+            // false를 돌려준 뒤, 즉 예전 코드가 프롬프트를 통째로 끄던 그 자리에만 끼어들기 때문이다.
+            // TryBuildPrompt 안(분기 사슬)에 넣지 않은 이유가 이것이다 - 거기 넣으면 순서에 따라
+            // E 동사를 가진 분기를 덮을 수 있다. 조준 대상이 잡히는 자리(뗏목 갑판 등)에서의 안내는
+            // 문장 끝에 붙는 꼬리말(BuildFishHint)이 맡는다.
+            // (&&로 이은 out 변수는 조건이 참인 분기 안에서 확실히 대입돼 있다 - 이 파일의
+            //  BuildingSystem.TryGetPieceTier 분기가 이미 쓰고 있는 것과 같은 형태다.)
+            if (interaction.TryGetLookTarget(out GameObject target)
+                && TryBuildPrompt(target, out string main, out string sub, out bool blocked))
             {
-                SetOpen(false);
+                ShowPrompt(main, sub, blocked);
                 return;
             }
 
-            if (!TryBuildPrompt(target, out string main, out string sub, out bool blocked))
+            if (TryBuildFishingPrompt(out string fishMain, out string fishSub, out bool fishBlocked))
             {
-                SetOpen(false);
+                ShowPrompt(fishMain, fishSub, fishBlocked);
                 return;
             }
 
-            ShowPrompt(main, sub, blocked);
+            SetOpen(false);
         }
 
         /// <summary>
@@ -319,6 +330,23 @@ namespace MakeGame.UI
             if (shelter != null)
                 return BuildShelterPrompt(shelter, inventory, key, out main, out sub, out blocked);
 
+            // [농사] 밭. 자리는 **E 동사를 가진 분기들 사이**이고, 위의 어떤 분기도 가리지 않는다 -
+            // 밭 오브젝트에는 상자/자원/사냥감/증류기/모닥불/훈연기/잔해/위험요소/쉼터 컴포넌트가
+            // 하나도 붙지 않기 때문이다(FarmPlot은 자기 오브젝트를 통째로 소유한다).
+            //
+            // ⚠️ InteractionController에는 대응 분기가 **없다**(그 파일은 이 작업의 락 밖이다). 그런데도
+            // 여기서 E를 약속해도 되는 이유는 ThrownWeapon 분기와 다르다: 밭은 E를 **자기가 직접 읽는다**
+            // (FarmPlot.TryHandleInteractKey - 조준 판정은 InteractionController.TryGetLookTarget을
+            // 그대로 빌려 오므로 화면이 잡는 대상과 키가 잡는 대상이 같은 레이 하나다). 그래서
+            // "화면은 E라는데 눌러도 아무 일이 없다"가 생기지 않는다.
+            //
+            // GetComponentInParent를 쓰는 이유는 상자/뗏목과 같다 - 지금은 루트에만 콜라이더가 있지만
+            // 나중에 시각 파츠에 콜라이더가 붙어도 같은 밭으로 이어지게 한다(FarmPlot 쪽 키 처리도
+            // 정확히 같은 조회를 쓴다 - 두 곳이 갈라지지 않게).
+            var farmPlot = target.GetComponentInParent<FarmPlot>();
+            if (farmPlot != null)
+                return BuildFarmPlotPrompt(farmPlot, inventory, key, out main, out sub, out blocked);
+
             // [제작대 3종] 조준하면 이름이라도 뜨게 한다. 자리는 **E 동사를 가진 분기 전부의 뒤,
             // 폴백 분기(건축 부품 승급 / 조타 / 뗏목)의 앞**이다. 근거 두 가지:
             //  (1) InteractionController에는 CraftStation 분기가 아예 없다(그 파일은 이 작업의 락 밖).
@@ -400,6 +428,103 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// [농사] 밭 프롬프트. 밭의 상태가 곧 E가 하는 일이라 세 갈래로 갈린다.
+        ///  · 빈 밭  → "[E] 야자씨앗 심기"      / "야자 묘목 · 3일이면 다 자란다"
+        ///  · 자라는 중 → "[E] 야자 묘목 물주기" / "성장 중 62% · 비가 오면 더 빨리 자란다"
+        ///    (물을 줄 수 없으면 회색으로 "야자 묘목 성장 중 62%" + 사유)
+        ///  · 다 자람 → "[E] 야자 묘목 수확"     / "코코넛 2~3개 · 씨앗을 일부 돌려받는다"
+        ///
+        /// **판정을 하나도 새로 만들지 않는다.** 심을 수 있는 씨앗은 FarmPlot.TryFindPlantableSeed,
+        /// 물주기 가능 여부는 FarmPlot.CanWater, 수확 가능 여부는 FarmPlot.CanHarvest, 비 보정은
+        /// FarmPlot.IsRainBoostActive — 전부 FarmPlot이 실제 동작에 쓰는 바로 그 메서드다
+        /// (ResourceNode.GetHarvestFailure의 결론만 받아 옮기는 것과 같은 규칙).
+        /// 넷 다 상태를 바꾸지 않아 매 갱신마다 호출해도 안전하다.
+        /// </summary>
+        private bool BuildFarmPlotPrompt(FarmPlot plot, PlayerInventory inventory, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            main = FarmPlot.DisplayName;
+            sub = "";
+            blocked = false;
+
+            // ── 빈 밭: 심기 ──────────────────────────────────────────────────────
+            if (!plot.HasCrop)
+            {
+                if (!FarmPlot.TryFindPlantableSeed(inventory, out ItemData seed, out FarmCropKind seedKind))
+                {
+                    blocked = true;
+                    sub = "심을 씨앗이 없다 - 야자씨앗 / 해조류씨앗 / 약초씨앗을 만들어라";
+                    return true;
+                }
+
+                main = $"{key} {seed.itemName} 심기";
+                sub = $"{FarmPlot.GetCropDisplayName(seedKind)} · " +
+                    $"{FormatGrowDays(FarmPlot.GetGrowDays(seedKind))}일이면 다 자란다";
+                return true;
+            }
+
+            string cropName = plot.CropDisplayName;
+
+            // ── 다 자람: 수확 ────────────────────────────────────────────────────
+            if (plot.IsRipe)
+            {
+                string yieldText = plot.TryGetYieldRange(out int minYield, out int maxYield)
+                    ? (minYield == maxYield ? $"{minYield}개" : $"{minYield}~{maxYield}개")
+                    : "";
+                ItemData harvest = plot.HarvestItem;
+                string harvestName = harvest != null ? harvest.itemName : "수확물";
+
+                if (!plot.CanHarvest(inventory))
+                {
+                    main = $"{cropName} 수확 가능";
+                    blocked = true;
+                    sub = harvest == null
+                        ? $"{harvestName} 아이템이 없어 수확할 수 없다"
+                        : "가방이 가득 찼다 - Tab에서 정리하거나 저장궤에 넣어라";
+                    return true;
+                }
+
+                main = $"{key} {cropName} 수확";
+                sub = $"{harvestName} {yieldText} · 씨앗을 일부 돌려받는다";
+                return true;
+            }
+
+            // ── 자라는 중: 물주기 ────────────────────────────────────────────────
+            // 진행도는 FarmPlot.Progress01(외형 단계가 보는 것과 같은 값)을 그대로 백분율로 옮긴다.
+            int percent = Mathf.Clamp(Mathf.FloorToInt(plot.Progress01 * 100f), 0, 99);
+            string growthText = $"성장 중 {percent}%";
+
+            if (FarmPlot.IsRainBoostActive)
+                growthText += " · 비가 와서 빨리 자란다";
+            else if (plot.IsWatered)
+                growthText += " · 물이 대어져 있다";
+
+            if (!plot.CanWater(inventory))
+            {
+                main = $"{cropName} {growthText}";
+                blocked = true;
+                sub = plot.IsWatered
+                    ? "물은 이미 충분하다"
+                    : $"{FarmPlot.WaterItemName} 1개가 있으면 물을 줘서 더 빨리 키울 수 있다";
+                return true;
+            }
+
+            main = $"{key} {cropName} 물주기";
+            sub = $"{growthText} · {FarmPlot.WaterItemName} 1개를 쓴다";
+            return true;
+        }
+
+        /// <summary>
+        /// 성장 일수를 "3" / "1.5"처럼 짧게 적는다(정수면 소수점을 붙이지 않는다).
+        /// </summary>
+        private static string FormatGrowDays(float days)
+        {
+            return Mathf.Approximately(days, Mathf.Round(days))
+                ? Mathf.RoundToInt(days).ToString()
+                : days.ToString("0.#");
+        }
+
+        /// <summary>
         /// [제작대 3종] 제작 시설 프롬프트. 예: "제작대" / "여기서 [V] 제작 창을 열면 전용 제작법이 열린다".
         ///
         /// **상호작용 키(E)를 안내하지 않는다** - ThrownWeapon 프롬프트와 같은 이유다. 이 시설의 사용법은
@@ -474,7 +599,9 @@ namespace MakeGame.UI
             }
 
             main = $"{key} 뗏목 제작";
-            sub = raft.DescribeState();
+            // [낚시] 갑판 위에서는 어디를 봐도 뗏목이 조준되므로 "대상 없음" 분기에 닿지 못한다.
+            // 물 위에서 낚시를 발견할 수 있는 유일한 자리라 꼬리말만 덧붙인다(조건이 안 맞으면 빈 문자열).
+            sub = raft.DescribeState() + BuildFishHint();
             return true;
         }
 
@@ -941,6 +1068,45 @@ namespace MakeGame.UI
             sub = $"{weapon.data.itemName} 사용 · 남은 체력 {hazard.currentHealth:F0}/{hazard.maxHealth:F0}"
                 + BuildThrowHint(inventory);
             return true;
+        }
+
+        /// <summary>
+        /// [낚시] 낚싯대를 들고 물을 겨누고 있을 때 뜨는 프롬프트("[Z] 낚시").
+        ///
+        /// **판정을 여기서 다시 만들지 않는다** - 낚싯대 보유·조준 방향·그 자리에 물이 있는지·성공률은
+        /// 전부 FishingSystem.TryDescribeCastPrompt가 실제 캐스팅과 **같은 코드**로 판정해 문장까지
+        /// 만들어 준다(이 파일의 대원칙: 대상 컴포넌트가 공개한 결론만 옮긴다).
+        /// 줄이 이미 나가 있는 동안에는 그쪽이 false를 돌려주므로 여기서도 아무것도 뜨지 않는다 -
+        /// 진행 상태는 FishingSystem 자신의 화면 중앙 위 패널이 이미 보여 준다(같은 안내의 중복 방지).
+        /// 키 표기는 문자열로 박지 않고 FishingSystem.FishingKey(= PlayerController.fishingKey)에서 읽는다.
+        /// </summary>
+        private bool TryBuildFishingPrompt(out string main, out string sub, out bool blocked)
+        {
+            main = "";
+            sub = "";
+            blocked = false;
+
+            FishingSystem fishing = FishingSystem.Active;
+            if (fishing == null)
+                return false;
+
+            return fishing.TryDescribeCastPrompt($"[{fishing.FishingKey}]", out main, out sub, out blocked);
+        }
+
+        /// <summary>
+        /// [낚시] 낚시가 지금 가능할 때만 붙는 " · [Z] 낚시" 꼬리말.
+        ///
+        /// 뗏목 갑판처럼 **어디를 봐도 무언가가 조준되는 자리**에서는 위의 "대상 없음" 분기에 절대
+        /// 도달하지 못해 낚시를 발견할 방법이 없다. 그 구멍만 메운다(창 투척의 BuildThrowHint와 같은 방식).
+        /// 조건이 안 맞으면 빈 문자열이라 기존 문장이 한 글자도 달라지지 않는다.
+        /// </summary>
+        private static string BuildFishHint()
+        {
+            FishingSystem fishing = FishingSystem.Active;
+            if (fishing == null)
+                return "";
+
+            return fishing.GetHintSuffix($"[{fishing.FishingKey}]");
         }
 
         /// <summary>

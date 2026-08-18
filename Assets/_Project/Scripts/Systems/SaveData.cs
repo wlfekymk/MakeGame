@@ -225,6 +225,93 @@ namespace MakeGame.Systems
         [Header("훈연기 (식량 루프)")]
         [Tooltip("설치된 훈연기 각각의 위치·회전·불 상태·훈연 진행 상황.")]
         public List<SmokerSaveEntry> smokers = new List<SmokerSaveEntry>();
+
+        // ── 지도 표식 (카토그래피) ────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례 - bossDefeated·smokers를 추가할 때와 완전히 같은
+        // 판단). 이 필드가 없는 옛 세이브는 초기화식대로 **빈 목록**으로 읽히고, 그것이 정확히
+        // "아직 지도에 아무 표식도 남기지 않았다"는 뜻이라 마이그레이션이 필요 없다.
+        // saveContentVersion도 올리지 않는다 - 없으면 없는 대로 정답이 나오므로, 올리면 옛 세이브에
+        // 불필요한 안내 로그만 뜬다(bossDefeated와 같은 근거).
+        //
+        // **표식이 없는 섬은 아예 항목을 만들지 않는다**(mark == 0은 저장하지 않는다). 섬이 50개라도
+        // 실제로 표시를 남긴 몇 개만 실리므로 파일이 커지지 않고, 로드 쪽도 "목록에 없으면 표식 없음"
+        // 한 줄로 끝난다.
+        //
+        // discoveredIslandIds와 나란히 두고 싶지만 그 자리는 파일 앞이라 손댈 수 없다(맨 끝 추가만).
+
+        [Header("지도 표식 (카토그래피)")]
+        [Tooltip("전체 지도([M])에서 섬에 남긴 표식. 표식을 지운 섬은 목록에 실리지 않는다.")]
+        public List<IslandMarkSaveEntry> islandMarks = new List<IslandMarkSaveEntry>();
+
+        // ── 밭 (농사) ─────────────────────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례 - bossDefeated·smokers·islandMarks를 추가할 때와
+        // 완전히 같은 판단). 이 필드가 없는 옛 세이브는 초기화식대로 **빈 목록**으로 읽히고, 그것이
+        // 정확히 "아직 밭을 하나도 놓지 않았다"는 뜻이라 마이그레이션이 필요 없다.
+        // saveContentVersion도 올리지 않는다 - 그 값은 "기존 항목의 복원 규칙이 달라졌다"는 신호인데
+        // (뗏목 v1→v2가 그런 경우다), 여기서는 기존 어떤 항목의 복원 규칙도 한 줄 바뀌지 않았다.
+        // 올리면 옛 세이브에 불필요한 안내 로그만 뜬다(bossDefeated·smokers와 같은 근거).
+        //
+        // **structures(StructureSaveEntry) 목록에 넣지 않고 별도 목록으로 나가는 이유는 훈연기와 같다:**
+        // 그쪽에 넣으려면 종류 구분자인 Data.StructureType에 값을 추가해야 하는데 그 파일이 이 작업의
+        // 락 밖이다. 목록을 따로 두면 enum을 한 글자도 건드리지 않고 저장할 수 있다.
+
+        [Header("밭 (농사)")]
+        [Tooltip("설치된 밭 각각의 위치·회전과 심어 둔 작물·성장 진행도.")]
+        public List<FarmPlotSaveEntry> farmPlots = new List<FarmPlotSaveEntry>();
+    }
+
+    /// <summary>
+    /// 밭 한 칸의 저장 항목.
+    ///
+    /// 작물 종류를 enum(FarmCropKind)이 아니라 **int로 저장한다** - raftInstalledParts / islandMarks와
+    /// 같은 규약이다. 저장 계층에서 정수로 고정해 두면 나중에 열거자 이름이 바뀌어도 파일 형식이
+    /// 흔들리지 않는다. 다만 **값 자체는 여전히 고정이다**(FarmCropKind 주석: 추가는 맨 끝에만) -
+    /// 중간에 끼워 넣으면 저장된 야자 묘목이 해조류로 되살아난다. 모르는 값(미래 버전 파일)은
+    /// FarmPlot.ApplySavedState가 "빈 밭"으로 떨어뜨린다.
+    ///
+    /// **마지막 정산 시각은 저장하지 않는다.** 불러오면 시계(elapsedSeconds)도 저장 시점으로 함께
+    /// 되돌아가므로, 복원 후 첫 정산에서 현재 시계로 기준점을 다시 잡으면 경과가 정확히 0이 된다.
+    /// 저장했다가 어긋나면 없던 시간이 통째로 자라 버리는 쪽이 더 위험하다(Shelter의 저장궤 정산이
+    /// lastSettleSeconds를 일부러 빼 둔 것과 완전히 같은 판단이다).
+    /// </summary>
+    [System.Serializable]
+    public class FarmPlotSaveEntry
+    {
+        [Header("위치/회전")]
+        public float posX;
+        public float posY;
+        public float posZ;
+        public float rotY;
+
+        [Header("심어 둔 작물")]
+        [Tooltip("작물이 심겨 있는지. false이면 아래 두 값은 무시된다(빈 밭).")]
+        public bool hasCrop;
+
+        [Tooltip("작물 종류(= FarmCropKind의 정수값). 0 = 야자 묘목 · 1 = 해조류 · 2 = 약초.")]
+        public int cropKind;
+
+        [Tooltip("지금까지 쌓인 성장 시간(게임 내 초). 작물의 총 성장 시간에 도달하면 수확할 수 있다.")]
+        public float growthSeconds;
+
+        [Tooltip("물주기 효과가 남아 있는 시간(게임 내 초). 0이면 마른 상태다.")]
+        public float wateredSecondsRemaining;
+    }
+
+    /// <summary>
+    /// 섬 하나에 남긴 지도 표식(카토그래피) 저장 항목.
+    ///
+    /// 섬 자체는 worldSeed로 다시 만들어지므로(IslandInstance는 매번 새 객체다) 표식도
+    /// discoveredIslandIds와 **같은 방식**으로 islandId를 키 삼아 따로 저장해 두었다가 로드 후
+    /// 되돌린다. 표식 종류를 enum이 아니라 int로 저장하는 이유는 raftInstalledParts와 같다 -
+    /// 나중에 열거자 이름이 바뀌어도 저장 파일 형식이 흔들리지 않게 저장 계층에서는 정수로 고정한다.
+    /// 값 규약(MinimapUI.IslandMark): 0 = 없음 · 1 = 고갈됨 · 2 = 자원 있음 · 3 = 위험.
+    /// 모르는 값(미래 버전 파일)은 로드 쪽에서 "없음"으로 떨어진다.
+    /// </summary>
+    [System.Serializable]
+    public class IslandMarkSaveEntry
+    {
+        public int islandId;
+        public int mark;
     }
 
     /// <summary>

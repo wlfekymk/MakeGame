@@ -66,6 +66,15 @@ namespace MakeGame.Player
         // 마우스: 좌/우 버튼은 **건축 모드 안에서만** 쓰인다(BuildingSystem.Update는 buildMode가
         // 꺼져 있으면 그 두 줄에 도달하지 않는다). 그래서 건축 모드에서만 투척을 막으면 충돌이 없다.
         // X와 T는 프로젝트 전체에서 한 번도 쓰이지 않는다(KeyCode 전수 grep 확인).
+        //
+        // [낚시 - 다시 전수 대조] 위 목록에 X(회피)와 T(투척)가 더해진 뒤 남은 빈 키를 다시 세었다.
+        // 사용 중: E R C G F Tab V J M B Q X T Space Esc LeftCtrl LeftShift RightShift 1~7 = - +
+        // Keypad+/- F3~F11 (KeyCode 전수 grep + 씬 직렬화 키 값 전수 확인: toggleKey 118/9 ·
+        // cycleFilterKey 102 · diveKey 306 · interactKey 101 · cookKey 114 · consumeKey 99 ·
+        // placeKey 103 · continueKey 32 · saveKey 286 · loadKey 290 · restartKey 114 · toggleKey
+        // 109/27/284 · zoomIn 61 · zoomOut 45). WASD는 축 입력이라 제외한다.
+        // → 왼손이 닿는 범위에서 비어 있는 글자 키는 **Z 하나뿐**이다(H I K L N O P U Y는 비어
+        //   있지만 전부 오른손 자리라, 이동하면서 두 번 눌러야 하는 낚시 키로는 맞지 않는다).
 
         [Header("전투 - 회피 구르기")]
         [Tooltip("짧게 대시(구르기)하는 키. X는 프로젝트에서 쓰이지 않는 빈 키다.")]
@@ -108,10 +117,22 @@ namespace MakeGame.Player
         [Tooltip("머리가 물속일 때 투척 속도에 곱하는 배율. 사거리가 눈에 띄게 짧아진다.")]
         public float underwaterThrowSpeedMultiplier = 0.5f;
 
+        // ── 낚시 ─────────────────────────────────────────────────────────────────────
+        //
+        // [왜 여기서 입력을 받는가] 회피/투척과 같은 이유다. 분기 순서 규약을 가진
+        // InteractionController.cs는 이 작업의 락 밖이고, 낚시는 E(상호작용)와 뜻이 겹치지 않는
+        // 별개의 활동이라 이동의 주인인 이쪽에서 전용 키로 받는 것이 제자리다.
+        // **기존 물고기 사냥(E키, HuntableCreature)은 한 줄도 건드리지 않는다** - 낚시는 추가 선택지다.
+
+        [Header("낚시")]
+        [Tooltip("찌를 던지고, 입질이 오면 챔질하는 키. Z는 위 전수 대조에서 남은 유일한 빈 왼손 키다.")]
+        public KeyCode fishingKey = KeyCode.Z;
+
         [Tooltip("사냥/전투 경험치를 받을 스킬 컴포넌트. 비워두면 같은 오브젝트에서 자동으로 찾는다.")]
         public PlayerSkills playerSkills;
 
-        [Tooltip("마우스 좌우/상하 회전 감도")]
+        [Tooltip("마우스 좌우/상하 회전 감도. 씬에 직렬화된 이 값이 기준선이고, 설정 화면의 감도 슬라이더는" +
+            " 여기에 배율(GameSettings.MouseSensitivity, 기본 1.0)로 곱해진다 - 이 값을 갈아치우지 않는다.")]
         public float lookSensitivity = 2f;
 
         [Tooltip("시점 카메라 (상하 회전은 이 카메라에만 적용한다)")]
@@ -184,6 +205,15 @@ namespace MakeGame.Player
         private Vector3 dodgeDirection;
         private float throwCooldownTimer;
 
+        // ── [설정 - 난이도] 배율을 곱하기 전의 기준 감소 속도. 한 번만 기억하고 항상 여기에 곱한다
+        //    (ApplyDifficultyToSurvival 주석 - 현재 값에 곱하면 배율이 누적된다).
+        private bool difficultyBaseCaptured;
+        private float baseHungerDecayPerSecond;
+        private float baseThirstDecayPerSecond;
+
+        // [낚시] 런타임에 이 오브젝트에 붙는 낚시 시스템(HookFishing 참고). 씬 직렬화는 없다.
+        private MakeGame.Systems.FishingSystem fishing;
+
         /// <summary>필요한 컴포넌트 참조를 캐싱하고, 카메라 흔들림 컴포넌트를 붙인다.</summary>
         private void Awake()
         {
@@ -199,6 +229,76 @@ namespace MakeGame.Player
                 playerSkills = GetComponent<PlayerSkills>();
             if (playerSkills == null)
                 playerSkills = FindAnyObjectByType<PlayerSkills>();
+
+            // 인벤토리/스킬 참조가 전부 확정된 **뒤에** 붙인다(그 둘을 그대로 넘겨주기 때문이다).
+            HookFishing();
+
+            // [설정] 난이도가 바뀌면 즉시 허기/갈증 감소 속도를 다시 계산한다. 설정 창이 닫혀 있는
+            // 동안에는 아무도 발행하지 않으므로 비용이 0이다(GameSettings.Changed 주석).
+            MakeGame.Systems.GameSettings.Changed += ApplyDifficultyToSurvival;
+        }
+
+        /// <summary>
+        /// [설정 - 난이도] 난이도 배율을 생존 수치에 적용한다.
+        ///
+        /// **Awake가 아니라 Start에서 처음 적용하는 이유**: 기준값(base*)을 SurvivalStats에서 읽어 두는데,
+        /// SurvivalStats.Awake가 balanceConfig 폴백으로 그 필드들을 채울 수 있어(0 이하인 필드만 채운다)
+        /// Awake 실행 순서에 따라 아직 채워지지 않은 값을 기준으로 잡을 위험이 있다. Start는 모든 Awake가
+        /// 끝난 뒤에 돌므로 그 경합이 구조적으로 사라진다.
+        ///
+        /// 타이틀 화면 동안 이 컴포넌트는 꺼져 있어(MainMenuController.SetGameplayEnabled) Start가 게임
+        /// 시작 시점까지 미뤄질 수 있지만, 그동안은 Time.timeScale = 0이라 허기/갈증이 한 톨도 줄지 않는다.
+        /// </summary>
+        private void Start()
+        {
+            ApplyDifficultyToSurvival();
+        }
+
+        /// <summary>
+        /// [설정 - 난이도] 허기/갈증 감소 속도에 난이도 배율을 곱한다(보통 = 1.0 = 기존 밸런스 그대로).
+        ///
+        /// **원본 값을 한 번만 기억해 두고 항상 그 값에 곱한다.** 현재 값에 계속 곱하면 설정 창을 여닫을
+        /// 때마다 배율이 누적돼 며칠 만에 굶어 죽는다(이 프로젝트의 쉼터 roofHeight 누적 버그와 같은 유형).
+        ///
+        /// 위협 피해 배율(GameSettings.ThreatDamageMultiplier)은 여기서 걸지 않는다 - 피해 진입점인
+        /// SurvivalStats.TakeDamage / CombatSystem이 이 작업의 락 밖이다(GameSettings 쪽 주석에 인계 사항).
+        /// </summary>
+        private void ApplyDifficultyToSurvival()
+        {
+            if (survivalStats == null)
+                return;
+
+            if (!difficultyBaseCaptured)
+            {
+                baseHungerDecayPerSecond = survivalStats.hungerDecayPerSecond;
+                baseThirstDecayPerSecond = survivalStats.thirstDecayPerSecond;
+                difficultyBaseCaptured = true;
+            }
+
+            survivalStats.hungerDecayPerSecond =
+                baseHungerDecayPerSecond * MakeGame.Systems.GameSettings.HungerDrainMultiplier;
+            survivalStats.thirstDecayPerSecond =
+                baseThirstDecayPerSecond * MakeGame.Systems.GameSettings.ThirstDrainMultiplier;
+        }
+
+        /// <summary>
+        /// [낚시] 낚시 시스템을 이 오브젝트에 런타임 부착하고 참조를 배선한다.
+        ///
+        /// 씬 편집이 이 작업의 락 밖이라 FishingSystem은 씬에 인스턴스를 둘 수 없다. CameraShake를
+        /// 카메라에 런타임 부착하는 EnsureCameraShake와 같은 수법으로, 인벤토리·스킬·카메라를 이미
+        /// 손에 들고 있는 이쪽이 컴포넌트를 붙이고 참조까지 넘겨준다.
+        ///
+        /// Awake는 컴포넌트가 비활성(enabled = false, 타이틀 화면)이어도 호출되므로 부착은 항상 일어난다.
+        /// 이미 붙어 있으면(중복 Awake·수동 배치) 다시 붙이지 않고 배선만 갱신한다.
+        /// </summary>
+        private void HookFishing()
+        {
+            if (fishing == null)
+                fishing = GetComponent<MakeGame.Systems.FishingSystem>();
+            if (fishing == null)
+                fishing = gameObject.AddComponent<MakeGame.Systems.FishingSystem>();
+
+            fishing.Configure(this, inventory, playerSkills, cameraTransform);
         }
 
         /// <summary>
@@ -209,6 +309,11 @@ namespace MakeGame.Player
         {
             if (inventory != null)
                 inventory.InventoryChanged -= RefreshPassiveEquipment;
+
+            // 정적 이벤트라 구독을 풀지 않으면 파괴된 컴포넌트가 계속 불려 나온다(설정을 바꿀 때마다
+            // MissingReferenceException). GameSettings 쪽 R1 리셋 훅도 구독자를 비우지만, 그건
+            // 플레이 세션 경계에서만 도는 안전망이므로 여기서 정직하게 푼다.
+            MakeGame.Systems.GameSettings.Changed -= ApplyDifficultyToSurvival;
         }
 
         /// <summary>
@@ -366,6 +471,13 @@ namespace MakeGame.Player
             var building = MakeGame.Systems.BuildingSystem.Instance;
             if (throwPressed && (building == null || !building.IsBuildModeOn))
                 TryThrowSpear();
+
+            // [낚시] 캐스팅과 챔질이 같은 키다. 단계에 따라 뜻이 갈리는 판정은 전부 FishingSystem이
+            // 하고(단일 소스), 여기서는 "눌렸다"만 넘긴다. 위 게이트(timeScale 0 · 커서 잠금 해제 ·
+            // 뗏목 조종 중)를 이미 통과한 뒤라 창이 열려 있거나 멈춘 화면에서는 도달하지 않는다.
+            // 건축 모드는 막지 않는다 - Z는 건축이 쓰는 입력이 아니다(좌/우클릭과 1~7만 쓴다).
+            if (fishing != null && Input.GetKeyDown(fishingKey))
+                fishing.HandleFishingKey();
         }
 
         /// <summary>
@@ -554,8 +666,17 @@ namespace MakeGame.Player
                 return;
             }
 
-            float mouseX = Input.GetAxis("Mouse X") * lookSensitivity;
-            float mouseY = Input.GetAxis("Mouse Y") * lookSensitivity;
+            // [설정] 마우스 감도 배율(0.3~3.0, 기본 1.0)과 Y축 반전.
+            // 씬에 직렬화된 lookSensitivity는 **기준선으로 그대로 두고 배율만 곱한다** - 씬 값을 덮어쓰면
+            // 이 프로젝트가 반복해서 낸 "코드와 씬 값이 갈라지는" 사고가 그대로 재현된다.
+            // GameSettings의 게터는 정적 필드 반환이라(PlayerPrefs는 최초 1회만 읽는다) 프레임당 할당이 0이다.
+            float sensitivity = lookSensitivity * MakeGame.Systems.GameSettings.MouseSensitivity;
+            float mouseX = Input.GetAxis("Mouse X") * sensitivity;
+            float mouseY = Input.GetAxis("Mouse Y") * sensitivity;
+
+            // 반전은 상하(피치)에만 건다 - 좌우 반전은 어떤 게임에도 없는 설정이라 혼란만 준다.
+            if (MakeGame.Systems.GameSettings.InvertLookY)
+                mouseY = -mouseY;
 
             transform.Rotate(Vector3.up, mouseX);
 

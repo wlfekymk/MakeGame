@@ -172,13 +172,196 @@ namespace MakeGame.UI
             public int islandId = -1;
         }
 
-        /// <summary>섬 목록의 한 줄(정보 텍스트 + 이동 버튼).</summary>
+        /// <summary>섬 목록의 한 줄(정보 텍스트 + 표식 버튼 + 이동 버튼).</summary>
         private class IslandRow
         {
             public GameObject rowGo;
             public Text infoLabel;
             public Button travelButton;
+            public Button markButton;
+            public Text markLabel;
             public int islandId = -1;
+            public int shownMark = -1; // 마지막으로 라벨에 반영한 표식(바뀔 때만 문자열을 갈아 끼운다)
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
+        // 카토그래피 (지도 표식)
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 섬에 남길 수 있는 표식. 값은 **세이브 파일에 정수로 그대로 들어가므로**(IslandMarkSaveEntry)
+        /// 기존 값의 숫자를 바꾸거나 중간에 삽입하면 옛 세이브의 표식이 다른 뜻으로 바뀐다.
+        /// 새 표식은 반드시 **맨 뒤에만** 추가한다(BossKind와 같은 규칙).
+        /// </summary>
+        public enum IslandMark
+        {
+            None = 0,
+            Depleted = 1,      // 고갈됨 - 다 캤으니 다시 오지 않아도 된다
+            HasResources = 2,  // 자원 있음 - 남은 것이 있다
+            Danger = 3,        // 위험 - 상어/보스/맹수
+        }
+
+        /// <summary>표식 순환 순서(버튼을 누를 때마다 다음 값). 마지막에서 다시 None으로 돌아온다.</summary>
+        private const int IslandMarkCount = 4;
+
+        /// <summary>
+        /// 섬별 표식 저장소. **static인 이유**: 섬(IslandInstance)은 RegenerateWorld마다 통째로
+        /// 새로 만들어지므로 거기에 필드를 달면 불러오기 한 번에 표식이 전부 날아간다
+        /// (isDiscovered를 SaveData.discoveredIslandIds로 따로 들고 있는 것과 완전히 같은 이유).
+        /// islandId를 키로 UI 계층에 들고 있다가 SaveLoadController가 저장/복원한다.
+        /// </summary>
+        private static readonly Dictionary<int, int> islandMarkStore = new Dictionary<int, int>();
+
+        /// <summary>
+        /// 표식 저장소가 어느 월드의 것인지. 한 플레이 세션 안에서 새 게임/불러오기로 worldSeed가
+        /// 바뀌면(= 완전히 다른 섬 배치) 옛 표식이 엉뚱한 섬에 붙으므로 통째로 비운다.
+        /// static은 씬을 다시 로드해도 살아남기 때문에 이 가드가 없으면 표식이 세계를 넘어 샌다.
+        /// </summary>
+        private static int markStoreWorldSeed;
+        private static bool markStoreSeedKnown;
+
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 표식 저장소가 이전 실행의 값을 들고 시작하지
+        /// 않게 초기 상태로 되돌린다(R1 규칙).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCache()
+        {
+            islandMarkStore.Clear();
+            markStoreWorldSeed = 0;
+            markStoreSeedKnown = false;
+            spritesLoaded = false;
+            dotSprite = null;
+            ringSprite = null;
+            arrowSprite = null;
+            hasSavedMapPosition = false;
+            savedMapPosition = Vector2.zero;
+        }
+
+        /// <summary>
+        /// 표식 저장소가 지금 월드의 것인지 확인하고, 다른 월드면 비운다. 매 프레임 호출되지만
+        /// 정상 경로에서는 int 비교 한 번이라 비용이 없다(할당 0).
+        /// </summary>
+        public static void SyncMarkWorld(int worldSeed)
+        {
+            if (markStoreSeedKnown && markStoreWorldSeed == worldSeed)
+                return;
+
+            if (markStoreSeedKnown)
+                islandMarkStore.Clear(); // 다른 월드로 갈아탔다 - 옛 표식은 의미가 없다
+
+            markStoreWorldSeed = worldSeed;
+            markStoreSeedKnown = true;
+        }
+
+        /// <summary>섬에 남긴 표식(없으면 None). 나침반 띠(CompassUI)도 이것을 읽어 표식 색을 맞춘다.</summary>
+        public static IslandMark GetIslandMark(int islandId)
+        {
+            if (islandMarkStore.TryGetValue(islandId, out int value)
+                && value > 0 && value < IslandMarkCount)
+                return (IslandMark)value;
+            return IslandMark.None;
+        }
+
+        /// <summary>표식을 지정한다. None이면 항목을 아예 지운다(세이브에도 실리지 않는다).</summary>
+        public static void SetIslandMark(int islandId, IslandMark mark)
+        {
+            if (mark == IslandMark.None)
+                islandMarkStore.Remove(islandId);
+            else
+                islandMarkStore[islandId] = (int)mark;
+        }
+
+        /// <summary>표식을 다음 값으로 돌린다(없음 → 고갈됨 → 자원 있음 → 위험 → 없음).</summary>
+        public static IslandMark CycleIslandMark(int islandId)
+        {
+            var next = (IslandMark)(((int)GetIslandMark(islandId) + 1) % IslandMarkCount);
+            SetIslandMark(islandId, next);
+            return next;
+        }
+
+        /// <summary>
+        /// 저장용: 표식이 있는 섬만 목록에 싣는다(SaveLoadController.Save가 부른다).
+        /// 넘어온 목록은 먼저 비운다 - 두 번 저장해도 항목이 겹쳐 쌓이지 않는다.
+        /// </summary>
+        public static void WriteMarksTo(List<IslandMarkSaveEntry> target)
+        {
+            if (target == null)
+                return;
+
+            target.Clear();
+            foreach (var pair in islandMarkStore)
+            {
+                if (pair.Value <= 0 || pair.Value >= IslandMarkCount)
+                    continue;
+                target.Add(new IslandMarkSaveEntry { islandId = pair.Key, mark = pair.Value });
+            }
+        }
+
+        /// <summary>
+        /// 복원용: 저장된 표식으로 저장소를 통째로 교체한다(SaveLoadController.Load가 부른다).
+        /// **RegenerateWorld 뒤에 부른다** - 그래야 여기서 세운 worldSeed가 실제로 만들어진 월드와
+        /// 일치한다. 목록이 null이거나 비어 있으면(표식 필드가 없는 옛 세이브) 그냥 빈 상태가 되고,
+        /// 그것이 정확히 "그 세이브에는 표식이 없었다"는 뜻이라 마이그레이션이 필요 없다.
+        /// 모르는 값(미래 버전 파일)은 조용히 버린다.
+        /// </summary>
+        public static void ReadMarksFrom(List<IslandMarkSaveEntry> source, int worldSeed)
+        {
+            islandMarkStore.Clear();
+            markStoreWorldSeed = worldSeed;
+            markStoreSeedKnown = true;
+
+            if (source == null)
+                return;
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                var entry = source[i];
+                if (entry == null || entry.mark <= 0 || entry.mark >= IslandMarkCount)
+                    continue;
+                islandMarkStore[entry.islandId] = entry.mark;
+            }
+        }
+
+        /// <summary>표식의 짧은 한글 이름(목록 버튼용). None은 버튼의 기본 문구다.</summary>
+        private static string GetMarkButtonLabel(IslandMark mark)
+        {
+            switch (mark)
+            {
+                case IslandMark.Depleted: return "고갈";
+                case IslandMark.HasResources: return "자원";
+                case IslandMark.Danger: return "위험";
+                default: return "표식";
+            }
+        }
+
+        /// <summary>정보 줄에 덧붙일 표식 꼬리표. 표식이 없으면 빈 문자열이다.</summary>
+        private static string GetMarkTag(IslandMark mark)
+        {
+            switch (mark)
+            {
+                case IslandMark.Depleted: return "  ·  [고갈됨]";
+                case IslandMark.HasResources: return "  ·  [자원 있음]";
+                case IslandMark.Danger: return "  ·  [위험]";
+                default: return "";
+            }
+        }
+
+        /// <summary>
+        /// 표식 색. 새 색을 만들지 않는다(ArtDirection 1장) - 이미 이 파일이 쓰고 있는 세 색이다.
+        /// 고갈됨 = NeutralGray(다 끝난 것), 자원 있음 = 안내 금색(MinimapUI.statusLabel과 같은 값),
+        /// 위험 = DangerRed. **선택 표시(MedicGreen)와 겹치지 않는 세 색**이라 링 하나로 둘을
+        /// 동시에 구분할 수 있다(선택이 표식보다 우선).
+        /// </summary>
+        public static Color GetIslandMarkColor(IslandMark mark)
+        {
+            switch (mark)
+            {
+                case IslandMark.Depleted: return NeutralGray;
+                case IslandMark.HasResources: return new Color(1f, 0.9f, 0.4f, 1f);
+                case IslandMark.Danger: return DangerRed;
+                default: return NeutralGray;
+            }
         }
 
         // 스프라이트는 한 번만 읽어 캐시한다(매 표식 생성마다 Resources.Load를 부르지 않는다).
@@ -470,6 +653,10 @@ namespace MakeGame.UI
             if (worldMapManager == null || player == null || radarContent == null)
                 return;
 
+            // [카토그래피] 표식 저장소가 지금 월드의 것인지 확인한다(int 비교 1회 - 할당 0).
+            // 한 세션 안에서 새 게임/불러오기로 월드가 갈리면 옛 표식이 엉뚱한 섬에 붙으므로 비운다.
+            SyncMarkWorld(worldMapManager.worldSeed);
+
             // UI의 Z축 회전은 반시계가 양수라, 시계 방향으로 도는 Y축 오일러각과 부호가 반대다.
             if (playerArrowRt != null)
                 playerArrowRt.localEulerAngles = new Vector3(0f, 0f, -player.eulerAngles.y);
@@ -577,6 +764,13 @@ namespace MakeGame.UI
             Color fillColor = !revealed ? LandUnknown : (isCurrent ? LandCurrent : LandKnown);
             Color ringColor = !revealed ? RingUnknown : (isCurrent ? RingCurrent : RingKnown);
 
+            // [카토그래피] 표식이 있는 섬은 **윤곽 링의 색**으로 알린다 - 미니맵과 전체 지도가 같은
+            // ApplyMarkerVisual을 지나므로 두 화면에 한 번에 반영되고, 오브젝트가 하나도 늘지 않는다.
+            // 미탐사 섬에는 칠하지 않는다(표식을 남기려면 먼저 가 봐야 한다 - 정보 누출 금지).
+            IslandMark mark = revealed ? GetIslandMark(island.islandId) : IslandMark.None;
+            if (mark != IslandMark.None)
+                ringColor = GetIslandMarkColor(mark);
+
             if (isSelected)
                 ringColor = MedicGreen; // 선택 표시는 인벤토리 선택 테두리와 같은 색·같은 의미로 통일
 
@@ -659,7 +853,19 @@ namespace MakeGame.UI
                 // (매 갱신마다 Remove/Add를 반복하지 않기 위함).
                 marker.hitButton.onClick.AddListener(() =>
                 {
+                    // [카토그래피] Shift를 누른 채 클릭하면 표식을 순환시킨다(없음 → 고갈됨 →
+                    // 자원 있음 → 위험 → 없음). 맨 클릭의 뜻(목적지 선택)은 한 글자도 바꾸지 않는다 -
+                    // 이 창의 클릭은 이미 "이동 목적지 고르기"라는 의미가 굳어 있어서, 거기에 표식을
+                    // 얹으면 지도를 짚어보는 것만으로 표식이 뒤바뀐다. 목록의 [표식] 버튼도 같은
+                    // 함수를 부르므로 조작 경로가 둘이어도 규칙은 하나다.
+                    if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                    {
+                        if (worldMapManager != null && IsRevealed(worldMapManager.GetIsland(marker.islandId)))
+                            CycleIslandMark(marker.islandId);
+                    }
+
                     selectedIslandId = marker.islandId;
+                    mapRefreshTimer = 0f; // 표식 변화를 다음 프레임에 바로 반영한다
                     RefreshChecklist();
                 });
             }
@@ -852,7 +1058,7 @@ namespace MakeGame.UI
         {
             float columnX = WindowPadding + MapViewSize + 14f;
 
-            var header = UIBuilder.CreateText(mapWindowRt, "ListHeader", "섬 목록 · 클릭하면 지도에서 찾아준다", 12, NeutralGray, TextAnchor.MiddleLeft);
+            var header = UIBuilder.CreateText(mapWindowRt, "ListHeader", "섬 목록 · [표식]으로 고갈/자원/위험 표시 (지도에선 Shift+클릭)", 12, NeutralGray, TextAnchor.MiddleLeft);
             header.raycastTarget = false;
             header.horizontalOverflow = HorizontalWrapMode.Overflow;
             header.rectTransform.anchorMin = new Vector2(0f, 1f);
@@ -1133,8 +1339,10 @@ namespace MakeGame.UI
                     // 340m 간격 무리를 이루는데, 지도 축척(약 0.02px/m)에서 표식이 7px 간격이 되므로
                     // 무리마다 "?" 수십 장이 같은 자리에 겹쳐 잉크 얼룩이 된다. 미탐사 섬의 존재는
                     // 검은 원 표식이 이미 알리고 있어 정보 손실이 없다.
+                    // [카토그래피] 표식이 있으면 이름표에도 꼬리표를 붙인다(링 색과 이중으로 알린다 -
+                    // 색만으로는 야간·색맹 조건에서 세 표식이 갈리지 않는다).
                     marker.label.text = revealed
-                        ? $"섬 {island.islandId} · {GetSizeKoreanName(island.size)}{(isCurrent ? " (현재 위치)" : "")}"
+                        ? $"섬 {island.islandId} · {GetSizeKoreanName(island.size)}{(isCurrent ? " (현재 위치)" : "")}{GetMarkTag(GetIslandMark(island.islandId))}"
                         : "";
                 }
             }
@@ -1183,6 +1391,12 @@ namespace MakeGame.UI
                 // 읽는다 - 호버 콜백과 같은 방식). 예전처럼 여기서 RemoveAll/Add를 반복하면 50행 ×
                 // 0.2초 주기 = 초당 클로저 250개 할당이라 지도를 열어두는 내내 GC를 데운다.
                 row.islandId = island.islandId;
+
+                // [카토그래피] 표식은 가본 섬에만 남길 수 있다. 라벨 문자열은 표식이 실제로
+                // 바뀐 행에서만 갈아 끼운다(0.2초 주기 × 50행에서 매번 새 문자열을 만들지 않는다).
+                if (row.markButton != null)
+                    row.markButton.interactable = revealed;
+                RefreshMarkButton(row);
             }
 
             for (int i = islands.Count; i < islandRows.Count; i++)
@@ -1192,6 +1406,26 @@ namespace MakeGame.UI
                 statusLabel.text = lastTravelStatus;
 
             RefreshChecklist();
+        }
+
+        /// <summary>
+        /// 표식 버튼의 글자/색을 지금 표식에 맞춘다. **표식이 실제로 바뀐 행에서만** 문자열을
+        /// 갈아 끼우므로(shownMark 캐시) 목록 갱신 주기(0.2초)에 새 문자열이 생기지 않는다.
+        /// </summary>
+        private void RefreshMarkButton(IslandRow row)
+        {
+            if (row == null || row.markLabel == null)
+                return;
+
+            IslandMark mark = GetIslandMark(row.islandId);
+            if (row.shownMark == (int)mark)
+                return;
+
+            row.shownMark = (int)mark;
+            row.markLabel.text = GetMarkButtonLabel(mark);
+            row.markLabel.color = mark == IslandMark.None
+                ? new Color(1f, 1f, 1f, 0.75f)
+                : GetIslandMarkColor(mark);
         }
 
         private void EnsureRowCount(int count)
@@ -1217,10 +1451,37 @@ namespace MakeGame.UI
             infoLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             infoLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
+            // [카토그래피] 표식 버튼. 이동 버튼 **왼쪽**에 둔다 - 목록에서 가장 자주 누르는 것은
+            // 여전히 이동이라 그쪽을 오른쪽 끝(누르던 자리)에 그대로 남긴다.
+            var markButton = UIBuilder.CreateButton(rowGo.transform, "MarkButton", "표식", null);
+            markButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
+            Text markLabel = markButton.GetComponentInChildren<Text>();
+            if (markLabel != null)
+                markLabel.fontSize = 12;
+
             var travelButton = UIBuilder.CreateButton(rowGo.transform, "TravelButton", "이동", null);
             travelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 70f;
 
-            var row = new IslandRow { rowGo = rowGo, infoLabel = infoLabel, travelButton = travelButton };
+            var row = new IslandRow
+            {
+                rowGo = rowGo,
+                infoLabel = infoLabel,
+                travelButton = travelButton,
+                markButton = markButton,
+                markLabel = markLabel,
+            };
+
+            // 표식 콜백도 행을 만들 때 한 번만 등록한다(이동 버튼과 같은 규칙 - 매 갱신마다
+            // RemoveAll/Add를 반복하면 50행 × 0.2초 주기로 클로저가 초당 수백 개 생긴다).
+            // 미발견 섬에는 표식을 남길 수 없다(버튼도 비활성) - 가보지 않은 섬에 "고갈됨"을
+            // 붙이는 것은 뜻이 없고, 표식 색이 미탐사 링을 덮어 정보 누출이 된다.
+            row.markButton.onClick.AddListener(() =>
+            {
+                CycleIslandMark(row.islandId);
+                row.shownMark = -1;  // 라벨을 즉시 다시 쓰게 만든다
+                mapRefreshTimer = 0f; // 지도 표식 색도 다음 프레임에 바로 반영한다
+                RefreshMarkButton(row);
+            });
 
             // [B52] 이동 콜백도 행을 만들 때 한 번만 등록한다. row.islandId는 RefreshList가 매 갱신
             // 최신으로 채워 두므로, 클릭 시점에 읽으면 항상 그 행이 지금 표시 중인 섬이다.
@@ -1253,7 +1514,9 @@ namespace MakeGame.UI
             bool revealed = IsRevealed(island);
             string sizeText = revealed ? GetSizeKoreanName(island.size) : "미확인";
             string statusText = island.isStartingIsland ? "시작 섬" : (island.isDiscovered ? "발견함" : "미발견");
-            return $"섬 {island.islandId}  ·  {sizeText}  ·  {distance:F0}m  ·  {statusText}";
+            // [카토그래피] 표식은 가본 섬에만 붙는다 - 미발견 섬에 꼬리표가 뜨면 그 자체가 정보 누출이다.
+            string markTag = revealed ? GetMarkTag(GetIslandMark(island.islandId)) : "";
+            return $"섬 {island.islandId}  ·  {sizeText}  ·  {distance:F0}m  ·  {statusText}{markTag}";
         }
 
         private string GetSizeKoreanName(IslandSize size)

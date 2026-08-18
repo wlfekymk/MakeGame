@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_야자씨앗
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 야자씨앗
+  description: "코코넛을 쪼개 골라낸 씨눈. 밭에 심으면 야자 묘목이 자라 사흘 뒤 코코넛을 맺는다."
+  icon: {fileID: 0}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0
+  hungerRestoreAmount: 0
+  thirstRestoreAmount: 0
+  isRawFood: 0
+  cookedResult: {fileID: 0}
+  isCoconutWaterSource: 0
+  isPlaceable: 0
+  placementPrefab: {fileID: 0}

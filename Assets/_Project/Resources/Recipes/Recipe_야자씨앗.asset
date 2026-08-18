@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_야자씨앗
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "야자 씨앗"
+  description: "코코넛을 쪼개 씨눈을 골라낸다. 밭에 심으면 사흘 뒤 코코넛을 맺는 야자 묘목이 된다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 0b631157c4864eb3adb1b0bf99ba09da, type: 2}
+    quantity: 1
+  resultItem: {fileID: 11400000, guid: dbe1a029d3514ff3b0f4db885df07501, type: 2}
+  resultQuantity: 2
+  requiredSkill: 1
+  requiredSkillLevel: 1
+  experienceReward: 5

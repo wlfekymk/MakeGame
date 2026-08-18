@@ -228,6 +228,13 @@ namespace MakeGame.Systems
             // 독립 rng 스트림(0x1A9E) - 기존 스트림의 draw 순서에 영향 없음. 순수 배경(세이브 무관).
             MarineLifeSpawner.Spawn(islandObject, radius);
 
+            // [난파선] 해양 생물 직후, 같은 동기 흐름에서 마지막으로 난파선 잔해(부러진 선체 + 흩어진
+            // 화물 + 수거 지점 2~4곳)를 수심 5~16m에 놓는다. 접지가 TrySampleSeabed에 의존하므로
+            // 스커트 등록 이후여야 한다(앞 세 스포너와 같은 전제).
+            // 독립 rng 스트림(0xB0A7) - 기존 스트림(0x5EABED/0xC1A0/0xCA7E/0x1A9E/0x5EAF/0x0B0CCA)의
+            // draw 순서에 영향 없음. 세이브 비대상(수거 여부 미저장 - 침몰 화물과 같은 한계).
+            ShipwreckSpawner.Spawn(islandObject, radius);
+
             // 정점 수 총합 로그 예약(프레임당 1줄). 로거의 Start는 이 프레임의 모든 섬 생성이 끝난 뒤 돈다.
             pendingVertexTotal += vertexCount;
             pendingSkirtCount++;

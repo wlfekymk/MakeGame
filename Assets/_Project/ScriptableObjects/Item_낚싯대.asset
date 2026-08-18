@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_낚싯대
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 낚싯대
+  description: "대나무 대에 노끈 줄을 매고 천조각으로 찌를 단 낚싯대. 물가나 물 위에서 찌를 던져 물고기를 낚는다. 던질 때마다 조금씩 상한다."
+  icon: {fileID: 0}
+  maxUses: 40
+  blockedFromLargeIslandsByCurrent: 0
