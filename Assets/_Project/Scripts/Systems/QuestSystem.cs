@@ -513,7 +513,50 @@ namespace MakeGame.Systems
                 aircraftDone ? "수리 완료" : $"재료 {aircraftPercent}%",
                 aircraftPercent / 100f,
                 completed: aircraftDone, locked: aircraftRepair == null, latch: true);
+
+            BuildBossQuests();
         }
+
+        /// <summary>
+        /// [엔드게임 보스] 보스 3종 체크리스트. 항해 묶음의 맨 아래에 둔다 - 이 셋은 탈출의
+        /// **전제**가 아니라 탈출에 얹는 선택 목표이고(세 번째 엔딩 "정복"의 조건),
+        /// 뗏목/경비행기보다 먼저 손댈 일이 없기 때문이다.
+        ///
+        /// 진행도 문구가 곧 공략 힌트다("섬에서 먼 외해" 등) - 이 게임에는 보스를 안내하는 다른
+        /// 수단이 없고(미니맵에 표시하지 않는다), 바다는 40km²라 힌트가 없으면 찾을 방법이 없다.
+        ///
+        /// **래치하지 않는다**(latch: false). 보스 진행도는 이미 영구 상태(BossCreature의 static +
+        /// 세이브 필드)라 래치가 더 줄 것이 없고, 오히려 F9 불러오기로 진행도가 되감겼을 때
+        /// 래치가 남아 "잡지 않은 보스가 완료로 표시되는" 거짓말이 된다.
+        /// </summary>
+        private void BuildBossQuests()
+        {
+            for (int kind = 0; kind < BossCreature.KindCount; kind++)
+            {
+                bool defeated = BossCreature.IsDefeated(kind);
+                bool hasTrophy = BossCreature.HasTrophy(kind);
+
+                string progress = hasTrophy
+                    ? "전리품 확보"
+                    : (defeated
+                        ? $"처치 완료 · {BossCreature.GetTrophyName(kind)} 수거 전"
+                        : BossLocationHints[kind]);
+
+                Write(QuestCategory.Voyage, "quest.boss." + kind,
+                    $"{BossCreature.GetDisplayName(kind)}를 물리치고 전리품을 얻는다 (선택)",
+                    progress,
+                    hasTrophy ? 1f : (defeated ? 0.5f : 0f),
+                    completed: hasTrophy, locked: false, latch: false);
+            }
+        }
+
+        /// <summary>보스가 어디에 있는지 알려 주는 한 줄(배치 규칙은 BossSpawner가 정한다).</summary>
+        private static readonly string[] BossLocationHints =
+        {
+            "섬에서 먼 외해에 있다",
+            "수중 동굴 근처에 있다",
+            "가장 깊은 해저에 있다",
+        };
 
         /// <summary>1단계: 해안에 바닥판을 깔아 항해 가능한 크기까지 키운다.</summary>
         private void WriteRaftTileQuest()

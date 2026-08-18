@@ -15,6 +15,11 @@ namespace MakeGame.Systems
         None,
         Boat,      // 뗏목을 지어 떠나는 정공법 경로 - 제목 "귀환"
         Aircraft,  // 경비행기를 수리해 떠나는 속성 경로 - 제목 "탈출"
+
+        // [엔드게임 보스] 위 두 탈출 중 하나를 완성한 상태에서 **보스 3종의 트로피까지** 모은 경우.
+        // 값을 중간에 끼워 넣지 않고 맨 뒤에 붙였다 - 이 enum은 세이브에 들어가지 않지만
+        // (SaveData에 엔딩 종류 필드가 없다) 씬/프리팹에 int로 직렬화될 수 있는 형태라 규칙은 같다.
+        Trophy,    // 두 탈출 경로 중 하나 + 트로피 3개 - 제목 "정복"
     }
 
     /// <summary>
@@ -161,6 +166,12 @@ namespace MakeGame.Systems
 
         /// <summary>경비행기 엔딩 마지막 문장.</summary>
         private const string AircraftEndingSubtitle = "섬은 아직 그 자리에 있다.";
+
+        /// <summary>보스 트로피 엔딩 제목(세 번째 엔딩).</summary>
+        private const string TrophyEndingTitle = "정복";
+
+        /// <summary>보스 트로피 엔딩 마지막 문장. 두 단어 제목 + 감탄사 없는 한 줄 규칙은 그대로다.</summary>
+        private const string TrophyEndingSubtitle = "바다는 더 이상 당신을 붙잡지 못했다.";
 
         /// <summary>엔딩 연출 화면에 표시할 메시지.</summary>
         private string endingMessage = "";
@@ -326,11 +337,21 @@ namespace MakeGame.Systems
 
             // 두 조건 모두 읽기 전용 판정이라(인벤토리 개수 조회 / bool 필드 읽기) 둘 다 평가해도
             // 부작용이 없다. 먼저 성립한 쪽에서 빠져나가지 않는 이유가 이것이다.
-            if (CheckBoatEndingConditions())
+            bool boatReady = CheckBoatEndingConditions();
+            if (boatReady)
                 best = HigherPriority(best, EndingKind.Boat);
 
-            if (aircraftRepair != null && aircraftRepair.isRepairComplete && HasElapsedAircraftRequiredDays())
+            bool aircraftReady = aircraftRepair != null && aircraftRepair.isRepairComplete
+                && HasElapsedAircraftRequiredDays();
+            if (aircraftReady)
                 best = HigherPriority(best, EndingKind.Aircraft);
+
+            // [엔드게임 보스] 세 번째 엔딩. **기존 두 엔딩의 조건을 한 글자도 건드리지 않는다** -
+            // 탈출 수단(뗏목 또는 경비행기)이 이미 성립한 그 프레임에, 트로피 3개까지 있으면
+            // 결말만 더 높은 것으로 바뀐다. 그래서 보스를 한 마리도 잡지 않은 플레이는 예전과
+            // 100% 같고, 보스를 잡았다고 해서 엔딩이 **더 일찍** 나는 일도 없다.
+            if ((boatReady || aircraftReady) && BossCreature.AllTrophiesCollected)
+                best = HigherPriority(best, EndingKind.Trophy);
 
             return best;
         }
@@ -349,6 +370,10 @@ namespace MakeGame.Systems
         {
             switch (kind)
             {
+                // [엔드게임 보스] 트로피 엔딩은 "탈출 조건 + 보스 3종"이라 두 경로 어느 쪽보다도
+                // 엄격하게 위에 얹힌 조건이다. 동시 성립은 정의상 항상 일어나므로(트로피 엔딩은
+                // 다른 하나가 성립해야만 성립한다) 여기가 가장 높아야 세 번째 결말이 실제로 보인다.
+                case EndingKind.Trophy: return 3;
                 case EndingKind.Boat: return 2;      // 더 긴 경로 - 동시 성립 시 이쪽을 보여준다
                 case EndingKind.Aircraft: return 1;
                 default: return 0;                   // None
@@ -460,14 +485,40 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// 엔딩 종류별 제목(크게 띄우는 두 단어). 문구 표는 이 클래스의 상수 한 곳에만 있다.
+        /// [엔드게임 보스] 세 번째 엔딩이 붙으면서 삼항 연산자를 switch로 바꿨다 - 종류가 셋 이상이면
+        /// "경비행기가 아니면 배"라는 판정이 조용히 틀린 답을 준다.
+        /// </summary>
+        private static string GetEndingTitle(EndingKind kind)
+        {
+            switch (kind)
+            {
+                case EndingKind.Aircraft: return AircraftEndingTitle;
+                case EndingKind.Trophy: return TrophyEndingTitle;
+                default: return BoatEndingTitle;
+            }
+        }
+
+        /// <summary>엔딩 종류별 마지막 문장. 분기 기준은 <see cref="GetEndingTitle"/>과 완전히 같다.</summary>
+        private static string GetEndingSubtitle(EndingKind kind)
+        {
+            switch (kind)
+            {
+                case EndingKind.Aircraft: return AircraftEndingSubtitle;
+                case EndingKind.Trophy: return TrophyEndingSubtitle;
+                default: return BoatEndingSubtitle;
+            }
+        }
+
+        /// <summary>
         /// 엔딩을 확정한다. 어느 경로든 GameManager에 알려 멀티플레이를 개방시키고,
         /// 화면에 승리 연출을 띄운 뒤 이동/상호작용을 잠시 멈춘다.
         /// </summary>
         /// <param name="kind">달성한 엔딩의 종류(연출 분기용). 제목/부제는 이 값에서 결정된다.</param>
         private void TriggerEnding(EndingKind kind)
         {
-            string title = kind == EndingKind.Aircraft ? AircraftEndingTitle : BoatEndingTitle;
-            string subtitle = kind == EndingKind.Aircraft ? AircraftEndingSubtitle : BoatEndingSubtitle;
+            string title = GetEndingTitle(kind);
+            string subtitle = GetEndingSubtitle(kind);
 
             endingTriggered = true;
             achievedEnding = kind;

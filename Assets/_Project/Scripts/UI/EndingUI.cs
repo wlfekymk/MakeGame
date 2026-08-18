@@ -32,7 +32,10 @@ namespace MakeGame.UI
     /// </summary>
     public class EndingUI : MonoBehaviour
     {
-        // ── 연출 길이(전부 실시간 초). 합계 약 6.5초 + 통계 6줄 리듬 ──────────────────────────
+        // ── 연출 길이(전부 실시간 초). 합계 약 6.9초 + 통계 7줄 리듬 ──────────────────────────
+        // [엔드게임 보스] 통계가 6줄 → 7줄이 되며 0.4초 늘었다. EndingChecker의 계속하기 안전장치
+        // (ContinueKeyFallbackSeconds = 10초)보다 여전히 3초 이상 짧아, 연출이 끝나기 전에 폴백이
+        // 먼저 열리는 역전은 일어나지 않는다.
         private const float BlackoutDuration = 1.0f;      // 페이즈 1: 암전
         private const float BackgroundFadeDuration = 0.6f; // 페이즈 2: 배경 크로스페이드
         private const float TitleFadeDuration = 0.9f;      // 페이즈 2: 제목
@@ -42,8 +45,12 @@ namespace MakeGame.UI
         private const float ClosingFadeDuration = 0.8f;    // 페이즈 4: 마지막 문장
         private const float FooterFadeDuration = 0.5f;     // 페이즈 4: 안내 문구 + 계속하기 버튼
 
-        /// <summary>통계 줄 개수(Design_Ending.md 3장 페이즈 3 표 - 6항목 고정).</summary>
-        private const int StatRowCount = 6;
+        /// <summary>
+        /// 통계 줄 개수(Design_Ending.md 3장 페이즈 3 표의 6항목 + [엔드게임 보스] 전리품 1항목).
+        /// 7번째 줄을 늘리면서 통계 블록의 시작 y를 130 → 147로 올려(BuildUI의 PositionCentered)
+        /// 마지막 줄과 마지막 문장(y = -110) 사이의 여백을 예전과 같은 크기로 유지한다.
+        /// </summary>
+        private const int StatRowCount = 7;
 
         // ── 팔레트(ArtDirection.md 1.1, Design_Ending.md 2장) ────────────────────────────────
         private static readonly Color TitleGold = new Color(1f, 0.85f, 0.2f, 1f);
@@ -83,6 +90,9 @@ namespace MakeGame.UI
 
         private Coroutine sequenceRoutine;
         private Sprite gradientSprite;
+
+        /// <summary>[엔드게임 보스] 정복 엔딩 전용 그라데이션(심해 → 노을). 비행기 것과 색이 달라 따로 캐시한다.</summary>
+        private Sprite trophyGradientSprite;
 
         /// <summary>연출이 진행 중인지(=아직 마지막 페이즈에 도달하지 않았는지).</summary>
         private bool presenting = false;
@@ -274,7 +284,7 @@ namespace MakeGame.UI
             for (int i = 0; i < StatRowCount; i++)
             {
                 var row = UIBuilder.CreateText(root, $"Stat{i}", "", 18, BodyGray, TextAnchor.MiddleCenter);
-                PositionCentered(row.rectTransform, yOffset: 130f - i * 34f, width: 0f, height: 30f);
+                PositionCentered(row.rectTransform, yOffset: 147f - i * 34f, width: 0f, height: 30f);
                 statLabels[i] = row;
                 statGroups[i] = row.gameObject.AddComponent<CanvasGroup>();
                 statGroups[i].alpha = 0f;
@@ -406,9 +416,12 @@ namespace MakeGame.UI
         private void BeginPresentation()
         {
             bool isAircraft = ResolveIsAircraftEnding(endingChecker.EndingMessage);
+            // [엔드게임 보스] 세 번째 엔딩(정복)은 배/비행기 어느 쪽도 아니다. 판정은 문구가 아니라
+            // EndingChecker.AchievedEnding 하나뿐이다 - 문구가 바뀌어도 조용히 뒤집히지 않는다.
+            bool isTrophy = endingChecker.AchievedEnding == EndingKind.Trophy;
 
             ApplyEndingMessage(endingChecker.EndingMessage, isAircraft);
-            ApplyEndingBackground(isAircraft);
+            ApplyEndingBackground(isAircraft, isTrophy);
             RefreshStats(isAircraft);
 
             ResetPresentationState();
@@ -708,14 +721,28 @@ namespace MakeGame.UI
         /// 배: duskDawnColor #FF9959 단색(수평선의 노을).
         /// 배경 아트가 있으면 색을 알파 0.9로 덮어 아트를 질감 정도로만 남긴다.
         /// </summary>
-        private void ApplyEndingBackground(bool isAircraft)
+        /// <param name="isTrophy">
+        /// [엔드게임 보스] 세 번째 엔딩(정복). 심해(Deep Ocean)에서 노을(Dusk/Dawn)로 올라가는
+        /// 세로 그라데이션을 쓴다 - 두 기존 엔딩의 색을 위아래로 겹친 것이라 팔레트를 넓히지 않으면서
+        /// "바다 밑에서 올라와 떠났다"가 색으로 읽힌다. 판정은 isAircraft보다 **먼저** 본다.
+        /// </param>
+        private void ApplyEndingBackground(bool isAircraft, bool isTrophy = false)
         {
             if (backgroundImage == null)
                 return;
 
             float alpha = backgroundArt != null ? 0.9f : 1f;
 
-            if (isAircraft)
+            if (isTrophy)
+            {
+                if (trophyGradientSprite == null)
+                    trophyGradientSprite = CreateVerticalGradientSprite(DeepOcean, DuskDawn);
+
+                backgroundImage.sprite = trophyGradientSprite;
+                backgroundImage.type = Image.Type.Simple;
+                backgroundImage.color = new Color(1f, 1f, 1f, alpha);
+            }
+            else if (isAircraft)
             {
                 if (gradientSprite == null)
                     gradientSprite = CreateVerticalGradientSprite(DeepOcean, DaySkyTint);
@@ -772,6 +799,13 @@ namespace MakeGame.UI
             SetStatRow(5, "겪은 위기",
                 survivalStats != null ? $"{survivalStats.CrisisCount}회" : UnknownValue,
                 survivalStats != null && !isAircraft);
+
+            // [엔드게임 보스] 7번째 줄은 **모든 엔딩에서 공개**한다. 위 4~6번처럼 흐리게 가리지 않는
+            // 이유는, 이 줄이 세 번째 엔딩(정복)의 조건 그 자체이기 때문이다 - 배/비행기로 끝낸
+            // 플레이어에게 "0/3"을 보여주는 것이 곧 "여기 아직 남은 것이 있다"는 정확한 정보다.
+            // 값의 단일 소스는 BossCreature의 진행도(= 세이브에 저장되는 그 값)다.
+            SetStatRow(6, "보스 전리품",
+                $"{BossCreature.TrophyCount}/{BossCreature.KindCount}", true);
         }
 
         /// <summary>

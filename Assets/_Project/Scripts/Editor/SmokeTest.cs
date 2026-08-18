@@ -17,7 +17,7 @@ namespace MakeGame.EditorTools
     /// Ocean · DayNightCycle · BuildingSystem · CursorLockController · GrassFieldDriver ·
     /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual · UnderwaterCave_* 수중 동굴 ·
     /// MarineLife_* 해양 생물 ·
-    /// ShoreRibbon_* 부서지는 파도 마루 리본) 존재를 확인한다.
+    /// ShoreRibbon_* 부서지는 파도 마루 리본 · Boss_* 엔드게임 보스) 존재를 확인한다.
     ///
     /// ★ 도메인 리로드 생존 구조 ★
     /// 플레이 진입/이탈(및 플레이 중 재컴파일) 때마다 에디터 static이 전부 초기화된다.
@@ -79,6 +79,13 @@ namespace MakeGame.EditorTools
         // 물가가 없는 섬이나 셰이더 부재 시에는 리본이 생기지 않는 것이 계약이지만, 시작 섬(0번)은
         // 항상 해수면 아래로 잠기는 테두리를 가져(BakeShoreField 주석의 실측: 등고선 선분 158개)
         // 등고선이 반드시 존재한다.
+        // boss = BossCreature.Spawn의 "Boss_{BossKind}" 보스 루트(BossSpawner가 월드당 3마리까지
+        // 배치한다. 컨테이너 "BossRoot"는 접두가 "Boss_"가 아니라 이 검사에 잡히지 않는다 - 실제
+        // 보스 개체가 섰는지를 본다). 위 항목들과 달리 **월드 생성과 같은 프레임이 아니다**:
+        // BossSpawner는 씬에 배선할 수 없어 스스로 붙은 뒤 0.5초 주기로 월드 준비를 폴링하므로
+        // 첫 배치가 1초 안팎 늦는다. 이 검사는 5초마다 돌고 한 번이라도 관측되면 래치되므로
+        // (RunSceneChecks 주석) 그 지연을 그대로 흡수한다.
+        // 처치된 보스는 오브젝트가 사라지지만, 스모크 테스트는 새 판 20초라 그럴 일이 없다.
         private static readonly (string key, string objectName, bool prefix)[] Checks =
         {
             ("player", "Player", false),
@@ -96,6 +103,7 @@ namespace MakeGame.EditorTools
             ("underwaterCave", "UnderwaterCave_", true),
             ("marineLife", "MarineLife_", true),
             ("shoreRibbon", "ShoreRibbon_", true),
+            ("boss", "Boss_", true),
         };
 
         // ---- 도메인 로컬 상태 (리로드 직후 SessionState에서 복원) ----
@@ -392,6 +400,7 @@ namespace MakeGame.EditorTools
             public bool underwaterCave;
             public bool marineLife;
             public bool shoreRibbon;
+            public bool boss;
         }
 
         [Serializable]
@@ -440,6 +449,7 @@ namespace MakeGame.EditorTools
                 underwaterCave = SessionState.GetBool(KeyCheckPrefix + "underwaterCave", false),
                 marineLife = SessionState.GetBool(KeyCheckPrefix + "marineLife", false),
                 shoreRibbon = SessionState.GetBool(KeyCheckPrefix + "shoreRibbon", false),
+                boss = SessionState.GetBool(KeyCheckPrefix + "boss", false),
             };
 
             var result = new SmokeResult

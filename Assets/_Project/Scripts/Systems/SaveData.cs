@@ -186,6 +186,31 @@ namespace MakeGame.Systems
             "문자열로 압축하지 않고 List<int>로 두는 이유: 칸이 최대 8개뿐이라 압축 이득이 없고," +
             " JsonUtility가 List<int>를 그대로 직렬화하므로 파싱 코드(=버그 자리)가 아예 필요 없다.")]
         public List<int> raftBaseTiles = new List<int>();
+
+        // ── 엔드게임 보스 ────────────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례 - 위 필드들과 같은 이유). 이 두 필드가 없는 옛
+        // 세이브는 빈 목록으로 읽히고, BossCreature.ApplySavedProgress가 그것을 "아직 한 마리도
+        // 잡지 않았다"로 읽는다. 정확히 옛 세이브의 진실이므로 마이그레이션이 필요 없다.
+        //
+        // **saveContentVersion을 올리지 않는다.** 그 값은 "복원 규칙이 달라졌다"는 신호이고
+        // (뗏목 v1→v2가 그런 경우다 - 없던 정보를 승격해 채워야 했다), 여기서는 없으면 없는 대로
+        // 정답이 나오므로 올릴 이유가 없다. 올리면 오히려 옛 세이브에 불필요한 안내 로그가 뜬다.
+        //
+        // 인덱스는 BossKind의 값 순서(0 = 거대 상어 / 1 = 대왕 곰치 / 2 = 심해 괴수)다. 그래서
+        // BossKind에 값을 중간 삽입하면 저장된 진행도가 다른 보스로 옮겨 붙는다 - 그 enum 주석에
+        // "맨 뒤에만 추가"라고 못 박아 둔 이유가 이것이다. 목록이 짧아도(옛 파일·손상 파일)
+        // ApplySavedProgress가 길이를 확인하고 읽으므로 예외가 나지 않는다.
+        //
+        // bool 목록을 쓰는 이유: 보스가 3마리뿐이라 비트마스크로 접을 이득이 없고, JsonUtility가
+        // List&lt;bool&gt;을 그대로 직렬화하므로 파싱 코드(= 버그 자리)가 필요 없다(raftBaseTiles와 같은 판단).
+
+        [Header("엔드게임 보스")]
+        [Tooltip("보스 3종의 처치 여부(인덱스 = BossKind). 처치한 보스는 다시 배치되지 않는다.")]
+        public List<bool> bossDefeated = new List<bool>();
+
+        [Tooltip("보스 3종의 전리품 수거 여부(인덱스 = BossKind). 셋을 모두 모으면 세 번째 엔딩" +
+            "(정복)이 열린다. 처치했지만 아직 안 주운 전리품은 그 보스가 지키던 자리에 다시 놓인다.")]
+        public List<bool> bossTrophyCollected = new List<bool>();
     }
 
     /// <summary>

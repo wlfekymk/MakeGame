@@ -196,6 +196,7 @@ namespace MakeGame.Systems
             SaveStructures(data);
             SaveResourceNodes(data);
             SaveHazardsAndCreatures(data);
+            SaveBossProgress(data);
 
             string json = JsonUtility.ToJson(data, true);
             if (!WriteSaveFileSafely(json))
@@ -349,6 +350,12 @@ namespace MakeGame.Systems
                     worldMapManager.DiscoverIsland(islandId);
                 worldMapManager.DiscoverIsland(data.currentIslandId);
             }
+
+            // [엔드게임 보스] 보스 진행도는 **RegenerateWorld 직후**에 되돌린다. 위 재생성이
+            // BossSpawner가 만들어 둔 보스/전리품을 통째로 파괴하고, 스포너는 그것을 감지해
+            // 다음 폴링(0.5초)에서 다시 배치하는데 - 그때 읽는 값이 바로 여기서 세우는 플래그다.
+            // 순서가 뒤집히면 이미 잡은 보스가 한 번 되살아났다가 사라진다.
+            RestoreBossProgress(data);
 
             if (player != null)
                 TeleportPlayer(new Vector3(data.playerX, data.playerY, data.playerZ), data.playerRotY);
@@ -1164,6 +1171,38 @@ namespace MakeGame.Systems
                         creature.RestoreCaughtState(true);
                 }
             }
+        }
+
+        // ── [엔드게임 보스] 진행도 ───────────────────────────────────────────────────
+        //
+        // 위 SaveHazardsAndCreatures와 **완전히 분리한다.** 보스도 HazardSource를 달고 있지만
+        // spawnOrder가 -1이라 그쪽 순회에 구조적으로 잡히지 않는다(BossCreature 클래스 주석).
+        // 그렇게 만든 이유가 여기 있다: 위험 요소 세이브는 (섬, 안정 키)로 대조하는데 보스는
+        // 섬에 속하지 않고 월드당 한 마리씩뿐이라, 종류 인덱스 세 개짜리 bool 목록이면 충분하다.
+
+        /// <summary>
+        /// 보스 3종의 처치/전리품 진행도를 기록한다. 값의 단일 소스는 BossCreature의 static 플래그다
+        /// (씬을 훑지 않는다 - 처치된 보스는 오브젝트 자체가 이미 사라져 있어 훑을 대상이 없다).
+        /// </summary>
+        private static void SaveBossProgress(SaveData data)
+        {
+            data.bossDefeated.Clear();
+            data.bossTrophyCollected.Clear();
+
+            for (int kind = 0; kind < BossCreature.KindCount; kind++)
+            {
+                data.bossDefeated.Add(BossCreature.IsDefeated(kind));
+                data.bossTrophyCollected.Add(BossCreature.HasTrophy(kind));
+            }
+        }
+
+        /// <summary>
+        /// 저장된 보스 진행도를 되돌린다. 옛 세이브에는 두 목록이 아예 없어 빈 목록이 오고,
+        /// ApplySavedProgress가 그것을 "아직 한 마리도 잡지 않았다"로 읽는다(길이 검사 포함).
+        /// </summary>
+        private static void RestoreBossProgress(SaveData data)
+        {
+            BossCreature.ApplySavedProgress(data.bossDefeated, data.bossTrophyCollected);
         }
     }
 }
