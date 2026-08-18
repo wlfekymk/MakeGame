@@ -918,7 +918,14 @@ def turntable(obj, out_png, title="", stats=None, px=440, samples=24, notes=None
     scene.camera = cam
 
     os.makedirs(os.path.dirname(out_png), exist_ok=True)
-    tmp_dir = os.path.join(os.path.dirname(out_png), "_tiles")
+    # 타일 임시 폴더는 **호출마다 고유**해야 한다. 예전에는 출력 폴더 밑 고정 이름 `_tiles`
+    # 였는데, unit 스크립트 둘을 동시에 돌리면(실제로 rockform.py <-> seaform.py) 서로의
+    # tile0~3.png 를 덮어써 렌더가 오염되거나 합성이 죽었다. 프로세스(pid)와 출력 파일
+    # 스템을 섞어 한 출력 폴더 안에서도 겹치지 않게 한다.
+    # pid 는 비결정 값이지만 **임시 폴더 이름은 산출물이 아니다** - 결과 PNG 의 경로와
+    # 내용은 이 변경으로 한 바이트도 달라지지 않는다(계약 재현성 유지).
+    stem = os.path.splitext(os.path.basename(out_png))[0]
+    tmp_dir = os.path.join(os.path.dirname(out_png), f"_tiles_{stem}_{os.getpid()}")
     os.makedirs(tmp_dir, exist_ok=True)
 
     tiles = []

@@ -1,10 +1,11 @@
+using System.Collections.Generic;
 using UnityEngine;
 using MakeGame.Data;
 
 namespace MakeGame.Systems
 {
     /// <summary>
-    /// 섬별 해저 생태(산호밭 / 해초 숲 / 수중 바위) 분포기.
+    /// 섬별 해저 생태(산호밭 / 해초 숲 / 수중 바위) + 해저 지형지물(seaform) 분포기.
     ///
     /// SeabedGenerator가 해저 스커트(섬 가장자리 → 수심 18m 환형 모래 바닥)를 깔고 레코드를 등록한
     /// **직후, 같은 동기 흐름에서** 호출된다(SeabedGenerator.Build 끝부분 - 스커트가 먼저 있어야
@@ -30,6 +31,8 @@ namespace MakeGame.Systems
     /// 진주조개는 **또 다른 완전 분리 스트림**(0xC1A0 솔트 - SpawnPearlClams 주석)을 쓴다. 검증이
     /// 끝난 0x5EABED 스트림의 꼬리에 draw를 덧붙이는 것조차 금지다(기존 월드 재현성 1비트 불변).
     /// 채집 해초 서브셋 판정은 아예 rng가 아니라 순수 위치 해시(draw 소비 0 - PositionHash)다.
+    /// 해저 지형지물(seaform)도 **제3의 완전 분리 스트림**(0x5EAF 솔트 - SpawnSeaForms 주석)이라,
+    /// 지형지물이 몇 개 서든 기존 산호/해초/searock/화물/조개 추첨은 1비트도 밀리지 않는다.
     ///
     /// ── 생명주기 편승 ────────────────────────────────────────────────────────────
     /// 배치물 루트는 반드시 **그 섬의 루트 오브젝트("Island_{id}_{size}") 자식**이다. 그래서
@@ -42,7 +45,9 @@ namespace MakeGame.Systems
     ///  (2) 전부 r ≥ R(섬 메시 밖) 해수면 아래라, 뭍 배치(산포 반경 0.8R 이내)의 레이가 위를
     ///      지나갈 일 자체가 없다.
     ///  (3) 콜라이더는 "큰 바위"에만 BoxCollider(대략치)를 달아 잠수 시 실제로 부딪히는 랜드마크로
-    ///      만들고, 산호/해초/작은 바위는 콜라이더 없음(수중 이동을 막지 않는다).
+    ///      만들고, 산호/해초/작은 바위는 콜라이더 없음(수중 이동을 막지 않는다). 해저 지형지물
+    ///      (seaform)은 같은 규약을 따르되 관통형 a(아치)/d(협곡)와 오버행 e만 비볼록
+    ///      MeshCollider다 - 볼록 헐은 통로·언더컷을 메워 버린다(PlaceSeaForm 주석).
     ///
     /// ── 시각 로더 ────────────────────────────────────────────────────────────────
     /// IslandResourceSpawner.MeshLibrary(ResourceVisualLibrary.TryLoadTwoPartModel)의 검증된 패턴
@@ -55,8 +60,10 @@ namespace MakeGame.Systems
     /// ResourceVisualLibrary.GetMaterial 공유 캐시(색+텍스처당 1장, enableInstancing)에서 받는다.
     ///
     /// ── 성능 ────────────────────────────────────────────────────────────────────
-    /// 섬당 렌더러 약 20~45개(산호는 서브메시 2라 드로우콜 기준 약 30~60). 모델 50종 × 머티리얼
-    /// 19장(산호 12색×2단 중 실제 사용 조합 + 해초 4 + 바위 3)은 전부 월드 공유 정적 캐시다.
+    /// 섬당 렌더러 약 20~45개(산호는 서브메시 2라 드로우콜 기준 약 30~60) + 해저 지형지물 최대 5개
+    /// (소형 0~1 / 중형 1~2 / 대형 2~4 / 특대 3~5, 각 1렌더러). 모델 63종 × 머티리얼 19장(산호
+    /// 12색×2단 중 실제 사용 조합 + 해초 4 + 바위 3)은 전부 월드 공유 정적 캐시다. 지형지물은
+    /// 바위 팔레트의 첫 색을 그대로 쓰므로 **머티리얼이 한 장도 늘지 않는다**.
     /// 수중이라 그림자는 캐스팅/수신 모두 끈다(스커트와 같은 이유 - 보이지 않는 그림자에 드로우를
     /// 쓰지 않는다).
     /// </summary>
@@ -72,6 +79,13 @@ namespace MakeGame.Systems
         /// 조개가 몇 개 뽑히든 기존 산호/해초/바위/화물 추첨은 1비트도 밀리지 않는다(꼬리 draw 추가
         /// 금지 - 검증 완료된 기존 스트림의 draw 수·순서 동결이 원칙이다).</summary>
         private const int ClamSeedSalt = 0xC1A0;
+
+        /// <summary>해저 지형지물(seaform_a~h) 전용 **제3 격리 스트림**의 시드 소금. 기존
+        /// 0x5EABED(생태)·0xC1A0(조개)·0xCA7E(동굴) 및 3000000+ salt 대역과 겹치지 않는 값이라,
+        /// 여기서 몇 번을 뽑든 산호/해초/searock/화물/조개의 추첨 순서·결과는 1비트도 밀리지 않는다.
+        /// (섬 id는 50 미만이므로 `worldSeed*397 ^ islandId ^ salt` 끼리도 충돌할 수 없다 -
+        /// 두 스트림이 같은 시드가 되려면 islandId 차이가 salt 차이(≥0x5EF552)와 같아야 한다.)</summary>
+        private const int SeaFormSeedSalt = 0x5EAF;
 
         // ── 모델 카탈로그 (Resources/Models, 확장자 없음) ──────────────────────────
 
@@ -131,6 +145,99 @@ namespace MakeGame.Systems
         /// <summary>첨탑 바위(searock_k~o)의 인덱스 구간. 잠수 랜드마크라 깊이 6m 이상에만 배치한다.</summary>
         private const int SpireStart = 10;
         private const int SpireCount = 5;
+
+        // ── 해저 지형지물 (seaform_a~h - searock 소품과 역할이 다른 "통과·단차·오버행" 계열) ──
+        // searock(60~300tri 소품)은 바닥에 흩는 장식이지만 seaform은 잠수 동선을 만드는 지형이다.
+        // 그래서 배치 경로 자체가 분리돼 있다: 전용 rng 스트림(SeaFormSeedSalt) + 수심대 분리 +
+        // 반경 합 기반 최소 간격(occupancy) + 모델 높이 기준 수면 돌출 방지.
+
+        /// <summary>해저 지형지물 8종(seaform_a~h, `o` 1개 + mtllib 동봉 = 단일 메시·서브메시 1).</summary>
+        private static readonly string[] SeaFormModelNames =
+        {
+            "seaform_a", "seaform_b", "seaform_c", "seaform_d",
+            "seaform_e", "seaform_f", "seaform_g", "seaform_h",
+        };
+
+        /// <summary>각 지형지물의 실측 전체 크기(m, W×H×D · 밑면 y=0). OBJ 정점 실측값 -
+        /// BoxCollider 대략치 / 수면 돌출 판정(H) / footprint 반경(max(W,D)/2)에 쓴다
+        /// (RockModelSizes와 같은 사본 정책).</summary>
+        private static readonly Vector3[] SeaFormModelSizes =
+        {
+            new Vector3(6.13f, 4.21f, 3.11f), // a 해저 아치(관통 개구 2.94m)
+            new Vector3(4.84f, 4.72f, 4.39f), // b 기둥 군집
+            new Vector3(8.12f, 2.49f, 4.28f), // c 계단 리지
+            new Vector3(6.11f, 4.28f, 4.31f), // d 협곡 블록쌍(통로 1.6m 관통)
+            new Vector3(4.44f, 2.71f, 3.51f), // e 오버행 바위(언더컷 1.6m)
+            new Vector3(7.23f, 0.99f, 4.96f), // f 균열 암반판
+            new Vector3(2.65f, 5.97f, 2.42f), // g 탑 바위
+            new Vector3(4.75f, 2.10f, 3.62f), // h 잔해 더미
+        };
+
+        /// <summary>모델별 수심대 하한(m). f·c는 얕은~중간, a·d·e는 중간, g·b·h는 깊은 곳이다.
+        /// 실제 하한은 max(이 값, 모델높이×스케일 + 1m 여유)라 수면 위로는 절대 튀어나오지 않는다
+        /// (예: seaform_g 5.97m × 1.2 = 7.16m → 8.16m 이상 수심에만 선다).</summary>
+        private static readonly float[] SeaFormDepthMin = { 4f, 7f, 2f, 4f, 4f, 2f, 7f, 7f };
+
+        /// <summary>모델별 수심대 상한(m). 스커트 최심(약 18m) 안쪽이라 항상 유효 구간이 남는다.</summary>
+        private static readonly float[] SeaFormDepthMax = { 10f, 15f, 8f, 10f, 10f, 8f, 15f, 15f };
+
+        /// <summary>비볼록 MeshCollider가 필수인 관통형 표식. a(아치)·d(협곡)는 볼록 근사를 쓰면
+        /// 통로가 통째로 메워져 지형지물의 존재 이유가 사라지고, e(오버행)도 언더컷 그늘이 채워진다
+        /// (IslandMeshGenerator.Vegetation의 [B52] cliff_b 사고와 같은 근거). 나머지 5종은 기존 큰
+        /// searock 규약대로 BoxCollider 대략치다.</summary>
+        private static readonly bool[] SeaFormNonConvex = { true, false, false, true, true, false, false, false };
+
+        /// <summary>수심대 3그룹의 모델 인덱스 풀. 얕은~중간(f·c) / 중간(a·d·e) / 깊은 곳(g·b·h).</summary>
+        private static readonly int[] SeaFormShallowGroup = { 5, 2 };
+        private static readonly int[] SeaFormMidGroup = { 0, 3, 4 };
+        private static readonly int[] SeaFormDeepGroup = { 6, 1, 7 };
+
+        /// <summary>지형지물 스케일 범위. 상한 1.2는 "모델 높이 + 1m 여유 ≤ 스커트 최심"을 지키는 값이다.</summary>
+        private const float SeaFormScaleMin = 0.9f;
+        private const float SeaFormScaleMax = 1.2f;
+
+        /// <summary>지형지물 밑단(y=0)을 모래 기복(±0.6m)에 파묻는 침하량(m). 큰 접지면이라
+        /// searock(0.10m)보다 깊게 문다 - 가장자리 들뜸/틈 방지.</summary>
+        private const float SeaFormSink = 0.15f;
+
+        /// <summary>지형지물과 다른 배치물 사이의 여유 간격(m). 실제 최소 거리는
+        /// (내 footprint 반경 + 상대 예약 반경 + 이 값)이다(반경 합 기반).</summary>
+        private const float SeaFormClearance = 2.5f;
+
+        /// <summary>후보 하나당 최대 시도 수(무한 루프 금지 - TryPickPoint와 같은 규칙).</summary>
+        private const int SeaFormMaxAttempts = 24;
+
+        /// <summary>동굴 착지 링 회피를 **강한 선호**로 거는 앞쪽 시도 수. 이 구간의 후보는 링을
+        /// 피한 자리만 채택하고, 그래도 자리를 못 찾으면 남은 시도는 링 회피를 풀어 배치 자체를
+        /// 살린다. 하드 배제로 두지 않는 이유는 계산으로 확인된 사실 때문이다: 동굴은 "수심 8m가
+        /// 되는 첫 지점"에 서므로 그 링이 중간 수심대(a·d 4~10m)의 반경 구간을 통째로 덮어,
+        /// 하드 배제로 두면 대형·특대 섬에서 아치·협곡이 아예 서지 못한다. 링을 푼 뒤 실제로 겹칠
+        /// 확률은 방위까지 맞아야 하므로 낮다(특대 섬 기준 지형지물 1개당 약 1~2%).</summary>
+        private const int SeaFormCaveGuardAttempts = 8;
+
+        // ── 점유 예약 (반경 합 기반 최소 간격) ──────────────────────────────────────
+        // (x, z, 반경) 목록. Spawn 진입 시 비우고, **이 파일이 이번 섬에서 자리를 확정한 순간**
+        // 등록한다(메시 로드 여부와 무관하게 - 그래야 임포트가 한 프레임 늦어도 지형지물의 후보
+        // 채택/거절이 같아 draw 수가 흔들리지 않는다). searock은 일부러 넣지 않는다: ≤3m 소품이고,
+        // 그 배치 루프의 반복 횟수 자체가 메시 로드 여부에 좌우돼(placed 증가 조건) 예약 집합이
+        // 비결정적이 되기 때문이다. 소품이 지형지물 발치에 붙는 것은 애초에 자연스럽다(암설).
+
+        /// <summary>산호 패치 중심 예약 반경(m). 패치 산포가 중심 반경 3~7m라 그 외곽과 같다.</summary>
+        private const float CoralPatchReserve = 7f;
+
+        /// <summary>해초 숲 중심 예약 반경(m). 군락 산포가 중심 반경 1.5~4.5m라 그 외곽과 같다.</summary>
+        private const float KelpGroveReserve = 4.5f;
+
+        /// <summary>침몰 화물 더미 예약 반경(m). 컨테이너 0.6m + 파편 1.7m 산포의 외곽이다.</summary>
+        private const float CargoPileReserve = 2.5f;
+
+        /// <summary>수중 동굴 예약 반경(m). 동굴 footprint 반쪽(≤7.2m - UnderwaterCaveSpawner
+        /// 배치 스캔 주석)의 올림값이다.</summary>
+        private const float CaveReserve = 8f;
+
+        /// <summary>이번 섬의 점유 목록. (x, y=z, z=반경)로 담는 Vector3 재사용 버퍼다
+        /// (섬마다 Clear - 월드 재생성/도메인 리로드는 ResetStaticCache가 함께 비운다).</summary>
+        private static readonly List<Vector3> occupancy = new List<Vector3>(48);
 
         // ── 침몰 화물 (잠수 보상 - crate_a/barrel_a 재사용) ─────────────────────────
 
@@ -213,7 +320,7 @@ namespace MakeGame.Systems
             new Color(0.36f, 0.42f, 0.36f),
         };
 
-        // ── 공유 메시 캐시 (모델 55종 = 산호 20 + 해초 10 + 바위 20 + 화물 2 + 조개 3) ──
+        // ── 공유 메시 캐시 (모델 63종 = 산호 20 + 해초 10 + 바위 20 + 화물 2 + 조개 3 + 지형지물 8) ──
         // 산호는 body/tip 두 장(임포터가 합치면 primary 한 장에 서브메시 2, secondary는 null).
         private static readonly Mesh[] coralPrimary = new Mesh[20];
         private static readonly Mesh[] coralSecondary = new Mesh[20];
@@ -223,6 +330,8 @@ namespace MakeGame.Systems
         // 조개도 산호처럼 두 장(shell/pearl). 병합 임포트면 primary 한 장에 서브메시 2, secondary는 null.
         private static readonly Mesh[] clamPrimary = new Mesh[3];
         private static readonly Mesh[] clamSecondary = new Mesh[3];
+        // 해저 지형지물 8종(seaform_a~h). `o` 1개 + usemtl 1종이라 단일 메시·서브메시 1이다.
+        private static readonly Mesh[] seaFormMeshes = new Mesh[8];
 
         /// <summary>프레임당 1회 프로브 가드(TryGetBambooModel/AirlinerWreck.probeFrame과 같은 규칙).
         /// 실패를 영구 래치하지 않으므로 임포트가 한 프레임 늦어도 다음 섬/다음 월드에서 자연 복구된다.</summary>
@@ -268,6 +377,8 @@ namespace MakeGame.Systems
             System.Array.Clear(cargoMeshes, 0, cargoMeshes.Length);
             System.Array.Clear(clamPrimary, 0, clamPrimary.Length);
             System.Array.Clear(clamSecondary, 0, clamSecondary.Length);
+            System.Array.Clear(seaFormMeshes, 0, seaFormMeshes.Length);
+            occupancy.Clear();
             probeFrame = -1;
             kelpSwayShader = null;
             kelpShaderProbeFrame = -1;
@@ -366,6 +477,9 @@ namespace MakeGame.Systems
             // [rng 격리] 이 섬 전용 독립 스트림. 여기서 몇 번을 뽑든 다른 시스템의 추첨 순서는 불변이다.
             var rng = new System.Random(unchecked(worldSeed * 397 ^ islandId ^ SeedSalt));
 
+            // 이번 섬의 점유 예약 목록을 비운다(지형지물 최소 간격 판정 전용 - rng 소비 0).
+            occupancy.Clear();
+
             EnsureModelsLoaded();
 
             var root = new GameObject(rootName);
@@ -394,6 +508,14 @@ namespace MakeGame.Systems
             // 이 격리 스트림의 꼬리에 붙는 추가 소비라, 위 세 배치의 추첨 순서·결과는 1비트도 밀리지
             // 않는다(PlaceLargeStones가 BuildIslandSurface 맨 끝에서만 불리는 것과 같은 원칙).
             SpawnSunkenCargo(rng, root.transform, center, rMin, rMax, seaLevel, radius);
+
+            // [rng 격리 3 - 해저 지형지물] seaform_a~h는 searock 소품과 역할이 다른 **지형 계열**이라
+            // 배치 경로도 스트림도 분리한다. 기존 0x5EABED 스트림의 꼬리에 붙이지 않으므로(0x5EAF
+            // 제3 독립 스트림) 위 네 배치의 draw 수·순서·결과는 지형지물 추가 전후로 완전 동일하다.
+            // 호출 위치가 화물 다음인 이유는 rng가 아니라 **점유 예약** 때문이다 - 산호밭/해초숲/
+            // 화물 자리가 먼저 등록돼 있어야 반경 합 기반 간격 판정이 그것들을 피할 수 있다.
+            var seaFormRng = new System.Random(unchecked(worldSeed * 397 ^ islandId ^ SeaFormSeedSalt));
+            SpawnSeaForms(seaFormRng, root.transform, center, radius, skirtWidth, seaLevel);
 
             // [rng 격리 2] 진주조개는 기존 0x5EABED 스트림의 꼬리에도 붙이지 않고 **별도 솔트의
             // 제2 독립 스트림**으로만 뽑는다 - 이미 검증된 위 네 배치의 draw 수·순서·결과는
@@ -430,6 +552,9 @@ namespace MakeGame.Systems
                 if (!TryPickPoint(rng, center, rMin, rMax, seaLevel, 1.5f, 7f, 12,
                         out Vector3 patchCenter, out _))
                     continue;
+
+                // 지형지물 간격 판정용 점유 등록(rng 소비 0 - 이 패치의 추첨은 아래 그대로다).
+                Reserve(patchCenter, CoralPatchReserve);
 
                 int patchFamily = rng.NextInt(0, CoralFamilyStart.Length);
                 int coralCount = rng.NextInt(5, 10);
@@ -477,6 +602,9 @@ namespace MakeGame.Systems
                 if (!TryPickPoint(rng, center, rMin, rMax, seaLevel, 2f, 10f, 12,
                         out Vector3 groveCenter, out _))
                     continue;
+
+                // 지형지물 간격 판정용 점유 등록(rng 소비 0).
+                Reserve(groveCenter, KelpGroveReserve);
 
                 int kelpCount = rng.NextInt(5, 11);
                 for (int k = 0; k < kelpCount; k++)
@@ -548,6 +676,232 @@ namespace MakeGame.Systems
             }
         }
 
+        // ── 해저 지형지물 (seaform_a~h - searock 소품과 분리된 배치 경로) ─────────────
+
+        /// <summary>
+        /// 잠수 동선을 만드는 해저 지형지물(통과형 아치/협곡, 단차 리지/암반판, 오버행, 탑·기둥·잔해)을
+        /// 섬 규모별로 소수 배치한다.
+        ///
+        /// ── 규모별 개수(SizeScale과 같은 반지름 중간값 경계 50/90/140/200 → 70/115/170) ──
+        ///   소형 0~1 · 중형 1~2 · 대형 2~4 · 특대 3~5. 지형지물 1개 = 렌더러 1개(단일 서브메시)라
+        ///   섬당 추가 렌더러는 최대 5개다.
+        ///
+        /// ── 수심대 분리(SeaFormDepthMin/Max) ──
+        ///   f(균열 암반판)·c(계단 리지) 2~8m / a(아치)·d(협곡)·e(오버행) 4~10m /
+        ///   g(탑)·b(기둥군집)·h(잔해더미) 7~15m. 실제 수심은 SeabedGenerator.TrySampleSeabed 판정이다.
+        ///
+        /// ── 수면 돌출 방지 ──
+        ///   실제 하한은 max(대역 하한, 모델높이 × 스케일 + 1m)다. 가장 높은 seaform_g(5.97m)는
+        ///   스케일 1.2에서 8.16m 이상 수심에만 서므로 어떤 경우에도 꼭대기가 수면 아래 1m 이상이다.
+        ///
+        /// ── 최소 간격(반경 합 기반) ──
+        ///   내 footprint 반경(= max(W,D)/2 × 스케일) + 상대 예약 반경 + 여유 2.5m. 상대는 이미
+        ///   자리가 확정된 산호밭(7m)·해초숲(4.5m)·침몰 화물(2.5m)·먼저 놓인 지형지물이다.
+        ///   이 넷은 하드 조건이고, 대형/특대 섬의 **수중 동굴 착지 링**(8m)만 앞쪽 시도에서
+        ///   강하게 선호하는 소프트 조건이다(IsClearOfCaveRing / SeaFormCaveGuardAttempts).
+        ///
+        /// ── [결정성] ──
+        ///   개수/그룹/변종/요/스케일 draw는 배치 성공 여부·메시 로드 여부를 보기 **전에** 끝낸다
+        ///   (PlaceCargoPile과 같은 규칙). 후보 채택 판정은 지형 샘플과 점유 예약뿐인데 둘 다 메시
+        ///   로드와 무관하므로, 임포트가 한 프레임 늦어도 같은 시드의 다음 월드에서 같은 자리에 선다.
+        /// </summary>
+        private static void SpawnSeaForms(System.Random rng, Transform root, Vector3 center,
+            float radius, float skirtWidth, float seaLevel)
+        {
+            int count;
+            if (radius < 70f)
+                count = rng.NextInt(0, 2);       // 소형 0~1
+            else if (radius < 115f)
+                count = rng.NextInt(1, 3);       // 중형 1~2
+            else if (radius < 170f)
+                count = rng.NextInt(2, 5);       // 대형 2~4
+            else
+                count = rng.NextInt(3, 6);       // 특대 3~5
+
+            // 동굴은 대형/특대 섬에만 생긴다(UnderwaterCaveSpawner.Spawn의 115m 경계).
+            bool caveIsland = radius >= 115f;
+
+            for (int i = 0; i < count; i++)
+            {
+                // ── 1) draw 전부 ──
+                int group = rng.NextInt(0, 3);
+                int[] pool = group == 0 ? SeaFormShallowGroup
+                    : (group == 1 ? SeaFormMidGroup : SeaFormDeepGroup);
+                int variant = pool[rng.NextInt(0, pool.Length)];
+                float yaw = rng.NextFloat(0f, 360f);
+                float scale = rng.NextFloat(SeaFormScaleMin, SeaFormScaleMax);
+
+                // ── 2) 수심 조건 + 후보 채택(rng는 후보 각/반경만 소비 - 지형 샘플은 결정적) ──
+                Vector3 size = SeaFormModelSizes[variant];
+                float depthMin = Mathf.Max(SeaFormDepthMin[variant], size.y * scale + 1f);
+                float depthMax = SeaFormDepthMax[variant];
+                float footprint = 0.5f * Mathf.Max(size.x, size.z) * scale;
+
+                if (depthMin > depthMax)
+                    continue; // 구조적으로 설 수 없는 조합(현재 표에서는 발생하지 않는다)
+
+                if (!TryPickSeaFormPoint(rng, center, radius, skirtWidth, seaLevel, footprint,
+                        depthMin, depthMax, caveIsland, out Vector3 pos))
+                    continue; // 자리 없음 - draw는 이미 전부 소비됐다(결정성)
+
+                // ── 3) 점유 등록 → 생성 ──
+                // 등록은 **메시 확인 전**이다. 그래야 임포트 지연으로 시각이 빠져도 뒤따르는
+                // 지형지물의 채택/거절이 같아 draw 수가 흔들리지 않는다.
+                Reserve(pos, footprint);
+                PlaceSeaForm(root, center, pos, variant, yaw, scale, i);
+            }
+        }
+
+        /// <summary>
+        /// 지형지물 후보 하나를 뽑는다. 스커트 환형 안쪽/바깥쪽으로 footprint + 2m를 물려 모델이
+        /// 환형 밖으로 삐져나오지 않게 하고, 수심대·최소 간격·동굴 링 회피를 모두 통과한 첫 후보를
+        /// 채택한다. 시도 수는 고정(무한 루프 금지 - TryPickPoint와 같은 규칙)이다.
+        /// </summary>
+        private static bool TryPickSeaFormPoint(System.Random rng, Vector3 center, float radius,
+            float skirtWidth, float seaLevel, float footprint, float depthMin, float depthMax,
+            bool caveIsland, out Vector3 worldPos)
+        {
+            worldPos = Vector3.zero;
+
+            float rMin = radius + footprint + 2f;
+            float rMax = radius + skirtWidth - footprint - 2f;
+            if (rMax <= rMin)
+                return false; // 스커트가 이 모델을 담기엔 좁다(draw 소비 없이 즉시 실패)
+
+            for (int attempt = 0; attempt < SeaFormMaxAttempts; attempt++)
+            {
+                float angle = rng.NextFloat(0f, Mathf.PI * 2f);
+                float r = rng.NextFloat(rMin, rMax);
+                var candidate = new Vector3(
+                    center.x + Mathf.Cos(angle) * r, 0f, center.z + Mathf.Sin(angle) * r);
+
+                if (!SeabedGenerator.TrySampleSeabed(candidate, out float seabedY))
+                    continue;
+
+                float depth = seaLevel - seabedY;
+                if (depth < depthMin || depth > depthMax)
+                    continue;
+
+                if (!IsClear(candidate, footprint))
+                    continue;
+
+                // 앞쪽 시도에서만 동굴 착지 링을 피한다(뒤쪽은 완화 - SeaFormCaveGuardAttempts).
+                if (caveIsland && attempt < SeaFormCaveGuardAttempts
+                    && !IsClearOfCaveRing(center, radius, skirtWidth, seaLevel, angle, r, footprint))
+                    continue;
+
+                worldPos = new Vector3(candidate.x, seabedY, candidate.z);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 지형지물 하나를 세운다. 재질은 기존 수중 바위 규약(ResourceVisualLibrary.GetMaterial
+        /// 공유 캐시)의 어두운 현무암 한 색이라 지형지물이 몇 개든 **새 머티리얼이 0장**이다
+        /// (이 파일에 깊이별 명암 규칙은 없으므로 단일 색 - searock의 RockPalette[0]과 같은 장을 쓴다).
+        ///
+        /// [콜라이더] 기존 큰 searock 규약(스케일 후 최대 치수 &gt; 1.5m → 콜라이더)을 따른다.
+        /// 8종 전부 그 문턱을 넘으므로 전부 콜라이더가 붙되, 관통형 a(아치)·d(협곡)와 오버행 e는
+        /// **비볼록 정적 MeshCollider**(Rigidbody 없음, convex 기본 false, sharedMesh = 렌더 메시 -
+        /// 동굴 셸/해저 스커트와 같은 경로)라 통로·언더컷이 실제로 뚫려 있다. 나머지는 BoxCollider
+        /// 대략치다. 이름이 "SeaForm_"이라 TerrainSampler 지형 판정("Island_" 접두 필터)에는
+        /// 구조적으로 안 잡힌다(SeaRock/CaveShell과 같은 안전 근거).
+        /// </summary>
+        private static void PlaceSeaForm(Transform root, Vector3 islandCenter, Vector3 worldPos,
+            int variant, float yaw, float scale, int index)
+        {
+            Mesh mesh = seaFormMeshes[variant];
+            if (mesh == null)
+                return; // 이 변종만 아직 안 로드됨 - 조용히 건너뛴다(래치 없음, 다음 월드에서 복구)
+
+            Material material = ResourceVisualLibrary.GetMaterial(RockPalette[0], "rock");
+            Vector3 localPos = worldPos - islandCenter + new Vector3(0f, -SeaFormSink, 0f);
+            var part = CreateVisualPart(root, "SeaForm_" + index + "_" + SeaFormModelNames[variant],
+                mesh, material, localPos, yaw, scale);
+
+            if (SeaFormNonConvex[variant])
+            {
+                // 비볼록 정적 MeshCollider. 볼록 헐은 정의상 오목부를 메우므로 아치 개구(2.94m)/
+                // 협곡 통로(1.6m)/오버행 언더컷(1.6m)이 통째로 막힌다.
+                part.AddComponent<MeshCollider>().sharedMesh = mesh; // convex 기본값 false
+            }
+            else
+            {
+                // 파츠 로컬 공간 기준 대략치 - 부모 스케일이 균등이라 콜라이더도 함께 커진다
+                // (PlaceRock의 큰 바위 경로와 같은 식·같은 0.85 폭 계수).
+                Vector3 size = SeaFormModelSizes[variant];
+                var box = part.AddComponent<BoxCollider>();
+                box.center = new Vector3(0f, size.y * 0.5f, 0f);
+                box.size = new Vector3(size.x * 0.85f, size.y, size.z * 0.85f);
+            }
+        }
+
+        // ── 점유 예약 / 간격 판정 (전부 rng 소비 0인 순수 기하 판정) ──────────────────
+
+        /// <summary>이번 섬의 점유 목록에 (중심 XZ, 반경)을 등록한다.</summary>
+        private static void Reserve(Vector3 worldPos, float reserveRadius)
+        {
+            occupancy.Add(new Vector3(worldPos.x, worldPos.z, reserveRadius));
+        }
+
+        /// <summary>등록된 모든 점유와 (내 반경 + 상대 반경 + 여유) 이상 떨어져 있으면 true.</summary>
+        private static bool IsClear(Vector3 worldPos, float ownRadius)
+        {
+            for (int i = 0; i < occupancy.Count; i++)
+            {
+                Vector3 entry = occupancy[i];
+                float dx = worldPos.x - entry.x;
+                float dz = worldPos.z - entry.y;
+                float minDistance = ownRadius + entry.z + SeaFormClearance;
+                if (dx * dx + dz * dz < minDistance * minDistance)
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 수중 동굴(UnderwaterCaveSpawner)의 착지 지점을 피한다.
+        ///
+        /// 동굴은 이 스포너가 끝난 **뒤**에 놓이므로 자리를 예약해 줄 수 없고, 그 방위(baseAngle)는
+        /// 동굴 전용 rng가 정한다. 대신 동굴의 착지 규칙 자체를 이용한다: 동굴은 각 방위 레이를
+        /// radius+8m부터 3m 간격으로 훑어 **수심 8~14m가 되는 첫 지점**에 선다. 즉 동굴 자리는
+        /// 방위와 무관하게 "첫 수심 8m 교차점"이 그리는 얇은 링 위에만 있다. 그래서 후보의 자기
+        /// 방위 레이에서 그 링까지의 반경 거리만 재면, 동굴이 어느 방위를 뽑든 겹치지 않는다
+        /// (링이 방위에 따라 완만하게 변하는 곡선이라 이 근사가 보수적으로 안전하다).
+        ///
+        /// rng를 한 칸도 소비하지 않고(순수 지형 샘플), 채택 직전 후보에서만 부르므로 비용은
+        /// 섬당 수백 회 샘플 수준이다(월드 생성 1회).
+        /// </summary>
+        private static bool IsClearOfCaveRing(Vector3 center, float radius, float skirtWidth,
+            float seaLevel, float angle, float dist, float footprint)
+        {
+            // UnderwaterCaveSpawner의 스캔 상수 사본(그쪽은 private): 안팎 8m 물림, 3m 간격,
+            // 수심 8~14m. 동굴 2종의 높이 하한(max(8, 높이+1) = 8)도 이 대역에 흡수된다.
+            float distMin = radius + 8f;
+            float distMax = radius + skirtWidth - 8f;
+            float cos = Mathf.Cos(angle);
+            float sin = Mathf.Sin(angle);
+
+            for (float d = distMin; d <= distMax; d += 3f)
+            {
+                var probe = new Vector3(center.x + cos * d, 0f, center.z + sin * d);
+                if (!SeabedGenerator.TrySampleSeabed(probe, out float seabedY))
+                    continue;
+
+                float depth = seaLevel - seabedY;
+                if (depth < 8f || depth > 14f)
+                    continue;
+
+                // 첫 교차점이 곧 동굴 착지점이다(동굴 스캔과 같은 "first hit wins").
+                return Mathf.Abs(dist - d) >= CaveReserve + footprint;
+            }
+
+            return true; // 이 방위에는 동굴이 설 수 있는 수심대가 없다
+        }
+
         /// <summary>
         /// 침몰 화물 더미(잠수 보상): 깊이 8m 이상 해저에 crate_a/barrel_a 2~4개를 비스듬히 쌓고
         /// 주변에 searock 파편 1~2개를 흩은 뒤, 더미 루트에 BoxCollider + AirlinerSalvagePoint를
@@ -572,6 +926,9 @@ namespace MakeGame.Systems
                 if (!TryPickPoint(rng, center, rMin, rMax, seaLevel, 8f, 18.5f, 16,
                         out Vector3 pos, out _))
                     continue;
+
+                // 지형지물 간격 판정용 점유 등록(rng 소비 0 - 메시 로드 여부와도 무관하게 등록한다).
+                Reserve(pos, CargoPileReserve);
 
                 PlaceCargoPile(rng, root, center, pos, p);
             }
@@ -1006,7 +1363,7 @@ namespace MakeGame.Systems
         // ── 로더 ────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 모델 55종의 공유 메시를 채운다. ResourceVisualLibrary.TryLoadTwoPartModel(검증된
+        /// 모델 63종(산호 20 + 해초 10 + 바위 20 + 화물 2 + 조개 3 + 지형지물 8)의 공유 메시를 채운다. ResourceVisualLibrary.TryLoadTwoPartModel(검증된
         /// Load&lt;GameObject&gt;+MeshFilter 로더)을 그대로 쓰고, 프레임당 1회만 프로브하며(같은 프레임의
         /// 섬 50개 생성 루프에서 Load가 50번 반복되지 않게), 실패를 영구 래치하지 않는다.
         /// 산호 OBJ의 `o` 2개는 이름 키워드(trunk/leaf류)에 안 걸리므로 그 로더의 "o 등장 순서" 폴백이
@@ -1025,6 +1382,8 @@ namespace MakeGame.Systems
                 anyMissing = cargoMeshes[i] == null;
             for (int i = 0; i < clamPrimary.Length && !anyMissing; i++)
                 anyMissing = clamPrimary[i] == null;
+            for (int i = 0; i < seaFormMeshes.Length && !anyMissing; i++)
+                anyMissing = seaFormMeshes[i] == null;
 
             if (!anyMissing || probeFrame == Time.frameCount)
                 return;
@@ -1084,6 +1443,18 @@ namespace MakeGame.Systems
                     clamPrimary[i] = shell;
                     clamSecondary[i] = pearl;
                 }
+            }
+
+            // 해저 지형지물(seaform_a~h). `o` 1개 + usemtl 1종이라 로더의 "메시 하나면 그것이
+            // trunk" 규칙으로 단일 메시가 그대로 온다(두 번째 out은 항상 null - 버린다).
+            // 이 메시는 렌더 메시이자 관통형(a/d/e)의 비볼록 MeshCollider용 물리 메시다.
+            for (int i = 0; i < SeaFormModelNames.Length; i++)
+            {
+                if (seaFormMeshes[i] != null)
+                    continue;
+                if (ResourceVisualLibrary.TryLoadTwoPartModel("Models/" + SeaFormModelNames[i],
+                        out Mesh form, out _))
+                    seaFormMeshes[i] = form;
             }
         }
 

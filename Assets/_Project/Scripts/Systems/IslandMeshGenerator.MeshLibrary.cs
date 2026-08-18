@@ -683,6 +683,91 @@ namespace MakeGame.Systems
             return true;
         }
 
+
+        // ── [B55] 육상 암층 12종 (rockform_a~l) ────────────────────────────────────
+        //   로드 규칙은 위 대형 석재 7종과 **완전히 같다**(공용 ProbeSingleMeshModels: 필드 초기자에서
+        //   Resources.Load 금지 · 실패를 영구 캐시하지 않고 프레임당 1회만 다시 살핌 · 프리팹을
+        //   Instantiate하지 않고 sharedMesh만 꺼냄). 좌표 계약도 같다: 미터 · 밑면 y=0 · X/Z 중심.
+        //
+        //   ★ 기존 바위(rock_a~e)의 일반 풀에 **절대 섞지 않는다** ★ 제작 담당 경고 그대로다 -
+        //   TryGetRockModel은 "목표 폭 ±35% 후보"로 고르는 소품용 로더라, 여기에 7m 첨탑(b)이나
+        //   6.2m 아치(a)를 넣으면 폭만 맞고 높이는 3배인 모델이 소품 자리에 꽂힌다. 그래서 대형 석재
+        //   7종과 마찬가지로 **인덱스 지정 전용 로더**(TryGetRockformModel)를 따로 둔다 - 종류·계층은
+        //   전부 호출부(Vegetation.PlaceRockforms)가 확정하므로 크기 후보·위치 해시 선택이 여기 없다.
+        //
+        //   ★ 절차 폴백 없음 ★ 대형 석재 7종과 같은 이유다(신규 장식이라 "없으면 없는 것"이 폴백).
+        //
+        //   ★ _col 헐이 없다 ★ rockform_*.obj에는 <모델명>_col.obj가 없으므로 GetCollisionHull은 항상
+        //   null을 돌려준다. 그래서 호출부는 AddRockCollider(convex)가 아니라 **비볼록 MeshCollider**를
+        //   쓴다(Vegetation.AddRockformCollider). 관통형(a 자연아치 · k 쐐기바위)은 볼록 헐이면 구멍이
+        //   메워지고, 나머지도 정점 수가 PhysX convex cook 상한(255)을 넘어 부분 헐로 잘리기 때문이다
+        //   (b 258정점 ~ g 3,655정점 - 전부 상한 초과. e/j만 예외지만 규칙을 갈라 둘 이유가 없다).
+
+        /// <summary>암층 모델 경로(Resources 기준, 확장자 없음). 인덱스는 아래 Rockform* 상수와 일대일.</summary>
+        private static readonly string[] RockformModelResourcePaths =
+        {
+            "Models/rockform_a", "Models/rockform_b", "Models/rockform_c", "Models/rockform_d",
+            "Models/rockform_e", "Models/rockform_f", "Models/rockform_g", "Models/rockform_h",
+            "Models/rockform_i", "Models/rockform_j", "Models/rockform_k", "Models/rockform_l",
+        };
+
+        // 이름 붙은 인덱스. 호출부가 계층(피복/중형/랜드마크)별 배열에 이 상수를 담아 쓴다.
+        internal const int RockformArch = 0;       // a 자연아치   6.20×4.30×2.10 (관통 개구 2.5m)
+        internal const int RockformSpire = 1;      // b 첨탑       2.20×7.00×1.85
+        internal const int RockformColumns = 2;    // c 주상절리   4.00×5.00×3.40
+        internal const int RockformMushroom = 3;   // d 버섯바위   3.50×3.10×3.30
+        internal const int RockformBedded = 4;     // e 층리 슬랩  3.90×3.00×3.15
+        internal const int RockformCracked = 5;    // f 균열 거석  3.20×4.50×2.90
+        internal const int RockformErratics = 6;   // g 표석 군집  6.00×2.10×4.40
+        internal const int RockformTilted = 7;     // h 기울어진 판석 2.60×3.50×2.30
+        internal const int RockformHoneycomb = 8;  // i 벌집풍화암 2.50×2.10×2.45
+        internal const int RockformSteps = 9;      // j 계단 노두  5.00×2.00×4.20 (단높이 0.52m - 오를 수 있음)
+        internal const int RockformWedge = 10;     // k 쐐기바위   4.00×2.90×1.90 (관통 1.7m)
+        internal const int RockformShelf = 11;     // l 낮은 노두판 7.00×1.20×5.50
+
+        /// <summary>암층 모델의 개수. 위 경로 배열/아래 크기표/호출부 가중치 표의 길이가 전부 이 값이다.</summary>
+        internal const int RockformCount = 12;
+
+        /// <summary>각 모델의 실측 크기(m, W×H×D). 디스크 OBJ 정점에서 검산했다(전부 밑면 y=0).
+        /// 호출부는 이 H를 **매립 깊이 계산**에 쓰므로(비율 매립), 값이 틀리면 바위가 뜨거나 통째로 잠긴다.</summary>
+        private static readonly Vector3[] RockformModelSizes =
+        {
+            new Vector3(6.20f, 4.30f, 2.10f), // a 자연아치
+            new Vector3(2.20f, 7.00f, 1.85f), // b 첨탑
+            new Vector3(4.00f, 5.00f, 3.40f), // c 주상절리 다발
+            new Vector3(3.50f, 3.10f, 3.30f), // d 버섯바위
+            new Vector3(3.90f, 3.00f, 3.15f), // e 층리 슬랩
+            new Vector3(3.20f, 4.50f, 2.90f), // f 균열 거석
+            new Vector3(6.00f, 2.10f, 4.40f), // g 표석 군집
+            new Vector3(2.60f, 3.50f, 2.30f), // h 기울어진 판석
+            new Vector3(2.50f, 2.10f, 2.45f), // i 벌집풍화암
+            new Vector3(5.00f, 2.00f, 4.20f), // j 계단 노두
+            new Vector3(4.00f, 2.90f, 1.90f), // k 쐐기바위
+            new Vector3(7.00f, 1.20f, 5.50f), // l 낮은 노두판
+        };
+
+        private static readonly Mesh[] rockformModelMeshes = new Mesh[RockformCount];
+        private static int rockformModelProbeFrame = -1;
+
+        /// <summary>
+        /// [B55] 지정한 인덱스(RockformArch 등)의 암층 공유 메시를 돌려준다. 아직 로드되지 않았으면
+        /// false - 호출부는 그 개체를 배치하지 않는다(대형 석재 7종과 같은 규약: 절차 폴백 없음).
+        /// </summary>
+        internal static bool TryGetRockformModel(int index, out Mesh mesh, out Vector3 size)
+        {
+            mesh = null;
+            size = Vector3.one;
+
+            ProbeSingleMeshModels(RockformModelResourcePaths, rockformModelMeshes, ref rockformModelProbeFrame);
+
+            if (index < 0 || index >= rockformModelMeshes.Length || rockformModelMeshes[index] == null)
+                return false;
+
+            mesh = rockformModelMeshes[index];
+            size = RockformModelSizes[index];
+            return true;
+        }
+
         /// <summary>
         /// [B29] 큰 바위 / 곁에 붙는 작은 덩어리의 공유 메시(구 규격 [-0.5,0.5]^3).
         ///
@@ -1051,6 +1136,8 @@ namespace MakeGame.Systems
             driftModelProbeFrame = -1;
             System.Array.Clear(stoneModelMeshes, 0, stoneModelMeshes.Length);
             stoneModelProbeFrame = -1;
+            System.Array.Clear(rockformModelMeshes, 0, rockformModelMeshes.Length);
+            rockformModelProbeFrame = -1;
             grassBladeMesh = null;
             palmTrunkPrismMesh = null;
         }

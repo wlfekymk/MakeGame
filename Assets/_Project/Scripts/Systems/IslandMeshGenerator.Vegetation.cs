@@ -220,11 +220,41 @@ namespace MakeGame.Systems
                 ResourceVisualLibrary.GetMaterial(StructureVisualBuilder.SupplyKhaki, "driftwood"),
             };
 
+            // [B56 순서 수정] 아키타입과 **암반 필드를 지면 캡보다 먼저** 확정한다.
+            // 이유: BuildGroundCaps 안에서 GrassFieldSystem.Build(잔디 카드 굽기)가 호출되는데,
+            // B55의 원래 순서(캡 → 암반)에서는 잔디가 구워지는 시점에 암반 필드가 아직 없어서
+            // 바위섬(피복 0.50)에서 지면 절반을 덮은 암반 위에 잔디가 그대로 자라 보였다.
+            // 초목(야자/덤불/풀포기)만 배제되고 잔디만 남는, 눈에 바로 띄는 어긋남이었다.
+            //
+            // ★ 앞으로 옮겨도 결과가 한 비트도 달라지지 않는 근거 ★
+            //   · ArchetypeProfileOf는 이름/부모 해시뿐이고(월드당 1회 로그 외 부작용 없음),
+            //     BuildRockField는 순수 위치 노이즈 + 면적 가중 분위수다 - 둘 다 rng를 만들지도
+            //     소비하지도 않으므로 boundaryPhaseA/B를 뽑는 rng 추첨 순서가 그대로다.
+            //   · 둘 다 씬 오브젝트를 하나도 만들지 않는다. 실제로 오브젝트를 만드는
+            //     BuildRockCap은 **원래 자리(캡 4장 다음)** 에 그대로 두었으므로 root 아래
+            //     자식 생성 순서도 예전과 동일하다.
+            var archetype = ArchetypeProfileOf(islandObject);
+
+            // [B55 암석 피복] 이 섬의 "암반 지대" 필드(★ rng 소비 0 ★ - 순수 위치 노이즈 +
+            // 면적 가중 분위수). 아래 네 곳이 **같은 필드 하나**를 본다:
+            //   (1) RockCap   - 지면 삼각형 중 rockCoverage 비율만큼을 암반색으로 덮는다(면적 계약).
+            //   (2) 초목      - 암반 지대 안쪽(core)에서는 야자수/덤불/풀포기를 배제한다.
+            //   (3) 암층 노두 - PlaceRockforms의 피복 패치가 이 필드 안에서만 중심을 잡는다.
+            //   (4) [B56] 잔디 카드 - 같은 core 기준으로 배제하고, 경계 완충대에서만 밀도를 낮춘다.
+            // 넷이 같은 함수를 읽으므로 "바위 위에 나무/잔디가 자라는" 어긋남이 원리적으로 없다.
+            var rockField = BuildRockField(islandObject, radius, archetype.rockCoverage);
+
             // (1) 지면 색 구분: 정상부 밝은 풀 / 내륙 풀 / 마른 모래 / 젖은 모래의 4단(전부 덮개 메시다 - B11).
             //     난수 소비 2회(풀밭 경계 위상 2개)로 고정.
             float boundaryPhaseA = rng.NextFloat(0f, Mathf.PI * 2f);
             float boundaryPhaseB = rng.NextFloat(0f, Mathf.PI * 2f);
-            BuildGroundCaps(root.transform, islandObject, radius, boundaryPhaseA, boundaryPhaseB);
+            // [B56] 암반 판정을 **순수 함수(월드 좌표 → 잔디 유지 계수)** 로 포장해 넘긴다.
+            // 값 묶음(RockField)을 그대로 넘기지 않는 이유: 암반 노이즈 상수·임계·디더 해시가 전부
+            // 이 파일의 private이고, 그것을 GrassFieldSystem에 복사하면 "같은 판정을 두 곳이 따로
+            // 계산하는" 단일 소스 위반이 생긴다(B55가 세 소비자를 한 함수로 묶은 이유와 같다).
+            // 델리게이트 1개는 섬 생성 1회당 1회 할당이고 프레임당 비용은 0이다.
+            BuildGroundCaps(root.transform, islandObject, radius, boundaryPhaseA, boundaryPhaseB,
+                MakeRockGrassKeep(rockField));
 
             // (2) 초목 개수: 반지름에 선형 비례시키되 규모별 상한을 두고, 마지막에 섬 전체 상한을 강제한다.
             //     면적 비례(반지름의 제곱)로 잡으면 특대 섬에서 곧바로 수천 개가 되어 쓸 수 없다.
@@ -250,14 +280,31 @@ namespace MakeGame.Systems
             //       인스턴스**라, 야자수 draw가 몇 개 늘든 자원 노드의 배치·세이브에는 영향이 없다.
             //       같은 스트림 안의 덤불·풀포기·바위·표류물은 야자수 뒤에 오므로 위치가 재배치된다
             //       (개수는 그대로, 세이브와 무관한 장식이다).
-            int palmCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.60f), 20, 80);
-            int bushCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.24f), 12, 48);
-            int tuftCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.78f), 20, 156);
+            //     [B54 아키타입] 계수와 상한에 **같은 배율**을 곱한다. B49가 "계수와 상한을 같은 배율로
+            //     올려야 네 규모가 전부 정확히 그 배율이 된다"고 못 박은 것과 같은 이유다 - 상한만
+            //     올리면 소·중형이 안 변하고, 계수만 올리면 대·특대가 상한에 묶여 트림에 되깎인다.
+            //     하한(20/12/20)도 함께 배율을 먹는다(바위섬에서 하한이 남으면 감량이 무의미해진다).
+            //     정글/습지는 배율이 1을 넘으므로 아래 섬 전체 상한(284)도 vegetationCapScale로 함께
+            //     올라간다 - 그러지 않으면 특대 섬에서 트림이 배율을 그대로 되깎아 열대섬과 같아진다.
+            //     (archetype / rockField는 [B56]에서 이 블록 위 - 지면 캡 앞 - 으로 옮겼다. 잔디가
+            //      BuildGroundCaps 안에서 구워지므로 그 전에 암반 필드가 있어야 한다. 옮겨도 값이
+            //      달라지지 않는 근거는 그쪽 주석에 있다.)
+
+            // 암반 캡은 **원래 자리 그대로** 여기서 만든다(지면 캡 4장 다음 = 자식 순서 불변).
+            BuildRockCap(root.transform, islandObject, radius, rockField, archetype);
+
+            int palmCount = ScaledCount(radius * 0.60f, 20, 80, archetype.palmScale);
+            int bushCount = ScaledCount(radius * 0.24f, 12, 48, archetype.bushScale);
+            int tuftCount = ScaledCount(radius * 0.78f, 20, 156, archetype.tuftScale);
+
+            // 살아 있는 가드(B9 정정 규칙)는 그대로 유지하되, 예산 자체가 아키타입에 비례해 움직인다.
+            int vegetationBudget = Mathf.Max(3,
+                Mathf.RoundToInt(MaxVegetationInstancesPerIsland * Mathf.Max(0.1f, archetype.vegetationCapScale)));
 
             int requested = palmCount + bushCount + tuftCount;
-            if (requested > MaxVegetationInstancesPerIsland)
+            if (requested > vegetationBudget)
             {
-                float trim = (float)MaxVegetationInstancesPerIsland / requested;
+                float trim = (float)vegetationBudget / requested;
                 palmCount = Mathf.Max(1, Mathf.FloorToInt(palmCount * trim));
                 bushCount = Mathf.Max(1, Mathf.FloorToInt(bushCount * trim));
                 tuftCount = Mathf.Max(1, Mathf.FloorToInt(tuftCount * trim));
@@ -292,7 +339,8 @@ namespace MakeGame.Systems
                 // 버리되, Create*가 소비할 draw는 그대로 소비시킨다(skipSubmerged 인자).
                 Vector3 palmSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f, VegetationMinGroundY);
                 CreatePalm(root.transform, palmSpot, rng, trunkMaterial, frondMaterials[i % frondMaterials.Length],
-                    ShouldSkipSubmergedSpot(palmSpot, VegetationMinGroundY));
+                    ShouldSkipSubmergedSpot(palmSpot, VegetationMinGroundY)
+                    || IsRockPatchCore(rockField, palmSpot)); // [B55] 암반 지대에는 나무가 서지 않는다
             }
 
             for (int i = 0; i < bushCount; i++)
@@ -300,7 +348,8 @@ namespace MakeGame.Systems
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.8f, radius * 0.50f);
                 Vector3 bushSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.8f, radius * 0.50f, VegetationMinGroundY);
                 CreateBush(root.transform, bushSpot, rng, bushMaterials[i % bushMaterials.Length],
-                    ShouldSkipSubmergedSpot(bushSpot, VegetationMinGroundY));
+                    ShouldSkipSubmergedSpot(bushSpot, VegetationMinGroundY)
+                    || IsRockPatchCore(rockField, bushSpot)); // [B55] 암반 지대 배제
             }
 
             for (int i = 0; i < tuftCount; i++)
@@ -310,7 +359,8 @@ namespace MakeGame.Systems
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius * 0.5f, radius * 0.70f);
                 Vector3 tuftSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius * 0.5f, radius * 0.70f, VegetationMinGroundY);
                 CreateGrassTuft(root.transform, tuftSpot, rng, tuftMaterials[i % tuftMaterials.Length],
-                    ShouldSkipSubmergedSpot(tuftSpot, VegetationMinGroundY));
+                    ShouldSkipSubmergedSpot(tuftSpot, VegetationMinGroundY)
+                    || IsRockPatchCore(rockField, tuftSpot)); // [B55] 암반 지대 배제
             }
 
             // ── [B29] 여기서부터 바위·표류물. 난수 소비를 **초목 루프 뒤에** 두는 것이 중요하다 ──
@@ -320,7 +370,9 @@ namespace MakeGame.Systems
             // (3) 바위 무리. 개수는 반지름 선형(초목과 같은 규칙) - 소형 3 / 중형 5 / 대형 8 / 특대 12.
             //     하나짜리 바위는 "떨어뜨려 놓은 공"으로 읽혀서, 항상 큰 덩어리 1 + 작은 덩어리 2~3의
             //     무리로 만든다(CreateRockCluster 주석).
-            int rockClusterCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.06f), 3, MaxRockClustersPerIsland);
+            //     [B54] 아키타입 rockScale을 계수·하한·상한에 같이 곱한다(초목과 같은 규칙).
+            //     바위섬 2.2배 / 화산암섬 1.9배 / 절벽섬 1.7배 · 습지섬 0.45배 / 산호섬 0.5배.
+            int rockClusterCount = ScaledCount(radius * 0.06f, 3, MaxRockClustersPerIsland, archetype.rockScale);
             for (int i = 0; i < rockClusterCount; i++)
             {
                 // 풀밭과 마른 모래 양쪽에 걸치게 0.78R까지 내보낸다 - 해변에 반쯤 박힌 바위가
@@ -341,7 +393,8 @@ namespace MakeGame.Systems
             //     그래서 **반경이 아니라 높이**로 파도선을 찾는다(-0.3m ~ +0.9m = 젖은 모래 띠).
             //     탐색 고리를 0.55R~0.99R로 넓혀, 만이 깊게 파인 방위에서도 물가를 실제로 만날 수 있게 했다.
             //     난수 소비는 그대로 SampleOnIsland 2회뿐이다(탐색은 rng를 쓰지 않는다).
-            int driftCount = Mathf.Clamp(Mathf.RoundToInt(radius * 0.05f), 2, MaxDriftItemsPerIsland);
+            //     [B54] 아키타입 driftScale(백사장섬 1.8 / 산호섬 1.3 / 정글·화산 0.8).
+            int driftCount = ScaledCount(radius * 0.05f, 2, MaxDriftItemsPerIsland, archetype.driftScale);
             for (int i = 0; i < driftCount; i++)
             {
                 Vector3 spot = SampleOnIsland(islandObject.transform.position, rng, radius * 0.845f, radius * 0.925f);
@@ -358,7 +411,21 @@ namespace MakeGame.Systems
             // 이 스트림은 세이브와 무관한 장식 전용이고, 추가 draw가 전부 꼬리에 붙는 한 같은 worldSeed에서
             // 위 초목·바위·표류물의 위치는 1cm도 밀리지 않으며 재현성(같은 시드 = 같은 월드)도 유지된다.
             // 새 콜라이더(거암/겹바위/절벽 convex)는 아래 Physics.SyncTransforms() 앞에서 생긴다.
-            PlaceLargeStones(root.transform, islandObject, radius, rng, innerClearRadius, rockMaterials);
+            // [B54] rockScale은 **뽑은 개수에 곱한다**(뽑는 횟수 4회는 그대로다). 규모표의 하한/상한을
+            // 건드리지 않으므로 "규모가 클수록 많다"는 관계가 유지되고, 아키타입이 그 위에 배율로 얹힌다.
+            // [B55] 대형 석재가 놓인 자리를 담는 공용 리스트. 아래 PlaceRockforms가 같은 리스트로
+            // 이격을 검사해 "절벽 안에 첨탑이 박히는" 겹침을 구조적으로 막는다.
+            var placedStoneSpots = new List<Vector3>();
+            var placedStoneSpacing = new List<float>();
+            PlaceLargeStones(root.transform, islandObject, radius, rng, innerClearRadius, rockMaterials,
+                archetype.rockScale, placedStoneSpots, placedStoneSpacing);
+
+            // ── [B55] 육상 암층 12종(rockform_a~l). **격리 rng 스트림**을 쓴다 ──
+            // 위 배치들과 달리 인자 rng를 한 번도 건드리지 않는다(스트림 salt 0x0B0CCA - 기존
+            // 0x5EABED/0xC1A0/0xCA7E와 겹치지 않는다). 꼬리에 덧붙이는 것만으로도 재현성은 지켜지지만,
+            // 격리 스트림이면 나중에 이 배치의 draw 수가 바뀌어도 **기존 배치가 원리적으로 밀릴 수 없다**.
+            PlaceRockforms(root.transform, islandObject, radius, innerClearRadius, rockMaterials,
+                archetype, rockField, placedStoneSpots, placedStoneSpacing);
 
             // 위 루프들이 바위 큰 덩어리·야자수 줄기에 차단 콜라이더를 새로 달았다.
             // Physics.autoSyncTransforms는 기본 false라(AGENT_BRIEF 4장 — 초목이 전부 해수면에 깔렸던
@@ -366,6 +433,38 @@ namespace MakeGame.Systems
             // 전부 이름 필터라 못 봐도 무해하지만, "보이거나 안 보이거나"가 프레임 타이밍에 좌우되는
             // 비결정성을 남기지 않기 위해 여기서 한 번 동기화한다(섬당 1회 — 비용 무시 가능).
             Physics.SyncTransforms();
+        }
+
+        /// <summary>
+        /// [B54 아키타입] "반지름 선형 × 클램프" 개수식에 아키타입 배율을 얹는 공용 계산기.
+        ///
+        /// 배율을 **계수와 클램프 양끝에 모두** 곱하는 것이 핵심이다. B49가 야자수를 5배로 올릴 때
+        /// "계수와 상한을 같은 배율로 올려야 네 규모가 전부 정확히 5배가 된다(상한만 올리면 소·중형이
+        /// 안 늘고, 계수만 올리면 대·특대가 상한에 묶인다)"고 못 박은 것과 같은 이유다. 하한까지
+        /// 곱하는 이유는 반대 방향에도 같은 함정이 있기 때문이다 - 하한을 그대로 두면 바위섬의
+        /// 야자수 0.35배가 소형 섬(하한 20)에서 통째로 무효가 된다.
+        ///
+        /// 최소 1은 보장한다(0이면 그 섬에 그 종류가 아예 없어져 "희박"이 아니라 "부재"가 된다 -
+        /// 화산암섬도 야자수 몇 그루는 서 있어야 규모감이 읽힌다). rng를 소비하지 않는다.
+        /// </summary>
+        private static int ScaledCount(float linear, int min, int max, float scale)
+        {
+            float s = Mathf.Max(0.05f, scale);
+            int lo = Mathf.Max(1, Mathf.RoundToInt(min * s));
+            int hi = Mathf.Max(lo, Mathf.RoundToInt(max * s));
+            return Mathf.Clamp(Mathf.RoundToInt(linear * s), lo, hi);
+        }
+
+        /// <summary>
+        /// [B54] 대형 석재 개수에 아키타입 배율을 적용한다. 위 ScaledCount와 달리 클램프가 없고
+        /// (규모표가 이미 하한/상한이다) **0을 허용한다** - 규모표에 0이 들어 있는 항목(소형 섬의
+        /// 겹바위·절벽)이 배율 때문에 억지로 1이 되면 작은 섬에 절벽이 서는 기존 금기가 깨진다.
+        /// </summary>
+        private static int ScaleStoneCount(int count, float scale)
+        {
+            if (count <= 0)
+                return 0;
+            return Mathf.Max(1, Mathf.RoundToInt(count * scale));
         }
 
         /// <summary>
@@ -727,8 +826,14 @@ namespace MakeGame.Systems
         /// 잔해는 "밟고 지나감"이 명세라 콜라이더 없음. 전부 호출부(BuildIslandSurface)의
         /// Physics.SyncTransforms() 앞에서 생긴다.
         /// </summary>
+        /// <param name="rockScale">
+        /// [B54] 아키타입 바위 배율. 규모표에서 **뽑은 뒤** 곱하므로 rng 소비 횟수(4회)는 배율과 무관하다
+        /// - 이 함수가 스트림의 꼬리라 뒤따르는 소비자는 없지만, 개수 판정과 난수 소비를 분리해 두면
+        /// 나중에 뒤에 무언가를 덧붙여도 배율만으로는 배치가 밀리지 않는다.
+        /// </param>
         private static void PlaceLargeStones(Transform parent, GameObject islandObject, float radius,
-            System.Random rng, float innerClearRadius, Material[] materials)
+            System.Random rng, float innerClearRadius, Material[] materials, float rockScale = 1f,
+            List<Vector3> sharedPlaced = null, List<float> sharedSpacing = null)
         {
             Vector3 center = islandObject.transform.position;
 
@@ -742,21 +847,41 @@ namespace MakeGame.Systems
             // 가장 가까운 규모로 떨어지게 하는 방어이지, 현재 값에서는 정확히 4단으로 갈린다.
             int bracket = radius <= 70f ? 0 : radius <= 115f ? 1 : radius <= 170f ? 2 : 3;
 
-            int megaCount = rng.NextInt(StoneMegaMin[bracket], StoneMegaMax[bracket] + 1);
-            int rubbleCount = rng.NextInt(StoneRubbleMin[bracket], StoneRubbleMax[bracket] + 1);
-            int stackCount = rng.NextInt(StoneStackMin[bracket], StoneStackMax[bracket] + 1);
-            int cliffCount = rng.NextInt(StoneCliffMin[bracket], StoneCliffMax[bracket] + 1);
+            // [B54] 네 번의 draw는 배율과 무관하게 항상 여기서 일어난다(위 rockScale 인자 주석).
+            float stoneScale = Mathf.Max(0.05f, rockScale);
+            int megaCount = ScaleStoneCount(rng.NextInt(StoneMegaMin[bracket], StoneMegaMax[bracket] + 1), stoneScale);
+            int rubbleCount = ScaleStoneCount(rng.NextInt(StoneRubbleMin[bracket], StoneRubbleMax[bracket] + 1), stoneScale);
+            int stackCount = ScaleStoneCount(rng.NextInt(StoneStackMin[bracket], StoneStackMax[bracket] + 1), stoneScale);
+            int cliffCount = ScaleStoneCount(rng.NextInt(StoneCliffMin[bracket], StoneCliffMax[bracket] + 1), stoneScale);
 
-            // 살아 있는 가드(B9 정정의 규칙): 현재 규모표로는 최대 33 = 상한과 정확히 같아 발동하지
-            // 않지만, 규모표를 올리는 순간 잔해부터 깎는다(콜라이더 없는 계열이라 잃는 것이 가장 적다).
+            // 살아 있는 가드(B9 정정의 규칙): 예전에는 규모표 최대 33 = 상한과 정확히 같아 발동하지
+            // 않았지만, [B54] 아키타입 배율(바위섬 2.2배)이 얹히면서 **실제로 걸리는 가드**가 됐다.
+            // 상한 자체는 올리지 않는다 - 이 계열은 삼각형이 수천 면대(특대 최악 130,540)라 렌더 예산의
+            // 근거가 초목과 다르다.
+            // 깎는 방식은 "잔해부터"에서 **네 계열 비례 축소**로 바꿨다. 예전 규칙은 초과분이 최대
+            // 몇 개라는 전제에서만 옳았는데, 배율 2.2배(바위섬 특대)에서는 초과가 40개라 잔해를 0으로
+            // 만들어도 상한이 조용히 뚫린다. 게다가 바위섬에서 사라지는 것이 하필 "깨진 암석 잔해"라
+            // 유형의 인상이 거꾸로 간다. 비례 축소는 **구성비**를 보존하므로 두 문제를 함께 없앤다.
+            // 내림(Floor)이라 합이 상한을 넘을 수 없다.
+            // ★ Tropical에서는 이 분기가 **절대 실행되지 않는다** - 규모표 최대 33 = 상한이라
+            //   requested > 상한이 성립하지 않기 때문이다(아키타입 도입 이전과 완전히 동일).
             int requested = megaCount + rubbleCount + stackCount + cliffCount;
             if (requested > MaxLargeStonesPerIsland)
-                rubbleCount = Mathf.Max(0, rubbleCount - (requested - MaxLargeStonesPerIsland));
+            {
+                float keep = (float)MaxLargeStonesPerIsland / requested;
+                megaCount = Mathf.FloorToInt(megaCount * keep);
+                rubbleCount = Mathf.FloorToInt(rubbleCount * keep);
+                stackCount = Mathf.FloorToInt(stackCount * keep);
+                cliffCount = Mathf.FloorToInt(cliffCount * keep);
+            }
 
             // 이번 배치에서 이미 놓인 큰 석재(거암/겹바위/절벽). 상호 간격 검사와 잔해의 "깨져 나온"
             // 연출(60% 확률로 큰 석재 주변 3~6m) 앵커로 쓴다.
-            var placedLarge = new List<Vector3>();
-            var placedSpacing = new List<float>();
+            // [B55] 호출부가 리스트를 넘기면 그것을 그대로 채운다 - 뒤이어 도는 PlaceRockforms가
+            // **같은 리스트**를 이격 검사에 재사용해, 암층 랜드마크가 절벽·거암과 겹치지 않게 한다.
+            // 넘기지 않으면(기본값) 예전처럼 지역 리스트를 쓴다 - 이 함수의 동작은 한 줄도 달라지지 않는다.
+            var placedLarge = sharedPlaced ?? new List<Vector3>();
+            var placedSpacing = sharedSpacing ?? new List<float>();
 
             // ── (1) 거암 mega_a/b - 내륙, 회피 15m, 상호 8m, convex ──
             // 안쪽 한계: 기존 바위 무리와 같은 innerClearRadius+4를 기본으로 하되, 시작 섬은 고정물
@@ -930,6 +1055,697 @@ namespace MakeGame.Systems
 
             spot = Vector3.zero;
             return false;
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════
+        //  [B55] 암석 피복(rockCoverage) + 육상 암층 12종(rockform_a~l)
+        // ═════════════════════════════════════════════════════════════════════════
+        //
+        // 사용자 요구는 두 줄이었다: "수중·육지 바위 다양성"과 **"섬의 50%가 바위로 이루어진 섬"**.
+        // 뒤쪽이 IslandArchetypeProfile.rockCoverage(바위섬 0.50 / 화산암 0.42 / 절벽 0.30 / 열대 0.08)인데,
+        // B54는 값만 정의하고 아무도 읽지 않았다. 여기서 그 값을 **두 층으로** 실제 화면에 옮긴다.
+        //
+        //  (1) 암반 캡(RockCap) — 면적 계약을 지는 층.
+        //      지형 메시의 삼각형 중 "노이즈 값이 임계 이하"인 것만 골라 암반색 덮개 1장을 만든다.
+        //      임계는 **면적 가중 분위수**로 뽑으므로, 선택된 삼각형의 넓이 합 / 후보 넓이 합이
+        //      정확히 rockCoverage가 된다(아래 BuildRockField 주석의 검산). 즉 "50%"가 비유가 아니라
+        //      계산으로 보장되는 수치다. 비용은 GameObject 1개 + 서브메시 2장(= 드로우콜 +2)뿐이다.
+        //      ★ 프롭만으로는 이 계약을 지킬 수 없다 ★ 특대 섬 육지 면적은 9만 m²대인데 가장 큰
+        //      노두(l 7.0×5.5)의 발자국이 30m²다. 50%를 프롭으로 채우려면 1,500개가 필요해
+        //      렌더러 상한(200)의 7배가 된다. 그래서 면적은 캡이, 입체감은 프롭이 맡는 2층 구조다.
+        //
+        //  (2) 암층 프롭(PlaceRockforms) — 입체 기복을 만드는 층.
+        //      같은 노이즈 필드 안에서만 패치 중심을 잡으므로 프롭은 **항상 암반 캡 위에** 선다.
+        //
+        // 그리고 같은 필드가 초목 배제에도 쓰인다(BuildIslandSurface의 IsRockPatchCore 호출) -
+        // 세 소비자가 함수 하나를 공유하므로 "바위 위에 야자수" 같은 어긋남이 구조적으로 없다.
+        //
+        // ★ 결정성 ★ 필드 계산은 rng를 만들지도 소비하지도 않는다(순수 위치 노이즈 + 시드 해시).
+        // 초목 배제는 기존 skipSubmerged 경로를 그대로 타므로 **rng draw가 비트 단위로 같다** -
+        // 같은 worldSeed에서 배제되지 않은 초목의 좌표는 1cm도 밀리지 않는다.
+        // 프롭 배치는 별도 격리 스트림(RockformStreamSalt)을 쓴다.
+
+        /// <summary>
+        /// 암반 캡/프롭이 놓일 수 있는 최소 지면 높이(m). **rockCoverage의 분모가 이 높이 위의 지면
+        /// 면적**이므로, 정의를 여기 한 곳에만 둔다.
+        ///
+        /// 값이 0.45인 근거: BuildGroundCaps의 WetTop 기준값이 0.30(젖은 모래 = 파도선)이라 그 위이고,
+        /// DampTop 0.75보다는 아래다. 즉 "파도가 닿는 띠만 빼고 물 위 육지 전부"가 피복 대상이다.
+        /// 0.75(축축한 모래 위)로 잡아 보면 분모가 너무 작아진다 - 이 월드의 섬은 정상부가 0.9~3.7m로
+        /// 낮아서(terrainMaxHeight 8 × 프로파일 heightScale 0.16~0.36 × 아키타입 0.72~1.30), 대표적인
+        /// 섬(정상 2.4m · plateauPow 1.0)에서 y ≥ 0.75인 면적이 발자국의 64%뿐이다. 0.45면 77%가 되어
+        /// "섬의 절반이 바위"라는 요구가 화면에서 실제로 절반으로 읽힌다.
+        /// 암반이 물가까지 내려오는 그림은 바위섬/절벽섬에서 오히려 맞다(자갈 해안).
+        /// </summary>
+        private const float RockCapMinGroundY = 0.45f;
+
+        /// <summary>암반 캡을 지형 위로 띄우는 높이(m). 기존 지면 캡 4장은 전부 0.08이라, 5cm 위에 얹어
+        /// 깊이 충돌 없이 그 위에 그려지게 한다(reversed-Z float 깊이에서 5cm는 200m 거리에서도 넉넉하다).
+        /// 8cm → 13cm의 차이로 새로 가려지는 것은 높이 8~13cm짜리 납작한 자원 노드(부싯돌 0.10m)뿐이고,
+        /// 그마저 암반 지대 안(= rockCoverage 비율)에서만 일어난다.</summary>
+        private const float RockCapYOffset = 0.13f;
+
+        /// <summary>초목을 배제하는 "암반 중심부"의 몫. 피복 면적의 이 비율만 배제하고 가장자리
+        /// (나머지 22%)에는 초목을 남긴다 - 암반과 풀밭이 칼로 자른 듯 갈리지 않게 하는 완충대다.</summary>
+        private const float RockCoreShare = 0.78f;
+
+        /// <summary>암반 노이즈의 저주파/고주파 파장(1/m). 33m 얼룩 위에 10m 결을 얹는다.</summary>
+        private const float RockNoiseCoarseScale = 0.030f;
+        private const float RockNoiseFineScale = 0.095f;
+
+        /// <summary>삼각형 단위 디더 폭. 캡 경계가 직선으로 읽히지 않게 흩뜨린다(BuildGroundCaps의
+        /// heightDither와 같은 목적). 임계 계산과 선택자가 **같은 값**을 쓰므로 피복률은 흔들리지 않는다.</summary>
+        private const float RockNoiseDither = 0.08f;
+
+        /// <summary>암반 노이즈 디더용 위치 해시 salt(0x51A7B0xx / 0x51A7B020 대역과 겹치지 않게 띄웠다).</summary>
+        private const uint RockNoiseDitherSalt = 0x51A7B030u;
+
+        /// <summary>이름/부모 규약이 깨졌을 때 쓰는 섬 필드 시드 폴백 salt.</summary>
+        private const uint RockFieldFallbackSalt = 0x51A7B031u;
+
+        /// <summary>
+        /// 섬 하나의 암반 노이즈 필드. struct이므로 호출부가 값으로 들고 다닌다(전역 상태 0 = 섬
+        /// 여러 개를 같은 프레임에 지어도 서로 오염되지 않는다).
+        /// </summary>
+        private struct RockField
+        {
+            /// <summary>피복이 실제로 존재하는가(coverage 0 · 지형 메시 없음 · 후보 삼각형 0이면 false).</summary>
+            public bool active;
+            /// <summary>섬 월드 중심. 월드 좌표 질의를 지형 로컬 좌표로 되돌릴 때 쓴다.</summary>
+            public Vector3 center;
+            /// <summary>펄린 오프셋 4개(저주파 x/z · 고주파 x/z). 섬마다 다른 무늬가 나오게 한다.</summary>
+            public float coarseOffsetX, coarseOffsetZ, fineOffsetX, fineOffsetZ;
+            /// <summary>피복 임계. 노이즈가 이 값 미만인 지면이 암반이다(면적 가중 분위수).</summary>
+            public float threshold;
+            /// <summary>초목 배제 임계(피복 면적의 RockCoreShare 몫에 해당하는 더 낮은 분위수).</summary>
+            public float coreThreshold;
+        }
+
+        /// <summary>
+        /// 지형 로컬 XZ → 암반 노이즈 값 [0,1]. ★ 순수 함수 · rng 소비 0 ★
+        /// 저주파(33m) 0.65 + 고주파(10m) 0.35에 삼각형 단위 디더를 더한다. 임계 계산(BuildRockField)과
+        /// 선택자(BuildRockCap) · 초목 배제 · 패치 중심 판정이 **전부 이 한 함수**를 부른다.
+        /// </summary>
+        private static float RockNoise(RockField field, float localX, float localZ)
+        {
+            float coarse = Mathf.PerlinNoise(localX * RockNoiseCoarseScale + field.coarseOffsetX,
+                                             localZ * RockNoiseCoarseScale + field.coarseOffsetZ);
+            float fine = Mathf.PerlinNoise(localX * RockNoiseFineScale + field.fineOffsetX,
+                                           localZ * RockNoiseFineScale + field.fineOffsetZ);
+            float dither = DecorationPositionHash01(new Vector3(localX, 0f, localZ), RockNoiseDitherSalt) - 0.5f;
+            return Mathf.Clamp01(coarse * 0.65f + fine * 0.35f + dither * RockNoiseDither);
+        }
+
+        /// <summary>시드 키 + salt → 펄린 오프셋 [0, 512). IslandArchetypes와 같은 finalizer다(난수 소비 0).</summary>
+        private static float RockFieldOffset(int seedKey, uint salt)
+        {
+            unchecked
+            {
+                uint h = (uint)seedKey ^ salt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                // 하한 64는 **음수 입력 방지**용이다. Mathf.PerlinNoise는 음수 좌표에서 0 주위로
+                // 접히는 구현이라(대칭 무늬), 오프셋이 0에 가까우면 섬 절반이 반대쪽 절반의 거울상이 된다.
+                // 섬 반경 상한 200m × 최대 주파수 0.095 = 19이므로 64면 어떤 좌표에서도 양수다.
+                return 64f + (h & 0xFFFFFFu) / (float)0x1000000u * 512f;
+            }
+        }
+
+        /// <summary>
+        /// 섬 오브젝트 → (worldSeed, islandId). 이름 규약 "Island_{id}_{size}"와 부모 WorldMapManager를
+        /// 읽는다(ArchetypeOf와 같은 경로 · FindObjectsByType류 전역 탐색 없음). 규약이 깨지면 false.
+        /// </summary>
+        private static bool TryGetIslandIdentity(GameObject islandObject, out int worldSeed, out int islandId)
+        {
+            worldSeed = 0;
+            islandId = 0;
+            if (islandObject == null)
+                return false;
+
+            IslandSize size;
+            if (!TryParseIslandName(islandObject.name, out islandId, out size))
+                return false;
+
+            var manager = islandObject.GetComponentInParent<WorldMapManager>();
+            if (manager == null)
+                return false;
+
+            worldSeed = manager.worldSeed;
+            return true;
+        }
+
+        /// <summary>섬 하나의 결정적 시드 키. 규약이 깨지면 섬 월드 좌표 해시로 폴백한다(여전히 결정적).</summary>
+        private static int IslandRockSeedKey(GameObject islandObject)
+        {
+            int worldSeed, islandId;
+            if (TryGetIslandIdentity(islandObject, out worldSeed, out islandId))
+                return IslandArchetypes.SeedKey(worldSeed, islandId);
+            return unchecked((int)DecorationPositionHash(islandObject.transform.position, RockFieldFallbackSalt));
+        }
+
+        /// <summary>
+        /// 섬의 암반 필드를 만든다. ★ rng 소비 0 ★
+        ///
+        /// [피복률이 계산으로 보장되는 이유] 지형 메시의 삼각형을 (노이즈 값, 넓이) 쌍으로 모아 노이즈
+        /// 오름차순으로 정렬한 뒤, 넓이를 누적해 `coverage × 전체넓이`에 도달하는 지점의 노이즈 값을
+        /// 임계로 삼는다. 그러면 `노이즈 < 임계`인 삼각형의 넓이 합 = coverage × 전체넓이가 **정의상**
+        /// 성립한다(오차는 경계 삼각형 1장 이하). 펄린 값 분포는 균등이 아니라 종 모양이라 "임계 =
+        /// coverage"로 두면 실제 면적이 크게 어긋나는데(펄린 중앙값 부근에서 밀도가 최대), 분위수는
+        /// 분포 모양과 무관하게 정확하다 - 이 방식을 고른 이유다.
+        ///
+        /// 후보는 지면 높이 RockCapMinGroundY(0.75m) 이상인 삼각형뿐이다. 즉 rockCoverage의 분모는
+        /// "젖은 모래 띠 위의 섬 육지"이고, 물에 잠긴 테두리나 파도선은 애초에 세지 않는다.
+        ///
+        /// 비용: 특대 섬 지형이 7,110삼각형(ringCount 40 × radialSegments 90)이라 정렬 대상이 그 이하다.
+        /// 섬 생성 1회에 한 번뿐이고 배열 2개는 즉시 버려진다.
+        /// </summary>
+        private static RockField BuildRockField(GameObject islandObject, float radius, float coverage)
+        {
+            var field = new RockField();
+            if (islandObject == null)
+                return field;
+
+            field.center = islandObject.transform.position;
+            if (coverage <= 0.001f)
+                return field;
+
+            var filter = islandObject.GetComponent<MeshFilter>();
+            Mesh source = filter != null ? filter.sharedMesh : null;
+            if (source == null)
+                return field; // 프리팹 지형 구성이면 삼각형을 알 수 없다 - 조용히 피복 없음
+
+            int seedKey = IslandRockSeedKey(islandObject);
+            field.coarseOffsetX = RockFieldOffset(seedKey, 0xA1B2C3D4u);
+            field.coarseOffsetZ = RockFieldOffset(seedKey, 0xB2C3D4A1u);
+            field.fineOffsetX = RockFieldOffset(seedKey, 0xC3D4A1B2u);
+            field.fineOffsetZ = RockFieldOffset(seedKey, 0xD4A1B2C3u);
+
+            Vector3[] vertices = source.vertices;
+            int[] triangles = source.triangles;
+            int capacity = triangles.Length / 3;
+            if (capacity <= 0)
+                return field;
+
+            var noiseKeys = new float[capacity];
+            var triangleAreas = new float[capacity];
+            int count = 0;
+            float totalArea = 0f;
+            for (int t = 0; t + 2 < triangles.Length; t += 3)
+            {
+                Vector3 a = vertices[triangles[t]];
+                Vector3 b = vertices[triangles[t + 1]];
+                Vector3 c = vertices[triangles[t + 2]];
+                Vector3 centroid = (a + b + c) / 3f;
+                if (centroid.y < RockCapMinGroundY)
+                    continue;
+
+                float area = Vector3.Cross(b - a, c - a).magnitude * 0.5f;
+                if (area <= 0.0001f)
+                    continue;
+
+                noiseKeys[count] = RockNoise(field, centroid.x, centroid.z);
+                triangleAreas[count] = area;
+                count++;
+                totalArea += area;
+            }
+
+            if (count <= 0 || totalArea <= 0f)
+                return field;
+
+            System.Array.Sort(noiseKeys, triangleAreas, 0, count);
+
+            float wantMain = totalArea * Mathf.Clamp01(coverage);
+            float wantCore = totalArea * Mathf.Clamp01(coverage * RockCoreShare);
+            // 기본값은 "전부 선택"(coverage가 1에 가까울 때 정렬 끝까지 가도 도달하지 못하는 경우).
+            field.threshold = noiseKeys[count - 1] + 1f;
+            field.coreThreshold = field.threshold;
+
+            float accumulated = 0f;
+            bool coreSet = false;
+            for (int i = 0; i < count; i++)
+            {
+                accumulated += triangleAreas[i];
+                if (!coreSet && accumulated >= wantCore)
+                {
+                    field.coreThreshold = noiseKeys[i];
+                    coreSet = true;
+                }
+                if (accumulated >= wantMain)
+                {
+                    field.threshold = noiseKeys[i];
+                    break;
+                }
+            }
+
+            field.active = true;
+            return field;
+        }
+
+        /// <summary>
+        /// 암반 캡 1장. 기존 지면 캡 4장과 **같은 도구**(BuildCapLayer - 지형 삼각형을 잘라 덮개를 만든다)를
+        /// 쓰므로 지형 굴곡과 100% 일치하고, 콜라이더는 붙지 않으며(플레이어는 지형 위를 걷는다),
+        /// 그림자도 드리우지 않는다. 톤 2장으로 나눠 200m 섬이 단색 한 장으로 덮이는 것을 막는다.
+        /// 색은 WeatheredStone을 아키타입 지면색 쪽으로 28% 섞은 값이다 - 화산암섬이면 검게, 바위섬이면
+        /// 회갈색으로 자동으로 따라간다(색 상수를 아키타입마다 새로 정의하지 않는다).
+        /// </summary>
+        private static void BuildRockCap(Transform surfaceRoot, GameObject islandObject, float radius,
+            RockField field, IslandArchetypeProfile archetype)
+        {
+            if (!field.active || surfaceRoot == null || islandObject == null)
+                return;
+
+            var filter = islandObject.GetComponent<MeshFilter>();
+            Mesh source = filter != null ? filter.sharedMesh : null;
+            if (source == null)
+                return;
+
+            RockField local = field; // 람다가 struct 복사본을 캡처한다(호출부 값 오염 없음)
+            Color rockBase = Color.Lerp(StructureVisualBuilder.WeatheredStone, archetype.groundColor, 0.28f);
+
+            BuildCapLayer(surfaceRoot, source, radius, "RockCap", rockBase,
+                RockCapYOffset, radius * 1.10f, "rock",
+                (centroid, distance, angle) =>
+                    centroid.y >= RockCapMinGroundY && RockNoise(local, centroid.x, centroid.z) < local.threshold,
+                2, 0.20f, Shade(StructureVisualBuilder.WeatheredStone, 0.76f));
+        }
+
+        /// <summary>월드 좌표가 암반 지대(캡이 덮은 자리) 위인가. ★ rng 소비 0 ★</summary>
+        private static bool IsRockGround(RockField field, Vector3 worldSpot)
+        {
+            if (!field.active || worldSpot.y < RockCapMinGroundY)
+                return false;
+            return RockNoise(field, worldSpot.x - field.center.x, worldSpot.z - field.center.z) < field.threshold;
+        }
+
+        /// <summary>월드 좌표가 암반 **중심부**인가(초목 배제 판정). 가장자리 22%는 배제하지 않는다.</summary>
+        private static bool IsRockPatchCore(RockField field, Vector3 worldSpot)
+        {
+            if (!field.active || worldSpot.y < RockCapMinGroundY)
+                return false;
+            return RockNoise(field, worldSpot.x - field.center.x, worldSpot.z - field.center.z) < field.coreThreshold;
+        }
+
+        /// <summary>
+        /// [B56] 월드 좌표에서의 **잔디 유지 계수** [0,1]. ★ 순수 함수 · rng 소비 0 ★
+        ///
+        ///   1     암반 피복 밖(또는 물가 띠) - 잔디가 예전과 완전히 같이 깔린다.
+        ///   0     암반 코어(coreThreshold 미만 = 피복 면적의 78%) - 초목 배제와 **같은 기준**이라
+        ///         야자수가 서지 않는 자리에는 잔디도 서지 않는다.
+        ///   0~1   경계 완충대(코어와 피복 경계 사이 22%) - 코어 쪽 0에서 바깥 1까지 선형.
+        ///         호출부가 이 값을 채택 확률로 쓰므로 완충대의 평균 밀도는 정확히 절반이 되고,
+        ///         암반에서 풀밭으로 밀도가 서서히 오른다(칼로 자른 경계가 생기지 않는다).
+        ///         상수 0.5로 일괄 반감하면 완충대 안쪽 끝에서 밀도가 0 → 0.5로 튀어 결국
+        ///         경계선이 하나 더 생긴다 - 그래서 선형 램프를 쓴다(비용은 같다).
+        ///
+        /// IsRockGround/IsRockPatchCore와 **같은 RockNoise·같은 임계**를 읽는다. 판정 로직이 이
+        /// 파일 밖으로 복사되지 않게 하는 것이 이 래퍼의 존재 이유다.
+        /// </summary>
+        private static float RockGrassKeep(RockField field, Vector3 worldSpot)
+        {
+            if (!field.active || worldSpot.y < RockCapMinGroundY)
+                return 1f;
+
+            float noise = RockNoise(field, worldSpot.x - field.center.x, worldSpot.z - field.center.z);
+            if (noise >= field.threshold)
+                return 1f;                                  // 피복 밖
+            if (noise < field.coreThreshold)
+                return 0f;                                  // 코어 - 전면 배제
+            // InverseLerp는 두 임계가 같을 때(피복률이 0에 수렴하는 퇴화 사례) 0을 돌려주므로
+            // 0으로 나누지 않는다. 그 경우 완충대의 면적 자체가 0이라 결과에 영향이 없다.
+            return Mathf.InverseLerp(field.coreThreshold, field.threshold, noise);
+        }
+
+        /// <summary>
+        /// [B56] 암반 필드를 "월드 좌표 → 잔디 유지 계수" 순수 함수로 포장한다(GrassFieldSystem에
+        /// 넘기는 유일한 통로). 피복이 없는 섬(coverage 0 · 지형 메시 없음)은 null을 돌려주어
+        /// 호출부가 판정 자체를 건너뛰게 한다 - 그런 섬의 잔디는 비트 단위로 예전과 같다.
+        /// 델리게이트가 struct **복사본**을 캡처하므로 호출부 값이 오염되지 않는다(BuildRockCap의
+        /// 람다와 같은 방식). 섬 생성 1회당 할당 1개, 프레임당 비용 0.
+        /// </summary>
+        private static System.Func<Vector3, float> MakeRockGrassKeep(RockField field)
+        {
+            if (!field.active)
+                return null;
+
+            RockField local = field;
+            return worldSpot => RockGrassKeep(local, worldSpot);
+        }
+
+        // ── [B55] 암층 12종의 계층·가중치·자세 표 ──────────────────────────────────
+        //
+        // 계층을 나눈 이유는 제작 담당 경고 그대로다: 이 12종은 폭이 2.2~7.0m, 높이가 1.2~7.0m로
+        // **한 자리에 섞어 쓸 수 없다.** 소품 자리(기존 rock_a~e 1.85~3.2m)에 7m 첨탑이 꽂히는 것을
+        // 구조적으로 막기 위해, 종류를 계층 배열로 가르고 계층마다 배치 규칙(고리·간격·개수)을 따로 둔다.
+        //
+        //   피복/노두(Cover)     e 층리슬랩 · g 표석군집 · j 계단노두 · l 낮은노두판
+        //                        → 낮고 넓다. 암반 지대(RockField) 안에서만 패치로 깔린다.
+        //   중형 특징물(Feature) d 버섯바위 · h 기울어진판석 · i 벌집풍화암 · k 쐐기바위
+        //                        → 사람 키의 1.5~2배. 내륙에 흩어 놓는다.
+        //   랜드마크(Landmark)   a 자연아치 · b 첨탑 · c 주상절리 · f 균열거석
+        //                        → 멀리서 보이는 지형지물. 섬당 소수만, 상호 16m 이격.
+
+        private static readonly int[] RockformLandmarkKinds =
+            { RockformArch, RockformSpire, RockformColumns, RockformCracked };
+        private static readonly int[] RockformFeatureKinds =
+            { RockformMushroom, RockformTilted, RockformHoneycomb, RockformWedge };
+        private static readonly int[] RockformCoverKinds =
+            { RockformBedded, RockformErratics, RockformSteps, RockformShelf };
+
+        /// <summary>
+        /// 아키타입별 종류 가중치. 행 = IslandArchetype(enum 순서), 열 = 암층 종류(a~l = 0~11).
+        /// 0이면 그 섬에 그 종류가 **절대 나오지 않는다**. 계층 안에서만 정규화되므로(PickRockformKind),
+        /// 한 계층의 가중치가 전부 0이면 그 계층은 그 아키타입에서 통째로 비활성이 된다.
+        ///
+        /// 설계 의도(사용자/디렉터 요구를 표 한 장으로 옮긴 것):
+        ///   화산암 = 주상절리(c 8)·첨탑(b 7)·균열거석(f 6) 선호, 표석군집(g)·아치(a)는 낮게.
+        ///   절벽   = 기울어진 판석(h 7)·층리 슬랩(e 7)·낮은 노두판(l 6)·계단 노두(j 6) 선호.
+        ///   바위섬 = 전 계열 고르게 높다(6~7) - "전 계열"이 곧 바위섬의 정의다.
+        ///   산호/습지 = 거의 없다. 첨탑·주상절리는 0(낮고 평평한 환초 / 진창 습지에 5m 암주는 없다).
+        /// </summary>
+        private static readonly int[,] RockformArchetypeWeights =
+        {
+            //              a  b  c  d  e  f  g  h  i  j  k  l
+            /* Tropical */ { 3, 3, 3, 4, 4, 3, 4, 4, 4, 4, 3, 5 },
+            /* Rocky    */ { 6, 6, 6, 6, 7, 6, 7, 6, 6, 6, 6, 7 },
+            /* Sandy    */ { 2, 1, 1, 3, 4, 2, 5, 3, 3, 4, 2, 6 },
+            /* Jungle   */ { 3, 2, 2, 5, 3, 5, 4, 3, 5, 3, 3, 4 },
+            /* Volcanic */ { 3, 7, 8, 3, 4, 6, 3, 3, 5, 5, 5, 4 },
+            /* Atoll    */ { 1, 0, 0, 1, 2, 0, 2, 1, 1, 2, 1, 4 },
+            /* Marsh    */ { 1, 0, 0, 1, 2, 1, 3, 1, 2, 2, 1, 4 },
+            /* Cliff    */ { 5, 4, 4, 3, 7, 4, 4, 7, 3, 6, 4, 6 },
+        };
+
+        /// <summary>종류별 균등 배율 범위(min). 계단 노두(j)만 좁다 - 단높이 0.52m가 배율을 그대로 먹어서
+        /// 1.15를 넘기면 0.60m가 되어 **오를 수 없게** 되기 때문이다(명세의 "오를 수 있음"이 깨진다).</summary>
+        private static readonly float[] RockformScaleMin =
+            { 0.90f, 0.85f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.95f };
+        private static readonly float[] RockformScaleMax =
+            { 1.25f, 1.20f, 1.30f, 1.30f, 1.50f, 1.25f, 1.45f, 1.30f, 1.40f, 1.15f, 1.25f, 1.55f };
+
+        /// <summary>
+        /// 종류별 매립 깊이(모델 높이 대비 비율 - 배율을 곱한 실제 높이에 적용한다).
+        /// 밑면이 평평한 y=0 원점이라 비율 매립이어도 경사지에서 모서리가 뜨지 않는다.
+        ///
+        /// 낮은 노두판(l)이 0.50으로 유독 깊은 이유: 콜라이더를 달지 않는 유일한 종류라(아래 표)
+        /// 노출이 잠수 높이보다 크면 **통과해 걸어 다니는 판**이 된다. 0.50이면 노출이 0.60~0.93m라
+        /// 점프(0.9m)로 올라선 것처럼 보이고, 실제로는 그냥 지나가진다 - rock_rubble 2종의 "밟고 지나감"
+        /// 규약을 그대로 물려받은 값이다.
+        /// 계단 노두(j)가 0.06으로 얕은 이유: 단(0.52m)이 지면에 잠기면 계단이 아니라 턱이 된다.
+        /// </summary>
+        private static readonly float[] RockformSinkFraction =
+            { 0.04f, 0.05f, 0.05f, 0.05f, 0.16f, 0.04f, 0.14f, 0.05f, 0.10f, 0.06f, 0.05f, 0.50f };
+
+        /// <summary>콜라이더를 다는가. l(낮은 노두판)만 false다 - 위 SinkFraction 주석의 근거.
+        /// 나머지 11종은 전부 **비볼록** MeshCollider다(AddRockformCollider).</summary>
+        private static readonly bool[] RockformNeedsCollider =
+            { true, true, true, true, true, true, true, true, true, true, true, false };
+
+        /// <summary>씬 하이어라키에 찍히는 이름. "Island_"로 시작하지 않아 TerrainSampler의 지형 필터에
+        /// 구조적으로 걸릴 수 없다(이 파일의 다른 장식과 같은 규약).</summary>
+        private static readonly string[] RockformPartNames =
+        {
+            "Deco_RockArch", "Deco_RockSpire", "Deco_RockColumns", "Deco_RockMushroom",
+            "Deco_RockBedded", "Deco_RockCracked", "Deco_RockErratics", "Deco_RockTilted",
+            "Deco_RockHoneycomb", "Deco_RockSteps", "Deco_RockWedge", "Deco_RockShelf",
+        };
+
+        /// <summary>랜드마크 개수 하한/상한(소/중/대/특대). "섬당 소수"라는 명세 그대로다.</summary>
+        private static readonly int[] RockformLandmarkMin = { 0, 0, 1, 2 };
+        private static readonly int[] RockformLandmarkMax = { 1, 1, 2, 3 };
+
+        /// <summary>중형 특징물 개수 하한/상한(소/중/대/특대).</summary>
+        private static readonly int[] RockformFeatureMin = { 1, 2, 3, 4 };
+        private static readonly int[] RockformFeatureMax = { 2, 4, 5, 7 };
+
+        /// <summary>랜드마크/특징물의 절대 상한. 아키타입 배율(바위섬 2.2배)이 규모표 위에 곱해지므로
+        /// 상한이 없으면 특대 바위섬에 랜드마크가 6개 서서 "소수"라는 전제가 깨진다.</summary>
+        public const int MaxRockformLandmarksPerIsland = 4;
+        public const int MaxRockformFeaturesPerIsland = 10;
+
+        /// <summary>
+        /// 피복 프롭의 섬당 렌더러 상한(소/중/대/특대). 초과분은 **조용히** 잘라낸다(정상 동작이라
+        /// 로그를 남기지 않는다 - 로그를 남기면 바위섬을 열 때마다 콘솔이 도배된다).
+        /// 이 상한에 실제로 닿는 조합은 특대 바위섬(coverage 0.50) 하나뿐이다 - 아래 패치 수식 참고.
+        /// </summary>
+        private static readonly int[] RockformCoverCap = { 40, 80, 140, 200 };
+
+        /// <summary>패치 하나가 대표하는 지면 면적(m²). 패치 수 = coverage × 배치 고리 면적 / 이 값이다.
+        /// 900은 "한 변 30m마다 노두 무리 하나"에 해당한다 - 프롭은 면적을 채우는 것이 아니라
+        /// 암반 캡 위에 기복을 찍는 층이므로(파일 상단 2층 구조 주석) 성기게 잡는다.</summary>
+        private const float RockformPatchArea = 900f;
+
+        /// <summary>패치 안에서 노두가 흩어지는 반경(m).</summary>
+        private const float RockformPatchRadius = 7f;
+
+        private const float RockformLandmarkSpacing = 16f;
+        private const float RockformFeatureSpacing = 10f;
+        private const float RockformPatchSpacing = 11f;
+
+        /// <summary>격리 rng 스트림 salt. 기존 장식 스트림(0x5EABED / 0xC1A0 / 0xCA7E)과 겹치지 않는다.</summary>
+        private const int RockformStreamSalt = 0x0B0CCA;
+
+        /// <summary>
+        /// [B55] 암층 12종을 계층별로 배치한다. ★ 인자 rng를 받지 않는다 ★ - 섬 시드에서 만든
+        /// **격리 스트림**만 쓰므로 기존 초목·바위·표류물·대형석재의 추첨이 원리적으로 밀릴 수 없다.
+        ///
+        /// [모델 필수] TryGetRockformModel이 false면 그 개체는 배치하지 않는다(대형 석재와 같은 규약 -
+        /// 절차 폴백 없음). 배율/yaw draw는 모델 유무와 **무관하게 먼저** 뽑으므로, 프로브가 아직
+        /// 성공하지 못한 프레임에도 스트림이 어긋나지 않는다(B45의 선추첨 규칙).
+        ///
+        /// [콜라이더] 11종은 비볼록 MeshCollider, l(낮은 노두판)만 없음. 비볼록인 이유는 두 가지다:
+        ///   (1) a 자연아치(개구 2.5m)·k 쐐기바위(관통 1.7m)는 볼록 헐이면 **구멍이 메워진다**.
+        ///   (2) _col 저폴리 헐이 없어 볼록으로 쿠킹하면 PhysX 255정점 상한에 걸려 부분 헐이 된다
+        ///       (b 258 ~ g 3,655정점). 비볼록 삼각형 메시는 상한이 없고, 정적 장식이라 비용도 낮다
+        ///       (쿠킹 결과는 공유 메시 단위로 캐시되므로 종류당 1회다).
+        /// </summary>
+        private static void PlaceRockforms(Transform parent, GameObject islandObject, float radius,
+            float innerClearRadius, Material[] materials, IslandArchetypeProfile archetype, RockField field,
+            List<Vector3> placed = null, List<float> placedSpacing = null)
+        {
+            if (parent == null || islandObject == null || materials == null || materials.Length == 0)
+                return;
+
+            Vector3 center = islandObject.transform.position;
+            bool startIsland = islandObject.name.StartsWith("Island_0_");
+            int bracket = radius <= 70f ? 0 : radius <= 115f ? 1 : radius <= 170f ? 2 : 3;
+            int archetypeRow = (int)archetype.archetype;
+            if ((uint)archetypeRow >= (uint)IslandArchetypes.Count)
+                archetypeRow = 0;
+
+            int seedKey = IslandRockSeedKey(islandObject);
+            var rng = new System.Random(unchecked(seedKey * 397 ^ RockformStreamSalt));
+
+            float rockScale = Mathf.Max(0f, archetype.rockScale);
+            // 대형 석재가 이미 채워 넣은 리스트를 이어 쓴다(넘어오지 않으면 새로 만든다).
+            if (placed == null || placedSpacing == null)
+            {
+                placed = new List<Vector3>();
+                placedSpacing = new List<float>();
+            }
+            int materialCursor = 0;
+
+            // ── (1) 랜드마크 - 내륙, 상호 16m ──────────────────────────────────────
+            // 시작 섬은 고정물(경비행기 잔해·배 작업대·착륙 원, 도달 반경 12m)에서 18m 더 띄운다.
+            // 배율은 **뽑은 뒤** 곱하고 내림한다(ScaleStoneCount와 달리 0을 허용해야 산호/습지에서
+            // 랜드마크가 억지로 1개 서지 않는다 - "거의 없음"이 명세다).
+            int landmarkCount = Mathf.Clamp(
+                Mathf.FloorToInt(rng.NextInt(RockformLandmarkMin[bracket], RockformLandmarkMax[bracket] + 1) * rockScale),
+                0, MaxRockformLandmarksPerIsland);
+            float landmarkMinR = Mathf.Max(innerClearRadius + 6f,
+                startIsland ? StartIslandFixturesReach + 18f : 0f);
+            float landmarkMaxR = Mathf.Max(landmarkMinR + 6f, radius * 0.62f);
+            for (int i = 0; i < landmarkCount; i++)
+            {
+                int kind = PickRockformKind(RockformLandmarkKinds, archetypeRow, rng);
+                Vector3 spot;
+                if (!TryFindStoneSpot(center, rng, landmarkMinR, landmarkMaxR, RockformLandmarkSpacing,
+                        placed, placedSpacing, out spot))
+                    continue;
+
+                if (SpawnRockform(parent, kind, spot, rng, materials[materialCursor % materials.Length]))
+                    materialCursor++;
+                placed.Add(spot);
+                placedSpacing.Add(RockformLandmarkSpacing);
+            }
+
+            // ── (2) 중형 특징물 - 내륙 산포, 상호 10m ──────────────────────────────
+            int featureCount = Mathf.Clamp(
+                Mathf.FloorToInt(rng.NextInt(RockformFeatureMin[bracket], RockformFeatureMax[bracket] + 1) * rockScale),
+                0, MaxRockformFeaturesPerIsland);
+            float featureMinR = Mathf.Max(innerClearRadius + 4f,
+                startIsland ? StartIslandFixturesReach + 12f : 0f);
+            float featureMaxR = Mathf.Max(featureMinR + 6f, radius * 0.72f);
+            for (int i = 0; i < featureCount; i++)
+            {
+                int kind = PickRockformKind(RockformFeatureKinds, archetypeRow, rng);
+                Vector3 spot;
+                if (!TryFindStoneSpot(center, rng, featureMinR, featureMaxR, RockformFeatureSpacing,
+                        placed, placedSpacing, out spot))
+                    continue;
+
+                if (SpawnRockform(parent, kind, spot, rng, materials[materialCursor % materials.Length]))
+                    materialCursor++;
+                placed.Add(spot);
+                placedSpacing.Add(RockformFeatureSpacing);
+            }
+
+            // ── (3) 암석 피복 패치 - 암반 캡 위에만 ────────────────────────────────
+            // 패치 수 = rockCoverage × 배치 고리 면적 / 900m². coverage가 낮으면 자연히 성기게 나온다
+            // (열대 0.08도 0이 되지 않는다 - 특대 열대섬 기준 8패치 ≈ 33개). 렌더러 상한을 넘으면
+            // 그 자리에서 멈춘다(조용히 - 로그 없음).
+            if (field.active)
+            {
+                float patchMinR = Mathf.Max(innerClearRadius * 0.55f,
+                    startIsland ? StartIslandFixturesReach + 6f : 0f);
+                float patchMaxR = Mathf.Max(patchMinR + 8f, radius * 0.86f);
+                float ringArea = Mathf.PI * (patchMaxR * patchMaxR - patchMinR * patchMinR);
+                int rendererCap = RockformCoverCap[bracket];
+                int patchTarget = Mathf.Clamp(
+                    Mathf.RoundToInt(Mathf.Clamp01(archetype.rockCoverage) * ringArea / RockformPatchArea),
+                    0, rendererCap); // 패치당 최소 2개이므로 상한 자체가 패치 수의 안전 상한이다
+
+                int spawned = 0;
+                for (int p = 0; p < patchTarget && spawned < rendererCap; p++)
+                {
+                    Vector3 patchCenter = Vector3.zero;
+                    bool found = false;
+                    // 시도 10회. 6회(대형 석재의 관례)가 아니라 10회인 이유: 후보는 "육지 + 암반 지대"를
+                    // 둘 다 만족해야 하는데, 암반 지대가 좁은 섬(열대 0.08)에서는 6회로는 채택률이
+                    // 39%까지 떨어져 coverage가 개수식과 채택률에 **두 번** 곱해진다. 10회면 57%다.
+                    for (int attempt = 0; attempt < 10; attempt++)
+                    {
+                        Vector3 candidate = SnapToLand(SampleOnIsland(center, rng, patchMinR, patchMaxR),
+                            center, patchMinR, patchMaxR, VegetationMinGroundY);
+                        if (candidate.y <= VegetationMinGroundY || !IsRockGround(field, candidate))
+                            continue;
+
+                        // 이번 섬에서 이미 놓인 것(대형 석재 · 암층 랜드마크/특징물 · 앞선 패치)과의 이격.
+                        // 상대의 이격값은 0.6배만 적용한다 - 절벽(12m)·랜드마크(16m) 둘레에 노두가
+                        // 하나도 없는 민둥 고리가 생기는 것이 오히려 부자연스럽기 때문이다.
+                        bool blocked = false;
+                        for (int k = 0; k < placed.Count; k++)
+                        {
+                            float need = Mathf.Max(RockformPatchSpacing, placedSpacing[k] * 0.6f);
+                            float dx = candidate.x - placed[k].x;
+                            float dz = candidate.z - placed[k].z;
+                            if (dx * dx + dz * dz < need * need)
+                            {
+                                blocked = true;
+                                break;
+                            }
+                        }
+                        if (blocked)
+                            continue;
+
+                        patchCenter = candidate;
+                        found = true;
+                        break;
+                    }
+
+                    int lumps = rng.NextInt(2, 7); // 2~6개(명세)
+                    if (!found)
+                        continue;
+
+                    placed.Add(patchCenter);
+                    placedSpacing.Add(RockformPatchSpacing);
+                    for (int j = 0; j < lumps && spawned < rendererCap; j++)
+                    {
+                        Vector2 jitter = rng.NextInsideUnitCircle() * RockformPatchRadius;
+                        Vector3 spot = SnapToLand(patchCenter + new Vector3(jitter.x, 0f, jitter.y),
+                            center, patchMinR, patchMaxR, VegetationMinGroundY);
+                        int kind = PickRockformKind(RockformCoverKinds, archetypeRow, rng);
+                        if (spot.y <= VegetationMinGroundY)
+                        {
+                            // 물속 - 배치하지 않는다. 이 계층은 격리 스트림이라 건너뛰어도 다른 배치가
+                            // 밀리지 않지만, 아래 SpawnRockform의 draw는 소비해 스트림을 본 경로와 맞춘다.
+                            SpawnRockform(parent, -1, spot, rng, null);
+                            continue;
+                        }
+
+                        if (SpawnRockform(parent, kind, spot, rng, materials[materialCursor % materials.Length]))
+                        {
+                            materialCursor++;
+                            spawned++;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 계층 안에서 아키타입 가중치로 종류 하나를 고른다. rng draw는 **항상 1회**다(가중치 합이 0인
+        /// 계층에서도 draw는 소비한다 - 스트림 길이가 아키타입에 따라 달라지지 않게 하는 것이 목적).
+        /// 합이 0이면 -1을 돌려주고 호출부는 그 개체를 만들지 않는다.
+        /// </summary>
+        private static int PickRockformKind(int[] kinds, int archetypeRow, System.Random rng)
+        {
+            int total = 0;
+            for (int i = 0; i < kinds.Length; i++)
+                total += RockformArchetypeWeights[archetypeRow, kinds[i]];
+
+            int roll = rng.NextInt(0, Mathf.Max(1, total));
+            if (total <= 0)
+                return -1;
+
+            int accumulated = 0;
+            for (int i = 0; i < kinds.Length; i++)
+            {
+                accumulated += RockformArchetypeWeights[archetypeRow, kinds[i]];
+                if (roll < accumulated)
+                    return kinds[i];
+            }
+            return kinds[kinds.Length - 1];
+        }
+
+        /// <summary>
+        /// 암층 하나를 만든다. 배율/yaw draw는 **항상 2회**로 고정이라(kind가 -1이거나 모델이 없어도
+        /// 먼저 뽑는다) 이 계층의 rng 스트림 길이가 모델 로드 상태에 좌우되지 않는다.
+        /// 실제로 만들었으면 true.
+        /// </summary>
+        private static bool SpawnRockform(Transform parent, int kind, Vector3 groundSpot, System.Random rng,
+            Material material)
+        {
+            bool inRange = kind >= 0 && kind < RockformCount;
+            Mesh mesh = null;
+            Vector3 size = Vector3.one;
+            bool loaded = inRange && TryGetRockformModel(kind, out mesh, out size);
+
+            // ★ 선추첨 ★ 아래 두 줄은 어떤 경로에서도 반드시 실행된다. 배율 범위는 **모델 로드 여부가
+            // 아니라 종류**로 정해지므로(inRange), 프로브가 아직 성공하지 못한 프레임에도 뽑히는 값이
+            // 달라지지 않는다 - 스트림이 로드 타이밍에 좌우되지 않게 하는 것이 목적이다.
+            float scale = rng.NextFloat(inRange ? RockformScaleMin[kind] : 0.9f,
+                inRange ? RockformScaleMax[kind] : 1.2f);
+            float yaw = rng.NextFloat(0f, 360f);
+
+            if (!loaded || material == null)
+                return false;
+
+            var part = CreatePart(parent, RockformPartNames[kind], mesh,
+                Vector3.zero, Vector3.one * scale, Quaternion.Euler(0f, yaw, 0f), material);
+            part.transform.position = groundSpot + Vector3.down * (RockformSinkFraction[kind] * size.y * scale);
+
+            if (RockformNeedsCollider[kind])
+                AddRockformCollider(part, mesh);
+            return true;
+        }
+
+        /// <summary>
+        /// 암층 전용 **비볼록** MeshCollider. AddRockCollider(convex=true)와 일부러 갈라 놓았다 -
+        /// 이유는 PlaceRockforms 상단 [콜라이더] 주석에 있다(관통형 개구 보존 + _col 헐 부재).
+        /// 정적 장식이라 Rigidbody가 없고, 비볼록 삼각형 메시 콜라이더는 정적일 때만 허용되는 그 조건을
+        /// 항상 만족한다. rng를 소비하지 않고, 이름이 "Island_"로 시작하지 않아 지형으로 오인될 수 없다.
+        /// </summary>
+        private static void AddRockformCollider(GameObject part, Mesh sourceMesh)
+        {
+            if (part == null || sourceMesh == null)
+                return;
+
+            var collider = part.AddComponent<MeshCollider>();
+            collider.sharedMesh = sourceMesh;
+            collider.convex = false;
         }
 
         /// <summary>초목·바위가 서 있어도 되는 최소 지면 높이(m). 이보다 낮으면 물에 잠긴 자리로 본다.</summary>

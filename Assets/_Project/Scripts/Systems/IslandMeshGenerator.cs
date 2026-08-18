@@ -77,20 +77,87 @@ namespace MakeGame.Systems
         /// SeededRandomExtensions.CreateForSalt와 같은 (worldSeed, salt) 규약을 따르되, 그쪽은 System.Random을
         /// **만들어** 돌려주므로 여기서는 쓸 수 없다 - 지형은 난수 스트림을 하나도 만들지 않는 것이 요건이다.
         /// </summary>
+        /// <remarks>
+        /// [B54 아키타입] 식을 IslandArchetypes.SeedKey로 옮기고 여기서는 위임만 한다(값은 비트 단위로 동일).
+        /// 옮긴 이유: GenerateIslandMesh는 (worldSeed, islandId)를 모르고 **noiseSeed만** 받는데
+        /// (호출부 WorldMapManager는 이번 배치의 편집 범위 밖이라 인자를 늘릴 수 없다), 거기서도
+        /// 아키타입 고도 계수를 적용해야 한다. noiseSeed = SeedKey이므로 IslandArchetypes.FromSeedKey가
+        /// 같은 아키타입을 되찾아 준다 - 두 곳이 각자 해시를 복붙하면 언젠가 반드시 어긋나므로 위임한다.
+        /// </remarks>
         public static int ComputeNoiseSeed(int worldSeed, int islandId)
         {
-            unchecked
+            return IslandArchetypes.SeedKey(worldSeed, islandId);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        //  [B54 섬 유형(아키타입)] 섬 오브젝트 → 아키타입/파라미터 (난수 소비 0)
+        // ═══════════════════════════════════════════════════════════════════════════
+        //
+        // 입력을 어디서 얻는가(전부 이미 확정된 값이라 추가 상태가 없다):
+        //   · islandId / IslandSize → 오브젝트 이름 "Island_{id}_{size}"
+        //     (WorldMapManager.SpawnPlaceholder가 BuildIslandSurface **전에** 붙인다 - 이 파일의
+        //      IsStartIslandObject·Vegetation.PlaceLargeStones가 이미 같은 규약에 기대고 있다).
+        //   · worldSeed → 부모(WorldMapManager) 컴포넌트. 섬 오브젝트는 프리팹 경로든 절차 경로든
+        //     항상 WorldMapManager.transform의 자식이다(SpawnPlaceholder / CreateProceduralIslandTerrain).
+        //     FindObjectsByType류 전역 탐색을 쓰지 않는 이유이기도 하다(Unity 6.5 규약 + 비용).
+        //
+        // ★ 난수 소비 0 ★ 이름 파싱과 해시뿐이다. ★ 세이브 무관 ★ 저장 필드를 늘리지 않는다.
+
+        /// <summary>
+        /// 섬 오브젝트의 아키타입. 이름/부모에서 (islandId, size, worldSeed)를 읽어 순수 해시로 판정한다.
+        /// 이름이 규약과 다르거나 부모를 못 찾으면 Tropical(기준선)로 폴백한다 - 폴백해도 아키타입 도입
+        /// 이전과 같은 그림이 나오므로 안전한 실패다.
+        /// </summary>
+        public static IslandArchetype ArchetypeOf(GameObject islandObject)
+        {
+            if (islandObject == null)
+                return IslandArchetype.Tropical;
+
+            int islandId;
+            IslandSize size;
+            if (!TryParseIslandName(islandObject.name, out islandId, out size))
+                return IslandArchetype.Tropical;
+
+            var manager = islandObject.GetComponentInParent<WorldMapManager>();
+            if (manager == null)
+                return IslandArchetype.Tropical;
+
+            // 월드당 한 줄 요약(유형별 개수). 같은 worldSeed에는 두 번 찍지 않는다.
+            IslandArchetypes.LogWorldDistributionOnce(manager.worldSeed);
+
+            return IslandArchetypes.For(manager.worldSeed, islandId, size);
+        }
+
+        /// <summary>섬 오브젝트의 아키타입 파라미터(값 복사). 색·배율을 읽는 모든 지점이 이것만 쓴다.</summary>
+        public static IslandArchetypeProfile ArchetypeProfileOf(GameObject islandObject)
+        {
+            return IslandArchetypes.Get(ArchetypeOf(islandObject));
+        }
+
+        /// <summary>
+        /// "Island_{id}_{size}" 이름에서 섬 번호와 규모를 뽑는다(규약 위반이면 false).
+        /// size 토큰은 IslandSize.ToString() 그대로다("Small"/"Medium"/"Large"/"ExtraLarge").
+        /// </summary>
+        private static bool TryParseIslandName(string name, out int islandId, out IslandSize size)
+        {
+            islandId = 0;
+            size = IslandSize.Small;
+            if (string.IsNullOrEmpty(name) || !name.StartsWith("Island_"))
+                return false;
+
+            string[] parts = name.Split('_');
+            if (parts.Length < 3)
+                return false;
+            if (!int.TryParse(parts[1], out islandId))
+                return false;
+
+            switch (parts[2])
             {
-                uint h = (uint)(worldSeed * 73856093) ^ (uint)(islandId * 19349663) ^ 0x9E3779B9u;
-                h ^= h >> 16;
-                h *= 0x7FEB352Du;
-                h ^= h >> 15;
-                h *= 0x846CA68Bu;
-                h ^= h >> 16;
-                int seed = (int)h;
-                // 센티널과 겹치면 예전 지형으로 조용히 되돌아간다 - 확률은 2^-32이지만 실패 모드가
-                // "이 섬만 다른 섬과 같은 모양"이라 눈으로 못 잡는다. 값 하나를 비켜 준다.
-                return seed == LegacyNoiseSeed ? 0 : seed;
+                case "Small": size = IslandSize.Small; return true;
+                case "Medium": size = IslandSize.Medium; return true;
+                case "Large": size = IslandSize.Large; return true;
+                case "ExtraLarge": size = IslandSize.ExtraLarge; return true;
+                default: return false;
             }
         }
 
@@ -285,10 +352,32 @@ namespace MakeGame.Systems
             return isStartIsland ? Mathf.Clamp(t, 0.35f, 0.5f) : t;
         }
 
-        /// <summary>시작 섬 판정 포함 편의 오버로드(이름 규약 "Island_{id}_{size}" - Vegetation의 선례).</summary>
+        /// <summary>
+        /// [B54] 위 t에 **아키타입 보정**을 얹은 값. t' = Clamp(Clamp01(t·scale + offset), min, max).
+        /// Sandy/Atoll/Volcanic/Rocky는 오프셋이 +라 경계선이 올라가고(모래 넓게, 잔디 적게),
+        /// Jungle/Marsh/Cliff는 -라 내려간다(초지 넓게).
+        ///
+        /// Tropical은 scale 1 / offset 0 / 범위 [0,1]이라 **아키타입 도입 이전과 비트 단위로 같은 값**이다
+        /// (회귀 안전장치). 시작 섬은 항상 Tropical이므로 [0.35, 0.5] 클램프도 예전 그대로 걸린다.
+        /// 여전히 **난수를 소비하지 않는 순수 함수**다.
+        /// </summary>
+        public static float ComputeGrassLineT(Vector3 islandWorldPosition, bool isStartIsland,
+            IslandArchetype archetype)
+        {
+            var p = IslandArchetypes.Get(archetype);
+            float t = ComputeGrassLineT(islandWorldPosition, false);
+            t = Mathf.Clamp01(t * p.grassLineTScale + p.grassLineTOffset);
+            t = Mathf.Clamp(t, p.grassLineTMin, p.grassLineTMax);
+            return isStartIsland ? Mathf.Clamp(t, 0.35f, 0.5f) : t;
+        }
+
+        /// <summary>시작 섬 판정 포함 편의 오버로드(이름 규약 "Island_{id}_{size}" - Vegetation의 선례).
+        /// [B54] 아키타입 보정을 포함한다 - 잔디 경계(모래 캡 상한)와 잔디 밀도의 단일 소스이므로,
+        /// 여기 한 곳만 아키타입을 태우면 BuildGroundCaps와 GrassFieldSystem이 자동으로 같은 값을 본다.</summary>
         public static float ComputeGrassLineT(GameObject islandObject)
         {
-            return ComputeGrassLineT(islandObject.transform.position, IsStartIslandObject(islandObject));
+            return ComputeGrassLineT(islandObject.transform.position, IsStartIslandObject(islandObject),
+                ArchetypeOf(islandObject));
         }
 
         /// <summary>
@@ -733,6 +822,27 @@ namespace MakeGame.Systems
                 profile = BuildProfile(chosen, noiseSeed);
                 profile.radialMask = radialMask;
 
+                // ── [B54 아키타입 고도 계수] 항을 늘리지 않고 **기존 계수 3개에 곱하기만** 한다 ──
+                // 아키타입은 (worldSeed, islandId)를 직접 못 받는다(호출부 WorldMapManager는 편집 범위
+                // 밖이라 인자를 늘릴 수 없다). 대신 이미 받은 두 값에서 복원한다:
+                //   · noiseSeed = IslandArchetypes.SeedKey(worldSeed, islandId)  → 아키타입 추첨 키
+                //   · radius                                                     → IslandSize(가중치 열)
+                //   · shapeProfile == 0                                          → **시작 섬**
+                //     (SelectShapeProfile은 islandId 0에만 0번을 돌려준다. 1~7은 1~7의 순열,
+                //      8 이상도 1~7이라 0번은 시작 섬에서만 나온다 - 그 함수의 계약이 근거다.)
+                // 결과는 ArchetypeOf(섬 오브젝트)와 반드시 같은 값이다(같은 SeedKey·같은 표).
+                //
+                // 곱하는 대상은 heightScale / plateauPow / noiseAmp 셋뿐이다. 마스크·돔·능선·수로·
+                // 석호·메사·해안 잠수는 한 글자도 건드리지 않으므로 B47이 튜닝한 "0.8R 안 육지 비율"과
+                // 경사 상한의 근거가 그대로 유지된다(plateauPow를 내리면 중간 반경 y가 **올라가** 육지가
+                // 오히려 늘고, Atoll의 낮은 heightScaleMul은 그 상승분과 상쇄된다).
+                var archetypeProfile = IslandArchetypes.Get(
+                    IslandArchetypes.FromSeedKey(noiseSeed, IslandArchetypes.SizeFromRadius(radius),
+                        shapeProfile == 0));
+                profile.heightScale *= archetypeProfile.heightScaleMul;
+                profile.plateauPow *= archetypeProfile.plateauPowMul;
+                profile.noiseAmp *= archetypeProfile.terrainNoiseMul;
+
                 // [B50] 실측 윤곽이 주입되면 윤곽을 왜곡하는 세 장치를 끈다. 규약("0번 = +X축, 반시계
                 // 등간격")은 회전·이방성이 없는 좌표계 기준인데, MaskAt은 spin/stretch를 거친 각도로
                 // 마스크를 조회하므로 셋을 그대로 두면 측정한 해안선이 임의 각도로 돌고(spin),
@@ -878,8 +988,14 @@ namespace MakeGame.Systems
         /// 같은 초록이라 얼룩이 될 수 없다 - 지면 4단은 유지하면서 실패 모드만 없앤 구조다.
         /// GrassCap/DrySandCap/WetSandCap은 서로 겹치지 않는 정확한 여집합이고 합집합이 섬 전체다.
         /// </summary>
+        /// <param name="rockGrassKeep">
+        /// [B56] 월드 좌표 → 잔디 유지 계수 [0,1](1 = 암반 밖, 0 = 암반 코어, 그 사이 = 경계 완충대).
+        /// GrassFieldSystem.Build에 그대로 전달해 암반 위에 잔디 카드가 서지 않게 한다.
+        /// 암반 피복이 없는 섬이면 null이며, 그때 잔디는 예전과 비트 단위로 같다.
+        /// 판정 본체는 IslandMeshGenerator.Vegetation의 RockGrassKeep 하나뿐이다(단일 소스).
+        /// </param>
         private static void BuildGroundCaps(Transform surfaceRoot, GameObject islandObject, float radius,
-            float phaseA, float phaseB)
+            float phaseA, float phaseB, System.Func<Vector3, float> rockGrassKeep)
         {
             // [B15 기록] 지면 패치의 출처를 여기서 확정했다. 이 메서드 첫 줄에 `return;` 을 넣어
             // 캡을 통째로 끄자 패치가 완전히 사라졌다 — 가설 7개를 거친 뒤에야 반으로 가르는 실험을
@@ -900,7 +1016,10 @@ namespace MakeGame.Systems
             // [초지 잔디] 같은 훅 지점에서 잔디 인스턴스 배열을 굽는다(순수 위치 해시, rng 소비 0 -
             // GrassFieldSystem 상단 주석). phaseA/B를 그대로 넘겨 초지 판정이 아래 모래 캡 경계
             // (DryTop + BandWobble)와 정확히 같은 기준을 쓰게 한다. 셰이더(MG/Grass) 부재 시 무동작.
-            GrassFieldSystem.Build(islandObject, source, radius, phaseA, phaseB);
+            // [B56] rockGrassKeep(암반 판정 순수 함수)도 같이 넘긴다. 호출부(BuildIslandSurface)가
+            // 이 메서드보다 **먼저** 암반 필드를 확정하도록 순서를 바꿨기 때문에 여기서 이미 값이 있다
+            // - 예전에는 잔디가 구워진 뒤에 암반이 정해져서 바위섬 암반 위에 잔디가 남았다.
+            GrassFieldSystem.Build(islandObject, source, radius, phaseA, phaseB, rockGrassKeep);
 
             // 지형 최대 높이는 WorldMapManager.terrainMaxHeight(인스펙터 값, 실기에서 2.5 → 8로 상향)라
             // 코드 상수로 가정하면 안 된다. 메시 바운즈에서 읽어 항상 실제 지형에 맞춘다.
@@ -1045,6 +1164,11 @@ namespace MakeGame.Systems
             // 섬별로 움직일 이유가 없고 그대로 둔다 - grassLine 최저 1.15m > DampTop 0.75m라 어떤
             // t에서도 띠가 뒤집히거나 틈이 생기지 않는다(디더는 세 경계가 같은 값을 공유하므로 불변).
             // GrassFieldSystem.Build도 같은 함수로 같은 값을 읽는다 - 여기만 고치면 모래 위 잔디가 생긴다.
+            // [B54 아키타입] 이 섬의 유형 파라미터. 지면색·모래색이 여기서 갈린다.
+            // Tropical은 groundColor = MeadowGreen, sandColor = IslandSand로 **기존 상수와 같은 값**이라
+            // 열대섬의 지면은 아키타입 도입 이전과 한 채널도 다르지 않다(회귀 안전장치).
+            var archetype = ArchetypeProfileOf(islandObject);
+
             float grassLine = GrassLineHeight(islandObject);
             float DryTop(Vector3 centroid, float angle) =>
                 grassLine + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
@@ -1075,7 +1199,28 @@ namespace MakeGame.Systems
             // 그 노출이 이번 얼룩 신고의 정체였다. 같은 그림을 **명시적인 덮개**로 다시 만든다 -
             // 색은 예전 지형 기본색과 같은 Island Sand(#C2B280)이므로 해변의 겉모습은 달라지지 않는다.
             // 범위는 GrassCap의 정확한 여집합(안쪽) ~ WetSandCap의 정확한 여집합(바깥)이다.
-            BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", StructureVisualBuilder.IslandSand,
+            // [B54] 세 모래 캡의 기준색이 상수 IslandSand → **아키타입 sandColor**로 바뀐다(화산암섬은
+            // 검은 모래, 산호섬은 더 흰 모래). 3단 명도 계단(1.0 / 0.88 / 0.78)은 그대로 그 위에 얹히므로
+            // 띠 구조·경계식은 한 글자도 바뀌지 않고, Tropical의 sandColor는 IslandSand와 같은 값이다.
+            // [B54 아키타입 지면색] **비열대 섬에서만** 초지 영역(DryTop 위 = 지형 본체가 드러나는 자리)에
+            // 덮개를 한 장 얹는다. 왜 머티리얼 교체가 아니라 덮개인가:
+            //   · 지형 본체 머티리얼은 WorldMapManager가 만들고(편집 범위 밖) **씬의 terrainMaterial이
+            //     지정돼 있으면 월드의 모든 섬이 그 한 장을 공유한다.** 색을 바꾸면 프로젝트 에셋을
+            //     통째로 오염시키거나(공유 머티리얼 변조) 마지막 섬 색이 전 섬에 적용된다.
+            //   · 덮개는 이 파일이 이미 네 번 쓴 검증된 수단이고(B11 구조 반전), 아래 세 모래 캡과
+            //     **정확한 여집합**이라 틈/겹침이 원리적으로 생기지 않는다(합집합 = 섬 전체).
+            // Tropical은 groundColor가 지형 본체(MeadowGreen)와 같은 색이라 덮개가 화면에 더하는 정보가
+            // 0이다 - B15가 GrassCap을 지운 바로 그 이유이므로 여기서도 만들지 않는다(드로우콜 +0).
+            if (archetype.archetype != IslandArchetype.Tropical)
+            {
+                BuildCapLayer(surfaceRoot, source, radius, "GroundCap", archetype.groundColor,
+                    capOffset, radius * 0.75f, "leaf",
+                    (centroid, distance, angle) => centroid.y >= DryTop(centroid, angle),
+                    // 톤 2장(명도 단차 0%인 색조 변주 - B10). 반지름 200m를 단색 한 장이 덮는 것을 막는다.
+                    2, 0.22f, StructureVisualBuilder.FrondGreen);
+            }
+
+            BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", archetype.sandColor,
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
                     centroid.y >= DampTop(centroid, angle) && centroid.y < DryTop(centroid, angle),
@@ -1086,7 +1231,7 @@ namespace MakeGame.Systems
             // 예전에는 마른(100%) → 젖은(80%) 두 단계뿐이라 밝기가 한 번에 20% 떨어져,
             // 해변 한가운데에 **동심원 한 줄**이 그어진 것처럼 보였다. 88%를 사이에 끼워 단차를
             // 20% → 12%/10%로 나눈다(경계마다 ±1.5~2%R 디더가 걸려 있어 선이 아니라 점묘로 읽힌다).
-            BuildCapLayer(surfaceRoot, source, radius, "DampSandCap", Shade(StructureVisualBuilder.IslandSand, 0.88f),
+            BuildCapLayer(surfaceRoot, source, radius, "DampSandCap", Shade(archetype.sandColor, 0.88f),
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
                     centroid.y >= WetTop(centroid, angle) && centroid.y < DampTop(centroid, angle),
@@ -1099,7 +1244,7 @@ namespace MakeGame.Systems
             // [B22] 안쪽 경계가 SandEdge → DampEdge로 밀렸고(위 DampSandCap이 그 사이를 채운다),
             // 이 띠의 바깥쪽 절반은 이제 해수면 아래로 잠겨 불투명한 바다 평면에 가려진다 -
             // 즉 화면에 남는 것은 "물에 막 닿은 가장 어두운 모래" 한 줄이다.
-            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(StructureVisualBuilder.IslandSand, 0.78f),
+            BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(archetype.sandColor, 0.78f),
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) => centroid.y < WetTop(centroid, angle),
                 1);

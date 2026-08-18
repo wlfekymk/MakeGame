@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
+using MakeGame.Data;
 using MakeGame.Player;
 
 namespace MakeGame.Systems
@@ -51,6 +52,25 @@ namespace MakeGame.Systems
     ///  · 무작위 기울임 ±8도(축도 해시): 위에서 봐도 교차가 안 읽히고 윗선이 들쭉날쭉해진다.
     ///  · 뿌리색-지면 융합: _RootColor 기본값을 지면색 MeadowGreen의 어두운 변주로 - 밑동이
     ///    땅에 녹아든다(셰이더 기본값·머티리얼 세팅 양쪽).
+    ///
+    /// ── [B54] 섬 아키타입별 뿌리색 ────────────────────────────────────────────────
+    /// 아키타입 8종이 지면색을 갈라 놓자(화산암 #3A3733 / 습지 #56603A / 바위 #8A7F6E …) 위의
+    /// "뿌리색 = MeadowGreen의 그늘"이 열대 섬에서만 맞고 나머지에서는 밑동이 지면과 어긋났다.
+    /// 머티리얼은 월드 공유 1장 그대로 두고, 섬별 MaterialPropertyBlock(RenderParams.matProps)으로
+    /// _RootColor = 아키타입 groundColor × 0.56을 주입한다 - 배치 단위가 이미 섬별이라 블록이
+    /// 그 섬의 드로우에만 걸린다. 블록은 아키타입당 1개(최대 8개)를 캐시해 같은 유형끼리 공유하고,
+    /// 섬 레코드는 참조만 들고 있으므로 프레임당 할당은 0 그대로다. 열대 섬은 블록을 달지 않아
+    /// (matProps == null) 기존 렌더와 **비트 단위로 같다**. 배치·밀도·해시는 한 줄도 안 바뀐다.
+    ///
+    /// ── [B56] 암반 필드 위에는 잔디가 없다 ─────────────────────────────────────
+    /// B55가 아키타입 rockCoverage(바위 0.50 / 화산암 0.42 / 절벽 0.30 / 열대 0.08)만큼 지면을
+    /// 암반 캡으로 덮고 초목을 배제했지만, 잔디는 그때 이미 구워진 뒤라 암반 위에 그대로 남아
+    /// 있었다("지면 절반이 바위인데 그 위에 풀"). 이제 호출부가 암반 필드를 **잔디보다 먼저**
+    /// 확정해 판정 함수(rockGrassKeep)를 Build에 넘기고, 배치 루프가 코어에서는 카드를 건너뛰고
+    /// 경계 완충대(피복의 22%)에서는 유지 계수를 채택 확률로 써서 밀도를 서서히 올린다.
+    /// **순수 감산이다** - 목표 개수식·기존 해시·패치/꽃/LOD 로직은 한 줄도 바뀌지 않았고,
+    /// 1차 통과(eligibleWeight)도 그대로라 빠진 만큼이 다른 데로 재분배되지 않는다.
+    /// rng 소비는 여전히 0(암반 판정도 순수 노이즈/해시다).
     ///
     /// ── 초지 판정 (IslandMeshGenerator의 실제 색 경계 규칙 재사용) ──
     /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(기준 높이 + BandWobble(angle)
@@ -120,6 +140,12 @@ namespace MakeGame.Systems
 
         /// <summary>경사 상한 tan(30°). 정점 격자 기울기가 이보다 크면 바위 절벽 지대로 보고 제외한다.</summary>
         private const float MaxSlopeTan = 0.57735f;
+
+        /// <summary>
+        /// [B56] 암반 경계 완충대의 채택 판정용 salt. 이 파일의 다른 salt와 겹치지 않는 새 값이라
+        /// 지터·선별·패치·꽃·LOD 어느 해시와도 상관이 없다(기존 해시는 한 줄도 바뀌지 않았다).
+        /// </summary>
+        private const uint RockBandSalt = 0x3C79AC49u;
 
         /// <summary>경사 측정용 유한 차분 간격(m). 메시 삼각형(2~5m)보다 작아 국소 경사를 잡는다.</summary>
         private const float SlopeProbeStep = 0.6f;
@@ -215,9 +241,24 @@ namespace MakeGame.Systems
             public Matrix4x4[] flowerA;    // 꽃 LOD 그룹 A(꽃 머티리얼로 렌더. 폴백 시 null).
             public Matrix4x4[] flowerB;    // 꽃 LOD 그룹 B.
             public Bounds bounds;          // RenderParams.worldBounds(섬 단위)
+
+            /// <summary>
+            /// [B54] 이 섬의 _RootColor 주입 블록(아키타입 지면색 × RootColorGroundFactor).
+            /// Tropical이면 null - 머티리얼에 구워 둔 기본값이 곧 열대 값이라 주입할 것이 없다
+            /// (RootColorBlockFor 주석). 배치 시 1회 잡고 프레임에서는 참조만 넘긴다(할당 0).
+            /// </summary>
+            public MaterialPropertyBlock rootProps;
         }
 
         private static readonly List<GrassRecord> registry = new List<GrassRecord>();
+
+        /// <summary>
+        /// [B54] 아키타입별 _RootColor 블록 캐시(최대 8개 = IslandArchetypes.Count). 지면색은
+        /// 아키타입 표에서만 오므로 섬 50개가 아니라 **유형 수**만큼만 있으면 된다 - 같은 유형의
+        /// 섬들은 블록 하나를 공유한다(MaterialPropertyBlock은 읽기 전용으로만 쓰인다).
+        /// null 슬롯 = 아직 안 만들었거나 Tropical(주입 불필요).
+        /// </summary>
+        private static MaterialPropertyBlock[] rootColorBlocks;
 
         private static Mesh bladeMesh;
         private static Material grassMaterial;
@@ -226,6 +267,25 @@ namespace MakeGame.Systems
         private static bool hasCardTexture;      // grass_card 로드 성공 여부(꽃/카드 규격 스위치)
         private static int windTimeId;
         private static int playerPosId;
+        private static int rootColorId;
+
+        /// <summary>
+        /// [B54] 아키타입 지면색 → 잔디 뿌리색 계수. v4가 뿌리색을 "지면 MeadowGreen의 어두운
+        /// 변주"로 정한 그 계수(머티리얼 기본값 (0.30, 0.37, 0.17) ≈ MeadowGreen × 0.56)를
+        /// 그대로 쓴다 - 섬 지면색이 무엇이든 밑동이 **같은 색상각의 그늘**로 읽혀 땅에 녹아든다.
+        /// </summary>
+        private const float RootColorGroundFactor = 0.56f;
+
+        /// <summary>
+        /// [R1 규약] 도메인 리로드를 끈 상태에서 이전 플레이 세션의 정적 캐시가 새지 않게 비운다
+        /// (IslandArchetypes.ResetStaticCache / SeabedGenerator.ResetStaticCache가 선례다).
+        /// 블록은 아키타입 표만 보고 언제든 다시 만들 수 있으므로 버리는 것이 안전하다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCache()
+        {
+            rootColorBlocks = null;
+        }
 
         // ═══════════════════════════════════════════════════════════════════════════
         //  배치 (섬당 1회, 결정적)
@@ -240,8 +300,16 @@ namespace MakeGame.Systems
         /// <param name="radius">섬 지형 반지름 R(m). 메시 XZ 반경과 같다.</param>
         /// <param name="phaseA">모래 경계 BandWobble 위상 A(BuildGroundCaps와 같은 값).</param>
         /// <param name="phaseB">모래 경계 BandWobble 위상 B(BuildGroundCaps와 같은 값).</param>
+        /// <param name="rockGrassKeep">
+        /// [B56] 암반 필드 판정을 통째로 포장한 **순수 함수**(월드 좌표 → 잔디 유지 계수 [0,1]).
+        /// 1 = 암반 밖(예전 그대로) / 0 = 암반 코어(초목 배제와 같은 기준 - 카드를 놓지 않는다) /
+        /// 그 사이 = 코어와 피복 경계 사이 완충대(값을 채택 확률로 써서 밀도를 서서히 올린다).
+        /// null이면 암반 피복이 없는 섬이라는 뜻이고, 그때 잔디는 예전과 **비트 단위로 같다**.
+        /// 판정 본체는 IslandMeshGenerator.Vegetation의 RockGrassKeep 하나뿐이다(노이즈 상수·임계·
+        /// 디더 해시를 여기로 복사하지 않는 이유 - 단일 소스 규약).
+        /// </param>
         public static void Build(GameObject islandObject, Mesh islandMesh, float radius,
-            float phaseA, float phaseB)
+            float phaseA, float phaseB, System.Func<Vector3, float> rockGrassKeep = null)
         {
             if (islandObject == null || islandMesh == null || radius <= 0f || DensityMultiplier <= 0f)
                 return;
@@ -290,6 +358,11 @@ namespace MakeGame.Systems
             // [B52] 섬별 잔디 경계선(단일 소스: IslandMeshGenerator - 캡의 DrySandCap 상한(DryTop)과
             // 정확히 같은 값이다. 어긋나면 모래 위 잔디/잔디 없는 초원이 생긴다). t는 밀도에도 재사용한다.
             // ComputeGrassLineT는 섬 월드 위치만 입력인 순수 해시라 rng 소비 0, 세이브 로드 후에도 동일하다.
+            // [B54 아키타입] ComputeGrassLineT(GameObject)가 이미 아키타입 오프셋을 태워 돌려준다
+            // (BuildGroundCaps의 DryTop과 **같은 함수·같은 값** - 단일 소스 규약 그대로다).
+            // 밀도/키 배율만 여기서 따로 읽는다.
+            var archetype = IslandMeshGenerator.ArchetypeProfileOf(islandObject);
+            float grassHeightScale = Mathf.Max(0.1f, archetype.grassHeightScale);
             float grassLineT = IslandMeshGenerator.ComputeGrassLineT(islandObject);
             float grassMinHeightBase =
                 IslandMeshGenerator.GrassLineHeightFromT(grassLineT) + GrassBoundaryDitherHalf;
@@ -298,9 +371,14 @@ namespace MakeGame.Systems
             // 반지름 선형 보간이 위 네 점을 ±4% 안으로 지나므로 별도 테이블이 필요 없다.
             // [B52] 여기에 전역 0.65 × 섬별 lerp(1.0, 0.45, t)를 곱한다 - 경계선이 높은 모래 섬(t 큼)
             // 일수록 남은 초지의 잔디도 성기다. 목표 개수만 줄고 이후 로직(패치·꽃·LOD)은 불변이다.
+            // [B54] 아키타입 밀도 배율이 t 감쇠와 **곱해진다**. 두 항의 역할이 다르기 때문이다:
+            // t는 "이 섬의 초지가 얼마나 좁은가"(경계선 높이와 같은 소스), 배율은 "그 초지가 얼마나
+            // 무성한가"다. 습지섬(1.60)은 t까지 낮아 실효 밀도가 크게 오르고, 산호섬(0.40)은 t도
+            // 높아 이중으로 성기다 - 유형 차이가 화면에서 확실히 읽히게 하는 것이 목적이다.
             float targetCount = DensityMultiplier
                 * GlobalDensityScale
                 * Mathf.Lerp(1f, IslandDensityMin, grassLineT)
+                * Mathf.Max(0.05f, archetype.grassDensityScale)
                 * Mathf.Lerp(12000f, 40000f, Mathf.InverseLerp(50f, 200f, radius));
             if (targetCount < 1f)
                 return;
@@ -377,6 +455,28 @@ namespace MakeGame.Systems
                     if (gx * gx + gz * gz > MaxSlopeTan * MaxSlopeTan)
                         continue;
 
+                    // [B56] 암반 필드 배제. 아키타입 rockCoverage만큼 지면을 덮은 암반 캡
+                    // (IslandMeshGenerator의 RockCap) 위에는 카드를 놓지 않는다 - 바위섬은 지면
+                    // 절반이 암반인데 그 위에 잔디가 자라 보이던 것이 이 스킵 이전의 상태다.
+                    //  · 코어(계수 0)는 야자수/덤불/풀포기를 배제하는 것과 **같은 임계**다.
+                    //  · 완충대(0<계수<1)는 계수를 그대로 채택 확률로 써서 밀도가 서서히 오른다
+                    //    (평균 절반). 앵커 단위 판정이라 한 다발이 통째로 남거나 통째로 빠진다 -
+                    //    카드 2~3장이 반쪽만 남아 다발이 찢어지는 일이 없다.
+                    //  · 위치는 카드와 같은 규약의 월드 좌표(center + 로컬)다.
+                    //  · ★ 여기서만 스킵한다 ★ 1차 통과(eligibleWeight)는 일부러 건드리지 않았다.
+                    //    거기서도 빼면 keepProbability가 그만큼 올라가 남은 초지에 같은 총량이
+                    //    다시 몰린다 - "암반만큼 잔디가 준다"는 의도가 상쇄돼 사라진다.
+                    //    기존 목표 개수식·해시·패치 노이즈는 한 줄도 바뀌지 않았다(순수 감산).
+                    if (rockGrassKeep != null)
+                    {
+                        float rockKeep = rockGrassKeep(
+                            new Vector3(center.x + x, center.y + y, center.z + z));
+                        if (rockKeep <= 0f)
+                            continue;
+                        if (rockKeep < 1f && Hash01(ix, iz, islandSalt ^ RockBandSalt) >= rockKeep)
+                            continue;
+                    }
+
                     // [v4] 다발 군집: 이 셀은 '다발 앵커'다. 카드 2~3장(위치 해시)을 반경 0.22m
                     // 안에 군집 생성한다. [v3] 이봉 스케일의 다발/하층 분류는 앵커 단위(한 다발이
                     // 통째로 솟거나 낮다 - 실측 다발의 응집성), 나머지 변주는 카드 단위다.
@@ -421,9 +521,12 @@ namespace MakeGame.Systems
 
                         float hY = Hash01(ix, iz, cardSalt ^ 0xC2B2AE35u);
                         float hXZ = Hash01(ix, iz, cardSalt ^ 0x27D4EB2Fu);
-                        float scaleY = isTuft
+                        // [B54] 아키타입 높이 배율. 습지섬 1.40(키 큰 잔디) / 화산·산호 0.85.
+                        // 변주 구조(이봉 스케일)는 그대로 두고 결과에만 곱한다 - Tropical은 1.00이라
+                        // 아키타입 도입 이전과 비트 단위로 같은 행렬이 나온다.
+                        float scaleY = (isTuft
                             ? Mathf.Lerp(TuftScaleYMin, TuftScaleYMax, hY)
-                            : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY);
+                            : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY)) * grassHeightScale;
                         float scaleXZ = isTuft
                             ? Mathf.Lerp(TuftScaleXZMin, TuftScaleXZMax, hXZ)
                             : Mathf.Lerp(UnderScaleXZMin, UnderScaleXZMax, hXZ);
@@ -473,6 +576,9 @@ namespace MakeGame.Systems
                 flowerA = flowerListA != null && flowerListA.Count > 0 ? flowerListA.ToArray() : null,
                 flowerB = flowerListB != null && flowerListB.Count > 0 ? flowerListB.ToArray() : null,
                 bounds = bounds,
+                // [B54] 뿌리색은 이 섬의 지면색에서 온다. 배치 시 1회 잡아 두고 프레임에서는
+                // 참조만 RenderParams에 꽂는다(프레임당 할당 0 계약 유지).
+                rootProps = RootColorBlockFor(archetype),
             });
         }
 
@@ -509,6 +615,50 @@ namespace MakeGame.Systems
                 record.flowerB = FilterOutsideBox(record.flowerB, boxCenter, inverseRotation, boxHalfExtents);
                 return; // 레코드는 섬당 하나다(Build의 중복 등록 가드).
             }
+        }
+
+        /// <summary>
+        /// [B54] 섬 아키타입 → 잔디 뿌리색 주입 블록. 아키타입당 1개를 만들어 캐시하고 같은 유형의
+        /// 섬들이 공유한다(최대 8개). 머티리얼은 월드 공유 1장 그대로 - 장수를 늘리지 않는다.
+        ///
+        /// [왜 MaterialPropertyBlock이 이 경로에서 유효한가]
+        /// 렌더 배치 단위가 이미 **섬별**이다 - GrassFieldDriver.LateUpdate가 레코드마다 RenderParams를
+        /// 새로 만들어 Graphics.RenderMeshInstanced를 부르므로, RenderParams.matProps에 섬의 블록을
+        /// 꽂으면 그 섬의 드로우에만 _RootColor가 적용된다(블록은 배치 전체에 균일하게 걸린다 -
+        /// 인스턴스마다 다른 값이 필요한 것이 아니므로 스칼라 주입으로 충분하다). 셰이더의
+        /// _RootColor는 UnityPerMaterial CBUFFER의 평범한 머티리얼 프로퍼티라 블록이 그대로 덮는다.
+        ///
+        /// [Tropical이 null인 이유 - 회귀 안전장치]
+        /// 머티리얼에 구워 둔 기본값 (0.30, 0.37, 0.17)이 곧 v4가 고른 열대 뿌리색이다. 열대 섬은
+        /// 블록을 아예 달지 않으므로 matProps == null → 머티리얼 값 그대로 = 아키타입 도입 이전과
+        /// **비트 단위로 같은 렌더**다. (표의 Tropical.groundColor × 0.56 = (0.30296, 0.36904, 0.1736)
+        /// 으로 기본값과 소수 둘째 자리에서 갈리는데, 그 반올림 차를 열대 섬에 새로 태우지 않는다.)
+        /// </summary>
+        private static MaterialPropertyBlock RootColorBlockFor(IslandArchetypeProfile profile)
+        {
+            if (profile.archetype == IslandArchetype.Tropical)
+                return null;
+
+            int index = (int)profile.archetype;
+            if ((uint)index >= (uint)IslandArchetypes.Count)
+                return null; // 알 수 없는 값은 열대 기본값으로 폴백(IslandArchetypes.Get과 같은 관례)
+
+            if (rootColorBlocks == null)
+                rootColorBlocks = new MaterialPropertyBlock[IslandArchetypes.Count];
+            if (rootColorBlocks[index] != null)
+                return rootColorBlocks[index];
+
+            Color ground = profile.groundColor;
+            var root = new Color(
+                ground.r * RootColorGroundFactor,
+                ground.g * RootColorGroundFactor,
+                ground.b * RootColorGroundFactor,
+                1f); // 알파는 1 고정 - 셰이더가 _RootColor.rgb만 읽지만 계약 형태를 맞춘다.
+
+            var block = new MaterialPropertyBlock();
+            block.SetColor(rootColorId, root);
+            rootColorBlocks[index] = block;
+            return block;
         }
 
         /// <summary>박스 밖 인스턴스만 남긴 압축 배열을 돌려준다(제거된 것이 없으면 원본 참조 그대로).</summary>
@@ -704,6 +854,9 @@ namespace MakeGame.Systems
                 // [v4] 뿌리색-지면 융합: 지형 초지색 StructureVisualBuilder.MeadowGreen
                 // (0.541, 0.659, 0.310)의 ~0.56배 어두운 변주 - 카드 밑동이 MeadowGreen 지면과
                 // 같은 색상각의 그늘로 읽혀 땅에 녹아든다(밑동-지면 색 틈이 도드라지던 원인 제거).
+                // [B54] 이 값은 이제 **Tropical(= MeadowGreen 지면) 전용 기본값**이다. 다른 7종은
+                // 섬별 MaterialPropertyBlock이 자기 지면색으로 덮어쓴다(RootColorBlockFor).
+                // 머티리얼은 여전히 월드 공유 1장이다 - 아키타입마다 머티리얼을 늘리지 않는다.
                 grassMaterial.SetColor("_RootColor", new Color(0.30f, 0.37f, 0.17f, 1f));
                 grassMaterial.SetColor("_TipColor", new Color(0.45f, 0.62f, 0.28f, 1f));
                 grassMaterial.SetColor("_DryTint", new Color(0.55f, 0.52f, 0.30f, 1f));
@@ -737,6 +890,7 @@ namespace MakeGame.Systems
 
                 windTimeId = Shader.PropertyToID("_MG_WindTime");
                 playerPosId = Shader.PropertyToID("_MG_PlayerPos");
+                rootColorId = Shader.PropertyToID("_RootColor");
             }
 
             if (bladeMesh == null)
@@ -913,11 +1067,15 @@ namespace MakeGame.Systems
 
                     bool fullDetail = edgeDistance <= FullDetailDistance;
 
+                    // [B54] matProps에 섬의 뿌리색 블록을 꽂는다. 배치 단위가 섬이라 이 드로우에만
+                    // 걸린다(열대 섬은 null → 머티리얼 기본값 그대로). 머티리얼은 공유 1장이고
+                    // 블록은 배치 때 만들어 둔 것이라 프레임당 할당은 여전히 0이다.
                     var rparams = new RenderParams(grassMaterial)
                     {
                         worldBounds = record.bounds,
                         shadowCastingMode = ShadowCastingMode.Off,
                         receiveShadows = true,
+                        matProps = record.rootProps,
                     };
 
                     // 간이 LOD: 미리 갈라 둔 그룹을 거리로 선택만 한다(인스턴스 단위 재계산 없음).
@@ -926,6 +1084,8 @@ namespace MakeGame.Systems
                         RenderGroup(rparams, record.groupB);
 
                     // 꽃 배치: 별도 머티리얼((1,1) 셀 고정·틴트 오프), LOD 분할은 잔디와 동일 규칙.
+                    // [B54] 꽃에는 뿌리색 블록을 걸지 않는다 - _TintStrength가 0이라 _RootColor가
+                    // 결과에 아예 들어가지 않는다(꽃은 텍스처 원색이 계약이다).
                     if (flowerMaterial != null && (record.flowerA != null || record.flowerB != null))
                     {
                         var flowerParams = new RenderParams(flowerMaterial)
