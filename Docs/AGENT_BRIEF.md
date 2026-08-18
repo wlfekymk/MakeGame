@@ -310,7 +310,20 @@ Roof 5 / Chest 6.** 값이 세이브에 정수로 들어간다 — **추가는 �
 `Tab` 인벤토리 · `V` 제작 · `J` 퀘스트 · `M` 지도(`+`/`-` 확대) · `B` 건축 · `Q` 조각 회전 ·
 `Space` 엔딩 계속 · `Esc` 설정 · `LeftCtrl` 잠수 · `Shift` 커서 해제/한 칸 전부 버리기/물통에 담기 ·
 `F3` 디버그 HUD · `F4` 재료 지급 · `F5` 저장 · `F6/F7/F8` 엔딩·게임오버 미리보기 · `F9` 불러오기.
+
+**0.2.2x~0.2.50에서 추가된 키 (전수 재대조 완료 — 이제 왼손 글자 키는 전부 찼다)**
+- `X` **회피 구르기** (`PlayerController.dodgeKey`, 코드 기본값 · 씬 아님). 쿨다운 1.8초 · 속도 13m/s ·
+  0.28초 → 약 3.6m. 무적 프레임은 **없고** 대신 직후 0.22초 경직(속도 ×0.35)이 대가다.
+  허기 1.5 / 갈증 2 소모(RaftSailing 노 젓기와 같은 대가 규약).
+- `T` **또는 마우스 우클릭** — **창 투척** (`throwKey` / `throwMouseButton 1`, 둘 다 코드 기본값).
+  쿨다운 0.8초 · 초속 26m/s · 수중이면 ×0.5. `throwMouseButton`을 음수로 두면 마우스 투척만 꺼진다.
+- `Z` **낚시** (`fishingKey`). 캐스팅 → 입질 대기 → 챔질을 이 키 하나로 진행한다.
+  전수 대조 결과 **왼손이 닿는 빈 글자 키는 Z가 마지막이었다**(`PlayerController.cs:70-77`의 대조표).
+- `F10` 전체 지도 토글 · `F11` 치트 일괄 토글 (`DebugHud.cs:88,114`, 디버그 계열).
+
 **새 키를 만들기 전에 이 표를 확인해라.** 남는 키가 거의 없다.
+→ 위 세 키(X·T·Z)는 전부 **씬이 아니라 코드 기본값**이다. 씬에 직렬화되지 않았으므로 0장의
+"씬 값이 이긴다"가 적용되지 않는다 — 코드를 고치면 그대로 반영된다.
 
 ### 엔딩
 배: 3단계 누적 + 도면 3장 + 비상식량 12 · 생수 12 · 연료 1 + **경과 15일**(씬)
@@ -342,6 +355,84 @@ Roof 5 / Chest 6.** 값이 세이브에 정수로 들어간다 — **추가는 �
 `.bak`/`.tmp` 를 잔여물로 오해해서 지우는 코드를 넣지 마라 — 세이브 복구 경로다.
 `JsonUtility` 는 없는 필드를 기본값으로 채우므로 **`SaveData` 필드 추가는 안전하지만 제거·개명은 파괴적**이다.
 건축은 `buildStructureJson`(문자열) + `storageChests`(`ChestSaveEntry`: space/cell/level/pos/yaw/tier/items).
+
+**세이브 슬롯 3개**(0.2.4x~): 저장 위치가 슬롯 1~3으로 늘었다. **슬롯 1 = 기존 `makegame_save.json`
+그 자체**라 마이그레이션 코드가 없고 옛 진행이 그대로 이어진다. 슬롯 2·3만 `makegame_save_slot{N}.json`.
+현재 슬롯의 주인은 `GameSettings.SaveSlot`(`SaveLoadController.SlotCount = GameSettings.SaveSlotCount`)
+이고 F5/F9·타이틀 "이어하기"는 **언제나 현재 슬롯**에 작용한다. `.bak`/`.tmp` 규약은 슬롯마다 그대로다.
+**파일 내용 형식(SaveData 스키마)은 한 글자도 바뀌지 않았다.**
+
+### 아이템 수 (레지스트리 전수 = 단일 소스)
+**현재 57종.** 근거: `Assets/_Project/Resources/ItemDataRegistry.asset` 의 `allItems` 항목 57개 =
+`Assets/_Project/ScriptableObjects/Item_*.asset` 파일 57개(두 수가 일치 = 미등록 누락 0).
+
+> ⚠️ **소스 주석의 아이템 수는 낡았다.** `ItemDataRegistry.cs`(31개) · `ItemData.cs`(32개 .asset) ·
+> `CompassUI.cs`(51종)가 각각 다른 옛 숫자를 들고 있다. **수를 셀 때는 주석이 아니라 레지스트리
+> 에셋을 세라**(0장 "주석이 고쳤다고 주장하면 값을 직접 확인한다"의 전형이다).
+
+### 설치형 시설 (설치 키트, `ItemData.isPlaceable`)
+`isPlaceable: 1` 인 키트 아이템은 **8종**이다 — 모닥불 · 쉼터 · 물 증류기 · **제작대 · 용광로 ·
+베틀 · 훈연기 · 밭**. `G` 키로 설치한다.
+
+| 시설 | 세이브 경로 |
+|---|---|
+| 모닥불 / 쉼터 / 물 증류기 | `StructureType` 0 / 1 / 2 (기존) |
+| **제작대 / 용광로 / 베틀** | `StructureType` **3 / 4 / 5** (`CraftStationKind` ↔ 변환, 상태 없음 = type만 저장) |
+| **훈연기** | `StructureType`을 늘리지 않고 **`SaveData.smokers` 별도 목록**(`SmokerSaveEntry`) |
+| **밭** | 같은 이유로 **`SaveData.farmPlots` 별도 목록**(`FarmPlotSaveEntry`: 작물·성장도) |
+
+> ⚠️ 훈연기는 **Campfire 컴포넌트를 함께 달고 있다.** `SaveLoadController`가 모닥불을 훑을 때
+> `GetComponent<Smoker>() != null` 로 걸러내지 않으면 한 대가 모닥불로도 훈연기로도 두 번 저장돼
+> 불러올 때마다 유령이 늘어난다(`SaveLoadController.cs:754,926`). 이 검사를 지우지 마라.
+> 훈연기·밭 목록은 `Smoker.Active` / `FarmPlot.Active` 로 모은다 — `FindObjectsByType`으로
+> 되돌리면 **DontDestroyOnLoad 설치 템플릿까지 잡혀** 저장 때마다 한 대씩 늘어난다(`:1150-1158`).
+
+### 0.2.2x~0.2.50 신규 시스템 (한 줄씩)
+- **엔드게임 보스 3종 + 트로피 엔딩** — `BossKind` = 거대 상어 0 / 대왕 곰치 1 / 심해 괴수 2
+  (`BossSpawner` 배치, 전부 수중). 보스는 **자체 체력계를 만들지 않고 `HazardSource`를 얹는다** —
+  이 게임에서 때릴 수 있는 것은 `HazardSource`뿐이기 때문이다(E키 근접 · 투척 창 둘 다 그걸 본다).
+  트로피 3종(상어 이빨 · 곰치 턱뼈 · 촉수 표본)을 다 모으고 **배/비행기 탈출 중 하나까지 완성**하면
+  `EndingKind.Trophy`(제목 "정복"). **`EndingKind`는 맨 끝에만 추가한다.**
+- **음식 부패** — `FoodSpoilage`(정적 단일 판정처). 3단계 = 신선 / 상하기 시작(신선도 <0.5) /
+  부패(<0.15). 허기 회복 배율 **1.0 / 0.6 / 0.25**, 식중독 확률 **가산** +0.10 / +0.50.
+  기본 수명은 생음식 1일 · 익힌 음식 3일이고 **비상식량과 "훈제"로 시작하는 것은 안 상한다**
+  (`ItemData.spoilDays`: 0 = 자동 규칙 / 양수 = 그 값 / **음수 = 절대 안 상함**).
+  섭취는 같은 종류 중 **가장 상한 것부터(FIFO)** 소모된다 — 칸 표시와 실제가 갈리지 않게 하기 위함.
+- **낚시** — `FishingSystem`(Z키). 캐스팅 → 입질 대기 → 챔질. 낚싯대 내구도 1 + 미끼 1 소모,
+  성급한 챔질은 실패. 성공 시 사냥 스킬 경험치. **기존 E키 물고기 사냥(`HuntableCreature`)은
+  한 줄도 바뀌지 않았다** — 낚시는 대체가 아니라 추가 선택지다.
+  **씬에 없다** — `PlayerController.Awake`가 런타임에 `AddComponent`한다 → **코드 기본값이 곧 실동작값.**
+- **농사** — `FarmPlot`(밭키트 설치). `FarmCropKind` = 야자 묘목 0(3일) / 해조류 1(1.5일) / 약초 2(1일).
+  **정수 그대로 세이브에 들어간다 — 순서 변경·중간 삽입 금지.**
+- **난파선** — `ShipwreckSpawner`. 섬마다 0~2척이 해저 스커트 수심 5~16m에 흩어지고, 한 척에
+  수거 지점 2~4곳. `SeabedGenerator.Build`가 해저 스포너 3종 **직후** 같은 동기 흐름에서 부른다.
+  신규 모델 0개(기존 뗏목/화물 메시 재조합). **전용 rng 스트림**(salt `0xB0A7`)만 소비하므로
+  같은 worldSeed의 기존 월드 배치가 밀리지 않는다.
+- **나침반** — `CompassUI`. 화면 상단 띠형(N/E/S/W + 도수 + 발견한 섬 방향 표식), sortOrder 7.
+  **아이템을 요구하지 않는다**(Item_나침반 에셋이 없어서 내린 판단). 설정에서 끌 수 있다.
+- **지도 표식(카토그래피)** — `MinimapUI.IslandMark` = None 0 / 고갈됨 1 / 자원 있음 2 / 위험 3.
+  전체 지도의 섬 줄에서 버튼으로 순환한다. **정수 그대로 세이브(`IslandMarkSaveEntry`)에 들어간다 —
+  맨 끝에만 추가.** 저장소가 `static`인 이유는 `RegenerateWorld`가 섬 인스턴스를 통째로 갈기 때문이다.
+
+### 스킬·난이도 효과 배선 (0.2.50 — "노출만 돼 있던" 3건을 닫았다)
+수치의 단일 소스는 `PlayerSkills` / `GameSettings`이고, **적용만** 각 파일에서 한다.
+- **요리** `GetCookingRestoreMultiplier()`(Lv1 1.0 → Lv10 1.27) → `ConsumptionSystem.Consume`.
+  **익힌 음식(`isRawFood == false`)에만** 곱하고, 부패 배율과 **곱셈으로 합성**한다(축이 달라 이중
+  적용이 아니다). 갈증(음료)에는 적용하지 않는다.
+- **신체(이동)** `GetPhysicalMoveSpeedMultiplier()`(Lv10 1.09) → `PlayerController.HandleMove`의
+  지상 기본 속도. 골절 감속·구르기 경직·달리기 배율이 그 위에서 계산된다. **수영·구르기 대시는 제외.**
+- **신체(산소)** `GetPhysicalOxygenDrainMultiplier()`(Lv10 0.82, 하한 0.5) → `SurvivalStats.
+  oxygenDrainMultiplier`. **그 필드의 단일 소스는 여전히 `PlayerController`다** — 컨트롤러가
+  `산소통 배율 × 신체 배율`로 합성해 밀어 넣는다(덮어쓰면 산소통 효과가 사라진다).
+  **`PlayerSkills`에는 레벨업 이벤트가 없어** 인벤토리 변경뿐 아니라 `Update`에서도 다시 민다.
+- **난이도 위협 피해** `GameSettings.ThreatDamageMultiplier`(쉬움 0.7 / 보통 1.0 / 어려움 1.4) →
+  `SurvivalStats.TakeDamage`. **전투 원인(`Predator` · `SharkAttack`)에만** 건다. 굶주림·갈증·일사병·
+  중독·출혈·익사에는 걸지 않는다 — 굶주림/갈증은 이미 `HungerDrainMultiplier`/`ThirstDrainMultiplier`로
+  난이도가 걸려 있어 **같은 손잡이가 두 번 먹는다**. `Unknown`(기본 인자)도 1.0이다.
+  디버그 무적(`debugInfiniteHealth`)보다 **뒤**에 둔다 — 무적 중에는 사인·위기 통계가 오염되면 안 된다.
+
+> **세 배선 모두 Lv1 / 보통 난이도에서 배율이 정확히 `1f`라 예전 식과 비트 단위로 같다(회귀 0).**
+> 배율을 새로 만들 때 이 성질(레벨 1 = 1.0)을 깨지 마라.
 
 ---
 

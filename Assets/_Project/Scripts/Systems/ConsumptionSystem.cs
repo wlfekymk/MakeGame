@@ -16,6 +16,9 @@ namespace MakeGame.Systems
         [Tooltip("허기/갈증을 회복시킬 대상 생존 수치")]
         public SurvivalStats survivalStats;
 
+        [Tooltip("요리 스킬 보너스를 읽어올 대상. 비워 두면 같은 GameObject → 씬 순서로 자동으로 찾는다.")]
+        public PlayerSkills playerSkills;
+
         [Tooltip("익히지 않은 음식을 먹었을 때 식중독(중독)에 걸릴 확률 (0~1)")]
         [Range(0f, 1f)]
         public float rawFoodPoisonChance = 0.3f;
@@ -65,6 +68,50 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// [요리 스킬 배선] 보너스를 읽을 PlayerSkills를 확보한다(인스펙터 지정 → 같은 GameObject → 씬 조회).
+        /// Awake에서 한 번에 잡지 않고 섭취 시점에 늦게 잡는 이유: ConsumptionSystem이 Player보다 먼저
+        /// Awake를 받는 씬/부트스트랩 순서에서 영구 null이 되는 사고를 피하기 위한 것이다
+        /// (Smoker.ResolveSkills가 같은 이유로 같은 형태를 쓴다). 못 찾으면 null을 그대로 돌려주고,
+        /// 호출부가 배율 1.0으로 처리하므로 스킬 컴포넌트가 없는 씬에서도 예전 동작 그대로다.
+        /// </summary>
+        private PlayerSkills ResolveSkills()
+        {
+            if (playerSkills == null)
+                playerSkills = GetComponent<PlayerSkills>();
+
+            if (playerSkills == null)
+                playerSkills = FindAnyObjectByType<PlayerSkills>();
+
+            return playerSkills;
+        }
+
+        /// <summary>
+        /// [요리 스킬 배선] 이번 섭취에 곱할 요리 스킬 배율. 수치의 단일 소스는
+        /// PlayerSkills.GetCookingRestoreMultiplier()이며(Lv1 = 1.0 / Lv10 = 1.27), 여기서는 "누구에게
+        /// 적용할지"만 정한다.
+        ///
+        /// **적용 대상: 익힌 음식(isRawFood == false)만.** 요리 스킬이므로 생식품에 붙는 것은 말이 안 되고,
+        /// 붙이면 "굽지 않고 그냥 먹는 것"이 스킬로 강해져 조리 루프 자체를 무의미하게 만든다.
+        /// 참고로 지금 데이터에서 이 조건에 걸리는 것은 구운고기·구운생선·훈제육·훈제생선(= 실제 조리
+        /// 결과물)과 비상식량·해조류 두 종이다. 뒤의 둘은 엄밀히는 조리 결과물이 아니지만
+        /// (Lv10에서도 +5.4 / +1.6 허기로 영향이 미미하다) 이들을 걸러내려면 ItemData에 "조리 결과물"
+        /// 플래그를 새로 넣거나 아이템 이름 규칙에 기대야 해서 이번 범위에서는 넣지 않았다.
+        ///
+        /// **갈증(음료)에는 적용하지 않는다** - 요리 스킬은 허기 회복 배율이고, 음료는 조리 대상이 아니다.
+        /// </summary>
+        private float GetCookingRestoreMultiplier(ItemData data)
+        {
+            if (data == null || data.isRawFood)
+                return 1f;
+
+            PlayerSkills skills = ResolveSkills();
+            if (skills == null)
+                return 1f;
+
+            return skills.GetCookingRestoreMultiplier();
+        }
+
+        /// <summary>
         /// 지정한 인벤토리 아이템을 섭취한다.
         /// 음식/음료 효과가 있는 아이템만 섭취할 수 있으며, 성공 시 사용 횟수를 1 소모한다(소진되면 인벤토리에서 제거).
         /// </summary>
@@ -94,7 +141,15 @@ namespace MakeGame.Systems
             {
                 // 상할수록 허기 회복이 줄어든다(신선 1.0 / 상하기 시작 0.6 / 부패 0.25).
                 // 갈증 회복에는 적용하지 않는다 - 음료는 부패 대상이 아니다(FoodSpoilage.GetSpoilDays).
-                survivalStats.ConsumeFood(item.data.hungerRestoreAmount * FoodSpoilage.GetRestoreMultiplier(stage));
+                //
+                // [요리 스킬 배선] 부패 배율 **뒤에** 요리 배율을 한 번 더 곱한다. 두 배율은 서로 다른
+                // 축이라(신선도 = 아이템 상태 / 요리 = 플레이어 숙련) 이중 적용이 아니며, 곱셈이라
+                // 순서를 바꿔도 결과가 같다. 여기서 굳이 `(회복량 * 부패배율)`을 통째로 남기고 그 뒤에
+                // 곱한 이유는, 요리 배율이 정확히 1f인 레벨 1에서 예전 식과 **비트 단위로 동일한 값**이
+                // 나오게 하기 위한 것이다(x * 1f == x). 즉 Lv1 회귀 0.
+                // 부패한 음식은 요리 실력이 좋아도 여전히 0.25배로 줄어든다 - 의도한 동작이다.
+                survivalStats.ConsumeFood(item.data.hungerRestoreAmount * FoodSpoilage.GetRestoreMultiplier(stage)
+                    * GetCookingRestoreMultiplier(item.data));
                 AudioManager.Instance?.PlayEat(); // 음식 섭취 효과음
             }
 

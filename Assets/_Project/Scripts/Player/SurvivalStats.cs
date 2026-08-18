@@ -548,12 +548,45 @@ namespace MakeGame.Player
             }
 #endif
 
+            // [난이도 배선] 난이도별 위협 피해 배율(쉬움 0.7 / 보통 1.0 / 어려움 1.4)을 여기서 곱한다.
+            // **디버그 무적보다 뒤**에 둔 것은 의도적이다 - 무적은 "맞지 않은 것으로 친다"가 정의라
+            // 배율 계산까지 갈 일이 없어야 하고, 순서를 바꾸면 무적 중에도 사인/위기 통계가 오염된다.
+            // 보통 난이도에서는 배율이 정확히 1f라 `amount * 1f == amount`로 기존 동작과 비트 단위로 같다.
+            amount *= GetThreatDamageMultiplier(cause);
+
             health = Mathf.Max(0f, health - amount);
 
             if (amount > 0f && cause != DamageCause.Unknown)
             {
                 lastDamageCause = cause;
                 RecordCrisis(cause); // 겪은 위기 횟수(CrisisCount) 집계 - 판정 기준은 필드 선언부 주석 참고.
+            }
+        }
+
+        /// <summary>
+        /// [난이도 배선] 이 피해에 곱할 난이도 배율. **전투 피해(Predator/SharkAttack)에만 1이 아니다.**
+        ///
+        /// 적용 범위를 전투로 좁힌 근거(TakeDamage는 환경 피해도 전부 통과하는 단일 진입점이다):
+        ///  · GameSettings의 이름과 문서가 "위협(곰/상어 등)이 주는 피해 배율"이다. 굶주림·갈증·
+        ///    일사병·중독·출혈·익사는 위협이 아니라 생존 수치의 결과다.
+        ///  · **환경 피해는 이미 난이도가 걸려 있다.** 굶주림/갈증은 GameSettings.HungerDrainMultiplier /
+        ///    ThirstDrainMultiplier로 감소 속도가 난이도별로 벌어져 있으므로, 여기서 피해량까지 또 곱하면
+        ///    같은 난이도 손잡이가 두 번 먹는 이중 적용이 된다(어려움에서 1.35 × 1.4).
+        ///  · Unknown은 배율을 걸지 않는다. 기본 인자값이라 "원인을 지정하지 않은 호출"이 전부 여기로
+        ///    떨어지는데(지금은 그런 호출부가 없다), 나중에 누가 원인 없이 호출하면 그것이 전투인지
+        ///    환경인지 알 수 없다. 모르는 것에 난이도를 거는 대신 1.0으로 둔다.
+        ///
+        /// 보통(Normal)에서는 모든 원인에 대해 정확히 1f를 돌려주므로 기존 동작과 완전히 동일하다.
+        /// </summary>
+        private static float GetThreatDamageMultiplier(DamageCause cause)
+        {
+            switch (cause)
+            {
+                case DamageCause.Predator:
+                case DamageCause.SharkAttack:
+                    return MakeGame.Systems.GameSettings.ThreatDamageMultiplier;
+                default:
+                    return 1f;
             }
         }
 

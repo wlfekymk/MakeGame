@@ -364,8 +364,33 @@ namespace MakeGame.Player
 
             // 산소통 효과는 산소 로직의 주인인 SurvivalStats로 밀어 넣는다. 0 이하(잘못된 설정)는
             // SurvivalStats 쪽 관례대로 미설정으로 취급되므로 그대로 1(효과 없음)로 동작한다.
-            if (survivalStats != null)
-                survivalStats.oxygenDrainMultiplier = hasOxygenTank ? oxygenTankDrainMultiplier : 1f;
+            PushOxygenDrainMultiplier();
+        }
+
+        /// <summary>
+        /// [신체 스킬 배선] SurvivalStats.oxygenDrainMultiplier를 갱신한다.
+        ///
+        /// 그 필드의 **단일 소스가 이 컨트롤러**라는 SurvivalStats의 계약을 그대로 지키기 위해,
+        /// 신체 스킬 효과를 SurvivalStats 쪽에서 따로 읽지 않고 여기서 합성해 밀어 넣는다.
+        /// 합성은 곱셈이다 - 산소통 배율(소지 패시브) × 신체 배율(숙련). 덮어쓰면 산소통 효과가
+        /// 사라지므로 반드시 곱해야 한다. Lv1에서 신체 배율이 정확히 1f라 예전 식과 값이 같다
+        /// (산소통 있으면 0.5, 없으면 1.0). 최대 효과는 Lv10 + 산소통으로 0.5 × 0.82 = 0.41이다.
+        ///
+        /// 호출 지점이 둘인 이유: 예전에는 인벤토리 변경(RefreshPassiveEquipment)에서만 밀었는데,
+        /// **스킬 레벨업에는 이벤트가 없어**(PlayerSkills.AddExperience, CraftingUI가 같은 이유로
+        /// 폴링한다) 그것만 남기면 레벨이 올라도 다음 아이템 획득 전까지 반영되지 않는다. 그래서
+        /// Update에서도 같은 값을 다시 민다. 비용은 스킬 5개짜리 리스트 순회 1회 + 곱셈 하나다.
+        /// </summary>
+        private void PushOxygenDrainMultiplier()
+        {
+            if (survivalStats == null)
+                return;
+
+            float multiplier = hasOxygenTank ? oxygenTankDrainMultiplier : 1f;
+            if (playerSkills != null)
+                multiplier *= playerSkills.GetPhysicalOxygenDrainMultiplier();
+
+            survivalStats.oxygenDrainMultiplier = multiplier;
         }
 
         /// <summary>
@@ -417,6 +442,10 @@ namespace MakeGame.Player
             HandleCombatInput();
             HandleMove();
             PushAirPocketState();
+            // [신체 스킬 배선] 산소 소모 배율은 인벤토리 변경뿐 아니라 스킬 레벨업으로도 바뀌는데
+            // PlayerSkills에는 변경 이벤트가 없다. PushAirPocketState와 같은 "파생 상태를 매 프레임
+            // 밀어준다" 패턴으로 맞춰 둔다(자세한 근거는 PushOxygenDrainMultiplier 주석).
+            PushOxygenDrainMultiplier();
         }
 
         /// <summary>
@@ -729,7 +758,13 @@ namespace MakeGame.Player
                 return;
             }
 
-            float speed = moveSpeed;
+            // [신체 스킬 배선] 지상 이동 속도에 신체 스킬 배율을 곱한다(단일 소스:
+            // PlayerSkills.GetPhysicalMoveSpeedMultiplier, Lv1 = 1.0 / Lv10 = 1.09).
+            // Lv1에서 정확히 1f라 `moveSpeed * 1f == moveSpeed`가 되어 기존 동작과 비트 단위로 같다.
+            // 여기(=지상 기본 속도)에 곱하므로 뒤에 붙는 골절 감속·구르기 경직·달리기 배율이 모두
+            // 이 값 위에서 계산된다. 수영 속도(HandleSwimMove)와 구르기 대시(HandleDodgeMove)는 이
+            // speed를 쓰지 않으므로 영향을 받지 않는다 - 신체 스킬 효과의 정의가 "지상 이동 속도"다.
+            float speed = moveSpeed * (playerSkills != null ? playerSkills.GetPhysicalMoveSpeedMultiplier() : 1f);
             if (survivalStats != null && survivalStats.hasBrokenBone)
                 speed *= brokenBoneSpeedMultiplier;
 
