@@ -218,6 +218,11 @@ namespace MakeGame.Systems
             // (등록이 먼저여야 TrySampleSeabed 접지가 유효). 순수 배경·독립 rng - SeabedFloraSpawner 주석.
             SeabedFloraSpawner.Spawn(islandObject, radius);
 
+            // [수중 동굴] 해저 식생 직후, 같은 동기 흐름에서 대형/특대 섬에만 동굴을 놓는다
+            // (TrySampleSeabed 접지가 유효해야 하므로 스커트 등록 이후여야 한다).
+            // 독립 rng 스트림(0xCA7E) - 기존 스트림의 draw 순서에 영향 없음.
+            UnderwaterCaveSpawner.Spawn(islandObject, radius);
+
             // 정점 수 총합 로그 예약(프레임당 1줄). 로거의 Start는 이 프레임의 모든 섬 생성이 끝난 뒤 돈다.
             pendingVertexTotal += vertexCount;
             pendingSkirtCount++;

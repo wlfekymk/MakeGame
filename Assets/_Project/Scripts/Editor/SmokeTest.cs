@@ -15,7 +15,7 @@ namespace MakeGame.EditorTools
     /// 씬 참조 깨짐)를 배포 전에 잡는다. 콘솔 에러/예외/경고를 종류별로 집계하고
     /// 매 5초마다 씬 핵심 오브젝트(Player · Managers · Island_0_* 지형 · SurvivalHudUI ·
     /// Ocean · DayNightCycle · BuildingSystem · CursorLockController · GrassFieldDriver ·
-    /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual) 존재를 확인한다.
+    /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual · UnderwaterCave_* 수중 동굴) 존재를 확인한다.
     ///
     /// ★ 도메인 리로드 생존 구조 ★
     /// 플레이 진입/이탈(및 플레이 중 재컴파일) 때마다 에디터 static이 전부 초기화된다.
@@ -81,6 +81,7 @@ namespace MakeGame.EditorTools
             ("underwaterAmbience", "UnderwaterAmbience", false),
             ("sunkenCargo", "SunkenCargo_", true),
             ("airlinerWreck", "AirlinerWreckVisual", false),
+            ("underwaterCave", "UnderwaterCave_", true),
         };
 
         // ---- 도메인 로컬 상태 (리로드 직후 SessionState에서 복원) ----
@@ -374,6 +375,7 @@ namespace MakeGame.EditorTools
             public bool underwaterAmbience;
             public bool sunkenCargo;
             public bool airlinerWreck;
+            public bool underwaterCave;
         }
 
         [Serializable]
@@ -419,6 +421,7 @@ namespace MakeGame.EditorTools
                 underwaterAmbience = SessionState.GetBool(KeyCheckPrefix + "underwaterAmbience", false),
                 sunkenCargo = SessionState.GetBool(KeyCheckPrefix + "sunkenCargo", false),
                 airlinerWreck = SessionState.GetBool(KeyCheckPrefix + "airlinerWreck", false),
+                underwaterCave = SessionState.GetBool(KeyCheckPrefix + "underwaterCave", false),
             };
 
             var result = new SmokeResult

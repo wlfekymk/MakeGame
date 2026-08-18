@@ -178,6 +178,19 @@ namespace MakeGame.Player
         /// </summary>
         [System.NonSerialized]
         public float oxygenDrainMultiplier = 1f;
+
+        /// <summary>
+        /// 플레이어의 머리(카메라 위치)가 에어포켓(AirPocketZone) 안에 있는가. oxygenDrainMultiplier와
+        /// 같은 패턴으로 PlayerController가 매 프레임 밀어주는 파생 상태다 — SurvivalStats는 존의
+        /// 존재를 모른 채 bool 하나만 읽는다. 직렬화하지 않는 이유도 위와 동일: 매 프레임 다시
+        /// 계산되는 순간 상태라 씬/세이브 포맷 어느 쪽에도 실을 필요가 없다.
+        /// </summary>
+        [System.NonSerialized]
+        public bool isHeadInAirPocket = false;
+
+        [Tooltip("에어포켓 안에서 잠수 중일 때 초당 산소 회복량 = 산소 감소량(oxygenDrainPerSecond) x 이 배율.\n" +
+            "수면 위 회복(oxygenRecoveryPerSecond)보다는 느리게, 감소보다는 확실히 빠르게 차오른다.")]
+        public float airPocketRecoveryMultiplier = 3f;
         [Tooltip("산소가 고갈된 채로 잠수 중일 때 초당 입는 익사 피해량")]
         public float drowningDamagePerSecond = 3f;
 
@@ -341,6 +354,17 @@ namespace MakeGame.Player
         /// </summary>
         private void UpdateOxygen(float deltaTime, bool isUnderwater)
         {
+            // 에어포켓(수중 동굴 천장의 공기 주머니)에 머리를 넣고 있으면 잠수 중에도 산소가
+            // **회복**되고, 익사 진행(아래 TakeDamage)도 여기서 함께 멈춘다. 회복 속도는 감소
+            // 속도의 airPocketRecoveryMultiplier(기본 3)배 — 감소/회복이 상호 배타가 되도록
+            // 이 분기에서 바로 반환한다.
+            if (isUnderwater && isHeadInAirPocket)
+            {
+                float recoveryMultiplier = airPocketRecoveryMultiplier > 0f ? airPocketRecoveryMultiplier : 3f;
+                oxygen = Mathf.Min(MaxStatValue, oxygen + oxygenDrainPerSecond * recoveryMultiplier * deltaTime);
+                return;
+            }
+
             // 산소통 소지 패시브(oxygenDrainMultiplier=0.5) 반영. 0 이하는 미설정으로 보고 1로 취급한다.
             float drainMultiplier = oxygenDrainMultiplier > 0f ? oxygenDrainMultiplier : 1f;
 

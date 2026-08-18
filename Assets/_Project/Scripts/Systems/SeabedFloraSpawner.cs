@@ -152,6 +152,10 @@ namespace MakeGame.Systems
         /// 산호와 같은 병합 임포트 대비가 필요하다(서브메시 2 = [shell, pearl] 머티리얼 배열).</summary>
         private static readonly string[] ClamModelNames = { "clam_a", "clam_b", "clam_c" };
 
+        /// <summary>조개 변종 수(= ClamModelNames.Length). UnderwaterCaveSpawner가 동굴 내부
+        /// 조개 변종을 뽑을 때 쓴다 - 배열 자체를 노출하지 않고 개수만 준다.</summary>
+        internal const int ClamVariantCount = 3;
+
         /// <summary>각 조개 모델의 실측 전체 크기(m, W×H×D · 밑면 y=0). OBJ 정점 실측값 -
         /// 상호작용 BoxCollider 대략치에 쓴다(RockModelSizes와 같은 사본 정책).</summary>
         private static readonly Vector3[] ClamModelSizes =
@@ -745,7 +749,9 @@ namespace MakeGame.Systems
         /// GetComponentInParent 경로)이다. 메시 미로드면 아무것도 만들지 않는다(보이지 않는
         /// 수거 지점 금지 - PlaceCargoPile과 같은 폴백, 래치 없음).
         /// </summary>
-        private static void PlaceClam(Transform root, Vector3 islandCenter, Vector3 worldPos,
+        /// <summary>UnderwaterCaveSpawner가 동굴 내부 조개에 그대로 재사용한다(0.2.38에서
+        /// private → internal 승격, 본문·시그니처 무변경).</summary>
+        internal static void PlaceClam(Transform root, Vector3 islandCenter, Vector3 worldPos,
             int variant, float yaw, float scale, int pearlCount, int clamIndex)
         {
             Mesh shell = clamPrimary[variant];

@@ -213,6 +213,35 @@ namespace MakeGame.Player
         {
             HandleLook();
             HandleMove();
+            PushAirPocketState();
+        }
+
+        /// <summary>
+        /// 머리(카메라 위치)가 에어포켓(AirPocketZone) 안인지 판정해 SurvivalStats에 밀어준다.
+        /// oxygenDrainMultiplier(산소통 패시브)와 같은 "컨트롤러가 파생 상태를 밀어주는" 패턴 —
+        /// SurvivalStats.UpdateOxygen은 이 bool만 읽고, 참이면 잠수 중에도 산소를 회복시킨다.
+        ///
+        /// 성능: O(n) 존 순회(AirPocketZone.IsInsideAny)는 수영/잠수 모드(발이 수면 아래)일 때만
+        /// 프레임당 1회 수행한다. 육지에서는 산소가 어차피 정상 회복되므로 판정 자체가 무의미하고,
+        /// 에어포켓은 정의상 수면 아래(동굴 천장)에만 있어 판정 누락도 생기지 않는다.
+        /// </summary>
+        private void PushAirPocketState()
+        {
+            if (survivalStats == null)
+                return;
+
+            bool inPocket = false;
+            if (transform.position.y < waterLevel)
+            {
+                // 판정 기준점은 카메라(=머리) 위치. 카메라가 연결 안 된 씬에서는 SurvivalTickDriver의
+                // 산소 판정과 같은 머리 높이(발 + 1.6m)로 폴백한다.
+                Vector3 headPos = cameraTransform != null
+                    ? cameraTransform.position
+                    : transform.position + Vector3.up * 1.6f;
+                inPocket = MakeGame.Systems.AirPocketZone.IsInsideAny(headPos);
+            }
+
+            survivalStats.isHeadInAirPocket = inPocket;
         }
 
         /// <summary>
