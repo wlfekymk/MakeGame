@@ -396,6 +396,61 @@ namespace MakeGame.Systems
             return GrassLineHeightFromT(ComputeGrassLineT(islandObject));
         }
 
+        // ── [B57 해변 전이대] 경계 굽이(BandWobble) 3층화 ───────────────────────────────
+        // 문제(디렉터 신고 "너무 삐쭉빼쭉 어설퍼"): 잔디/모래 경계의 인공적인 느낌은 두 갈래였다.
+        //   (1) 캡을 **삼각형 단위로 포함/제외**해 경계가 메시 해상도(변 3~5m) 그대로 각졌다.
+        //       → BuildCapLayer의 마칭 트라이앵글 절단으로 해결한다(그쪽 주석).
+        //   (2) 굽이 항이 sin(2θ), sin(3θ) **두 개뿐**이라 섬 하나에 큰 물결이 정확히 2·3개 -
+        //       즉 타원/삼엽 도형이 그대로 읽히는 규칙 무늬였다. 게다가 각도 기준이라 파장이
+        //       반지름에 비례해(R=50에서 λ=157m, R=200에서 λ=628m) **섬이 클수록 경계가 자로
+        //       그은 원**이 됐고, 석호·수로 안쪽 물가는 바깥 물가와 같은 위상이 걸렸다.
+        //
+        // 조치: 각도(θ)가 아니라 **섬 로컬 XZ 미터**를 입력으로 받는 3층 중첩으로 바꾼다.
+        //   저주파 λ 46m / 56m  진폭 0.26 / 0.19m  → 만·곶 규모의 큰 굽이
+        //   중주파 λ 16m / 13m  진폭 0.105 / 0.075m → 해변 폭이 걸어가며 변하는 스케일
+        //   고주파 λ 5.0m / 4.0m 진폭 0.040 / 0.030m → 잔물결 크레뉼레이션(이 이상 키우면 다시 톱니)
+        // 층마다 방향이 다른 사인을 둘씩 겹쳐(6항) 축 정렬 줄무늬·단일 주기 반복이 생기지 않는다.
+        // 최대 진폭 0.70m·RMS 0.25m로, 예전(최대 0.34m·RMS 0.18m)보다 굽이는 커지되 세 캡 경계에
+        // **같은 값**이 더해지는 구조는 그대로다 - 띠 간격(0.45m/0.55m)이 어떤 값에서도 보존된다.
+        //
+        // ★ 단일 소스 ★ 이 함수는 세 곳이 **같은 값**을 봐야 한다:
+        //   (1) BuildGroundCaps의 DryTop/DampTop/WetTop, (2) 캡 절단면과 셰이더 페이드용 거리장,
+        //   (3) GrassFieldSystem의 잔디 전이대 판정. 상수를 복사하지 마라.
+        // ★ 난수 소비 0 ★ 입력은 (섬 로컬 x, z, 섬별 위상 2개)뿐인 순수 함수다.
+
+        /// <summary>
+        /// 잔디/모래 경계선의 굽이(m). 섬 로컬 XZ와 섬별 위상 2개만 받는 순수 함수다.
+        /// 세 모래 캡 경계와 잔디 전이대가 전부 이 한 값을 더해 쓴다(단일 소스).
+        /// </summary>
+        /// <param name="x">섬 로컬 X(m).</param>
+        /// <param name="z">섬 로컬 Z(m).</param>
+        /// <param name="phaseA">BuildIslandSurface가 뽑아 둔 섬별 위상 A(rad).</param>
+        /// <param name="phaseB">같은 위상 B(rad).</param>
+        public static float ShoreBandWobble(float x, float z, float phaseA, float phaseB)
+        {
+            // 파수 k = 2π / 파장. 방향 벡터는 전부 단위 길이라 파장이 미터 그대로 성립한다.
+            float low1 = Mathf.Sin((x * 0.9284f + z * 0.3714f) * 0.1366f + phaseA);          // λ 46.0m
+            float low2 = Mathf.Sin((x * -0.4472f + z * 0.8944f) * 0.1122f + phaseB * 1.7f);  // λ 56.0m
+            float mid1 = Mathf.Sin((x * 0.7071f - z * 0.7071f) * 0.3927f + phaseB);          // λ 16.0m
+            float mid2 = Mathf.Sin((x * 0.2425f + z * 0.9701f) * 0.4833f + phaseA * 2.3f);   // λ 13.0m
+            float high1 = Mathf.Sin((x * 0.6000f - z * 0.8000f) * 1.2566f + phaseA * 3.1f);  // λ  5.0m
+            float high2 = Mathf.Sin((x * 0.8944f + z * 0.4472f) * 1.5708f + phaseB * 4.7f);  // λ  4.0m
+            return 0.26f * low1 + 0.19f * low2
+                 + 0.105f * mid1 + 0.075f * mid2
+                 + 0.040f * high1 + 0.030f * high2;
+        }
+
+        /// <summary>
+        /// 섬 로컬 (x, z)에서의 잔디/모래 경계 높이(m) = 섬별 grassLine + 굽이 3층.
+        /// 삼각형 디더는 **들어가지 않는다** - 경계를 실제로 잘라 만들기 때문에(BuildCapLayer)
+        /// 디더로 톱니를 가릴 이유가 사라졌고, 오히려 디더가 톱니의 절반이었다.
+        /// </summary>
+        public static float GrassBoundaryHeight(float x, float z, float grassLineBase,
+            float phaseA, float phaseB)
+        {
+            return grassLineBase + ShoreBandWobble(x, z, phaseA, phaseB);
+        }
+
         /// <summary>시작 섬(0번) 판정. 이름 규약 "Island_{id}_{size}"는 WorldMapManager.SpawnPlaceholder가
         /// BuildIslandSurface 호출 **전에** 붙인다(IslandMeshGenerator.Vegetation.cs의 같은 판정이 선례).</summary>
         private static bool IsStartIslandObject(GameObject islandObject)
@@ -974,7 +1029,13 @@ namespace MakeGame.Systems
             // 삼각형 감는 방향은 한 비트도 바뀌지 않으므로 콜라이더 footprint, 스포너 산포 반경,
             // TerrainSampler 스냅, 캡 선택 조건이 전부 그대로다. 계산도 이미 확정된 정점 배열만
             // 보는 순수 기하라 rng를 0회 소비한다(월드 생성 결정성 불변).
-            mesh.uv2 = BakeShoreField(vertices, triangleArray);
+            //
+            // [해변 파도 3단계] 같은 호출이 뽑은 **등고선 선분(= 해안선 폴리라인)** 을 메시에 묶어
+            // 둔다. 마루 리본(ShorelineRibbon)이 아래 BuildGroundCaps에서 그것을 꺼내 기준선으로
+            // 쓴다 - 등고선을 다시 계산하지 않는다. UV2 값은 한 비트도 달라지지 않는다(추가로 실리는
+            // 변 식별자/내리막 방향은 거리장 계산에 들어가지 않는다).
+            mesh.uv2 = BakeShoreField(vertices, triangleArray, out ShoreContour shoreContour);
+            StashShoreContour(mesh, shoreContour);
 
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
@@ -1027,13 +1088,56 @@ namespace MakeGame.Systems
             // 이 메서드가 받은 메시 반경 그대로라 footprint 계산도 없다).
             SeabedGenerator.Build(islandObject, source, radius);
 
+            // ── [B57] 잔디/모래 경계선과 그 대표 경사 ────────────────────────────────────
+            // 여기(캡 생성보다 위)로 끌어올린 이유: 잔디 전이대 폭을 GrassFieldSystem.Build에
+            // 넘겨야 하는데, 그 호출이 캡 생성보다 먼저다(호출 순서는 아래 주석대로 고정이다).
+            float grassLine = GrassLineHeight(islandObject);
+
+            // 잔디/모래 경계의 **부호장**: + = 초지 쪽, - = 모래 쪽, 0 = 경계선.
+            // 삼각형 디더가 빠진 이유는 GrassBoundaryHeight 주석에 있다(디더가 톱니의 절반이었다).
+            // 정점 단위로 평가되는 연속 함수라 삼각형을 이 등고선에서 정확히 자를 수 있다.
+            System.Func<Vector3, float> dryField = v =>
+                v.y - GrassBoundaryHeight(v.x, v.z, grassLine, phaseA, phaseB);
+
+            // [왜 높이가 아니라 경사로 폭을 잡는가 - 실측이 뒤집은 가정]
+            // 전이대·색 페이드는 "경계선 아래위 몇 미터"로 잡아야 자연스러운데, 그 판정은 높이로
+            // 하는 것이 싸다. 그래서 처음엔 고정 높이 대역을 썼다가 실측에서 틀린 것을 확인했다:
+            // BakeShoreField 주석의 해변 경사 0.23~0.69는 **물가 근처** 값이고, 잔디선은 돔의
+            // 훨씬 위쪽이라 실제 경사가 0.04~0.30(중앙 0.06~0.18)이다. 고정 0.9m 대역이면
+            // 수평 폭이 5~25m가 되어 백사장(실측 15m)을 통째로 덮는다.
+            // 조치: 경계를 가로지르는 삼각형들의 높이 기울기 중앙값을 섬마다 재고, 목표 **수평**
+            // 폭에 그 경사를 곱해 높이 대역으로 되돌린다. 삼각형 몇 천 개를 한 번 훑는 비용뿐이다.
+            float boundarySlope = EstimateBoundarySlope(source, dryField);
+            float ecotoneHeight = Mathf.Clamp(EcotoneHorizontalWidth * boundarySlope,
+                EcotoneHeightMin, EcotoneHeightMax);
+            float colorFadeHeight = Mathf.Clamp(GrassColorFadeWidth * boundarySlope,
+                GrassColorFadeMin, GrassColorFadeMax);
+
             // [초지 잔디] 같은 훅 지점에서 잔디 인스턴스 배열을 굽는다(순수 위치 해시, rng 소비 0 -
             // GrassFieldSystem 상단 주석). phaseA/B를 그대로 넘겨 초지 판정이 아래 모래 캡 경계
             // (DryTop + BandWobble)와 정확히 같은 기준을 쓰게 한다. 셰이더(MG/Grass) 부재 시 무동작.
             // [B56] rockGrassKeep(암반 판정 순수 함수)도 같이 넘긴다. 호출부(BuildIslandSurface)가
             // 이 메서드보다 **먼저** 암반 필드를 확정하도록 순서를 바꿨기 때문에 여기서 이미 값이 있다
             // - 예전에는 잔디가 구워진 뒤에 암반이 정해져서 바위섬 암반 위에 잔디가 남았다.
-            GrassFieldSystem.Build(islandObject, source, radius, phaseA, phaseB, rockGrassKeep);
+            // [B57] ecotoneHeight = 잔디 전이대 높이 대역(m). 캡을 자르는 경계선과 **같은 소스**에서
+            // 나온 값이라 잔디와 모래가 같은 곡선·같은 폭을 본다.
+            GrassFieldSystem.Build(islandObject, source, radius, phaseA, phaseB, rockGrassKeep,
+                ecotoneHeight);
+
+            // [해변 파도 3단계] 부서지는 마루 리본. GenerateIslandMesh가 BakeShoreField 직후 묶어 둔
+            // 등고선(= 해안선 폴리라인)을 그대로 기준선으로 쓴다 - 여기서 다시 뽑지 않는다.
+            //
+            // 이 자리인 이유: 리본은 섬 오브젝트(자식으로 붙는다)와 반지름(거리 컷)이 둘 다 필요한데,
+            // 메시를 만드는 GenerateIslandMesh는 그 둘을 모르고, 사이를 잇는 WorldMapManager는 편집
+            // 범위 밖이다. 해저 스커트/잔디와 같은 훅 지점이고 같은 동기 흐름이다.
+            // **호출 순서를 SeabedGenerator.Build / GrassFieldSystem.Build 뒤에 둔 것도 의도다** -
+            // 앞에 끼우면 islandObject의 자식 인덱스에서 "Seabed_"가 한 칸 밀린다.
+            //
+            // 무영향 근거: rng를 만들지도 소비하지도 않는 순수 기하이고(월드 배치 재현성 불변),
+            // 지형 메시·UV2·콜라이더를 건드리지 않으며, 리본 오브젝트는 이름이 "ShoreRibbon_"라
+            // TerrainSampler류의 "Island_" 필터에서 구조적으로 제외되고 콜라이더도 없다.
+            // 셰이더가 없거나 등고선이 비면 조용히 아무것도 만들지 않는다.
+            ShorelineRibbon.Build(islandObject, ConsumeShoreContour(source), radius);
 
             // 지형 최대 높이는 WorldMapManager.terrainMaxHeight(인스펙터 값, 실기에서 2.5 → 8로 상향)라
             // 코드 상수로 가정하면 안 된다. 메시 바운즈에서 읽어 항상 실제 지형에 맞춘다.
@@ -1170,26 +1274,41 @@ namespace MakeGame.Systems
             // 더하므로 간격은 그대로다. 섬마다 다른 위상(phaseA/phaseB)을 쓰던 예전 GrassBoundaryRadius의
             // 역할을 여기가 이어받는다 - 그래야 BuildIslandSurface가 뽑아 둔 난수 2회(위상)가 계속
             // 의미를 갖는다(그 2회를 없애면 같은 worldSeed에서 기존 숲 배치가 통째로 밀린다).
+            //
+            // [B57] 굽이 항이 sin(2θ)+sin(3θ) 2층 → **미터 기준 6항 3층**(ShoreBandWobble - 위 주석)이
+            // 됐다. 인자가 각도에서 로컬 XZ로 바뀌었으므로 아래 세 경계도 무게중심 좌표를 그대로 넘긴다.
+            // 여전히 **한 값을 셋이 공유**하므로 띠 간격 보존 논증은 한 글자도 달라지지 않는다.
+            //
+            // [B57] 로컬 함수(식 본문)를 System.Func로 바꿨다. DryTop 경계는 이제 캡을 실제로 자르는
+            // **부호장**으로도 쓰여야 해서(BuildCapLayer의 clipKeep/bandField 인자) 델리게이트가
+            // 필요하다. 섬당 6개 남짓 만들고 마는 월드 생성 1회 경로라 할당은 논외다.
             float heightDither = 0.36f;
-            float BandWobble(float angle) =>
-                0.22f * Mathf.Sin(angle * 2f + phaseA) + 0.12f * Mathf.Sin(angle * 3f + phaseB);
-            // [B52] DryTop의 기준 상수(1.30)만 섬별 값으로 바뀐다(위 GrassLineHeight 주석 - 단일 소스).
-            // BandWobble·디더 항은 B47 그대로다. DampTop/WetTop(모래 3단 내부 경계)은 해변의 물리량이라
-            // 섬별로 움직일 이유가 없고 그대로 둔다 - grassLine 최저 1.15m > DampTop 0.75m라 어떤
-            // t에서도 띠가 뒤집히거나 틈이 생기지 않는다(디더는 세 경계가 같은 값을 공유하므로 불변).
-            // GrassFieldSystem.Build도 같은 함수로 같은 값을 읽는다 - 여기만 고치면 모래 위 잔디가 생긴다.
             // [B54 아키타입] 이 섬의 유형 파라미터. 지면색·모래색이 여기서 갈린다.
             // Tropical은 groundColor = MeadowGreen, sandColor = IslandSand로 **기존 상수와 같은 값**이라
             // 열대섬의 지면은 아키타입 도입 이전과 한 채널도 다르지 않다(회귀 안전장치).
             var archetype = ArchetypeProfileOf(islandObject);
 
-            float grassLine = GrassLineHeight(islandObject);
-            float DryTop(Vector3 centroid, float angle) =>
-                grassLine + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
-            float DampTop(Vector3 centroid, float angle) =>
-                0.75f + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
-            float WetTop(Vector3 centroid, float angle) =>
-                0.30f + BandWobble(angle) + (Hash01(centroid) - 0.5f) * heightDither;
+            // [B52] DryTop의 기준 상수(1.30)만 섬별 값으로 바뀐다(위 GrassLineHeight 주석 - 단일 소스).
+            // DampTop/WetTop(모래 3단 내부 경계)은 해변의 물리량이라 섬별로 움직일 이유가 없고 그대로
+            // 둔다 - grassLine 최저 1.15m > DampTop 0.75m + 디더 0.18m라 어떤 t에서도 띠가 뒤집히거나
+            // 틈이 생기지 않는다. GrassFieldSystem.Build도 GrassBoundaryHeight로 같은 값을 읽는다.
+            // (grassLine / dryField는 이 메서드 앞부분에서 이미 잡았다 - [B57] 주석.)
+
+            // 모래 캡이 위쪽 경계를 넘지 않도록 남기는 쪽(부호 반전) - BuildCapLayer의 clipKeep 계약은
+            // "값 ≥ 0인 쪽을 남긴다"이다.
+            System.Func<Vector3, float> sandKeep = v => -dryField(v);
+            // 모래 3단 내부 경계(Damp/Wet)는 예전 그대로 **삼각형 단위 + 디더**다. 이유:
+            //   · 신고된 톱니는 잔디/모래 경계 하나이고, 이 둘은 명도 12%/10% 차이인 같은 모래끼리의
+            //     경계라 디더 점묘로 충분히 읽힌다(B22가 그 목적으로 넣은 값이다).
+            //   · 물가 쪽이라 MGShoreline의 젖음/스와시가 매 프레임 그 위를 덮어 쓴다.
+            //   · 여기까지 자르면 캡 정점이 3배가 된다(경계 하나당 절단 정점이 붙는다) - 비용 대비
+            //     효과가 가장 낮은 지점이라 자르지 않는다.
+            System.Func<Vector3, float> dampTop = centroid =>
+                0.75f + ShoreBandWobble(centroid.x, centroid.z, phaseA, phaseB)
+                + (Hash01(centroid) - 0.5f) * heightDither;
+            System.Func<Vector3, float> wetTop = centroid =>
+                0.30f + ShoreBandWobble(centroid.x, centroid.z, phaseA, phaseB)
+                + (Hash01(centroid) - 0.5f) * heightDither;
 
             // 내륙 풀밭. 예전 색은 Shade(PalmFiber, 0.82) = #79733E로, Island Sand(#C2B280)와 색상각이
             // 각각 54°/45°로 9°밖에 차이 나지 않는 같은 황토 계열에 휘도만 1.58배 낮은 값이었다.
@@ -1225,13 +1344,16 @@ namespace MakeGame.Systems
             //     **정확한 여집합**이라 틈/겹침이 원리적으로 생기지 않는다(합집합 = 섬 전체).
             // Tropical은 groundColor가 지형 본체(MeadowGreen)와 같은 색이라 덮개가 화면에 더하는 정보가
             // 0이다 - B15가 GrassCap을 지운 바로 그 이유이므로 여기서도 만들지 않는다(드로우콜 +0).
+            // [B57] 선택 조건이 "무게중심이 DryTop 위"에서 "무게중심이 DampTop 위 + 잔디선에서 절단"
+            // 으로 바뀌었다. 합집합은 정확히 같다(예전 GroundCap ∪ DrySandCap = 무게중심 ≥ DampTop).
+            // 달라진 것은 그 합집합을 가르는 선이 삼각형 계단이 아니라 실제 등고선이라는 점뿐이다.
             if (archetype.archetype != IslandArchetype.Tropical)
             {
                 BuildCapLayer(surfaceRoot, source, radius, "GroundCap", archetype.groundColor,
                     capOffset, radius * 0.75f, "leaf",
-                    (centroid, distance, angle) => centroid.y >= DryTop(centroid, angle),
+                    (centroid, distance, angle) => centroid.y >= dampTop(centroid),
                     // 톤 2장(명도 단차 0%인 색조 변주 - B10). 반지름 200m를 단색 한 장이 덮는 것을 막는다.
-                    2, 0.22f, StructureVisualBuilder.FrondGreen);
+                    2, 0.22f, StructureVisualBuilder.FrondGreen, clipKeep: dryField);
             }
 
             // ── [해변 스와시] 모래 캡 3장을 MG/Shoreline 셰이더로 그린다 ──────────────────
@@ -1249,15 +1371,20 @@ namespace MakeGame.Systems
             //   · 실제로 겹칠 뻔한 MGOcean의 깊이 기반 해안 거품(물 기둥 0~0.7m)과는, 이쪽 거품을
             //     **물가 안쪽(모래 위)** 으로 제한해 물가를 사이에 두고 한 줄로 이어지게 했다
             //     (MGShoreline 헤더의 "중복 방지" 항목).
+            // [B57] 위쪽 경계(잔디선)는 selector가 아니라 **절단**으로 만든다 - 삼각형 단위 컷이
+            // 톱니의 1차 원인이었다(BuildCapLayer의 [B57] 주석에 원인·비용 계산). 아래쪽 경계
+            // (DampTop)는 예전 그대로 무게중심 판정이다.
+            // groundColor를 함께 넘겨, 셰이더가 캡 상단 0.9m를 초지색으로 녹인다(MGShoreline의
+            // _GroundColor / _GrassFadeHeight) - 잘린 가장자리에 색 단차가 남지 않게 하는 3번째 층이다.
             BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", archetype.sandColor,
                 capOffset, radius * 1.5f, "sand",
-                (centroid, distance, angle) =>
-                    centroid.y >= DampTop(centroid, angle) && centroid.y < DryTop(centroid, angle),
+                (centroid, distance, angle) => centroid.y >= dampTop(centroid),
                 // 젖은 모래와 같은 규칙의 2톤(채도만 내리는 색조 변주, 명도 단차 0%).
                 // [해변 스와시] 모래 3단 모두 MG/Shoreline으로 그린다. 마른 모래까지 포함하는 이유는
                 // 거친 바다의 도달거리(2.8m)가 물가~DampTop(실측 1.3m)을 넘어 마른 모래 아래쪽까지
                 // 올라오기 때문이다 - 여기를 빼면 폭풍에 파도가 캡 경계에서 잘린다.
-                1, shoreline: true);
+                1, shoreline: true, clipKeep: sandKeep, bandField: dryField,
+                groundColor: archetype.groundColor, grassFadeHeight: colorFadeHeight);
 
             // [B22 신규] 축축한 모래. 마른 모래와 젖은 모래 사이의 중간 단계다.
             // 예전에는 마른(100%) → 젖은(80%) 두 단계뿐이라 밝기가 한 번에 20% 떨어져,
@@ -1266,8 +1393,12 @@ namespace MakeGame.Systems
             BuildCapLayer(surfaceRoot, source, radius, "DampSandCap", Shade(archetype.sandColor, 0.88f),
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
-                    centroid.y >= WetTop(centroid, angle) && centroid.y < DampTop(centroid, angle),
-                1, shoreline: true);
+                    centroid.y >= wetTop(centroid) && centroid.y < dampTop(centroid),
+                // [B57] 거리장은 굽지만 절단은 하지 않는다. 잔디선에서 1m 넘게 떨어져 있어 페이드
+                // 값이 항상 0이지만, 절벽 지형에서 삼각형 하나가 두 경계를 함께 걸칠 때를 위해
+                // 세 모래 캡이 **같은 채널 계약**을 갖게 해 둔다(셰이더 분기 없음).
+                1, shoreline: true, bandField: dryField, groundColor: archetype.groundColor,
+                grassFadeHeight: colorFadeHeight);
 
             // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
             // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
@@ -1278,8 +1409,9 @@ namespace MakeGame.Systems
             // 즉 화면에 남는 것은 "물에 막 닿은 가장 어두운 모래" 한 줄이다.
             BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(archetype.sandColor, 0.78f),
                 capOffset, radius * 1.5f, "sand",
-                (centroid, distance, angle) => centroid.y < WetTop(centroid, angle),
-                1, shoreline: true);
+                (centroid, distance, angle) => centroid.y < wetTop(centroid),
+                1, shoreline: true, bandField: dryField, groundColor: archetype.groundColor,
+                grassFadeHeight: colorFadeHeight);
         }
 
         /// <summary>
@@ -1312,10 +1444,46 @@ namespace MakeGame.Systems
         /// (b) 캡 머티리얼의 셰이더를 MG/Shoreline으로 갈아 끼운다. 셰이더 로드가 실패하면
         /// 조용히 예전 URP Lit 그대로 남는다(드로우콜·머티리얼 개수는 어느 쪽이든 동일하다).
         /// </param>
+        /// <param name="clipKeep">
+        /// [B57 톱니 제거] 선택된 삼각형을 **연속 부호장의 0 등고선에서 실제로 잘라내는** 함수.
+        /// (정점 좌표 → 부호값. 값 ≥ 0인 쪽만 남는다.) null이면 예전과 100% 같은 삼각형 단위 컷이다.
+        ///
+        /// [왜 자르는가 - 톱니의 1차 원인 진단]
+        /// 지금까지 캡 경계는 **삼각형 무게중심 한 점**의 높이 비교였다. 그래서 경계선이 지형
+        /// 등고선이 아니라 **메시 삼각형의 변**을 따라 갔고, 그 변의 길이가 곧 톱니 크기가 된다:
+        ///   R=50  링 10 × 세그 75 → 링 간격 5.0m, 물가 부근 호 길이 3.4m
+        ///   R=200 링 40 × 세그 90 → 링 간격 5.0m, 호 길이 13.9m
+        /// 즉 실기에서 보이는 것은 한 변이 3~14m인 **삼각형 계단**이고, 여기에 ±0.18m 높이 디더가
+        /// 얹혀 계단이 무작위로 들쭉날쭉해진다. 디렉터 신고("너무 삐쭉빼쭉")와 정확히 일치한다.
+        /// 잔디 카드 쪽은 0.42m 격자에 연속 판정이라 경계가 매끈해서, 두 경계가 어긋나 보이는 것도
+        /// 같은 원인이다.
+        ///
+        /// [왜 알파 페이드가 아니라 절단인가 - 비용 대비]
+        /// 색 페이드만으로 가리려면 톱니 진폭(수평 3~14m)을 덮을 만큼 넓은 대역이 필요한데, 그러면
+        /// 백사장 폭(실측 15m)의 상당 부분이 뭉개진다. 절단은 경계 삼각형에만 정점을 더하므로
+        /// 비용이 **경계 길이에 선형**이다(면적이 아니다). 실제로 잔디선 하나만 자르면 절단 정점은
+        /// 등고선 교차 변 수(BakeShoreField 실측 기준 R=50에서 158개 수준)뿐이라 캡 정점이
+        /// 20~35% 늘어난다 - 2배 한참 아래다. 색 페이드는 버리지 않고 **3층 방어의 마지막 층**으로
+        /// 남긴다(bandField / MGShoreline._GroundColor).
+        ///
+        /// 마칭 트라이앵글은 BakeShoreField가 y=0 등고선을 뽑을 때 쓴 것과 같은 기법이고, 교차점을
+        /// **변 식별자로 캐시**해 이웃 삼각형이 같은 정점을 공유하므로 캡에 크랙이 생기지 않는다.
+        /// </param>
+        /// <param name="bandField">
+        /// [B57 색 전이] 정점마다 "잔디선 기준 부호 높이(m)"를 구워 **UV 채널 2(TEXCOORD2)** 에 싣는다.
+        /// MGShoreline이 이 값으로 캡 위쪽 가장자리를 초지색으로 녹인다(0 = 경계, 음수 = 모래 쪽).
+        /// null이면 채널을 만들지 않고, 그때 셰이더는 기본값 0을 받아 페이드가 없다.
+        /// </param>
+        /// <param name="groundColor">
+        /// [B57] 위 페이드가 수렴할 초지색(아키타입 groundColor). MGShoreline._GroundColor로 들어간다.
+        /// 셰이더 로드에 실패해 URP Lit으로 남으면 없는 프로퍼티라 조용히 무시된다.
+        /// </param>
         private static void BuildCapLayer(Transform surfaceRoot, Mesh source, float radius, string name,
             Color color, float yOffset, float textureTiling, string textureName,
             System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.30f,
-            Color? toneShift = null, bool shoreline = false)
+            Color? toneShift = null, bool shoreline = false,
+            System.Func<Vector3, float> clipKeep = null, System.Func<Vector3, float> bandField = null,
+            Color? groundColor = null, float grassFadeHeight = 0f)
         {
             Vector3[] sourceVertices = source.vertices;
             int[] sourceTriangles = source.triangles;
@@ -1338,6 +1506,23 @@ namespace MakeGame.Systems
             for (int i = 0; i < toneCount; i++)
                 toneTriangles[i] = new List<int>();
 
+            // [B57] 절단용 상태. 부호장 값은 정점마다 한 번만 계산하고(캡 하나 안에서 수만 번
+            // 중복 호출되는 것을 막는다), 교차점은 **변 키**로 캐시해 이웃 삼각형이 같은 정점을
+            // 재사용하게 한다 - 크랙 방지 + 정점 수 절반(변 하나당 1개).
+            float[] clipValues = null;
+            bool[] clipEvaluated = null;
+            Dictionary<long, int> cutCache = null;
+            long cutStride = 0L;
+            int[] polygon = null;
+            if (clipKeep != null)
+            {
+                clipValues = new float[sourceVertices.Length];
+                clipEvaluated = new bool[sourceVertices.Length];
+                cutCache = new Dictionary<long, int>();
+                cutStride = sourceVertices.Length + 1L;
+                polygon = new int[4]; // 평면 하나로 자른 삼각형의 최대 꼭짓점 수
+            }
+
             int selectedCount = 0;
             for (int t = 0; t + 2 < sourceTriangles.Length; t += 3)
             {
@@ -1352,6 +1537,45 @@ namespace MakeGame.Systems
                     continue;
 
                 var bucket = toneTriangles[ToneIndex(centroid, toneCount)];
+
+                if (clipKeep != null)
+                {
+                    float s0 = ClipValue(i0, clipKeep, sourceVertices, clipValues, clipEvaluated);
+                    float s1 = ClipValue(i1, clipKeep, sourceVertices, clipValues, clipEvaluated);
+                    float s2 = ClipValue(i2, clipKeep, sourceVertices, clipValues, clipEvaluated);
+
+                    if (s0 < 0f && s1 < 0f && s2 < 0f)
+                        continue; // 통째로 반대편 - 이 캡에 남는 조각이 없다.
+
+                    if (s0 < 0f || s1 < 0f || s2 < 0f)
+                    {
+                        // 서덜랜드-호지먼 1평면 클립: 삼각형 변을 순서대로 돌며 (a) 남는 꼭짓점과
+                        // (b) 부호가 갈리는 변의 교차점을 차례로 담는다. 감는 방향이 보존되므로
+                        // 법선(RecalculateNormals)이 뒤집히지 않는다.
+                        int polygonCount = 0;
+                        ClipEdge(i0, i1, s0, s1, polygon, ref polygonCount, cutCache, cutStride,
+                            remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                            sourceShore, hasSourceShore, shoreUvs);
+                        ClipEdge(i1, i2, s1, s2, polygon, ref polygonCount, cutCache, cutStride,
+                            remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                            sourceShore, hasSourceShore, shoreUvs);
+                        ClipEdge(i2, i0, s2, s0, polygon, ref polygonCount, cutCache, cutStride,
+                            remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                            sourceShore, hasSourceShore, shoreUvs);
+
+                        for (int k = 1; k + 1 < polygonCount; k++)
+                        {
+                            bucket.Add(polygon[0]);
+                            bucket.Add(polygon[k]);
+                            bucket.Add(polygon[k + 1]);
+                        }
+                        if (polygonCount >= 3)
+                            selectedCount++;
+                        continue;
+                    }
+                    // 셋 다 남는 쪽 - 아래 통짜 경로로 떨어진다(예전과 완전히 같은 정점 재사용).
+                }
+
                 bucket.Add(RemapVertex(i0, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
                     sourceShore, hasSourceShore, shoreUvs));
                 bucket.Add(RemapVertex(i1, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
@@ -1379,6 +1603,16 @@ namespace MakeGame.Systems
             // [해변 스와시] 물가 거리장을 UV2로 그대로 넘긴다(MGShoreline의 TEXCOORD1 계약).
             if (shoreUvs != null)
                 mesh.SetUVs(1, shoreUvs);
+            // [B57 색 전이] 잔디선 기준 부호 높이(m)를 UV 채널 2(TEXCOORD2)에 굽는다. 순수 위치
+            // 함수라 절단으로 새로 생긴 정점도 그냥 같은 식으로 채워진다(교차점은 값이 거의 0이다).
+            // 정점당 float2 하나 = 캡 메시 기준 8바이트라 섬 하나에 10KB 남짓이다.
+            if (bandField != null)
+            {
+                var bandUvs = new List<Vector2>(vertices.Count);
+                for (int i = 0; i < vertices.Count; i++)
+                    bandUvs.Add(new Vector2(bandField(vertices[i]), 0f));
+                mesh.SetUVs(2, bandUvs);
+            }
             mesh.subMeshCount = usedTones.Count;
             for (int s = 0; s < usedTones.Count; s++)
                 mesh.SetTriangles(toneTriangles[usedTones[s]], s);
@@ -1409,7 +1643,17 @@ namespace MakeGame.Systems
                 // 텍스처([MainTexture] _BaseMap = sand.png)가 그대로 살아남고, 머티리얼 개수 =
                 // 드로우콜도 그대로다. 셰이더가 없으면 아무 일도 일어나지 않는다(예전 URP Lit 유지).
                 if (shoreline)
+                {
                     TryApplyShorelineShader(material);
+                    // [B57] 캡 위쪽 가장자리가 수렴할 초지색 + 페이드 폭. 셰이더 로드 실패로 URP Lit이
+                    // 남아 있으면 존재하지 않는 프로퍼티라 유니티가 조용히 무시한다(폴백 계약 유지).
+                    // 페이드 폭은 **거리장(UV 채널 2)을 실제로 구운 캡에만** 넣는다 - 셰이더 기본값이
+                    // 0(페이드 끔)이라, 채널 없는 캡이 통째로 초지색이 되는 실패 모드가 원리적으로 없다.
+                    if (groundColor.HasValue)
+                        material.SetColor(GroundColorProperty, groundColor.Value);
+                    if (bandField != null && grassFadeHeight > 0f)
+                        material.SetFloat(GrassFadeHeightProperty, grassFadeHeight);
+                }
                 // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
                 // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
                 // WorldMapManager.CreateDefaultTerrainMaterial의 모래 타일링과 같은 계산 방식이다.
@@ -1452,6 +1696,168 @@ namespace MakeGame.Systems
                     : new Vector2(v.y >= 0f ? ShoreFieldFar : -ShoreFieldFar, v.y));
             }
             remap[sourceIndex] = newIndex;
+            return newIndex;
+        }
+
+        /// <summary>[B57] MGShoreline의 초지 페이드 목표색 프로퍼티 ID(BuildCapLayer가 캡마다 넣는다).</summary>
+        private static readonly int GroundColorProperty = Shader.PropertyToID("_GroundColor");
+
+        /// <summary>[B57] 같은 페이드의 폭 프로퍼티 ID.</summary>
+        private static readonly int GrassFadeHeightProperty = Shader.PropertyToID("_GrassFadeHeight");
+
+        // ── [B57] 전이대·색 페이드 폭 (수평 미터 기준) ────────────────────────────────
+        // 목표를 **수평 폭**으로 잡고 경계 경사를 곱해 높이 대역으로 되돌린다(BuildGroundCaps의
+        // boundarySlope 주석에 실측 근거). 클램프는 극단적인 지형(거의 평평한 석호 바닥 /
+        // 절벽 바로 위 잔디선)에서 대역이 발산하거나 0이 되는 것을 막는 안전대다.
+
+        /// <summary>잔디 전이대의 목표 수평 폭(m). 아래 1/3(모래 쪽) + 위 2/3(초지 쪽)로 나뉜다.</summary>
+        private const float EcotoneHorizontalWidth = 6.0f;
+
+        /// <summary>전이대 높이 대역의 하한/상한(m). 대역 = 위 폭 × 경계 경사.</summary>
+        private const float EcotoneHeightMin = 0.25f;
+        private const float EcotoneHeightMax = 1.50f;
+
+        /// <summary>
+        /// 모래 → 초지 색 전이의 목표 수평 폭(m). 잔디 전이대(6m)의 절반이라
+        /// "성긴 풀 아래로 아직 모래가 비치는" 그림이 유지된다.
+        /// </summary>
+        private const float GrassColorFadeWidth = 3.0f;
+
+        /// <summary>색 전이 높이 대역의 하한/상한(m).</summary>
+        private const float GrassColorFadeMin = 0.15f;
+        private const float GrassColorFadeMax = 0.90f;
+
+        /// <summary>
+        /// [B57] 잔디선을 가로지르는 지형 삼각형들의 **높이 기울기 중앙값** = 그 섬 잔디선의
+        /// 대표 경사. 전이대 폭과 색 페이드 폭을 "수평 몇 미터"로 잡기 위한 환산 계수다.
+        ///
+        /// 왜 중앙값인가: 수로 둑·절벽 같은 국소 급경사가 평균을 끌어올려 전이대가 통째로
+        /// 얇아지는 것을 막는다. 교차 삼각형이 하나도 없으면(경계선이 지형 밖) 0.12를 돌려준다
+        /// - 실측 중앙값 분포(0.06~0.18)의 가운데라 캡·잔디가 없는 섬에서도 값이 튀지 않는다.
+        /// 난수 소비 0, 섬당 삼각형 배열 1회 순회.
+        /// </summary>
+        private static float EstimateBoundarySlope(Mesh source, System.Func<Vector3, float> field)
+        {
+            Vector3[] verts = source.vertices;
+            int[] tris = source.triangles;
+            var slopes = new List<float>(256);
+
+            for (int t = 0; t + 2 < tris.Length; t += 3)
+            {
+                Vector3 p0 = verts[tris[t]];
+                Vector3 p1 = verts[tris[t + 1]];
+                Vector3 p2 = verts[tris[t + 2]];
+                float f0 = field(p0);
+                float f1 = field(p1);
+                float f2 = field(p2);
+                bool a = f0 >= 0f, b = f1 >= 0f, c = f2 >= 0f;
+                if (a == b && b == c)
+                    continue; // 경계를 가로지르지 않는 삼각형
+
+                // ∇y (크라메르 - ShoreDownhill과 같은 방법, 여기서는 크기만 쓴다).
+                float e1x = p1.x - p0.x, e1z = p1.z - p0.z, dy1 = p1.y - p0.y;
+                float e2x = p2.x - p0.x, e2z = p2.z - p0.z, dy2 = p2.y - p0.y;
+                float det = e1x * e2z - e1z * e2x;
+                if (Mathf.Abs(det) <= 1e-9f)
+                    continue; // XZ에서 퇴화한 삼각형
+
+                float gx = (dy1 * e2z - dy2 * e1z) / det;
+                float gz = (e1x * dy2 - e2x * dy1) / det;
+                slopes.Add(Mathf.Sqrt(gx * gx + gz * gz));
+            }
+
+            if (slopes.Count == 0)
+                return 0.12f;
+
+            slopes.Sort();
+            float median = slopes[slopes.Count / 2];
+            // 하한 0.04 = 실측 최저 경사대(거의 평평한 초지). 상한 0.60 = 그 이상이면 어차피
+            // 경사 30도 컷(GrassFieldSystem)에 걸려 잔디가 서지 않는 지대다.
+            return Mathf.Clamp(median, 0.04f, 0.60f);
+        }
+
+        /// <summary>
+        /// [B57] 절단 부호장을 정점 단위로 1회만 평가하고 캐시한다. 캡 하나에서 같은 정점이 삼각형
+        /// 6개에 걸쳐 나오므로, 캐시가 없으면 굽이 6항 사인 계산이 그만큼 중복된다.
+        /// </summary>
+        private static float ClipValue(int index, System.Func<Vector3, float> clipKeep,
+            Vector3[] sourceVertices, float[] values, bool[] evaluated)
+        {
+            if (!evaluated[index])
+            {
+                values[index] = clipKeep(sourceVertices[index]);
+                evaluated[index] = true;
+            }
+            return values[index];
+        }
+
+        /// <summary>
+        /// [B57] 삼각형 변 하나를 서덜랜드-호지먼 규칙으로 처리해 결과 다각형에 정점을 담는다.
+        /// 시작점이 남는 쪽이면 그 정점을, 부호가 갈리면 교차점을 이어서 담는다(감는 방향 보존).
+        /// </summary>
+        private static void ClipEdge(int ia, int ib, float sa, float sb, int[] polygon,
+            ref int polygonCount, Dictionary<long, int> cutCache, long cutStride,
+            Dictionary<int, int> remap, Vector3[] sourceVertices, Vector2[] sourceUvs, bool hasSourceUv,
+            float radius, List<Vector3> vertices, List<Vector2> uvs,
+            Vector2[] sourceShore, bool hasSourceShore, List<Vector2> shoreUvs)
+        {
+            if (sa >= 0f && polygonCount < polygon.Length)
+            {
+                polygon[polygonCount++] = RemapVertex(ia, remap, sourceVertices, sourceUvs, hasSourceUv,
+                    radius, vertices, uvs, sourceShore, hasSourceShore, shoreUvs);
+            }
+
+            if ((sa >= 0f) != (sb >= 0f) && polygonCount < polygon.Length)
+            {
+                polygon[polygonCount++] = CutVertex(ia, ib, sa, sb, cutCache, cutStride,
+                    sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                    sourceShore, hasSourceShore, shoreUvs);
+            }
+        }
+
+        /// <summary>
+        /// [B57] 부호가 갈리는 변 위의 0 교차점 정점을 만든다(좌표·UV0·물가 거리장을 선형 보간).
+        ///
+        /// ★ 변 키로 캐시하는 이유 ★ 이웃한 두 삼각형은 같은 변을 공유하는데, 각자 교차점을 새로
+        /// 만들면 (a) 정점이 두 배가 되고 (b) 부동소수 오차로 두 점이 미세하게 어긋나 캡에 실금이
+        /// 보인다. 키는 BakeShoreField의 ShoreEdgeKey와 같은 접기 방식이고, 보간도 항상 인덱스가
+        /// 작은 쪽을 기준으로 계산해 **어느 삼각형에서 오든 비트 단위로 같은 좌표**가 나온다.
+        /// </summary>
+        private static int CutVertex(int ia, int ib, float sa, float sb, Dictionary<long, int> cutCache,
+            long cutStride, Vector3[] sourceVertices, Vector2[] sourceUvs, bool hasSourceUv, float radius,
+            List<Vector3> vertices, List<Vector2> uvs,
+            Vector2[] sourceShore, bool hasSourceShore, List<Vector2> shoreUvs)
+        {
+            int lo = ia < ib ? ia : ib;
+            int hi = ia < ib ? ib : ia;
+            long key = lo * cutStride + hi;
+            if (cutCache.TryGetValue(key, out int cached))
+                return cached;
+
+            float sLo = ia < ib ? sa : sb;
+            float sHi = ia < ib ? sb : sa;
+            float denominator = sLo - sHi;
+            // 두 값이 같은 부호일 수 없으므로(호출 조건) denominator는 0이 아니다. 그래도 완전히
+            // 같은 값(둘 다 0)이 들어오면 중점을 쓴다 - 퇴화 삼각형 하나가 나올 뿐 크랙은 없다.
+            float t = Mathf.Abs(denominator) < 1e-9f ? 0.5f : Mathf.Clamp01(sLo / denominator);
+
+            Vector3 va = sourceVertices[lo];
+            Vector3 vb = sourceVertices[hi];
+            Vector3 cut = va + (vb - va) * t;
+
+            int newIndex = vertices.Count;
+            vertices.Add(cut);
+            uvs.Add(hasSourceUv
+                ? Vector2.Lerp(sourceUvs[lo], sourceUvs[hi], t)
+                : new Vector2(cut.x / radius * 0.5f + 0.5f, cut.z / radius * 0.5f + 0.5f));
+            if (shoreUvs != null)
+            {
+                shoreUvs.Add(hasSourceShore
+                    ? Vector2.Lerp(sourceShore[lo], sourceShore[hi], t)
+                    : new Vector2(cut.y >= 0f ? ShoreFieldFar : -ShoreFieldFar, cut.y));
+            }
+
+            cutCache[key] = newIndex;
             return newIndex;
         }
 

@@ -43,6 +43,15 @@ namespace MakeGame.Systems
         // 즉 물가 근방 해변 경사는 0.23~0.69(m/m)다. 도달거리를 1.3m로 잡으면 잔잔한 날의
         // 스와시가 딱 "젖은 모래 띠 + 축축한 모래 띠"를 덮고, 2.8m면 거친 날에 마른 모래
         // 아래쪽까지 올라온다 - 바다 거칠기가 눈으로 읽히는 폭이다.
+        //
+        // ── [파도 v5] 도달거리 상향 (1.3/2.8 → 2.0/4.5) ─────────────────────────────
+        // OceanWaves의 진폭이 0.212 → 0.500m(잔잔) / 0.594 → 1.45m(폭풍)로 올라갔다. 스와시
+        // 도달거리는 파고에 비례하므로 같은 비율(약 1.55/1.60배)로 올린다. 해변 경사 0.23~0.69로
+        // 환산하면 잔잔 2.0m는 물가에서 높이 0.46~1.38m까지, 폭풍 4.5m는 1.04~3.1m까지 젖는다 -
+        // 잔잔한 날은 여전히 젖은/축축한 모래 띠(경계 0.30/0.75m) 안쪽에 머물고, 폭풍에는 마른
+        // 모래를 확실히 넘어 잔디선(1.93m) 근처까지 올라온다.
+        // ※ 전역 계약(_MG_ShoreParams의 채널 의미, _MG_SeaState를 여기서 쓰지 않는 규칙)은 그대로다 -
+        //   리본 메시 쪽이 _MG_SeaState에 비례해 높이를 잡는 계약도 건드리지 않았다.
 
         [Header("스와시 파형")]
         [Tooltip("파도 한 번의 주기(초). 바다 파도 성분의 주기(8.7/6.6/4.9/3.7s) 중 지배 성분에 맞춘 값.")]
@@ -52,10 +61,10 @@ namespace MakeGame.Systems
         public float frontSpeed = 1.8f;
 
         [Tooltip("잔잔한 바다(거칠기 0)에서 파도가 물가보다 안쪽으로 올라오는 최대 거리(m).")]
-        public float runupCalm = 1.3f;
+        public float runupCalm = 2.0f;
 
         [Tooltip("거친 바다(거칠기 1)에서의 최대 도달 거리(m). 클수록 폭풍에 파도가 해변 깊숙이 친다.")]
-        public float runupStorm = 2.8f;
+        public float runupStorm = 4.5f;
 
         // ── 셰이더 전역 프로퍼티 ID ──────────────────────────────────────────────
         // MGShoreline.shader는 이 둘을 Properties 블록 **밖**·CBUFFER(UnityPerMaterial) **밖**에서
@@ -104,7 +113,7 @@ namespace MakeGame.Systems
             // 도메인 리로드를 끈 플레이 모드에서 이전 실행 값이 남는 것을 막는다(R1 리셋 훅).
             Active = null;
             pushedParams = Vector4.zero;
-            PushParams(7.5f, 1.8f, 1.3f, 2.8f);
+            PushParams(7.5f, 1.8f, 2.0f, 4.5f);
             Shader.SetGlobalFloat(ShoreTimeProperty, 0f);
 
             SceneManager.sceneLoaded += (scene, mode) =>

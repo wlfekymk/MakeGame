@@ -16,7 +16,8 @@ namespace MakeGame.EditorTools
     /// 매 5초마다 씬 핵심 오브젝트(Player · Managers · Island_0_* 지형 · SurvivalHudUI ·
     /// Ocean · DayNightCycle · BuildingSystem · CursorLockController · GrassFieldDriver ·
     /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual · UnderwaterCave_* 수중 동굴 ·
-    /// MarineLife_* 해양 생물) 존재를 확인한다.
+    /// MarineLife_* 해양 생물 ·
+    /// ShoreRibbon_* 부서지는 파도 마루 리본) 존재를 확인한다.
     ///
     /// ★ 도메인 리로드 생존 구조 ★
     /// 플레이 진입/이탈(및 플레이 중 재컴파일) 때마다 에디터 static이 전부 초기화된다.
@@ -71,6 +72,13 @@ namespace MakeGame.EditorTools
         // marineLife = MarineLifeSpawner.Spawn의 "MarineLife_{섬 이름}" 배치 루트 - 모든 규모의 섬에
         // 최소 1개(sunkenCargo와 같은 동기 생성 경로: SeabedGenerator.Build → MarineLifeSpawner.Spawn)라
         // 시작 직후부터 존재한다. 거리 컷은 자식 컨테이너만 끄므로 이 루트는 항상 활성이다.
+        // shoreRibbon = ShorelineRibbon.Build의 "ShoreRibbon_{섬 이름}" 마루 리본 - 월드 생성의 같은
+        // 동기 흐름(IslandMeshGenerator.BuildGroundCaps → ShorelineRibbon.Build)에서 섬마다 1개씩
+        // 만들어지므로 시작 직후부터 존재한다. 거리 컷은 MeshRenderer.enabled만 끄고 오브젝트는
+        // 항상 활성이라(FindObjectsByType은 렌더러 상태를 보지 않는다) 먼 섬의 리본도 확인에 잡힌다.
+        // 물가가 없는 섬이나 셰이더 부재 시에는 리본이 생기지 않는 것이 계약이지만, 시작 섬(0번)은
+        // 항상 해수면 아래로 잠기는 테두리를 가져(BakeShoreField 주석의 실측: 등고선 선분 158개)
+        // 등고선이 반드시 존재한다.
         private static readonly (string key, string objectName, bool prefix)[] Checks =
         {
             ("player", "Player", false),
@@ -87,6 +95,7 @@ namespace MakeGame.EditorTools
             ("airlinerWreck", "AirlinerWreckVisual", false),
             ("underwaterCave", "UnderwaterCave_", true),
             ("marineLife", "MarineLife_", true),
+            ("shoreRibbon", "ShoreRibbon_", true),
         };
 
         // ---- 도메인 로컬 상태 (리로드 직후 SessionState에서 복원) ----
@@ -382,6 +391,7 @@ namespace MakeGame.EditorTools
             public bool airlinerWreck;
             public bool underwaterCave;
             public bool marineLife;
+            public bool shoreRibbon;
         }
 
         [Serializable]
@@ -429,6 +439,7 @@ namespace MakeGame.EditorTools
                 airlinerWreck = SessionState.GetBool(KeyCheckPrefix + "airlinerWreck", false),
                 underwaterCave = SessionState.GetBool(KeyCheckPrefix + "underwaterCave", false),
                 marineLife = SessionState.GetBool(KeyCheckPrefix + "marineLife", false),
+                shoreRibbon = SessionState.GetBool(KeyCheckPrefix + "shoreRibbon", false),
             };
 
             var result = new SmokeResult

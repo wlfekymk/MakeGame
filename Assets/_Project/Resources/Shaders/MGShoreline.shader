@@ -21,6 +21,17 @@
 //     uv2.y = 그 정점의 해수면 기준 높이(m). 예비 채널(현재 셰이더는 x만 쓴다).
 // BuildCapLayer가 캡 메시로 정점을 옮길 때 UV2도 같이 옮긴다. 런타임 비용 0이다.
 //
+// ── [B57] 잔디선 거리장(UV3 / TEXCOORD2) - 모래→초지 색 전이 ───────────────────
+// BuildCapLayer가 캡 정점마다 **잔디/모래 경계선 기준 부호 높이(m)** 를 한 칸 더 굽는다:
+//   uv3.x = y - 경계선 높이. 0 = 경계선, 음수 = 모래 쪽(캡이 실제로 존재하는 쪽).
+// 이 값으로 캡 위쪽 가장자리 _GrassFadeHeight(0.9m) 구간을 _GroundColor(아키타입 초지색)로
+// 녹인다. 경계에서 캡 색 = 초지색이 되므로 **잘린 가장자리에 색 단차가 남지 않는다.**
+// 채널이 없으면(비-스와시 캡 / 예전 메시) 값이 0으로 들어와 페이드가 전부 걸리는 것이 아니라,
+// C# 쪽에서 bandField를 넘긴 캡에만 채널이 생기므로 그때는 _GrassFadeHeight = 0과 같은
+// 결과가 되도록 아래 frag에서 **음수 쪽만** 페이드한다(0 이상은 그대로 초지색 = 캡 밖).
+// ※ 왜 UV2.y(예비 채널)를 쓰지 않았나: 그 값은 "정점의 해수면 기준 높이"라는 별개 계약이고,
+//   잔디선은 섬마다·방위마다 다른 곡선이라 높이 하나로는 복원할 수 없다.
+//
 // 왜 정점 색이 아니라 UV2인가:
 //   · 값이 **미터 단위 부호 있는 실수**이고 범위가 섬 크기에 비례한다(실측 -139m ~ +121m,
 //     시작 섬 -13.8m ~ +37.1m). 정점 색은 Color32로 눌려 0~1 8비트라, 200m를 담으면
@@ -95,6 +106,13 @@ Shader "MG/Shoreline"
         _FoamDissolveSoft("디졸브 경계 부드러움(작을수록 딱딱하게 지워진다)", Range(0.01, 0.60)) = 0.18
 
         _AlongshoreWobble("연안 방향 도달 시각 변주(주기 대비 비율)", Range(0.0, 0.5)) = 0.18
+
+        // [B57] 모래 → 초지 색 전이. C#(BuildCapLayer)이 아키타입 groundColor를 넣는다.
+        // 기본값은 열대섬 지면색(StructureVisualBuilder.MeadowGreen)이라 주입이 없어도 안전하다.
+        _GroundColor("초지 지면색(캡 상단이 수렴할 색)", Color) = (0.541, 0.659, 0.310, 1)
+        // 기본값 0 = 페이드 없음(안전한 무동작). C#은 잔디선 거리장(UV3)을 실제로 구운 캡에만
+        // 0.9를 넣는다 - 채널이 없는 캡이 통째로 초지색이 되는 실패 모드를 구조로 막는다.
+        _GrassFadeHeight("초지 페이드 높이(m) - 경계선 아래 이 구간에서 섞인다. 0 = 끔", Range(0.0, 3.0)) = 0.0
     }
 
     SubShader
@@ -138,6 +156,8 @@ Shader "MG/Shoreline"
                 float _FoamTiling;
                 half _FoamDissolveSoft;
                 half _AlongshoreWobble;
+                half4 _GroundColor;
+                float _GrassFadeHeight;
             CBUFFER_END
 
             TEXTURE2D(_BaseMap);
@@ -156,6 +176,7 @@ Shader "MG/Shoreline"
                 float3 normalOS   : NORMAL;
                 float2 uv         : TEXCOORD0;
                 float2 shore      : TEXCOORD1; // 물가 거리장(x = 거리 m, y = 높이 m) - 위 계약 참고
+                float2 band       : TEXCOORD2; // [B57] x = 잔디선 기준 부호 높이(m). 위 계약 참고
             };
 
             struct Varyings
@@ -166,6 +187,7 @@ Shader "MG/Shoreline"
                 float3 normalWS   : TEXCOORD2;
                 float3 positionWS : TEXCOORD3;
                 float  fogFactor  : TEXCOORD4;
+                float  band       : TEXCOORD5; // [B57] 잔디선 기준 부호 높이(m)
             };
 
             // 연안(해안선을 따라가는) 방향의 도달 시각 변주. -1~1.
@@ -186,6 +208,7 @@ Shader "MG/Shoreline"
                 OUT.positionCS = TransformWorldToHClip(positionWS);
                 OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap);
                 OUT.shore = IN.shore;
+                OUT.band = IN.band.x;
                 OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS);
                 OUT.fogFactor = ComputeFogFactor(OUT.positionCS.z);
                 return OUT;
@@ -252,7 +275,35 @@ Shader "MG/Shoreline"
                 // ---- 합성 ----
                 // 모래색은 아키타입 sandColor(× 명도 단계)를 그대로 쓴다 - 화산암섬의 검은 모래가
                 // 노래지지 않는 근거는 여기 한 줄이다(_BaseColor를 다른 색으로 덮지 않는다).
-                half3 sand = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv).rgb * _BaseColor.rgb;
+                half4 sandTex = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv);
+                half3 sand = sandTex.rgb * _BaseColor.rgb;
+
+                // [B57] 모래 → 초지 색 전이. band = 잔디/모래 경계선 기준 부호 높이(m)이고 캡은
+                // 경계선 아래(음수)에만 존재한다. 경계선에서 1(= 완전한 초지색), _GrassFadeHeight
+                // 만큼 아래로 내려가면 0(= 순수 모래)이 되도록 smoothstep으로 섞는다.
+                //   · 경계선에서 캡 색 = 지형 본체/초지 캡 색이라 **잘린 가장자리가 색 단차로
+                //     읽히지 않는다** - 절단(기하)·전이대(잔디)에 이은 3층 방어의 마지막 층이다.
+                //   · 초지색에도 모래 텍스처의 밝기 변화를 남긴다. 그대로 단색을 깔면 전이 구간만
+                //     평평해져 오히려 눈에 띈다(B10에서 배운 것과 같은 함정).
+                //   · 계수 0.55 + 0.32·g의 근거(실측): 지형 본체는 groundColor × leaf.png인데
+                //     leaf의 평균 밝기가 0.82, sand.png의 G 평균이 0.85다. 0.55 + 0.32×0.85 = 0.82로
+                //     **평균이 정확히 맞는다** - 단순히 텍스처를 그대로 곱하면(평균 0.85~1.14) 경계에
+                //     3~34% 밝은 초록 테가 생긴다. 결(std)은 leaf의 3%에 대해 1.5%로 조금 얕다.
+                //   · _GrassFadeHeight = 0(기본값 = 거리장을 안 구운 캡)이면 step이 0을 곱해
+                //     페이드가 통째로 꺼진다 - 분기 없는 무동작 폴백이다.
+                float fadeSpan = max(_GrassFadeHeight, 0.001);
+                half toGround = (half)(smoothstep(0.0, 1.0, saturate(1.0 + IN.band / fadeSpan))
+                    * step(0.001, _GrassFadeHeight));
+                half3 ground = _GroundColor.rgb * (0.55 + 0.32 * sandTex.g);
+                sand = lerp(sand, ground, toGround);
+
+                // 초지 쪽으로 넘어간 구간은 젖은 모래도 거품도 아니다(잔디 위로 물이 올라오면
+                // 거품 띠가 초록 위에 뜬다). 도달거리 컷이 대부분 막지만 경사가 급한 섬에서는
+                // 잔디선이 도달거리 안에 들어올 수 있어 여기서 한 번 더 죽인다.
+                half landMask = (half)(1.0 - toGround);
+                wet *= landMask;
+                foam *= landMask;
+
                 half3 albedo = lerp(sand, sand * _WetDarken, wet);
                 half smoothness = lerp(_DrySmoothness, _WetSmoothness, wet);
                 albedo = lerp(albedo, foamCol, foam);

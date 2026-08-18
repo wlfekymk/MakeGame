@@ -76,11 +76,18 @@ namespace MakeGame.Systems
     /// B47부터 지면 캡 경계는 반경이 아니라 **해수면 기준 높이**다: DryTop(기준 높이 + BandWobble(angle)
     /// ± 디더 0.18m) 위가 지형 본체 = Meadow Green 초원, 아래는 모래 캡 3단이다(BuildGroundCaps).
     /// [B52] 그 기준 높이는 전 섬 공통 1.30m가 아니라 **섬별 grassLine**(1.15~3.70m,
-    /// IslandMeshGenerator.GrassLineHeight - 캡의 DryTop과 단일 소스)이다. 잔디는
-    /// y ≥ grassLine + BandWobble(angle) + 0.18(디더 반폭)만 채택해 **어떤 디더 값에서도 모래
-    /// 삼각형 위에 서지 않는다.** BandWobble의 phaseA/phaseB는 훅에서 그대로 넘겨받으므로 경계가
-    /// 실제 모래 경계와 정확히 같은 위상으로 출렁인다. 수면 근처는 이 높이 조건이 자동으로 배제하고
-    /// (해수면 0m ≪ 1.33m+), 바위 절벽 지대(P7 메사 등)는 경사 30도 초과 제외가 걸러낸다.
+    /// IslandMeshGenerator.GrassLineHeight - 캡의 DryTop과 단일 소스)이다.
+    /// [B57] 경계식이 두 가지 바뀌었다:
+    ///   · 굽이 항이 각도 기준 2층 → **미터 기준 6항 3층**(IslandMeshGenerator.ShoreBandWobble).
+    ///     삼각형 디더는 사라졌다 - 캡을 그 곡선에서 **실제로 자르므로**(BuildCapLayer) 톱니를
+    ///     가릴 항이 필요 없다. 잔디도 같은 함수(GrassBoundaryHeight)를 호출한다(단일 소스 그대로).
+    ///   · "경계 위만 채택"이 **전이대 램프**로 바뀌었다. 경계선 아래 0.55m부터 위 1.15m까지
+    ///     밀도가 0 → 1로 차오르고, 그 구간의 카드는 키가 작고(0.60배) 마른 풀 셀 비율이 높다.
+    ///     모래 위 0.55m에 성긴 마른 풀이 서는 것은 이제 **의도**다(예전 "모래 위 잔디 금지"
+    ///     규약은 경계가 톱니였을 때의 방어였다 - EcotoneBelowFraction 상수 주석에 근거).
+    /// phaseA/phaseB는 훅에서 그대로 넘겨받으므로 경계가 실제 모래 경계와 같은 위상으로 굽이친다.
+    /// 수면 근처는 이 높이 조건이 자동으로 배제하고(해수면 0m ≪ 0.6m+), 바위 절벽 지대(P7 메사 등)는
+    /// 경사 30도 초과 제외가 걸러낸다.
     ///
     /// ── [B52] 섬별 잔디량 스펙트럼 ("잔디가 너무 많다" 대응) ──
     /// 목표 개수 = 기존 목표 × 전역 0.65 × 섬별 lerp(1.0, 0.45, t). t는 grassLine과 **같은**
@@ -124,13 +131,52 @@ namespace MakeGame.Systems
         /// </summary>
         private const float CellSpacing = 0.42f;
 
+        // ── [B57 해변 전이대(ecotone)] 모래 → 성긴 풀 → 빽빽한 풀 ────────────────────────
+        // 예전에는 잔디가 "경계 높이 + 디더 반폭 0.18m" 위에서 **밀도 100%로 시작**했다. 그래서
+        // 화면에서는 백사장과 초지가 한 줄로 딱 잘려, 캡 경계의 삼각형 톱니와 겹쳐 더 인공적으로
+        // 읽혔다. 실제 열대 해변은 모래에서 초지로 수 미터에 걸쳐 옮겨 간다.
+        //
+        // 조치: 경계선 H(x,z) = grassLine + ShoreBandWobble(단일 소스, 캡을 자르는 바로 그 곡선)를
+        // 기준으로 **높이 대역**을 잡고 그 안에서 밀도를 램프시킨다.
+        //   · 대역 아래 1/3보다 낮으면 : 잔디 없음(순수 백사장)
+        //   · 아래 1/3 ~ 경계선 H      : 성긴 풀. 마른 풀 셀 비율이 높고 키가 작다(모래 위 잔풀)
+        //   · H ~ 대역 위 2/3          : 밀도가 100%까지 차오른다
+        // 대역 높이는 **섬마다 다르다** - IslandMeshGenerator가 잔디선 대표 경사를 재서
+        // "목표 수평 6m × 경사"로 환산해 넘긴다(BuildGroundCaps의 boundarySlope 주석에 실측 근거:
+        // 잔디선의 실제 경사는 물가 근처의 0.23~0.69가 아니라 0.04~0.30이다). 고정 높이 대역을
+        // 쓰면 완만한 섬에서 전이대가 20m를 넘어 백사장을 통째로 덮는다.
+        //
+        // ★ 잔디가 모래 위에 서는 것이 이제 **의도**다 ★ B52의 "어떤 디더 값에서도 모래 위에 서지
+        // 않는다"는 규약은 경계가 톱니였을 때 그 톱니 위에 카드가 서는 것을 막으려던 것이었다.
+        // 경계를 실제로 잘라 매끈해진 지금(BuildCapLayer의 [B57]), 모래 쪽 0.55m에 성긴 마른 풀이
+        // 서는 것은 레퍼런스 그대로다. 캡 상단은 셰이더가 초지색으로 녹이므로 색도 이어진다.
+
         /// <summary>
-        /// 초지 경계 디더 반폭(m) = BuildGroundCaps heightDither 0.36의 절반. [B52] 기준 높이 자체는
-        /// 상수 1.30이 아니라 섬별 grassLine(IslandMeshGenerator.GrassLineHeight - 캡과 단일 소스)이고,
-        /// Build가 "grassLine + 이 반폭"을 계산해 후보 판정에 넘긴다. 여기에 BandWobble(angle)이
-        /// 더해져 실제 모래 경계와 같은 위상으로 출렁이는 것은 B47 그대로다.
+        /// 전이대 높이 대역 중 **아래**(모래 쪽)가 차지하는 비율. 나머지가 위(초지 쪽)다.
+        /// 1:2 = 모래 위로 살짝 침범하고 초지 쪽으로 길게 차오르는 배분(수평 6m면 2m + 4m).
         /// </summary>
-        private const float GrassBoundaryDitherHalf = 0.18f;
+        private const float EcotoneBelowFraction = 1f / 3f;
+
+        /// <summary>
+        /// Build가 대역을 못 받았을 때(호출부가 옛 시그니처)의 기본 높이 대역(m).
+        /// 실측 경계 경사 중앙값 0.12 × 목표 수평 6m ≈ 0.72m.
+        /// </summary>
+        private const float EcotoneHeightFallback = 0.72f;
+
+        /// <summary>
+        /// 전이대가 내려갈 수 있는 하한 = 축축한 모래 캡 상한(BuildGroundCaps의 DampTop 기준값
+        /// 0.75m + 삼각형 디더 반폭 0.18m). 이 위로만 잔디가 선다.
+        /// </summary>
+        private const float DampSandTopCeiling = 0.93f;
+
+        /// <summary>전이대 바닥에서의 카드 높이 배율(위로 갈수록 1.0). 물가 쪽 풀이 짧다.</summary>
+        private const float EcotoneMinHeightScale = 0.60f;
+
+        /// <summary>전이대 바닥에서 **마른 풀 다발**이 될 확률. 위로 갈수록 0으로 준다.</summary>
+        private const float EcotoneDryChanceMax = 0.90f;
+
+        /// <summary>마른 풀 다발 추첨용 salt(이 파일의 다른 salt와 겹치지 않는 새 값).</summary>
+        private const uint DryTuftSalt = 0x5BD1E995u;
 
         /// <summary>[B52] 전역 잔디 감소 계수. 전 섬 공통으로 목표 개수에 곱한다.</summary>
         private const float GlobalDensityScale = 0.65f;
@@ -238,6 +284,8 @@ namespace MakeGame.Systems
             public float radius;           // 섬 지형 반지름 R
             public Matrix4x4[] groupA;     // 잔디 LOD 그룹 A(약 절반). 원거리에서는 이것만 그린다.
             public Matrix4x4[] groupB;     // 잔디 LOD 그룹 B(나머지 절반). 근거리에서만 추가.
+            public Matrix4x4[] dryA;       // [B57] 전이대 마른 풀 LOD 그룹 A(마른 풀 셀 고정 머티리얼).
+            public Matrix4x4[] dryB;       // [B57] 같은 그룹 B. 없으면 null - 드로우콜도 0이다.
             public Matrix4x4[] flowerA;    // 꽃 LOD 그룹 A(꽃 머티리얼로 렌더. 폴백 시 null).
             public Matrix4x4[] flowerB;    // 꽃 LOD 그룹 B.
             public Bounds bounds;          // RenderParams.worldBounds(섬 단위)
@@ -263,6 +311,7 @@ namespace MakeGame.Systems
         private static Mesh bladeMesh;
         private static Material grassMaterial;
         private static Material flowerMaterial;  // 카드 텍스처 폴백 시 null - 꽃 배치 자체가 없다.
+        private static Material dryMaterial;     // [B57] 전이대 마른 풀(아틀라스 2번 셀 고정). 폴백 시 null.
         private static bool shaderMissing;       // 한 번 실패하면 이후 전부 조용히 무동작(계약)
         private static bool hasCardTexture;      // grass_card 로드 성공 여부(꽃/카드 규격 스위치)
         private static int windTimeId;
@@ -308,8 +357,13 @@ namespace MakeGame.Systems
         /// 판정 본체는 IslandMeshGenerator.Vegetation의 RockGrassKeep 하나뿐이다(노이즈 상수·임계·
         /// 디더 해시를 여기로 복사하지 않는 이유 - 단일 소스 규약).
         /// </param>
+        /// <param name="ecotoneHeight">
+        /// [B57] 잔디 전이대의 높이 대역(m). IslandMeshGenerator가 그 섬 잔디선의 대표 경사에서
+        /// 환산해 넘긴다(캡을 자르는 경계선과 단일 소스). 0 이하면 기본값으로 떨어진다.
+        /// </param>
         public static void Build(GameObject islandObject, Mesh islandMesh, float radius,
-            float phaseA, float phaseB, System.Func<Vector3, float> rockGrassKeep = null)
+            float phaseA, float phaseB, System.Func<Vector3, float> rockGrassKeep = null,
+            float ecotoneHeight = 0f)
         {
             if (islandObject == null || islandMesh == null || radius <= 0f || DensityMultiplier <= 0f)
                 return;
@@ -364,8 +418,18 @@ namespace MakeGame.Systems
             var archetype = IslandMeshGenerator.ArchetypeProfileOf(islandObject);
             float grassHeightScale = Mathf.Max(0.1f, archetype.grassHeightScale);
             float grassLineT = IslandMeshGenerator.ComputeGrassLineT(islandObject);
-            float grassMinHeightBase =
-                IslandMeshGenerator.GrassLineHeightFromT(grassLineT) + GrassBoundaryDitherHalf;
+            // [B57] 디더 반폭(+0.18)을 더하지 않는다. 캡의 DryTop에서 삼각형 디더가 사라졌고
+            // (경계를 실제로 자르므로 톱니를 가릴 항이 필요 없다), 전이대가 이 기준선을 위아래로
+            // 걸치는 것이 이번 배치의 목적이다 - 위 전이대 상수 주석.
+            float grassLineBase = IslandMeshGenerator.GrassLineHeightFromT(grassLineT);
+            // [B57] 전이대 대역을 아래(모래 쪽)/위(초지 쪽)로 1:2 배분한다.
+            float ecoBand = ecotoneHeight > 0f ? ecotoneHeight : EcotoneHeightFallback;
+            float ecoBelow = ecoBand * EcotoneBelowFraction;
+            // 전이대가 **축축한 모래**(DampTop 0.75m + 디더 0.18m)까지 내려가지는 않게 자른다.
+            // 잔디가 마른 모래에 성기게 올라앉는 것은 의도지만(위 주석), 파도가 닿는 띠에까지
+            // 서면 그건 다른 그림이다. 경계 굽이는 잔디선과 DampTop에 **같은 값**이 더해지므로
+            // 이 비교는 굽이와 무관하게 성립한다(기준 높이끼리의 차이만 본다).
+            ecoBelow = Mathf.Min(ecoBelow, Mathf.Max(0f, grassLineBase - DampSandTopCeiling));
 
             // 섬 크기별 목표 개수: Small(R50) ~12k / Medium(R90) ~20k / Large(R140) ~30k / XL(R200) ~40k.
             // 반지름 선형 보간이 위 네 점을 ±4% 안으로 지나므로 별도 테이블이 필요 없다.
@@ -390,15 +454,18 @@ namespace MakeGame.Systems
             // v1은 개수만 셌지만 v2는 채택 확률에 패치 노이즈 배율(0.35~1.0)이 곱해지므로,
             // 배율 합계로 나눠야 총 개수가 목표치 근처에 남는다. 경사 검사는 여기서 하지
             // 않는다(비싼 검사라 채택된 소수에만 건다 - 목표는 "~" 근사치라 몇 % 미달은 허용).
+            // [B57] 전이대 계수(0~1)를 여기서도 곱한다. 1차/2차 통과가 **같은 가중치**를 봐야
+            // 총 카드 수가 목표치 근처에 남는다(패치 노이즈를 양쪽에 곱하는 것과 같은 이유).
             float eligibleWeight = 0f;
             for (int iz = -cellRange; iz <= cellRange; iz++)
             {
                 for (int ix = -cellRange; ix <= cellRange; ix++)
                 {
-                    float x, z, y;
+                    float x, z, y, eco;
                     if (TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
-                            maxPlaceRadiusSq, phaseA, phaseB, grassMinHeightBase, out x, out z, out y))
-                        eligibleWeight += PatchDensity(x, z, islandSalt);
+                            maxPlaceRadiusSq, phaseA, phaseB, grassLineBase, ecoBelow, ecoBand,
+                            out x, out z, out y, out eco))
+                        eligibleWeight += PatchDensity(x, z, islandSalt) * eco;
                 }
             }
             if (eligibleWeight <= 0f)
@@ -418,6 +485,17 @@ namespace MakeGame.Systems
             int expected = Mathf.CeilToInt(cardTarget * 0.55f) + 16;
             var listA = new List<Matrix4x4>(expected);
             var listB = new List<Matrix4x4>(expected);
+            // [B57] 전이대 마른 풀 리스트. 마른 풀 셀(아틀라스 2번)을 고정한 별도 머티리얼로
+            // 그리므로 배열을 따로 모은다 - 셰이더의 셀 선택이 인스턴스 단위가 아니라 머티리얼
+            // 프로퍼티(_CellOverride)라 이 방법 말고는 셀을 편향시킬 수단이 없다(MGGrass는 수정
+            // 금지 파일이고, 퍼 인스턴스 커스텀 데이터도 받지 않는다).
+            List<Matrix4x4> dryListA = null;
+            List<Matrix4x4> dryListB = null;
+            if (dryMaterial != null)
+            {
+                dryListA = new List<Matrix4x4>(512);
+                dryListB = new List<Matrix4x4>(512);
+            }
             List<Matrix4x4> flowerListA = null;
             List<Matrix4x4> flowerListB = null;
             if (flowerMaterial != null)
@@ -433,16 +511,19 @@ namespace MakeGame.Systems
             {
                 for (int ix = -cellRange; ix <= cellRange; ix++)
                 {
-                    float x, z, y;
+                    float x, z, y, eco;
                     if (!TryGetGrassCandidate(ix, iz, islandSalt, verts, rings, segments, radius,
-                            maxPlaceRadiusSq, phaseA, phaseB, grassMinHeightBase, out x, out z, out y))
+                            maxPlaceRadiusSq, phaseA, phaseB, grassLineBase, ecoBelow, ecoBand,
+                            out x, out z, out y, out eco))
                         continue;
 
                     // 군락감: 채택 확률에 파장 ~7m 저주파 노이즈 배율(0.35~1.0)을 곱한다 -
                     // 균일 카펫이 아니라 무성한 곳/성긴 곳으로 갈린다. 1차 통과와 같은 식이라
                     // 총 개수는 목표치 근처를 유지한다.
+                    // [B57] 여기에 전이대 계수를 곱한다 = 경계에서 밀도가 0으로 **완만히** 빠진다
+                    // (예전에는 경계 한 줄에서 100% → 0으로 끊겼다).
                     float patch = PatchDensity(x, z, islandSalt);
-                    if (Hash01(ix, iz, islandSalt ^ 0x9E3779B9u) > keepProbability * patch)
+                    if (Hash01(ix, iz, islandSalt ^ 0x9E3779B9u) > keepProbability * patch * eco)
                         continue;
 
                     // 경사 30도 초과 제외(유한 차분). 절벽(P7 메사)·수로 둑 상단 급경사를 걸러낸다.
@@ -483,16 +564,31 @@ namespace MakeGame.Systems
                     bool isTuft = Hash01(ix, iz, islandSalt ^ 0x94D049BBu) < TuftFraction;
                     int cardCount = Hash01(ix, iz, islandSalt ^ 0x632BE59Bu) < 0.5f ? 2 : 3;
 
+                    // [B57] 마른 풀 판정은 **앵커 단위**다 - 한 다발이 통째로 마르거나 통째로
+                    // 푸르러야 다발이 두 색으로 찢어지지 않는다(암반 완충대 판정과 같은 규칙).
+                    // 확률은 전이대 바닥에서 0.90, 위로 갈수록 0이다(제곱으로 빨리 준다).
+                    // 바닷가 쪽이 메마른 것이 실제 해변과 맞다.
+                    float dryChance = dryListA != null
+                        ? EcotoneDryChanceMax * (1f - eco) * (1f - eco)
+                        : 0f;
+                    bool isDryTuft = dryChance > 0f
+                        && Hash01(ix, iz, islandSalt ^ DryTuftSalt) < dryChance;
+
+                    // [B57] 카드 키: 전이대 바닥에서 0.60배로 낮아진다(모래에 붙은 잔풀).
+                    float ecoHeight = Mathf.Lerp(EcotoneMinHeightScale, 1f, eco);
+
                     // 꽃 무리 지대 판정은 앵커 단위 1회(파장 ~11m 노이즈, 문턱 = 면적 상위 ~12%).
                     // 전환 자체는 카드 단위라 꽃도 다발 구조 안에서 무리 지어 핀다.
                     // 텍스처 폴백 시에는 flowerList가 null이라 이 분기 전체가 죽는다(잔디-only).
+                    // [B57] 전이대에서는 꽃도 함께 준다(× eco). 마른 모래 위에 꽃밭이 피면
+                    // 전이대를 만든 의미가 상쇄된다. 마른 풀 다발에는 아예 꽃이 없다.
                     float flowerRatio = 0f;
-                    if (flowerListA != null)
+                    if (flowerListA != null && !isDryTuft)
                     {
                         float zone = LatticeNoise(x, z, FlowerWavelength, islandSalt ^ 0x68E31DA4u);
                         if (zone > FlowerZoneThreshold)
                             flowerRatio = Mathf.Lerp(FlowerRatioMin, FlowerRatioMax,
-                                (zone - FlowerZoneThreshold) / (1f - FlowerZoneThreshold));
+                                (zone - FlowerZoneThreshold) / (1f - FlowerZoneThreshold)) * eco;
                     }
 
                     for (int card = 0; card < cardCount; card++)
@@ -524,9 +620,11 @@ namespace MakeGame.Systems
                         // [B54] 아키타입 높이 배율. 습지섬 1.40(키 큰 잔디) / 화산·산호 0.85.
                         // 변주 구조(이봉 스케일)는 그대로 두고 결과에만 곱한다 - Tropical은 1.00이라
                         // 아키타입 도입 이전과 비트 단위로 같은 행렬이 나온다.
+                        // [B57] ecoHeight(전이대 키 감쇠)가 여기 한 곳에 곱해진다 - 변주 구조는
+                        // 그대로 두고 결과에만 곱하는 아키타입 배율과 같은 방식이다.
                         float scaleY = (isTuft
                             ? Mathf.Lerp(TuftScaleYMin, TuftScaleYMax, hY)
-                            : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY)) * grassHeightScale;
+                            : Mathf.Lerp(UnderScaleYMin, UnderScaleYMax, hY)) * grassHeightScale * ecoHeight;
                         float scaleXZ = isTuft
                             ? Mathf.Lerp(TuftScaleXZMin, TuftScaleXZMax, hXZ)
                             : Mathf.Lerp(UnderScaleXZMin, UnderScaleXZMax, hXZ);
@@ -543,6 +641,8 @@ namespace MakeGame.Systems
                         bool inGroupA = Hash01(ix, iz, cardSalt ^ 0x165667B1u) < 0.5f;
                         if (isFlower)
                             (inGroupA ? flowerListA : flowerListB).Add(matrix);
+                        else if (isDryTuft)
+                            (inGroupA ? dryListA : dryListB).Add(matrix);
                         else
                             (inGroupA ? listA : listB).Add(matrix);
 
@@ -553,6 +653,7 @@ namespace MakeGame.Systems
             }
 
             int total = listA.Count + listB.Count
+                + (dryListA != null ? dryListA.Count + dryListB.Count : 0)
                 + (flowerListA != null ? flowerListA.Count + flowerListB.Count : 0);
             if (total == 0)
                 return;
@@ -573,6 +674,8 @@ namespace MakeGame.Systems
                 radius = radius,
                 groupA = listA.ToArray(),
                 groupB = listB.ToArray(),
+                dryA = dryListA != null && dryListA.Count > 0 ? dryListA.ToArray() : null,
+                dryB = dryListB != null && dryListB.Count > 0 ? dryListB.ToArray() : null,
                 flowerA = flowerListA != null && flowerListA.Count > 0 ? flowerListA.ToArray() : null,
                 flowerB = flowerListB != null && flowerListB.Count > 0 ? flowerListB.ToArray() : null,
                 bounds = bounds,
@@ -611,6 +714,8 @@ namespace MakeGame.Systems
 
                 record.groupA = FilterOutsideBox(record.groupA, boxCenter, inverseRotation, boxHalfExtents);
                 record.groupB = FilterOutsideBox(record.groupB, boxCenter, inverseRotation, boxHalfExtents);
+                record.dryA = FilterOutsideBox(record.dryA, boxCenter, inverseRotation, boxHalfExtents);
+                record.dryB = FilterOutsideBox(record.dryB, boxCenter, inverseRotation, boxHalfExtents);
                 record.flowerA = FilterOutsideBox(record.flowerA, boxCenter, inverseRotation, boxHalfExtents);
                 record.flowerB = FilterOutsideBox(record.flowerB, boxCenter, inverseRotation, boxHalfExtents);
                 return; // 레코드는 섬당 하나다(Build의 중복 등록 가드).
@@ -685,16 +790,20 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 격자 셀 (ix, iz) 하나를 초지 후보로 평가한다. 지터 위치가 산포 원 안이고 지형 높이가
-        /// 초지 경계(섬별 grassLine + 디더 반폭 = grassMinHeightBase) 위면 true와 함께
-        /// 섬 로컬 (x, z, y)를 돌려준다.
+        /// **전이대 바닥**(경계선 - ecoBelow) 위면 true와 함께 섬 로컬 (x, z, y)와
+        /// 전이대 계수 eco(0~1)를 돌려준다. [B57] 예전에는 경계선 한 줄을 넘는지만 봤다.
         /// 1차(계수)와 2차(생성) 통과가 반드시 같은 판정을 내려야 하므로 한 함수로 공유한다.
         /// </summary>
-        /// <param name="grassMinHeightBase">[B52] IslandMeshGenerator.GrassLineHeightFromT(t) +
-        /// GrassBoundaryDitherHalf. Build가 섬당 1회 계산해 넘긴다(캡 경계와 단일 소스).</param>
+        /// <param name="grassLineBase">[B52/B57] IslandMeshGenerator.GrassLineHeightFromT(t).
+        /// Build가 섬당 1회 계산해 넘긴다(캡을 자르는 경계선과 단일 소스).</param>
+        /// <param name="eco">[B57] 전이대 계수 0~1(0 = 경계 아래 끝, 1 = 완전한 초지).
+        /// 밀도·카드 키·마른 풀 비율·꽃 비율이 전부 이 한 값에서 나온다.</param>
         private static bool TryGetGrassCandidate(int ix, int iz, uint islandSalt, Vector3[] verts,
             int rings, int segments, float radius, float maxPlaceRadiusSq, float phaseA, float phaseB,
-            float grassMinHeightBase, out float x, out float z, out float y)
+            float grassLineBase, float ecoBelow, float ecoBand,
+            out float x, out float z, out float y, out float eco)
         {
+            eco = 0f;
             x = ix * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x51ED270Bu) - 0.5f) * 0.9f * CellSpacing;
             z = iz * CellSpacing + (Hash01(ix, iz, islandSalt ^ 0x1B873593u) - 0.5f) * 0.9f * CellSpacing;
             y = 0f;
@@ -706,11 +815,22 @@ namespace MakeGame.Systems
             float angle = Mathf.Atan2(z, x);
             y = SampleHeightPolar(verts, rings, segments, radius, Mathf.Sqrt(rSq), angle);
 
-            // 초지 경계: BuildGroundCaps의 DryTop과 같은 식(섬별 grassLine + BandWobble) + 디더 반폭 0.18.
-            float minHeight = grassMinHeightBase
-                + 0.22f * Mathf.Sin(angle * 2f + phaseA)
-                + 0.12f * Mathf.Sin(angle * 3f + phaseB);
-            return y >= minHeight;
+            // 초지 경계: 모래 캡을 실제로 자르는 바로 그 곡선이다(IslandMeshGenerator.GrassBoundaryHeight
+            // - 단일 소스. 굽이 항을 여기에 복사해 두면 한쪽만 고쳐 어긋나는 사고가 재발한다).
+            float boundary = IslandMeshGenerator.GrassBoundaryHeight(x, z, grassLineBase, phaseA, phaseB);
+
+            // [B57] 전이대: 경계선 아래 ecoBelow부터 대역 ecoBand에 걸쳐 0 → 1로 차오른다.
+            // smoothstep이라 양 끝에서 기울기가 0 - 전이대 시작/끝에 밀도 단차가 생기지 않는다.
+            float u = (y - (boundary - ecoBelow)) / ecoBand;
+            if (u <= 0f)
+                return false;
+            if (u >= 1f)
+            {
+                eco = 1f;
+                return true;
+            }
+            eco = u * u * (3f - 2f * u);
+            return true;
         }
 
         // ── 저주파 격자 해시 노이즈 (군락/꽃 무리 - rng 소비 0) ────────────────────────
@@ -873,6 +993,29 @@ namespace MakeGame.Systems
                     grassMaterial.SetFloat("_TintStrength", 1f);    // v1 방식: 틴트가 곧 알베도
                 }
 
+                // [B57] 전이대 마른 풀 머티리얼: 아틀라스 **2번 셀(0,1) = 마른 풀** 고정.
+                // 왜 별도 머티리얼인가: MGGrass의 셀 선택은 정점 셰이더의 원점 해시이고 편향
+                // 파라미터가 _CellOverride(머티리얼 프로퍼티) 하나뿐이다. 퍼 인스턴스 커스텀
+                // 데이터를 받지 않으므로(셰이더 헤더의 계약) 셀을 편향시키려면 머티리얼을 가르는
+                // 수밖에 없다. 늘어나는 것은 전이대에 마른 다발이 실제로 있는 섬에서만 드로우콜
+                // 1~2개다(카드 총수의 3~6% 수준 - 1023 배치 하나에 대개 다 들어간다).
+                // 색: 뿌리/끝을 마른 풀 쪽으로 당기고 틴트를 조금 세게 건다. 아키타입 지면색
+                // 블록을 걸지 않는 이유는 **마른 풀은 어느 섬에서나 짚색**이기 때문이다 -
+                // 초지색을 따라가면 "초록색 마른 풀"이라는 모순이 나온다.
+                if (hasCardTexture)
+                {
+                    dryMaterial = new Material(shader) { name = "MGGrassDryMaterial" };
+                    dryMaterial.enableInstancing = true;
+                    dryMaterial.SetTexture("_BaseMap", cardTexture);
+                    dryMaterial.SetFloat("_CellOverride", 2f);
+                    dryMaterial.SetColor("_RootColor", new Color(0.42f, 0.38f, 0.22f, 1f));
+                    dryMaterial.SetColor("_TipColor", new Color(0.66f, 0.60f, 0.36f, 1f));
+                    dryMaterial.SetColor("_DryTint", new Color(0.62f, 0.57f, 0.34f, 1f));
+                    dryMaterial.SetFloat("_TintStrength", 0.75f);
+                    dryMaterial.SetFloat("_SheenStrength", 0.28f);
+                    dryMaterial.SetFloat("_TranslucencyStrength", 0.45f);
+                }
+
                 // 꽃 머티리얼: (1,1) 분홍 꽃 스파이크 셀 고정 + 틴트 오프(텍스처 원색).
                 // 텍스처 폴백 시에는 만들지 않는다 - 꽃 배치 분기 자체가 죽는다.
                 if (hasCardTexture)
@@ -1030,6 +1173,8 @@ namespace MakeGame.Systems
                 // 밟힘이 없다 - 올바른 무동작이다.
                 float now = Time.time;
                 grassMaterial.SetFloat(windTimeId, now);
+                if (dryMaterial != null)
+                    dryMaterial.SetFloat(windTimeId, now);
                 if (flowerMaterial != null)
                     flowerMaterial.SetFloat(windTimeId, now);
                 if (player != null)
@@ -1037,6 +1182,8 @@ namespace MakeGame.Systems
                     Vector3 p = player.transform.position;
                     var packed = new Vector4(p.x, p.y, p.z, 0f);
                     grassMaterial.SetVector(playerPosId, packed);
+                    if (dryMaterial != null)
+                        dryMaterial.SetVector(playerPosId, packed);
                     if (flowerMaterial != null)
                         flowerMaterial.SetVector(playerPosId, packed);
                 }
@@ -1082,6 +1229,21 @@ namespace MakeGame.Systems
                     RenderGroup(rparams, record.groupA);
                     if (fullDetail)
                         RenderGroup(rparams, record.groupB);
+
+                    // [B57] 전이대 마른 풀. 배열이 없으면(전이대에 마른 다발이 없는 섬) 드로우콜 0이다.
+                    // 뿌리색 블록을 걸지 않는 이유는 머티리얼 생성부 주석에 있다(마른 풀은 짚색 고정).
+                    if (dryMaterial != null && (record.dryA != null || record.dryB != null))
+                    {
+                        var dryParams = new RenderParams(dryMaterial)
+                        {
+                            worldBounds = record.bounds,
+                            shadowCastingMode = ShadowCastingMode.Off,
+                            receiveShadows = true,
+                        };
+                        RenderGroup(dryParams, record.dryA);
+                        if (fullDetail)
+                            RenderGroup(dryParams, record.dryB);
+                    }
 
                     // 꽃 배치: 별도 머티리얼((1,1) 셀 고정·틴트 오프), LOD 분할은 잔디와 동일 규칙.
                     // [B54] 꽃에는 뿌리색 블록을 걸지 않는다 - _TintStrength가 0이라 _RootColor가

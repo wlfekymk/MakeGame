@@ -1164,10 +1164,20 @@ namespace MakeGame.Systems
         /// 두 가지로 대부분의 쌍이 곱셈 4번에서 걸러진다. 최소 거리를 내는 선분은 하한 정의상
         /// 절대 걸러지지 않으므로 결과는 완전 탐색과 **동일하다**(근사가 아니다).
         /// 호출은 섬 하나당 1회, 월드 생성 시점뿐이다(프레임당 할당·계산 0).
+        ///
+        /// [해변 파도 3단계] 여기서 뽑는 **등고선 선분 집합이 곧 해안선 폴리라인**이다. 마루 리본
+        /// (ShorelineRibbon)이 그것을 기준선으로 재사용하도록 contour로 함께 돌려준다 - 같은 등고선을
+        /// 두 곳이 각자 뽑으면 값이 갈라질 수 있고, 이미 낸 비용을 두 번 내는 일이다.
+        /// 리본이 쓰는 두 가지가 더 실린다(거리장 계산에는 쓰이지 않는다 - **UV2 결과는 불변**):
+        ///   · 끝점이 놓인 **지형 메시 변의 식별자**(정점 인덱스 쌍). 이웃 삼각형은 같은 변을
+        ///     가로지르므로 이 키로 조각을 이으면 부동소수 허용치 없이 폴리라인이 복원된다.
+        ///   · 그 삼각형의 **내리막 단위 방향(XZ)** = 바다 쪽. 반지름 방향을 쓰면 석호·수로 안쪽
+        ///     물가에서 바다 방향이 뒤집히므로 높이 기울기에서 직접 얻는다.
         /// </summary>
-        private static Vector2[] BakeShoreField(Vector3[] vertices, int[] triangles)
+        private static Vector2[] BakeShoreField(Vector3[] vertices, int[] triangles, out ShoreContour contour)
         {
             var field = new Vector2[vertices.Length];
+            contour = null;
 
             // ── (1) 마칭 트라이앵글로 y = 0 등고선 선분을 모은다 ──
             // 삼각형 하나에서 부호가 갈리는 변은 항상 0개 또는 2개다(세 정점의 부호 조합상).
@@ -1176,30 +1186,45 @@ namespace MakeGame.Systems
             var segAz = new List<float>();
             var segBx = new List<float>();
             var segBz = new List<float>();
+            var segKeyA = new List<long>();
+            var segKeyB = new List<long>();
+            var segDownX = new List<float>();
+            var segDownZ = new List<float>();
+            long vertexStride = vertices.Length + 1L; // 변 키 = min·stride + max (충돌 없는 접기)
 
             for (int t = 0; t + 2 < triangles.Length; t += 3)
             {
-                Vector3 p0 = vertices[triangles[t]];
-                Vector3 p1 = vertices[triangles[t + 1]];
-                Vector3 p2 = vertices[triangles[t + 2]];
+                int i0 = triangles[t];
+                int i1 = triangles[t + 1];
+                int i2 = triangles[t + 2];
+                Vector3 p0 = vertices[i0];
+                Vector3 p1 = vertices[i1];
+                Vector3 p2 = vertices[i2];
 
                 Vector2 first = default;
                 Vector2 second = default;
+                long firstKey = 0L;
+                long secondKey = 0L;
                 int found = 0;
 
                 if (ShoreEdgeCrossing(p0, p1, out Vector2 h01))
                 {
                     first = h01;
+                    firstKey = ShoreEdgeKey(i0, i1, vertexStride);
                     found = 1;
                 }
                 if (ShoreEdgeCrossing(p1, p2, out Vector2 h12))
                 {
-                    if (found == 0) first = h12; else second = h12;
+                    long key = ShoreEdgeKey(i1, i2, vertexStride);
+                    if (found == 0) { first = h12; firstKey = key; }
+                    else { second = h12; secondKey = key; }
                     found++;
                 }
                 if (found < 2 && ShoreEdgeCrossing(p2, p0, out Vector2 h20))
                 {
-                    if (found == 0) first = h20; else second = h20;
+                    long key = ShoreEdgeKey(i2, i0, vertexStride);
+                    if (found == 0) { first = h20; firstKey = key; }
+                    else { second = h20; secondKey = key; }
                     found++;
                 }
 
@@ -1208,6 +1233,10 @@ namespace MakeGame.Systems
 
                 segAx.Add(first.x); segAz.Add(first.y);
                 segBx.Add(second.x); segBz.Add(second.y);
+                segKeyA.Add(firstKey); segKeyB.Add(secondKey);
+
+                ShoreDownhill(p0, p1, p2, first, second, out float downX, out float downZ);
+                segDownX.Add(downX); segDownZ.Add(downZ);
             }
 
             int segmentCount = segAx.Count;
@@ -1228,6 +1257,21 @@ namespace MakeGame.Systems
             float[] az = segAz.ToArray();
             float[] bx = segBx.ToArray();
             float[] bz = segBz.ToArray();
+
+            // [해변 파도 3단계] 같은 선분 배열을 리본에도 넘긴다(복사만 - 거리장 계산에는 무관).
+            contour = new ShoreContour
+            {
+                count = segmentCount,
+                ax = ax,
+                az = az,
+                bx = bx,
+                bz = bz,
+                keyA = segKeyA.ToArray(),
+                keyB = segKeyB.ToArray(),
+                downX = segDownX.ToArray(),
+                downZ = segDownZ.ToArray(),
+            };
+
             var midX = new float[segmentCount];
             var midZ = new float[segmentCount];
             var halfLength = new float[segmentCount];
@@ -1280,6 +1324,96 @@ namespace MakeGame.Systems
             }
 
             return field;
+        }
+
+        /// <summary>
+        /// 지형 메시 변(정점 인덱스 두 개)의 식별자. 순서와 무관하게 같은 값이 나오도록 정렬해 접는다.
+        /// 이웃한 두 삼각형은 공유 변에서 **같은 키**를 내므로, 리본의 조각 잇기가 좌표 비교(허용치가
+        /// 필요하다) 대신 위상 비교로 성립한다. stride = 정점 수 + 1이라 (min, max) 쌍이 충돌하지 않는다.
+        /// </summary>
+        private static long ShoreEdgeKey(int i0, int i1, long stride)
+        {
+            return i0 < i1 ? i0 * stride + i1 : i1 * stride + i0;
+        }
+
+        /// <summary>
+        /// 삼각형 (p0, p1, p2)의 높이장 기울기에서 **내리막 단위 방향(XZ)** 을 구한다 = 바다 쪽.
+        /// 세 정점이 XZ에서 퇴화(면적 0)했거나 완전히 평평하면, 등고선 선분에 수직인 두 방향 중
+        /// 삼각형 중심에서 멀어지는 쪽을 쓴다(그래도 방향이 없으면 0을 돌려주고 소비 측이 무시한다).
+        /// </summary>
+        private static void ShoreDownhill(Vector3 p0, Vector3 p1, Vector3 p2, Vector2 segA, Vector2 segB,
+            out float downX, out float downZ)
+        {
+            float e1x = p1.x - p0.x, e1z = p1.z - p0.z, dy1 = p1.y - p0.y;
+            float e2x = p2.x - p0.x, e2z = p2.z - p0.z, dy2 = p2.y - p0.y;
+            float det = e1x * e2z - e1z * e2x;
+
+            if (Mathf.Abs(det) > 1e-9f)
+            {
+                // ∇y (크라메르). 내리막은 그 반대 방향이다.
+                float gx = (dy1 * e2z - dy2 * e1z) / det;
+                float gz = (e1x * dy2 - e2x * dy1) / det;
+                float length = Mathf.Sqrt(gx * gx + gz * gz);
+                if (length > 1e-7f)
+                {
+                    downX = -gx / length;
+                    downZ = -gz / length;
+                    return;
+                }
+            }
+
+            // 폴백: 등고선 선분의 법선 두 개 중 삼각형 중심에서 바깥으로 나가는 쪽.
+            float ex = segB.x - segA.x;
+            float ez = segB.y - segA.y;
+            float edgeLength = Mathf.Sqrt(ex * ex + ez * ez);
+            if (edgeLength < 1e-7f)
+            {
+                downX = 0f;
+                downZ = 0f;
+                return;
+            }
+
+            float nx = ez / edgeLength;
+            float nz = -ex / edgeLength;
+            float cx = (p0.x + p1.x + p2.x) / 3f - (segA.x + segB.x) * 0.5f;
+            float cz = (p0.z + p1.z + p2.z) / 3f - (segA.y + segB.y) * 0.5f;
+            if (nx * cx + nz * cz > 0f)
+            {
+                nx = -nx;
+                nz = -nz;
+            }
+
+            downX = nx;
+            downZ = nz;
+        }
+
+        // ── [해변 파도 3단계] 등고선 인계 슬롯 ─────────────────────────────────────
+        // GenerateIslandMesh(메시를 만드는 곳)와 BuildGroundCaps(섬 오브젝트를 손에 쥔 곳)는
+        // 서로 다른 호출이고, 그 사이를 WorldMapManager(편집 범위 밖)가 잇는다. 인자를 늘리지
+        // 않고 값을 넘기려고 **메시 참조로 잠근 한 칸짜리 슬롯**을 쓴다. 흐름이
+        // "메시 생성 → 같은 섬의 BuildIslandSurface"로 한 호출 안에서 이어지므로(WorldMapManager.
+        // SpawnPlaceholder) 한 칸이면 충분하고, 혹시 어긋나면 참조 비교가 걸러 리본만 조용히
+        // 생략된다(잘못된 섬의 등고선이 쓰이는 일은 구조적으로 없다).
+        private static Mesh pendingContourMesh;
+        private static ShoreContour pendingContour;
+
+        /// <summary>방금 구운 등고선을 메시에 묶어 둔다(BakeShoreField 직후 1회).</summary>
+        private static void StashShoreContour(Mesh mesh, ShoreContour contour)
+        {
+            pendingContourMesh = mesh;
+            pendingContour = contour;
+        }
+
+        /// <summary>그 메시에 묶어 둔 등고선을 꺼내며 슬롯을 비운다(다른 메시면 null).</summary>
+        private static ShoreContour ConsumeShoreContour(Mesh mesh)
+        {
+            if (mesh == null || pendingContourMesh != mesh)
+                return null;
+
+            ShoreContour contour = pendingContour;
+            pendingContourMesh = null;
+            pendingContour = null;
+            return contour;
         }
 
         /// <summary>
@@ -1423,6 +1557,8 @@ namespace MakeGame.Systems
             shorelineShaderProbeFrame = -1;
             shoreFoamTexture = null;
             shoreFoamProbeFrame = -1;
+            pendingContourMesh = null;
+            pendingContour = null;
         }
     }
 }

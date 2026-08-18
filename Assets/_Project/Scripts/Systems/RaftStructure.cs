@@ -69,6 +69,12 @@ namespace MakeGame.Systems
         /// <summary>승선 발판이 고물에서 해변 쪽으로 뻗는 수평 거리.</summary>
         private const float RampRun = 2.2f;
 
+        /// <summary>
+        /// 승선 발판 밑동을 실측 해변 높이보다 얼마나 더 아래(모래 속)에 박을지(m).
+        /// 잔잔한 날의 상하 흔들림 실측 최대치(0.35m)에 맞췄다 - 근거는 TryAnchorToShore 주석.
+        /// </summary>
+        private const float RampFootDig = 0.35f;
+
         /// <summary>건조 외형 단계 수(0=골조 … 5=완성). 최소 4단계 요구를 넘겨 6단계로 잡았다.</summary>
         public const int TotalBuildLevels = 6;
 
@@ -86,18 +92,28 @@ namespace MakeGame.Systems
         [Tooltip("파도에 따라 뗏목이 뜨고 기울지. 끄면 예전처럼 고정된 자리에 가만히 있는다.")]
         public bool waveMotionEnabled = true;
 
-        [Tooltip("파도 높이를 얼마나 따라갈지(1 = 그대로). 뗏목은 8×5.2m 판이라 마루/골을 평균내므로" +
-            " 1보다 작게 두는 편이 자연스럽고, 갑판이 수면 아래로 내려가는 것도 막는다.")]
+        /// <summary>
+        /// ★ 이 값은 PlayerController.oceanWaveFollowScale(씬 값 0.75)과 **반드시 같아야 한다**. ★
+        /// 갑판 위에 선 플레이어의 수영 판정 수면은 waterLevel + 파고 × oceanWaveFollowScale이고,
+        /// 갑판 높이는 뗏목 상하 이동 = 파고 × waveHeaveScale을 탄다. 두 배율이 같으면 골에서
+        /// 갑판이 내려간 만큼 판정 수면도 같이 내려가 **서로 정확히 상쇄**되므로, 진폭을 아무리
+        /// 올려도 "갑판 윗면 − 판정 수면"이 갑판 높이 0.72m 근처에서 유지된다.
+        /// 이 값만 1.0으로 올리면(= 파도를 더 충실히 따라가면) 상쇄가 깨져 오히려 침수 쪽으로
+        /// 0.5m 이상 손해를 본다 - 실제로 시뮬레이션에서 폭풍 최소 여유가 +0.44 → −0.02m로 뒤집혔다.
+        /// </summary>
+        [Tooltip("파도 높이를 얼마나 따라갈지(1 = 그대로). PlayerController.oceanWaveFollowScale과 같은 값을" +
+            " 유지해야 갑판이 침수 판정에 걸리지 않는다(코드 주석 참고).")]
         public float waveHeaveScale = 0.75f;
 
-        [Tooltip("상하 흔들림 상한(m). 정박한 뗏목이라 승선 발판이 해변에서 너무 떨어지지 않게 묶어 둔다.")]
-        public float maxHeaveMeters = 0.45f;
+        [Tooltip("상하 흔들림 상한(m). 실측 최대치(폭풍 1.02m)보다 넉넉해야 한다 - 클램프가 걸리면" +
+            " 움직임이 끊길 뿐 아니라 갑판↔판정 수면의 상쇄가 깨져 침수가 생긴다.")]
+        public float maxHeaveMeters = 1.2f;
 
         [Tooltip("기울기 상한(도, 피치/롤 각각). 멀미·조작 불능 방지용 하드 리밋이다.")]
-        public float maxTiltDegrees = 6f;
+        public float maxTiltDegrees = 9f;
 
         [Tooltip("흔들림 저역통과 강도(1/초). 클수록 파도를 즉각 따라가고, 작을수록 둔하게 움직인다.")]
-        public float waveMotionDamping = 5f;
+        public float waveMotionDamping = 6.5f;
 
         /// <summary>지금 화면에 지어져 있는 단계. -1이면 아직 아무것도 안 지었다.</summary>
         private int builtLevel = -1;
@@ -434,11 +450,18 @@ namespace MakeGame.Systems
 
             // 승선 발판이 닿을 해변 지점의 실제 높이를 잰다. terrainMaxHeight는 씬 직렬화 값(8)이
             // 코드 기본값(2.5)과 다르므로 상수로 가정하면 안 된다 - 반드시 실측한다.
+            //
+            // [파도 v5] 잰 높이보다 RampFootDig만큼 **더 아래**를 발판 밑동으로 잡는다(하한도 함께
+            // 내렸다). 상하 흔들림 상한이 0.45 → 1.2m로 커져, 발판을 모래 표면에 딱 맞춰 두면 파도
+            // 마루마다 발판 끝이 통째로 떠올라 CharacterController.stepOffset(씬 값 0.3)을 넘는 턱이
+            // 생기기 때문이다. 잔잔한 날의 상하 진폭(실측 0.35m)만큼 파묻어 두면 그 날은 사이클
+            // 내내 발판이 모래에 닿아 있다. 파묻힌 만큼 경사가 서지만 최악(밑동 −0.9m)에서도
+            // 36.4° 로 slopeLimit(씬 값 45°) 안이다.
             Vector3 rampFoot = center - facing * (DeckLength * 0.5f + RampRun);
             float groundY = SampleTerrainHeight(rampFoot, out bool hitTerrain);
             rampFootLocalY = hitTerrain
-                ? Mathf.Clamp(groundY - center.y, -0.25f, DeckSurfaceY - 0.08f)
-                : 0f;
+                ? Mathf.Clamp(groundY - center.y - RampFootDig, -0.9f, DeckSurfaceY - 0.08f)
+                : -RampFootDig;
 
             CaptureWaveAnchor();
             anchored = true;
@@ -448,53 +471,25 @@ namespace MakeGame.Systems
         /// <summary>
         /// 파도 흔들림의 기준(정박 위치/회전)을 기억한다. 흔들림은 매 프레임 이 기준에 오프셋을 얹어
         /// **절대 좌표로 다시 대입**하는 방식이라, 오차가 프레임마다 누적되지 않는다(뗏목이 떠내려가지 않는다).
+        ///
+        /// 저역통과 상태를 0이 아니라 **지금 파도의 목표값으로 시드한다.** 0에서 출발하면 정박 직후
+        /// 약 1초 동안 뗏목이 파도를 "따라잡는" 과도 구간이 생기는데, 진폭이 커진 뒤로는 그 구간의
+        /// 갑판 침수 여유가 폭풍에서 −0.14m까지 내려간다(시뮬레이션 실측). 시드해 두면 첫 프레임부터
+        /// 정상 상태라 그 구간 자체가 사라진다.
         /// </summary>
         private void CaptureWaveAnchor()
         {
             anchorPosition = transform.position;
             anchorRotation = transform.rotation;
-            smoothedHeave = 0f;
-            smoothedPitchDeg = 0f;
-            smoothedRollDeg = 0f;
+            ComputeWaveTargets(out smoothedHeave, out smoothedPitchDeg, out smoothedRollDeg);
         }
 
         /// <summary>
-        /// 파도에 맞춰 뗏목을 위아래로 띄우고 살짝 기울인다(OceanWaves.SampleHeight 사용).
-        ///
-        /// [무엇을 움직이나] **뗏목 루트(transform) 하나만** 움직인다. 갑판(DeckRoot) · 건축 컨테이너
-        /// (PlacedStructures / BuildDeckPieces) · 파츠(RaftVisual) · 선체·갑판 콜라이더가 전부 루트의
-        /// 자식이고 로컬 좌표로 배치돼 있으므로(EnsureDeckRoot / BuildingSystem.SyncRaftBinding),
-        /// 갑판 위에 지은 집·상자는 뗏목과 통째로 같이 움직이며 1mm도 어긋나지 않는다.
-        /// 세이브도 갑판 조각을 뗏목 로컬 좌표로 저장하므로 저장/복원 결과가 달라지지 않는다.
-        ///
-        /// [샘플 수] 프레임당 SampleHeight 4회(뱃머리/고물/좌현/우현)뿐이다. 평균으로 상하 이동을,
-        /// 앞뒤/좌우 차이로 피치/롤을 만든다 - 8×5.2m 판이 파면을 평균내는 물리와 같은 모양이다.
-        /// (법선 1점 샘플보다 이쪽이 배 크기를 반영해 자연스럽고, 마루 하나에 과민 반응하지 않는다.)
-        ///
-        /// [멀미/조작 방지] 기울기는 maxTiltDegrees(기본 ±6°)로, 상하 이동은 maxHeaveMeters(기본
-        /// ±0.45m)로 하드 클램프한다. 현재 파도 파라미터로 300초 × 24방위를 훑어 본 실측 최대치는
-        /// **맑음 피치 0.72°/롤 0.76° · 폭풍 피치 2.02°/롤 2.14°** 라 기울기 상한은 사실상 안전망이고
-        /// 평소에 클램프가 걸리지 않는다(걸리면 그 순간 움직임이 뚝 끊겨 오히려 어색해진다).
-        /// 상하 이동 실측 최대치는 맑음 0.15m · 폭풍 0.42m로, 상한 0.45m에 폭풍 마루에서만 닿는다.
-        /// 추가로 저역통과(waveMotionDamping)를 한 겹 걸어 프레임 간 급변을 막는다.
-        ///
-        /// [정지 계약] 진행에 Time.deltaTime을 쓰고 파도 시계도 Time.time이므로, timeScale = 0인
-        /// 타이틀/일시정지/엔딩에서는 바다와 함께 뗏목도 완전히 멈춘다.
-        ///
-        /// [승선 발판] 뗏목은 고물이 물가에 걸친 정박 상태고 발판이 해변에 닿아 있다. 상하 이동이
-        /// 커지면 발판 끝이 모래에서 뜨거나 파묻히므로 maxHeaveMeters를 0.45m로 묶어 뒀다
-        /// (실측 최대 진폭은 잔잔 ±0.15m · 폭풍 ±0.42m다).
-        ///
-        /// [갑판 침수 없음] 갑판 윗면은 뗏목 원점 위 0.72m다. 뗏목이 골에 내려앉는 순간에도 그 자리의
-        /// 파고와 뗏목 상하 이동이 같은 파도에서 나오므로 서로 상쇄된다 - 갑판 25개 지점 × 300초
-        /// 시뮬레이션에서 "갑판 윗면 − 플레이어 수영 판정 수면"의 최소 여유가 폭풍에서도 0.54m였다.
-        /// 즉 갑판 위에 서 있다가 수영 모드로 뒤집히는 일은 생기지 않는다.
+        /// 지금 파도에서의 목표 상하 이동/피치/롤(클램프까지 적용). 뱃머리·고물·좌현·우현 4점을
+        /// 샘플해 평균으로 상하를, 앞뒤/좌우 차이로 기울기를 만든다. 힙 할당 없음(sin 16회).
         /// </summary>
-        private void UpdateWaveMotion()
+        private void ComputeWaveTargets(out float heave, out float pitchDeg, out float rollDeg)
         {
-            if (!waveMotionEnabled)
-                return;
-
             float halfLength = DeckLength * 0.5f;
             float halfWidth = DeckWidth * 0.5f;
             Vector3 forward = anchorRotation * Vector3.forward;
@@ -510,14 +505,64 @@ namespace MakeGame.Systems
             float tiltLimit = Mathf.Max(0f, maxTiltDegrees);
 
             float average = (yBow + yStern + yStarboard + yPort) * 0.25f;
-            float targetHeave = Mathf.Clamp((average - OceanWaves.SeaLevel) * scale, -heaveLimit, heaveLimit);
+            heave = Mathf.Clamp((average - OceanWaves.SeaLevel) * scale, -heaveLimit, heaveLimit);
 
             // 부호: Unity에서 로컬 X축 양의 회전은 +Z(뱃머리)를 아래로 내린다 → 뱃머리가 높으면 음수.
-            float targetPitch = Mathf.Clamp(
+            pitchDeg = Mathf.Clamp(
                 -Mathf.Atan2((yBow - yStern) * scale, DeckLength) * Mathf.Rad2Deg, -tiltLimit, tiltLimit);
             // 로컬 Z축 양의 회전은 +X(우현)를 위로 올린다 → 우현이 높으면 양수.
-            float targetRoll = Mathf.Clamp(
+            rollDeg = Mathf.Clamp(
                 Mathf.Atan2((yStarboard - yPort) * scale, DeckWidth) * Mathf.Rad2Deg, -tiltLimit, tiltLimit);
+        }
+
+        /// <summary>
+        /// 파도에 맞춰 뗏목을 위아래로 띄우고 살짝 기울인다(OceanWaves.SampleHeight 사용).
+        ///
+        /// [무엇을 움직이나] **뗏목 루트(transform) 하나만** 움직인다. 갑판(DeckRoot) · 건축 컨테이너
+        /// (PlacedStructures / BuildDeckPieces) · 파츠(RaftVisual) · 선체·갑판 콜라이더가 전부 루트의
+        /// 자식이고 로컬 좌표로 배치돼 있으므로(EnsureDeckRoot / BuildingSystem.SyncRaftBinding),
+        /// 갑판 위에 지은 집·상자는 뗏목과 통째로 같이 움직이며 1mm도 어긋나지 않는다.
+        /// 세이브도 갑판 조각을 뗏목 로컬 좌표로 저장하므로 저장/복원 결과가 달라지지 않는다.
+        ///
+        /// [샘플 수] 프레임당 SampleHeight 4회(뱃머리/고물/좌현/우현)뿐이다. 평균으로 상하 이동을,
+        /// 앞뒤/좌우 차이로 피치/롤을 만든다 - 8×5.2m 판이 파면을 평균내는 물리와 같은 모양이다.
+        /// (법선 1점 샘플보다 이쪽이 배 크기를 반영해 자연스럽고, 마루 하나에 과민 반응하지 않는다.)
+        ///
+        /// [멀미/조작 방지 - 파도 v5 재조정] 기울기는 maxTiltDegrees(±9°)로, 상하 이동은
+        /// maxHeaveMeters(±1.2m)로 하드 클램프한다. **300초 × 24방위 × 60Hz 시뮬레이션 실측치**:
+        ///     맑음  피치 1.60° / 롤 1.69° / 상하 0.35m
+        ///     폭풍  피치 4.58° / 롤 4.80° / 상하 1.01m
+        /// 두 클램프 모두 도달 빈도 **0.000%** 다 - 상한은 순수 안전망이고, 평소에 걸리지 않는다
+        /// (걸리면 그 순간 움직임이 뚝 끊겨 오히려 어색하고, 아래 [갑판 침수]의 상쇄도 깨진다).
+        /// 진폭이 2.4배가 됐는데도 기울기가 9°를 한참 밑도는 이유는 파장(118~21m)이 배 길이 8m보다
+        /// 훨씬 길어 갑판이 파면을 거의 평평하게 훑기 때문이다 - 멀미가 아니라 "너울에 실려 올라가는"
+        /// 움직임이 된다.
+        /// 저역통과는 5 → 6.5(1/초, 시정수 0.20 → 0.15초)로 올렸다. 진폭이 커지면 같은 지연이 만드는
+        /// 위치 오차도 같은 비율로 커져 갑판↔판정 수면 상쇄가 나빠지기 때문이고, 실제로 폭풍 최소
+        /// 여유가 +0.38 → +0.44m로 회복된다. 더 올려도(8.0 → +0.47m) 이득이 급격히 줄어 여기서 멈췄다.
+        ///
+        /// [정지 계약] 진행에 Time.deltaTime을 쓰고 파도 시계도 Time.time이므로, timeScale = 0인
+        /// 타이틀/일시정지/엔딩에서는 바다와 함께 뗏목도 완전히 멈춘다.
+        ///
+        /// [승선 발판] 뗏목은 고물이 물가에 걸친 정박 상태고 발판이 해변에 닿아 있다. 상하 상한을
+        /// 0.45 → 1.2m로 올린 만큼 발판 끝이 모래에서 뜰 수 있으므로, 발판 밑동을 잔잔한 날의 상하
+        /// 진폭(0.35m)만큼 **모래에 파묻어** 둔다(TryAnchorToShore의 RampFootDig). 잔잔한 날에는
+        /// 사이클 내내 발판이 모래에 닿아 있고, 폭풍 마루에서만 최대 0.65m가 뜬다 - "폭풍에는 배에
+        /// 오르내리기 어렵다"는 쪽이 오히려 맞다고 판단했다.
+        ///
+        /// [갑판 침수] 갑판 윗면은 뗏목 원점 위 0.72m다. 뗏목이 골에 내려앉는 순간에도 그 자리의
+        /// 파고와 뗏목 상하 이동이 **같은 배율(0.75)** 로 움직여 서로 상쇄된다(waveHeaveScale 주석).
+        /// 갑판 25개 지점 × 300초 × 24방위 시뮬레이션에서 "갑판 윗면 − 플레이어 수영 판정 수면"의
+        /// 최소 여유는 **맑음 +0.64m · 폭풍 +0.44m**(감쇠를 빼고 잰 보수적인 값. 실제로는 뗏목이 있는
+        /// 얕은 물에서 판정 수면에 쇄파 감쇠가 걸려 여유가 더 늘어난다).
+        /// 즉 갑판 위에 서 있다가 수영 모드로 뒤집히는 일은 생기지 않는다.
+        /// </summary>
+        private void UpdateWaveMotion()
+        {
+            if (!waveMotionEnabled)
+                return;
+
+            ComputeWaveTargets(out float targetHeave, out float targetPitch, out float targetRoll);
 
             // 지수 저역통과(프레임률 독립). deltaTime이 0이면(일시정지) 계수도 0이라 그대로 멈춘다.
             float blend = waveMotionDamping > 0f
@@ -866,7 +911,8 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 승선 발판. CharacterController의 stepOffset은 씬 값 0.3이라 갑판(0.72)에 그냥 올라설 수 없다.
-        /// 해변 실측 높이(rampFootLocalY)에서 갑판까지 이어지는 경사판을 놓고, 여기에만 콜라이더를 남긴다.
+        /// 해변 실측 높이보다 RampFootDig만큼 파묻은 밑동(rampFootLocalY)에서 갑판까지 이어지는
+        /// 경사판을 놓고, 여기에만 콜라이더를 남긴다(파묻는 이유는 TryAnchorToShore 주석).
         /// slopeLimit(씬 값 45도)보다 훨씬 완만하므로 걸어서 올라갈 수 있다.
         /// </summary>
         private void BuildBoardingRamp()
