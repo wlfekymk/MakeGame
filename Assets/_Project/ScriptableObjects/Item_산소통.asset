@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_산소통
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 산소통
+  description: "압축 공기를 눌러 담은 금속 통. 소지하고 있는 것만으로 잠수 중 산소가 절반 속도로 줄어든다. 하나면 충분하다."
+  icon: {fileID: 21300000, guid: c7a0b1a690228104e36db146f0d4ad95, type: 3}
+  maxUses: 1
+  maxStackSize: 1
+  blockedFromLargeIslandsByCurrent: 0

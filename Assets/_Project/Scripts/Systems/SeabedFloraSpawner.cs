@@ -15,9 +15,10 @@ namespace MakeGame.Systems
     /// 하나도 붙이지 않으므로 SaveLoadController의 FindObjectsByType 순회(ResourceNode/Campfire/…)에
     /// 걸리지 않고, 저장 파일에 한 바이트도 들어가지 않는다. 불러오기(RegenerateWorld) 후에는 같은
     /// worldSeed → 같은 시드 → 같은 배치로 그냥 다시 생성될 뿐이다.
-    /// 단 하나의 예외가 침몰 화물(SpawnSunkenCargo)의 AirlinerSalvagePoint인데, 그 컴포넌트도
-    /// 세이브 비대상이라(수거 여부 미저장 - AirlinerSalvagePoint [한계] 주석과 같은 한계) 저장
-    /// 파일에는 여전히 한 바이트도 들어가지 않고, 로드할 때마다 화물이 리셋될 뿐이다.
+    /// 예외는 침몰 화물(SpawnSunkenCargo)·진주조개(SpawnPearlClams)·채집 해초(PlaceKelp의 해시
+    /// 당첨 서브셋)의 AirlinerSalvagePoint인데, 그 컴포넌트도 세이브 비대상이라(수거 여부 미저장 -
+    /// AirlinerSalvagePoint [한계] 주석과 같은 한계) 저장 파일에는 여전히 한 바이트도 들어가지
+    /// 않고, 로드할 때마다 수거 지점이 리셋될 뿐이다.
     ///
     /// ── rng 격리 (최중요) ─────────────────────────────────────────────────────────
     /// 섬마다 `new System.Random(unchecked(worldSeed * 397 ^ islandId ^ 0x5EABED))` 로 만든
@@ -26,6 +27,9 @@ namespace MakeGame.Systems
     /// 어느 것도 만들지도, 이어 뽑지도 않는다 - 0x5EABED xor 시드는 위 어떤 salt 조합과도 겹치지
     /// 않는 별도 시드 공간이고, 여기서 몇 번을 뽑든 다른 시스템의 추첨 순서는 한 칸도 밀리지 않는다.
     /// UnityEngine.Random은 일절 쓰지 않는다(전역 상태 오염 금지 - SeededRandomExtensions 상단 주석).
+    /// 진주조개는 **또 다른 완전 분리 스트림**(0xC1A0 솔트 - SpawnPearlClams 주석)을 쓴다. 검증이
+    /// 끝난 0x5EABED 스트림의 꼬리에 draw를 덧붙이는 것조차 금지다(기존 월드 재현성 1비트 불변).
+    /// 채집 해초 서브셋 판정은 아예 rng가 아니라 순수 위치 해시(draw 소비 0 - PositionHash)다.
     ///
     /// ── 생명주기 편승 ────────────────────────────────────────────────────────────
     /// 배치물 루트는 반드시 **그 섬의 루트 오브젝트("Island_{id}_{size}") 자식**이다. 그래서
@@ -63,6 +67,11 @@ namespace MakeGame.Systems
 
         /// <summary>rng 격리용 시드 소금. 기존 어떤 salt 대역(3000000+ 등)과도 겹치지 않는 xor 상수.</summary>
         private const int SeedSalt = 0x5EABED;
+
+        /// <summary>진주조개 전용 **제2 격리 스트림**의 시드 소금. 0x5EABED 스트림과도 다른 값이라
+        /// 조개가 몇 개 뽑히든 기존 산호/해초/바위/화물 추첨은 1비트도 밀리지 않는다(꼬리 draw 추가
+        /// 금지 - 검증 완료된 기존 스트림의 draw 수·순서 동결이 원칙이다).</summary>
+        private const int ClamSeedSalt = 0xC1A0;
 
         // ── 모델 카탈로그 (Resources/Models, 확장자 없음) ──────────────────────────
 
@@ -137,6 +146,32 @@ namespace MakeGame.Systems
             new Vector3(0.60f, 0.86f, 0.60f), // barrel_a
         };
 
+        // ── 진주조개 (수심 2~8m 채집 노드 - clam_a/b/c) ────────────────────────────
+
+        /// <summary>진주조개 3종(clam_a~c). `o` 오브젝트 2개(shell → pearl 순서, mtllib 포함)라
+        /// 산호와 같은 병합 임포트 대비가 필요하다(서브메시 2 = [shell, pearl] 머티리얼 배열).</summary>
+        private static readonly string[] ClamModelNames = { "clam_a", "clam_b", "clam_c" };
+
+        /// <summary>각 조개 모델의 실측 전체 크기(m, W×H×D · 밑면 y=0). OBJ 정점 실측값 -
+        /// 상호작용 BoxCollider 대략치에 쓴다(RockModelSizes와 같은 사본 정책).</summary>
+        private static readonly Vector3[] ClamModelSizes =
+        {
+            new Vector3(0.50f, 0.37f, 0.45f), // clam_a
+            new Vector3(0.35f, 0.21f, 0.33f), // clam_b
+            new Vector3(0.70f, 0.60f, 0.63f), // clam_c
+        };
+
+        // ── 채집 해초 서브셋 (순수 위치 해시 - rng draw 소비 0) ─────────────────────
+
+        /// <summary>배치된 kelp 중 채집 가능("해초 군락") 서브셋의 당첨 비율(~15%).</summary>
+        private const float HarvestKelpChance = 0.15f;
+
+        /// <summary>위치 해시 salt. 같은 위치라도 용도(당첨 판정 / 지급 수량)마다 독립인 값이 나오게
+        /// 가른다(IslandMeshGenerator.MeshLibrary의 salt 상수 계열과 같은 규칙 - 값은 그쪽
+        /// 0x51A7B0xx 대역과 겹치지 않는 별도 대역이다).</summary>
+        private const uint KelpHarvestSelectSalt = 0x6B3E1F01u;
+        private const uint KelpHarvestCountSalt = 0x6B3E1F02u;
+
         // ── 팔레트 (순수 Color 상수라 필드 초기화식에 두어도 안전하다 - Unity API 호출 없음) ────
 
         /// <summary>산호 12색 팔레트(핑크/주황/자홍/노랑/청록/보라 등). 변종 인덱스 % 12로 순환하고,
@@ -174,13 +209,16 @@ namespace MakeGame.Systems
             new Color(0.36f, 0.42f, 0.36f),
         };
 
-        // ── 공유 메시 캐시 (모델 50종 - 월드 전체가 나눠 쓴다) ─────────────────────────
+        // ── 공유 메시 캐시 (모델 55종 = 산호 20 + 해초 10 + 바위 20 + 화물 2 + 조개 3) ──
         // 산호는 body/tip 두 장(임포터가 합치면 primary 한 장에 서브메시 2, secondary는 null).
         private static readonly Mesh[] coralPrimary = new Mesh[20];
         private static readonly Mesh[] coralSecondary = new Mesh[20];
         private static readonly Mesh[] kelpMeshes = new Mesh[10];
         private static readonly Mesh[] rockMeshes = new Mesh[20];
         private static readonly Mesh[] cargoMeshes = new Mesh[2]; // crate_a / barrel_a (`o` 1개 = 단일 메시)
+        // 조개도 산호처럼 두 장(shell/pearl). 병합 임포트면 primary 한 장에 서브메시 2, secondary는 null.
+        private static readonly Mesh[] clamPrimary = new Mesh[3];
+        private static readonly Mesh[] clamSecondary = new Mesh[3];
 
         /// <summary>프레임당 1회 프로브 가드(TryGetBambooModel/AirlinerWreck.probeFrame과 같은 규칙).
         /// 실패를 영구 래치하지 않으므로 임포트가 한 프레임 늦어도 다음 섬/다음 월드에서 자연 복구된다.</summary>
@@ -224,6 +262,8 @@ namespace MakeGame.Systems
             System.Array.Clear(kelpMeshes, 0, kelpMeshes.Length);
             System.Array.Clear(rockMeshes, 0, rockMeshes.Length);
             System.Array.Clear(cargoMeshes, 0, cargoMeshes.Length);
+            System.Array.Clear(clamPrimary, 0, clamPrimary.Length);
+            System.Array.Clear(clamSecondary, 0, clamSecondary.Length);
             probeFrame = -1;
             kelpSwayShader = null;
             kelpShaderProbeFrame = -1;
@@ -350,6 +390,12 @@ namespace MakeGame.Systems
             // 이 격리 스트림의 꼬리에 붙는 추가 소비라, 위 세 배치의 추첨 순서·결과는 1비트도 밀리지
             // 않는다(PlaceLargeStones가 BuildIslandSurface 맨 끝에서만 불리는 것과 같은 원칙).
             SpawnSunkenCargo(rng, root.transform, center, rMin, rMax, seaLevel, radius);
+
+            // [rng 격리 2] 진주조개는 기존 0x5EABED 스트림의 꼬리에도 붙이지 않고 **별도 솔트의
+            // 제2 독립 스트림**으로만 뽑는다 - 이미 검증된 위 네 배치의 draw 수·순서·결과는
+            // 조개 추가 전후로 1비트도 다르지 않다(완전 분리가 안전 - 헤더 rng 격리 주석).
+            var clamRng = new System.Random(unchecked(worldSeed * 397 ^ islandId ^ ClamSeedSalt));
+            SpawnPearlClams(clamRng, root.transform, center, rMin, rMax, seaLevel, radius);
 
             // 해초 스웨이 시간 구동: 스웨이 머티리얼이 하나라도 살아 있으면 이 섬의 생태 루트에
             // 드라이버를 붙인다(rng 소비 없음 - 추첨 순서 불변). 프레임 가드 덕에 섬이 몇 개든
@@ -651,6 +697,105 @@ namespace MakeGame.Systems
                 };
         }
 
+        /// <summary>
+        /// 진주조개(수심 2~8m 채집 노드): 섬 크기별 소수(소형 0~1 / 중형 2~3 / 대형·특대 3~5)를
+        /// 해저에 접지 배치하고, 각 조개에 BoxCollider + AirlinerSalvagePoint("진주조개",
+        /// 진주 1~2 - 배치 시 결정적 확정)를 붙인다. 규모 경계는 SizeScale과 같은 반지름 중간값이다.
+        ///
+        /// [rng 격리 2] 인자 rng는 Spawn이 만든 **조개 전용 제2 독립 스트림**(ClamSeedSalt)이다.
+        /// 기존 0x5EABED 스트림은 여기서 만지지도, 이어 뽑지도 않는다.
+        /// [결정성] 조개 하나의 모든 draw(위치/변종/자세/진주 수)는 메시 로드 여부를 보기 **전에**
+        /// 끝낸다(PlaceCargoPile과 같은 규칙) - 임포트가 한 프레임 늦어도 같은 시드의 다음 월드에서
+        /// 같은 자리·같은 진주 수로 나온다.
+        /// </summary>
+        private static void SpawnPearlClams(System.Random rng, Transform root, Vector3 center,
+            float rMin, float rMax, float seaLevel, float radius)
+        {
+            int clamCount;
+            if (radius < 70f)
+                clamCount = rng.NextInt(0, 2);       // 소형 0~1
+            else if (radius < 115f)
+                clamCount = rng.NextInt(2, 4);       // 중형 2~3
+            else
+                clamCount = rng.NextInt(3, 6);       // 대형/특대 3~5
+
+            for (int i = 0; i < clamCount; i++)
+            {
+                // 수심 2~8m 해저 접지(기존 TryPickPoint/TrySampleSeabed 재사용). 실패하면 이 조개만 버린다.
+                bool found = TryPickPoint(rng, center, rMin, rMax, seaLevel, 2f, 8f, 12,
+                    out Vector3 pos, out _);
+
+                // draw 전부 (접지 실패든 메시 미로드든 항상 같은 횟수·순서로 소비 - 결정성).
+                int variant = rng.NextInt(0, ClamModelNames.Length);
+                float yaw = rng.NextFloat(0f, 360f);
+                float size = rng.NextFloat(0.85f, 1.25f);
+                int pearlCount = rng.NextInt(1, 3); // 진주 1~2 - 배치 시 결정적 확정
+
+                if (!found)
+                    continue;
+
+                PlaceClam(root, center, pos, variant, yaw, size, pearlCount, i);
+            }
+        }
+
+        /// <summary>
+        /// 진주조개 하나. 시각은 산호와 같은 두-파트 규칙(병합 임포트면 렌더러 하나 +
+        /// sharedMaterials [껍데기, 진주], 개별 메시 2장이면 파츠 2개)이고, 수거는 침몰 화물과
+        /// 같은 규칙(루트에 BoxCollider + AirlinerSalvagePoint - InteractionController의
+        /// GetComponentInParent 경로)이다. 메시 미로드면 아무것도 만들지 않는다(보이지 않는
+        /// 수거 지점 금지 - PlaceCargoPile과 같은 폴백, 래치 없음).
+        /// </summary>
+        private static void PlaceClam(Transform root, Vector3 islandCenter, Vector3 worldPos,
+            int variant, float yaw, float scale, int pearlCount, int clamIndex)
+        {
+            Mesh shell = clamPrimary[variant];
+            if (shell == null)
+                return; // 이 변종만 아직 안 로드됨 - 조용히 건너뛴다(다음 월드에서 복구)
+
+            // 껍데기 = 모래빛 크림/베이지, 진주 = 밝은 진주광(살짝 분홍끼 흰색).
+            // 산호/화물과 같은 GetMaterial 공유 캐시 규약이라 조개가 몇 개든 머티리얼은 2장이다.
+            Material shellMaterial = ResourceVisualLibrary.GetMaterial(new Color(0.86f, 0.79f, 0.63f), "noise");
+            Material pearlMaterial = ResourceVisualLibrary.GetMaterial(new Color(0.97f, 0.91f, 0.93f), "noise");
+
+            // 조개 루트. "PearlClam_"은 "Island_"로 시작하지 않으므로 TerrainSampler 지형 판정에서
+            // 구조적으로 제외된다(SunkenCargo/SeaRock 콜라이더와 같은 안전 근거).
+            var clam = new GameObject("PearlClam_" + clamIndex);
+            clam.transform.SetParent(root, false);
+            // 밑면 y=0 접지 모델을 모래 기복 속에 살짝 묻는다(PlaceCoral과 같은 이유).
+            clam.transform.localPosition = worldPos - islandCenter + new Vector3(0f, -0.04f, 0f);
+
+            var part = CreateVisualPart(clam.transform, "Clam_" + ClamModelNames[variant], shell,
+                shellMaterial, Vector3.zero, yaw, scale);
+            var renderer = part.GetComponent<MeshRenderer>();
+            if (clamSecondary[variant] != null)
+            {
+                // 개별 메시 임포트: 진주를 같은 위치/회전/스케일의 파츠로 하나 더(임포터 동작 방어).
+                CreateVisualPart(clam.transform, "Clam_" + ClamModelNames[variant] + "_pearl",
+                    clamSecondary[variant], pearlMaterial, Vector3.zero, yaw, scale);
+            }
+            else if (renderer != null && shell.subMeshCount >= 2)
+            {
+                // 병합 임포트(Unity 6.5 실동작): 서브메시 순서는 OBJ `o` 순서(shell → pearl)다.
+                renderer.sharedMaterials = new[] { shellMaterial, pearlMaterial };
+            }
+
+            // 상호작용 콜라이더: 조개 루트의 BoxCollider(실측 크기 + 여유 패딩, 조준 가능한 최소
+            // 크기 보장). 레이가 맞으면 GetComponentInParent로 같은 오브젝트의 AirlinerSalvagePoint가
+            // 잡힌다(SunkenCargo와 같은 경로).
+            Vector3 worldSize = ClamModelSizes[variant] * scale;
+            var box = clam.AddComponent<BoxCollider>();
+            box.center = new Vector3(0f, worldSize.y * 0.5f, 0f);
+            box.size = new Vector3(
+                Mathf.Max(worldSize.x * 1.4f, 0.55f),
+                Mathf.Max(worldSize.y * 1.3f, 0.45f),
+                Mathf.Max(worldSize.z * 1.4f, 0.55f));
+
+            // [한계] 수거 여부는 세이브 미저장 - SunkenCargo와 동일한 한계(헤더 주석).
+            var salvage = clam.AddComponent<AirlinerSalvagePoint>();
+            salvage.displayName = "진주조개";
+            salvage.loot = new[] { new AirlinerSalvagePoint.LootEntry("진주", pearlCount) };
+        }
+
         // ── 개별 배치물 조립 ──────────────────────────────────────────────────────────
 
         /// <summary>
@@ -688,7 +833,12 @@ namespace MakeGame.Systems
             }
         }
 
-        /// <summary>해초 하나(양면 blade 메시 1장, 콜라이더 없음).</summary>
+        /// <summary>
+        /// 해초 하나(양면 blade 메시 1장). 기본은 콜라이더 없는 순수 장식이지만, **순수 위치 해시**로
+        /// 뽑힌 ~15% 서브셋은 채집 노드("해초 군락", 해조류 2~4)가 된다 - 판정·수량 모두 해시라
+        /// rng draw 소비가 0이고, 기존 해초 배치의 추첨 순서·시각(스웨이 셰이더 포함)은 완전 불변이다.
+        /// 채집 후에도 시각은 남는다(1회 수거 지점 규약 - SunkenCargo와 동일 한계).
+        /// </summary>
         private static void PlaceKelp(Transform root, Vector3 islandCenter, Vector3 worldPos,
             int variant, float yaw, float scale)
         {
@@ -699,7 +849,28 @@ namespace MakeGame.Systems
             // 해초만 스웨이 셰이더 머티리얼(로드 실패 시 기존 GetMaterial "leaf" 폴백 - GetKelpMaterial).
             Material material = GetKelpMaterial(variant);
             Vector3 localPos = worldPos - islandCenter + new Vector3(0f, -0.06f, 0f);
-            CreateVisualPart(root, "Kelp_" + KelpModelNames[variant], blade, material, localPos, yaw, scale);
+            var part = CreateVisualPart(root, "Kelp_" + KelpModelNames[variant], blade, material,
+                localPos, yaw, scale);
+
+            // 채집 서브셋 판정: 배치 좌표는 시드가 정하는 결정적 값이라 해시도 결정적이다.
+            if (PositionHash01(worldPos, KelpHarvestSelectSalt) >= HarvestKelpChance)
+                return;
+
+            // 상호작용 콜라이더: 해초 파츠 로컬 공간 기준(부모 스케일이 균등이라 함께 커진다 -
+            // PlaceRock 콜라이더와 같은 근거). blade 밑동 주변의 좁은 기둥이라 수중 이동을 크게
+            // 막지 않고, 이름이 "Kelp_"라 지형 판정("Island_" 필터)에는 구조적으로 안 잡힌다.
+            float height = Mathf.Min(KelpModelHeights[variant], 1.6f);
+            var box = part.AddComponent<BoxCollider>();
+            box.center = new Vector3(0f, height * 0.5f, 0f);
+            box.size = new Vector3(0.55f, height, 0.55f);
+
+            // 지급 수량 2~4도 위치 해시(별도 salt)로 결정적 확정 - draw 소비 0.
+            int count = 2 + (int)(PositionHash(worldPos, KelpHarvestCountSalt) % 3u);
+
+            // [한계] 수거 여부는 세이브 미저장 - SunkenCargo와 동일한 한계(헤더 주석).
+            var salvage = part.AddComponent<AirlinerSalvagePoint>();
+            salvage.displayName = "해초 군락";
+            salvage.loot = new[] { new AirlinerSalvagePoint.LootEntry("해조류", count) };
         }
 
         /// <summary>
@@ -829,7 +1000,7 @@ namespace MakeGame.Systems
         // ── 로더 ────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 모델 50종의 공유 메시를 채운다. ResourceVisualLibrary.TryLoadTwoPartModel(검증된
+        /// 모델 55종의 공유 메시를 채운다. ResourceVisualLibrary.TryLoadTwoPartModel(검증된
         /// Load&lt;GameObject&gt;+MeshFilter 로더)을 그대로 쓰고, 프레임당 1회만 프로브하며(같은 프레임의
         /// 섬 50개 생성 루프에서 Load가 50번 반복되지 않게), 실패를 영구 래치하지 않는다.
         /// 산호 OBJ의 `o` 2개는 이름 키워드(trunk/leaf류)에 안 걸리므로 그 로더의 "o 등장 순서" 폴백이
@@ -846,6 +1017,8 @@ namespace MakeGame.Systems
                 anyMissing = rockMeshes[i] == null;
             for (int i = 0; i < cargoMeshes.Length && !anyMissing; i++)
                 anyMissing = cargoMeshes[i] == null;
+            for (int i = 0; i < clamPrimary.Length && !anyMissing; i++)
+                anyMissing = clamPrimary[i] == null;
 
             if (!anyMissing || probeFrame == Time.frameCount)
                 return;
@@ -891,6 +1064,21 @@ namespace MakeGame.Systems
                         out Mesh cargo, out _))
                     cargoMeshes[i] = cargo;
             }
+
+            // 진주조개(clam_a~c). `o` 2개(shell/pearl)는 산호와 같은 처지다: 이름 키워드
+            // (trunk/leaf류)에 안 걸리므로 로더의 "o 등장 순서" 폴백이 shell → pearl 순서를
+            // 보장하고, 병합 임포트면 첫 메시(서브메시 2)만 오고 pearl은 null이다(PlaceClam 분기).
+            for (int i = 0; i < ClamModelNames.Length; i++)
+            {
+                if (clamPrimary[i] != null)
+                    continue;
+                if (ResourceVisualLibrary.TryLoadTwoPartModel("Models/" + ClamModelNames[i],
+                        out Mesh shell, out Mesh pearl))
+                {
+                    clamPrimary[i] = shell;
+                    clamSecondary[i] = pearl;
+                }
+            }
         }
 
         // ── 유틸 ────────────────────────────────────────────────────────────────────
@@ -905,6 +1093,34 @@ namespace MakeGame.Systems
             if (tokens.Length >= 2 && int.TryParse(tokens[1], out int id))
                 return id;
             return 0;
+        }
+
+        /// <summary>
+        /// 배치 위치 → 결정적 해시. IslandMeshGenerator.MeshLibrary.DecorationPositionHash의 사본이다
+        /// (그쪽은 private라 참조할 수 없다 - RockModelSizes와 같은 사본 정책. 알고리즘 근거는 그쪽
+        /// [B50] 주석: 0.1m 양자화 + 소수 곱 + xorshift-곱 마무리로 이웃 위치 상관 제거).
+        /// rng 소비 0 - 순수 함수라 기존 어떤 추첨 순서에도 영향이 없다.
+        /// </summary>
+        private static uint PositionHash(Vector3 worldPosition, uint salt)
+        {
+            unchecked
+            {
+                int qx = Mathf.RoundToInt(worldPosition.x * 10f);
+                int qz = Mathf.RoundToInt(worldPosition.z * 10f);
+                uint h = (uint)(qx * 73856093) ^ (uint)(qz * 19349663) ^ salt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return h;
+            }
+        }
+
+        /// <summary>위 해시를 [0,1) 실수로(채집 해초 당첨 판정용 - DecorationPositionHash01의 사본).</summary>
+        private static float PositionHash01(Vector3 worldPosition, uint salt)
+        {
+            return (PositionHash(worldPosition, salt) & 0xFFFFFFu) / (float)0x1000000;
         }
 
         /// <summary>섬 크기별 배치 스케일. 반지름 경계(50/90/140/200)의 중간값으로 가른다.</summary>

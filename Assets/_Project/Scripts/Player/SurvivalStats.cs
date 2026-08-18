@@ -164,6 +164,20 @@ namespace MakeGame.Player
         public float oxygenRecoveryPerSecond = 25f;
         [Tooltip("잠수(수면 아래) 중 초당 산소 감소량")]
         public float oxygenDrainPerSecond = 5f;
+
+        /// <summary>
+        /// 산소 감소 속도에 곱해지는 런타임 배율. 산소통(소지 패시브 장비)을 들고 있으면
+        /// PlayerController가 인벤토리 변경 이벤트 시점에 0.5로 낮춰 산소 지속시간을 2배로 만든다
+        /// (최대치는 MaxStatValue가 허기/갈증/일사병과 공유하는 공통 상한이라 최대치 2배 쪽은
+        /// 택하지 않았다 - HUD 비율 계산까지 전부 이 상수를 참조한다).
+        /// 직렬화하지 않는 이유: 이 값은 밸런스 설정이 아니라 "지금 산소통을 들고 있는가"라는
+        /// 파생 상태다. 세이브는 인벤토리(이름 키)만 저장하면 복원 시 InventoryChanged 경로로
+        /// 자연히 다시 계산되므로, 씬/세이브 포맷 모두 건드리지 않는다. 배율 값 자체(0.5)는
+        /// PlayerController.oxygenTankDrainMultiplier가 단일 소스다.
+        /// 0 이하는 이 파일의 다른 필드와 같은 관례로 '미설정'으로 보고 1로 취급한다.
+        /// </summary>
+        [System.NonSerialized]
+        public float oxygenDrainMultiplier = 1f;
         [Tooltip("산소가 고갈된 채로 잠수 중일 때 초당 입는 익사 피해량")]
         public float drowningDamagePerSecond = 3f;
 
@@ -327,8 +341,11 @@ namespace MakeGame.Player
         /// </summary>
         private void UpdateOxygen(float deltaTime, bool isUnderwater)
         {
+            // 산소통 소지 패시브(oxygenDrainMultiplier=0.5) 반영. 0 이하는 미설정으로 보고 1로 취급한다.
+            float drainMultiplier = oxygenDrainMultiplier > 0f ? oxygenDrainMultiplier : 1f;
+
             if (isUnderwater)
-                oxygen = Mathf.Max(0f, oxygen - oxygenDrainPerSecond * deltaTime);
+                oxygen = Mathf.Max(0f, oxygen - oxygenDrainPerSecond * drainMultiplier * deltaTime);
             else
                 oxygen = Mathf.Min(MaxStatValue, oxygen + oxygenRecoveryPerSecond * deltaTime);
 

@@ -60,6 +60,34 @@ namespace MakeGame.Player
         [Tooltip("이동 속도 판정에 사용할 생존 수치 컴포넌트 (골절 시 감속 등)")]
         public SurvivalStats survivalStats;
 
+        // ── 소지 패시브 장비 (오리발/산소통) ─────────────────────────────────────────────
+        //
+        // 이 프로젝트에는 "장착" 슬롯이 없다. 부력통이 재료로만 쓰이듯 장비류도 인벤토리 항목일
+        // 뿐이므로, "인벤토리에 들어 있기만 하면 효과가 켜지는" 소지 패시브로 구현한다.
+        // 프레임마다 인벤토리를 뒤지지 않도록 PlayerInventory.InventoryChanged(추가/제거/복원
+        // 모두에서 발행됨 - 세이브 복원의 AddItemIgnoringCapacity도 발행한다)에서만 다시 검사해
+        // bool로 캐시한다. 판정 키는 세이브와 같은 itemName 문자열이다(ItemData 에셋 참조를
+        // 쓰려면 씬 직렬화가 필요한데, 이 기능은 씬을 건드리지 않고 붙는다).
+
+        /// <summary>소지 패시브 판정에 쓰는 오리발 아이템 이름(Item_오리발.asset의 itemName).</summary>
+        public const string SwimFinsItemName = "오리발";
+
+        /// <summary>소지 패시브 판정에 쓰는 산소통 아이템 이름(Item_산소통.asset의 itemName).</summary>
+        public const string OxygenTankItemName = "산소통";
+
+        [Header("소지 패시브 장비")]
+        [Tooltip("오리발을 소지 중일 때 수영/잠수 이동 속도에 곱하는 배율 (1.4 = +40%).\n" +
+            "수평(swimSpeed)과 수직 입력(swimVerticalSpeed)에만 적용되고, 입력 없이 떠오르는 부력(buoyancy)은 그대로다.")]
+        public float finSwimSpeedMultiplier = 1.4f;
+
+        [Tooltip("산소통을 소지 중일 때 SurvivalStats의 산소 감소 속도에 곱하는 배율 (0.5 = 지속시간 2배).")]
+        public float oxygenTankDrainMultiplier = 0.5f;
+
+        // 소지 패시브 캐시. RefreshPassiveEquipment(인벤토리 변경 이벤트)에서만 갱신된다.
+        private PlayerInventory inventory;
+        private bool hasSwimFins;
+        private bool hasOxygenTank;
+
         private CharacterController controller;
         private Vector3 verticalVelocity;
         private float cameraPitch = 0f;
@@ -75,6 +103,69 @@ namespace MakeGame.Player
             lookCursorWasLocked = Cursor.lockState == CursorLockMode.Locked;
             lookSettleCounter = Mathf.Max(0, lookSettleFrames);
             EnsureCameraShake();
+            HookPassiveEquipment();
+        }
+
+        /// <summary>
+        /// 이벤트 구독 해제. 인벤토리와 같은 GameObject라 수명이 같지만,
+        /// 파괴 순서에 따라 죽은 구독이 남지 않도록 명시적으로 푼다.
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (inventory != null)
+                inventory.InventoryChanged -= RefreshPassiveEquipment;
+        }
+
+        /// <summary>
+        /// 소지 패시브 장비(오리발/산소통) 감시를 시작한다. PlayerInventory는 같은 Player
+        /// GameObject에 붙어 있으므로(SampleScene 실측) GetComponent로 찾고, 혹시 분리된
+        /// 씬 구성을 위해 전역 검색으로 한 번 더 폴백한다.
+        /// Awake에서 호출한다 - 이 컴포넌트는 타이틀 화면 동안 꺼져 있지만(enabled=false)
+        /// C# 이벤트는 enabled와 무관하게 도착하므로, 시작 지급(GrantStartingLoadout)이나
+        /// 세이브 복원으로 생기는 변경도 놓치지 않는다.
+        /// </summary>
+        private void HookPassiveEquipment()
+        {
+            inventory = GetComponent<PlayerInventory>();
+            if (inventory == null)
+                inventory = FindAnyObjectByType<PlayerInventory>();
+            if (inventory == null)
+                return;
+
+            inventory.InventoryChanged += RefreshPassiveEquipment;
+            RefreshPassiveEquipment();
+        }
+
+        /// <summary>
+        /// 인벤토리 변경 시에만 호출되어 오리발/산소통 소지 여부를 다시 검사해 캐시한다
+        /// (프레임당 인벤토리 순회 비용을 0으로 유지하기 위한 구조 - HandleSwimMove와
+        /// SurvivalStats.UpdateOxygen은 여기서 만든 캐시/배율만 읽는다).
+        /// </summary>
+        private void RefreshPassiveEquipment()
+        {
+            hasSwimFins = false;
+            hasOxygenTank = false;
+
+            var items = inventory.items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                if (item == null || item.data == null)
+                    continue;
+
+                if (item.data.itemName == SwimFinsItemName)
+                    hasSwimFins = true;
+                else if (item.data.itemName == OxygenTankItemName)
+                    hasOxygenTank = true;
+
+                if (hasSwimFins && hasOxygenTank)
+                    break;
+            }
+
+            // 산소통 효과는 산소 로직의 주인인 SurvivalStats로 밀어 넣는다. 0 이하(잘못된 설정)는
+            // SurvivalStats 쪽 관례대로 미설정으로 취급되므로 그대로 1(효과 없음)로 동작한다.
+            if (survivalStats != null)
+                survivalStats.oxygenDrainMultiplier = hasOxygenTank ? oxygenTankDrainMultiplier : 1f;
         }
 
         /// <summary>
@@ -209,7 +300,11 @@ namespace MakeGame.Player
         /// </summary>
         private void HandleSwimMove(float h, float v)
         {
-            Vector3 horizontalMove = (transform.right * h + transform.forward * v).normalized * swimSpeed;
+            // 오리발(소지 패시브) 보정. 캐시 갱신은 인벤토리 변경 이벤트에서만 일어난다(RefreshPassiveEquipment).
+            // 부력(buoyancy)은 "입력 없이 떠오르는" 수동적인 움직임이라 이동 속도 보정 대상에서 제외한다.
+            float finMultiplier = hasSwimFins && finSwimSpeedMultiplier > 0f ? finSwimSpeedMultiplier : 1f;
+
+            Vector3 horizontalMove = (transform.right * h + transform.forward * v).normalized * (swimSpeed * finMultiplier);
 
             float verticalInput = 0f;
             if (Input.GetButton("Jump"))
@@ -218,7 +313,7 @@ namespace MakeGame.Player
                 verticalInput -= 1f;
 
             // 입력이 없으면 부력으로 서서히 떠오르고, 입력이 있으면 그 방향으로 움직인다.
-            float verticalSpeed = verticalInput != 0f ? verticalInput * swimVerticalSpeed : buoyancy;
+            float verticalSpeed = verticalInput != 0f ? verticalInput * swimVerticalSpeed * finMultiplier : buoyancy;
 
             Vector3 finalMove = horizontalMove + Vector3.up * verticalSpeed;
             controller.Move(finalMove * Time.deltaTime);
