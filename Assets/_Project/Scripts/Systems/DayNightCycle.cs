@@ -274,8 +274,9 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 씬의 모든 Light 중 타입이 Directional인 첫 번째 광원을 찾는다.
+        /// UnderwaterAmbience도 같은 판정이 필요해 여기 정본을 공용으로 쓴다(internal static).
         /// </summary>
-        private Light FindDirectionalLight()
+        internal static Light FindDirectionalLight()
         {
             var lights = FindObjectsByType<Light>(FindObjectsInactive.Exclude);
             foreach (var light in lights)

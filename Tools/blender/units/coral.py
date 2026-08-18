@@ -97,35 +97,10 @@ def export_two_part(name, body_obj, tip_obj, tri_budget, tri_floor, preview_body
     out = os.path.join(mg.MODELS_DIR, name + ".obj")
     mg.export_obj(objs, out)
     mg.verify_obj_file(out, stats)
-    inject_usemtl(out)
+    mg.inject_usemtl(out)
     png = os.path.join(mg.PREVIEW_DIR, name + ".png")
     mg.turntable(objs, png, title=name, stats=stats, px=330, samples=16)
     return stats
-
-
-def inject_usemtl(path):
-    """airliner.py와 동일: mtllib + usemtl + 최소 .mtl 동봉(서브메시 구분자)."""
-    with open(path, "r") as fh:
-        lines = fh.readlines()
-    base = os.path.basename(path)
-    mtl_name = base[:-4] + ".mtl"
-    names = []
-    out = []
-    header_done = False
-    for line in lines:
-        out.append(line)
-        if not header_done and not line.startswith("#"):
-            out.insert(len(out) - 1, "mtllib " + mtl_name + chr(10))
-            header_done = True
-        if line.startswith("o "):
-            n = line[2:].strip()
-            names.append(n)
-            out.append("usemtl " + n + chr(10))
-    with open(path, "w") as fh:
-        fh.writelines(out)
-    with open(os.path.join(os.path.dirname(path), mtl_name), "w") as fh:
-        for n in names:
-            fh.write("newmtl " + n + chr(10) + "Kd 0.8 0.8 0.8" + chr(10) + chr(10))
 
 
 # ── 계열 1: 가지 산호 (사슴뿔) ────────────────────────────────────────────────

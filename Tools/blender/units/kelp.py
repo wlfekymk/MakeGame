@@ -109,31 +109,6 @@ def build_kelp(name, seed, kind, height, strands):
     return obj
 
 
-def inject_usemtl(path):
-    """coral.py와 동일(mtllib+usemtl+.mtl - 서브메시 구분자. 단일 그룹도 규칙 통일)."""
-    with open(path, "r") as fh:
-        lines = fh.readlines()
-    base = os.path.basename(path)
-    mtl_name = base[:-4] + ".mtl"
-    names = []
-    out = []
-    header_done = False
-    for line in lines:
-        out.append(line)
-        if not header_done and not line.startswith("#"):
-            out.insert(len(out) - 1, "mtllib " + mtl_name + chr(10))
-            header_done = True
-        if line.startswith("o "):
-            n = line[2:].strip()
-            names.append(n)
-            out.append("usemtl " + n + chr(10))
-    with open(path, "w") as fh:
-        fh.writelines(out)
-    with open(os.path.join(os.path.dirname(path), mtl_name), "w") as fh:
-        for n in names:
-            fh.write("newmtl " + n + chr(10) + "Kd 0.8 0.8 0.8" + chr(10) + chr(10))
-
-
 # (이름, 시드, 형태, 높이, 가닥 수)
 SPECS = [
     ("kelp_a", 71001, "ribbon", 2.6, 4),
@@ -161,7 +136,7 @@ def main():
         out = os.path.join(mg.MODELS_DIR, name + ".obj")
         mg.export_obj(obj, out)
         mg.verify_obj_file(out, stats)
-        inject_usemtl(out)
+        mg.inject_usemtl(out)
         mg.turntable(obj, os.path.join(mg.PREVIEW_DIR, name + ".png"),
                      title=name, stats=stats, px=330, samples=16)
         manifest.append((name, stats["tris"], tuple(round(v, 2) for v in stats["size"])))

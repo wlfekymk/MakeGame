@@ -135,12 +135,7 @@ namespace MakeGame.Systems
         /// </summary>
         private static bool TryLoadMeshes()
         {
-            bool anyMissing = false;
-            for (int i = 0; i < partMeshes.Length; i++)
-            {
-                if (partMeshes[i] == null)
-                    anyMissing = true;
-            }
+            bool anyMissing = ResourceVisualLibrary.AnyPartMissing(partMeshes);
 
             if (anyMissing && probeFrame != Time.frameCount)
             {
@@ -150,57 +145,15 @@ namespace MakeGame.Systems
                 // 로드는 반드시 Load<GameObject> + GetComponentsInChildren<MeshFilter> 경로다.
                 // 실사고(0.2.14 검증에서 발견): Resources.LoadAll<Mesh>(파일 경로)는 이 프로젝트의
                 // 모델 에셋에서 **빈 배열**을 돌려줘 잔해가 영영 안 만들어졌다. 검증된 로더
-                // (ResourceVisualLibrary.TryLoadTwoPartModel)와 같은 방식만 쓴다.
-                // 확장자를 붙이면 항상 null이다(AssetPipeline 3장).
-                var prefab = Resources.Load<GameObject>("Models/airliner_wreck_a");
-                if (prefab != null)
-                {
-                    var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
-
-                    // 병합 임포트(현재 Unity 6.5의 실제 동작): MeshFilter 1개 = 서브메시 5개.
-                    if (filters.Length == 1 && filters[0] != null && filters[0].sharedMesh != null)
-                    {
-                        mergedMesh = filters[0].sharedMesh;
-                    }
-
-                    // 개별 메시 임포트(임포터 동작이 되돌아올 경우의 방어): 이름으로 가른다.
-                    for (int i = 0; i < partMeshes.Length; i++)
-                    {
-                        if (partMeshes[i] != null)
-                            continue;
-
-                        for (int m = 0; m < filters.Length; m++)
-                        {
-                            Mesh mesh = filters[m] != null ? filters[m].sharedMesh : null;
-                            string meshName = mesh != null ? mesh.name.ToLowerInvariant() : null;
-                            string nodeName = filters[m] != null
-                                ? filters[m].gameObject.name.ToLowerInvariant() : null;
-                            // 메시 이름이 우선이고, 임포터가 메시 이름을 바꿔도 노드 이름으로 잡는다.
-                            if (mesh != null &&
-                                ((meshName != null && meshName.Contains(PartMeshNames[i])) ||
-                                 (nodeName != null && nodeName.Contains(PartMeshNames[i]))))
-                            {
-                                partMeshes[i] = mesh;
-                                break;
-                            }
-                        }
-                    }
-                }
+                // (ResourceVisualLibrary.TryLoadMultiPartModel)만 쓴다.
+                ResourceVisualLibrary.TryLoadMultiPartModel("Models/airliner_wreck_a",
+                    PartMeshNames, partMeshes, ref mergedMesh);
             }
 
             // 5장 전부 있어야 빌드한다 - 같은 OBJ의 서브에셋이라 일부만 로드되는 상황은 임포트가
             // 아직 끝나지 않았다는 뜻이고, 반쪽짜리 잔해를 만들었다가 다시 지우는 것보다 한 프레임
-            // 더 기다리는 쪽이 싸다.
-            bool complete = mergedMesh != null;
-            if (!complete)
-            {
-                complete = true;
-                for (int i = 0; i < partMeshes.Length; i++)
-                {
-                    if (partMeshes[i] == null)
-                        complete = false;
-                }
-            }
+            // 더 기다리는 쪽이 싸다(판정은 ResourceVisualLibrary와 공용).
+            bool complete = ResourceVisualLibrary.IsMultiPartModelComplete(mergedMesh, partMeshes);
 
             // 진단(실사고 추적): 프로브 300회(에디터 기준 약 5초)가 지나도 5장이 안 모이면 원인을
             // 한 번만 자세히 남긴다. 사용자 보고 "여객기가 없어"의 원인 후보는 (a) 프리팹 로드 실패
@@ -255,29 +208,11 @@ namespace MakeGame.Systems
                 ResourceVisualLibrary.GetMaterial(soot, "noise"),
             };
 
-            if (mergedMesh != null)
-            {
-                // 병합 임포트 경로: 렌더러 하나 + 머티리얼 배열. 서브메시 순서는 OBJ의 `o` 순서
-                // (hull, dark, stripe, window, soot)를 따른다 - airliner.py의 objs 순서가 그 근거다.
-                var part = StructureVisualBuilder.CreateMeshPart(root, "airliner_body", mergedMesh,
-                    Vector3.zero, Vector3.one, Quaternion.identity, materials[0]);
-                var renderer = part != null ? part.GetComponent<MeshRenderer>() : null;
-                if (renderer != null && mergedMesh.subMeshCount >= 2)
-                {
-                    int count = mergedMesh.subMeshCount;
-                    var slots = new Material[count];
-                    for (int s = 0; s < count; s++)
-                        slots[s] = materials[Mathf.Min(s, materials.Length - 1)];
-                    renderer.sharedMaterials = slots;
-                }
-                return;
-            }
-
-            for (int i = 0; i < partMeshes.Length; i++)
-            {
-                StructureVisualBuilder.CreateMeshPart(root, PartMeshNames[i], partMeshes[i],
-                    Vector3.zero, Vector3.one, Quaternion.identity, materials[i]);
-            }
+            // 병합 임포트 경로면 렌더러 하나 + 머티리얼 배열, 아니면 파트별 렌더러 하나씩.
+            // 서브메시 순서는 OBJ의 `o` 순서(hull, dark, stripe, window, soot)를 따른다 -
+            // airliner.py의 objs 순서가 그 근거다.
+            ResourceVisualLibrary.BuildMultiPartVisual(root, "airliner_body", mergedMesh,
+                PartMeshNames, partMeshes, materials);
         }
 
         /// <summary>

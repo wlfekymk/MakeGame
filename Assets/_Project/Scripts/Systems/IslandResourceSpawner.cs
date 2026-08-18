@@ -714,14 +714,8 @@ namespace MakeGame.Systems
         /// </summary>
         private float GetMultiplier(IslandSize size)
         {
-            switch (size)
-            {
-                case IslandSize.Small: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
-                case IslandSize.Medium: return mediumMultiplier > 0f ? mediumMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
-                case IslandSize.Large: return largeMultiplier > 0f ? largeMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
-                case IslandSize.ExtraLarge: return extraLargeMultiplier > 0f ? extraLargeMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
-                default: return smallMultiplier > 0f ? smallMultiplier : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
-            }
+            float configured = IslandSizeMetrics.SelectBySize(size, smallMultiplier, mediumMultiplier, largeMultiplier, extraLargeMultiplier);
+            return configured > 0f ? configured : IslandSizeMetrics.GetAreaProportionalMultiplier(size);
         }
 
         /// <summary>
@@ -731,14 +725,8 @@ namespace MakeGame.Systems
         /// </summary>
         private float GetScatterRadius(IslandSize size)
         {
-            switch (size)
-            {
-                case IslandSize.Small: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
-                case IslandSize.Medium: return mediumScatterRadius > 0f ? mediumScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
-                case IslandSize.Large: return largeScatterRadius > 0f ? largeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
-                case IslandSize.ExtraLarge: return extraLargeScatterRadius > 0f ? extraLargeScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
-                default: return smallScatterRadius > 0f ? smallScatterRadius : IslandSizeMetrics.GetScatterRadius(size);
-            }
+            float configured = IslandSizeMetrics.SelectBySize(size, smallScatterRadius, mediumScatterRadius, largeScatterRadius, extraLargeScatterRadius);
+            return configured > 0f ? configured : IslandSizeMetrics.GetScatterRadius(size);
         }
     }
 

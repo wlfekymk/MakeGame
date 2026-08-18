@@ -296,6 +296,16 @@ namespace MakeGame.Player
         /// </summary>
         private int CountUsedSlots()
         {
+            return CountUsedSlots(items, kindBuffer, kindCountBuffer);
+        }
+
+        /// <summary>
+        /// [B5] 위 계산의 공용 구현. StorageChest.CountUsedSlots가 같은 식을 복붙하고 있었어서
+        /// (표현이 둘 다 '1개 = 1항목' 평면 리스트라 식이 완전히 같다) 여기로 합쳤다.
+        /// 버퍼 두 개는 호출마다 List를 새로 만들지 않기 위한 재사용 스크래치로, Clear 후 채워 쓴다.
+        /// </summary>
+        internal static int CountUsedSlots(List<InventoryItem> items, List<ItemData> kindBuffer, List<int> kindCountBuffer)
+        {
             int slots = 0;
             kindBuffer.Clear();
             kindCountBuffer.Clear();
@@ -330,8 +340,11 @@ namespace MakeGame.Player
             return slots;
         }
 
-        /// <summary>개수 count를 한 칸 max개짜리 스택으로 담을 때 필요한 칸 수(정수 올림).</summary>
-        private static int SlotsFor(int count, int max)
+        /// <summary>
+        /// 개수 count를 한 칸 max개짜리 스택으로 담을 때 필요한 칸 수(정수 올림).
+        /// [B5] StorageChest/BuildingSystem이 같은 식을 복붙하고 있었어서 여기 것을 공용으로 승격했다.
+        /// </summary>
+        internal static int SlotsFor(int count, int max)
         {
             if (count <= 0)
                 return 0;

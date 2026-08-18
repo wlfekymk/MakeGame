@@ -262,7 +262,7 @@ namespace MakeGame.Systems
             else
             {
                 int have = GetItemCount(itemData);
-                need = SlotsFor(have + count, max) - SlotsFor(have, max);
+                need = PlayerInventory.SlotsFor(have + count, max) - PlayerInventory.SlotsFor(have, max);
             }
 
             return UsedSlots + need <= SlotCapacity;
@@ -502,49 +502,8 @@ namespace MakeGame.Systems
         /// </summary>
         private int CountUsedSlots()
         {
-            int slots = 0;
-            kindBuffer.Clear();
-            kindCountBuffer.Clear();
-
-            List<InventoryItem> items = State.items;
-            for (int i = 0; i < items.Count; i++)
-            {
-                InventoryItem item = items[i];
-                if (item == null || item.data == null)
-                    continue;
-
-                if (item.data.MaxStackSize <= 1)
-                {
-                    slots++;
-                    continue;
-                }
-
-                int index = kindBuffer.IndexOf(item.data);
-                if (index < 0)
-                {
-                    kindBuffer.Add(item.data);
-                    kindCountBuffer.Add(1);
-                }
-                else
-                {
-                    kindCountBuffer[index]++;
-                }
-            }
-
-            for (int i = 0; i < kindBuffer.Count; i++)
-                slots += SlotsFor(kindCountBuffer[i], kindBuffer[i].MaxStackSize);
-
-            return slots;
-        }
-
-        /// <summary>개수 count를 한 칸 max개짜리 스택으로 담을 때 필요한 칸 수(PlayerInventory와 같은 식).</summary>
-        private static int SlotsFor(int count, int max)
-        {
-            if (count <= 0)
-                return 0;
-            if (max <= 1)
-                return count;
-            return (count + max - 1) / max;
+            // [B5] 식이 완전히 같아 PlayerInventory의 공용 구현에 위임한다(버퍼는 이 상자 것을 그대로 재사용).
+            return PlayerInventory.CountUsedSlots(State.items, kindBuffer, kindCountBuffer);
         }
     }
 }

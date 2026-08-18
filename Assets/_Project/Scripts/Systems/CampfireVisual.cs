@@ -106,66 +106,19 @@ namespace MakeGame.Systems
         /// </summary>
         private static bool TryLoadMeshes()
         {
-            bool anyMissing = false;
-            for (int i = 0; i < partMeshes.Length; i++)
-            {
-                if (partMeshes[i] == null)
-                    anyMissing = true;
-            }
+            bool anyMissing = ResourceVisualLibrary.AnyPartMissing(partMeshes);
 
             if (anyMissing && probeFrame != Time.frameCount)
             {
                 probeFrame = Time.frameCount;
 
-                var prefab = Resources.Load<GameObject>("Models/campfire_a");
-                if (prefab != null)
-                {
-                    var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
-
-                    // 병합 임포트(현재 Unity 6.5의 실제 동작): MeshFilter 1개 = 서브메시 3개.
-                    if (filters.Length == 1 && filters[0] != null && filters[0].sharedMesh != null)
-                    {
-                        mergedMesh = filters[0].sharedMesh;
-                    }
-
-                    // 개별 메시 임포트(임포터 동작이 되돌아올 경우의 방어): 이름으로 가른다.
-                    for (int i = 0; i < partMeshes.Length; i++)
-                    {
-                        if (partMeshes[i] != null)
-                            continue;
-
-                        for (int m = 0; m < filters.Length; m++)
-                        {
-                            Mesh mesh = filters[m] != null ? filters[m].sharedMesh : null;
-                            string meshName = mesh != null ? mesh.name.ToLowerInvariant() : null;
-                            string nodeName = filters[m] != null
-                                ? filters[m].gameObject.name.ToLowerInvariant() : null;
-                            // 메시 이름이 우선이고, 임포터가 메시 이름을 바꿔도 노드 이름으로 잡는다.
-                            if (mesh != null &&
-                                ((meshName != null && meshName.Contains(PartMeshNames[i])) ||
-                                 (nodeName != null && nodeName.Contains(PartMeshNames[i]))))
-                            {
-                                partMeshes[i] = mesh;
-                                break;
-                            }
-                        }
-                    }
-                }
+                ResourceVisualLibrary.TryLoadMultiPartModel("Models/campfire_a",
+                    PartMeshNames, partMeshes, ref mergedMesh);
             }
 
             // 병합 메시가 있거나 3장이 전부 모여야 빌드한다 - 반쪽짜리를 만들었다 지우는 것보다
-            // 한 프레임 더 기다리는 쪽이 싸다(AirlinerWreck과 같은 규칙).
-            bool complete = mergedMesh != null;
-            if (!complete)
-            {
-                complete = true;
-                for (int i = 0; i < partMeshes.Length; i++)
-                {
-                    if (partMeshes[i] == null)
-                        complete = false;
-                }
-            }
-            return complete;
+            // 한 프레임 더 기다리는 쪽이 싸다(AirlinerWreck과 같은 규칙, 판정은 공용 헬퍼).
+            return ResourceVisualLibrary.IsMultiPartModelComplete(mergedMesh, partMeshes);
         }
 
         private static void BuildVisualParts(Transform root)
@@ -183,29 +136,10 @@ namespace MakeGame.Systems
                 ResourceVisualLibrary.GetMaterial(charred, "noise"),
             };
 
-            if (mergedMesh != null)
-            {
-                // 병합 임포트 경로: 렌더러 하나 + 머티리얼 배열. 서브메시 순서는 OBJ의 `o` 순서
-                // (stone, wood, char)를 따른다.
-                var part = StructureVisualBuilder.CreateMeshPart(root, "campfire_body", mergedMesh,
-                    Vector3.zero, Vector3.one, Quaternion.identity, materials[0]);
-                var renderer = part != null ? part.GetComponent<MeshRenderer>() : null;
-                if (renderer != null && mergedMesh.subMeshCount >= 2)
-                {
-                    int count = mergedMesh.subMeshCount;
-                    var slots = new Material[count];
-                    for (int s = 0; s < count; s++)
-                        slots[s] = materials[Mathf.Min(s, materials.Length - 1)];
-                    renderer.sharedMaterials = slots;
-                }
-                return;
-            }
-
-            for (int i = 0; i < partMeshes.Length; i++)
-            {
-                StructureVisualBuilder.CreateMeshPart(root, PartMeshNames[i], partMeshes[i],
-                    Vector3.zero, Vector3.one, Quaternion.identity, materials[i]);
-            }
+            // 병합 임포트 경로면 렌더러 하나 + 머티리얼 배열, 아니면 파트별 렌더러 하나씩.
+            // 서브메시 순서는 OBJ의 `o` 순서(stone, wood, char)를 따른다.
+            ResourceVisualLibrary.BuildMultiPartVisual(root, "campfire_body", mergedMesh,
+                PartMeshNames, partMeshes, materials);
         }
     }
 }

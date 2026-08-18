@@ -1809,21 +1809,12 @@ namespace MakeGame.Systems
             }
 
             /// <summary>
-            /// 삼각형 하나를 감김 방향까지 맞춰 넣는다. 기하 법선이 기준과 반대면 두 인덱스를 바꿔 넣는다.
+            /// 삼각형 하나를 감김 방향까지 맞춰 넣는다. 본문은 WorldMeshBuilder.AddOrientedTriangle
+            /// (정본)에 있다 - 기하 법선이 기준과 반대면 두 인덱스를 바꿔 넣는다.
             /// </summary>
             private void AddTriangle(int i0, int i1, int i2, Vector3 reference)
             {
-                Vector3 geometric = Vector3.Cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
-                if (Vector3.Dot(geometric, reference) < 0f)
-                {
-                    int swap = i1;
-                    i1 = i2;
-                    i2 = swap;
-                }
-
-                triangles.Add(i0);
-                triangles.Add(i1);
-                triangles.Add(i2);
+                WorldMeshBuilder.AddOrientedTriangle(vertices, triangles, i0, i1, i2, reference);
             }
         }
     }

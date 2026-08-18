@@ -521,6 +521,18 @@ namespace MakeGame.Systems
         /// <summary>삼각형 하나를 감김 방향까지 맞춰 넣는다. 기하 법선이 기준과 반대면 두 인덱스를 바꾼다.</summary>
         private void AddTriangle(int i0, int i1, int i2, Vector3 reference)
         {
+            AddOrientedTriangle(vertices, triangles, i0, i1, i2, reference);
+        }
+
+        /// <summary>
+        /// 감김 방향 보정 삼각형 추가의 **정본**(ResourceVisualLibrary/CreatureVisualBuilder의
+        /// 메시 빌더도 이것을 호출한다). 기하 법선이 기준(reference)과 반대면 두 인덱스를 바꿔
+        /// 넣는다 - 이 프로젝트는 왼손 좌표계라 표준 인덱스 표를 옮기면 통째로 안쪽을 향해
+        /// 컬링되는 사고가 반복됐다(클래스 주석 규칙 1).
+        /// </summary>
+        internal static void AddOrientedTriangle(List<Vector3> vertices, List<int> triangles,
+            int i0, int i1, int i2, Vector3 reference)
+        {
             Vector3 geometric = Vector3.Cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
             if (Vector3.Dot(geometric, reference) < 0f)
             {

@@ -136,6 +136,129 @@ namespace MakeGame.Systems
             return trunk != null;
         }
 
+        // ── [B1] 다중 파트 OBJ 모델 로더 (AirlinerWreck · CampfireVisual 공용) ─────────
+        /// <summary>
+        /// `o` 오브젝트가 여러 개인 OBJ를 한 번 프로브한다(프레임당 1회 가드는 호출부가 갖는다 -
+        /// TryLoadTwoPartModel과 같은 규칙). 로드는 반드시 Load&lt;GameObject&gt; +
+        /// GetComponentsInChildren&lt;MeshFilter&gt; 경로다(LoadAll&lt;Mesh&gt;는 이 프로젝트의
+        /// 모델 에셋에서 빈 배열을 준 실사고가 있다).
+        ///
+        /// 두 임포트 형태를 모두 지원한다:
+        ///  · 병합 임포트(현재 Unity 6.5의 실제 동작): MeshFilter 1개 = 서브메시 N개 → mergedMesh.
+        ///    **서브메시 인덱스 = OBJ `o` 그룹 등장 순서**가 절대 계약이다(이름 정렬/재배열 금지).
+        ///  · 개별 메시 임포트(임포터 동작이 되돌아올 경우의 방어): partNames[i]가 이름에 포함되는
+        ///    메시를 partMeshes[i]에 채운다. 메시 이름이 우선이고, 임포터가 메시 이름을 바꿔도
+        ///    노드 이름으로 잡는다.
+        /// 실패(프리팹 null)나 미발견 슬롯은 건드리지 않으므로 실패가 영구 캐시되지 않는다.
+        /// </summary>
+        /// <returns>이 시도 후 빌드 가능한 상태인가(IsMultiPartModelComplete와 같은 판정).</returns>
+        public static bool TryLoadMultiPartModel(string resourcePath, string[] partNames,
+            Mesh[] partMeshes, ref Mesh mergedMesh)
+        {
+            // 확장자를 붙이면 항상 null이다(AssetPipeline 3장).
+            var prefab = Resources.Load<GameObject>(resourcePath);
+            if (prefab != null)
+            {
+                var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
+
+                // 병합 임포트: MeshFilter 1개 = 서브메시 N개.
+                if (filters.Length == 1 && filters[0] != null && filters[0].sharedMesh != null)
+                {
+                    mergedMesh = filters[0].sharedMesh;
+                }
+
+                // 개별 메시 임포트: 이름으로 가른다.
+                for (int i = 0; i < partMeshes.Length; i++)
+                {
+                    if (partMeshes[i] != null)
+                        continue;
+
+                    for (int m = 0; m < filters.Length; m++)
+                    {
+                        Mesh mesh = filters[m] != null ? filters[m].sharedMesh : null;
+                        string meshName = mesh != null ? mesh.name.ToLowerInvariant() : null;
+                        string nodeName = filters[m] != null
+                            ? filters[m].gameObject.name.ToLowerInvariant() : null;
+                        // 메시 이름이 우선이고, 임포터가 메시 이름을 바꿔도 노드 이름으로 잡는다.
+                        if (mesh != null &&
+                            ((meshName != null && meshName.Contains(partNames[i])) ||
+                             (nodeName != null && nodeName.Contains(partNames[i]))))
+                        {
+                            partMeshes[i] = mesh;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return IsMultiPartModelComplete(mergedMesh, partMeshes);
+        }
+
+        /// <summary>partMeshes에 아직 못 채운 슬롯이 있는가(호출부의 프로브 필요 판정용).</summary>
+        public static bool AnyPartMissing(Mesh[] partMeshes)
+        {
+            for (int i = 0; i < partMeshes.Length; i++)
+            {
+                if (partMeshes[i] == null)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 빌드 가능 판정: 병합 메시가 있거나 파트가 전부 모여야 한다 - 같은 OBJ의 서브에셋이라
+        /// 일부만 로드되는 상황은 임포트가 아직 끝나지 않았다는 뜻이고, 반쪽짜리를 만들었다 지우는
+        /// 것보다 한 프레임 더 기다리는 쪽이 싸다.
+        /// </summary>
+        public static bool IsMultiPartModelComplete(Mesh mergedMesh, Mesh[] partMeshes)
+        {
+            return mergedMesh != null || !AnyPartMissing(partMeshes);
+        }
+
+        /// <summary>
+        /// 병합 메시의 서브메시들에 머티리얼을 슬롯별로 입힌다. **서브메시 인덱스 = OBJ `o` 그룹
+        /// 순서 = materials 배열 순서**가 절대 계약이다(이름 정렬/재배열 금지). 서브메시가
+        /// 머티리얼보다 많으면 마지막 머티리얼을 반복한다. 서브메시가 1개면 아무것도 하지 않는다
+        /// (CreateMeshPart가 이미 materials[0]을 입혀 둔 상태를 유지한다).
+        /// </summary>
+        public static void ApplySubmeshMaterials(MeshRenderer renderer, Mesh mesh, Material[] materials)
+        {
+            if (renderer == null || mesh == null || mesh.subMeshCount < 2)
+                return;
+
+            int count = mesh.subMeshCount;
+            var slots = new Material[count];
+            for (int s = 0; s < count; s++)
+                slots[s] = materials[Mathf.Min(s, materials.Length - 1)];
+            renderer.sharedMaterials = slots;
+        }
+
+        /// <summary>
+        /// 다중 파트 모델의 시각 파츠를 붙인다. 병합 메시가 있으면 렌더러 하나 + 머티리얼 배열
+        /// (ApplySubmeshMaterials), 없으면 파트별 렌더러 하나씩(partNames[i] + materials[i])이다.
+        /// 정점이 전부 로컬 미터 좌표로 구워져 있는 모델 전용이라 파츠는 예외 없이
+        /// 위치 0 · 회전 identity · 스케일 1로 붙는다(호출부에서 회전/스케일을 다시 주지 않는다).
+        /// </summary>
+        public static void BuildMultiPartVisual(Transform root, string mergedPartName, Mesh mergedMesh,
+            string[] partNames, Mesh[] partMeshes, Material[] materials)
+        {
+            if (mergedMesh != null)
+            {
+                // 병합 임포트 경로: 렌더러 하나 + 머티리얼 배열. 서브메시 순서는 OBJ의 `o` 순서를 따른다.
+                var part = StructureVisualBuilder.CreateMeshPart(root, mergedPartName, mergedMesh,
+                    Vector3.zero, Vector3.one, Quaternion.identity, materials[0]);
+                var renderer = part != null ? part.GetComponent<MeshRenderer>() : null;
+                ApplySubmeshMaterials(renderer, mergedMesh, materials);
+                return;
+            }
+
+            for (int i = 0; i < partMeshes.Length; i++)
+            {
+                StructureVisualBuilder.CreateMeshPart(root, partNames[i], partMeshes[i],
+                    Vector3.zero, Vector3.one, Quaternion.identity, materials[i]);
+            }
+        }
+
         /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음).</summary>
         private static readonly string[] BambooModelResourcePaths =
         {
@@ -752,21 +875,11 @@ namespace MakeGame.Systems
 
             /// <summary>
             /// 삼각형 하나를 감김 방향까지 맞춰 넣는다(IslandMeshGenerator.AddOrientedTriangle과 같은 방식).
-            /// 기하 법선이 기준과 반대면 두 인덱스를 바꿔 넣는다.
+            /// 본문은 WorldMeshBuilder.AddOrientedTriangle(정본)에 있다.
             /// </summary>
             private void AddTriangle(int i0, int i1, int i2, Vector3 reference)
             {
-                Vector3 geometric = Vector3.Cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
-                if (Vector3.Dot(geometric, reference) < 0f)
-                {
-                    int swap = i1;
-                    i1 = i2;
-                    i2 = swap;
-                }
-
-                triangles.Add(i0);
-                triangles.Add(i1);
-                triangles.Add(i2);
+                WorldMeshBuilder.AddOrientedTriangle(vertices, triangles, i0, i1, i2, reference);
             }
         }
     }

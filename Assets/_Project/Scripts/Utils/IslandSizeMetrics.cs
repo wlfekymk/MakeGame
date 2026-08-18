@@ -17,6 +17,26 @@ namespace MakeGame.Data
     public static class IslandSizeMetrics
     {
         /// <summary>
+        /// [B4] 섬 규모에 대응하는 값을 네 후보 중에서 고르는 공용 선택기.
+        /// 각 스포너(HazardSpawner/CreatureSpawner/IslandResourceSpawner)의 GetMultiplier/GetScatterRadius가
+        /// 필드 이름만 다르게 복붙하던 4-case switch의 단일 구현이다. 알 수 없는 enum 값(default)은
+        /// 세 호출부 모두와 동일하게 Small 후보로 폴백한다 - 순수 선택 함수라 rng를 소비하지 않으며,
+        /// 호출부가 "필드>0이면 필드, 아니면 IslandSizeMetrics 폴백" 판정을 그대로 이어서 하므로
+        /// 수치·평가 순서가 종전과 1비트도 다르지 않다.
+        /// </summary>
+        public static float SelectBySize(IslandSize size, float small, float medium, float large, float extraLarge)
+        {
+            switch (size)
+            {
+                case IslandSize.Small: return small;
+                case IslandSize.Medium: return medium;
+                case IslandSize.Large: return large;
+                case IslandSize.ExtraLarge: return extraLarge;
+                default: return small;
+            }
+        }
+
+        /// <summary>
         /// 섬 규모에 대응하는 절차적 지형(섬 메시)의 반지름(미터)을 반환한다.
         /// WorldMapManager.GetSizeScale이 위임하는 유일한 소스다(public 필드가 아니므로 씬 값과 무관,
         /// 폴백이 아니라 정답). 값: Small=50, Medium=90, Large=140, ExtraLarge=200.

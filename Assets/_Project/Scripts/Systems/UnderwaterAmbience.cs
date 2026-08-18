@@ -124,7 +124,7 @@ namespace MakeGame.Systems
             targetCamera = Camera.main;
             worldMap = FindAnyObjectByType<WorldMapManager>();
             dayNight = FindAnyObjectByType<DayNightCycle>();
-            sunLight = FindDirectionalLight();
+            sunLight = DayNightCycle.FindDirectionalLight();
         }
 
         /// <summary>
@@ -146,17 +146,7 @@ namespace MakeGame.Systems
             }
         }
 
-        /// <summary>씬의 Light 중 Directional 타입 첫 번째를 찾는다(DayNightCycle과 동일한 방식).</summary>
-        private Light FindDirectionalLight()
-        {
-            var lights = FindObjectsByType<Light>(FindObjectsInactive.Exclude);
-            foreach (var light in lights)
-            {
-                if (light.type == LightType.Directional)
-                    return light;
-            }
-            return null;
-        }
+        // 씬의 Directional Light 탐색은 DayNightCycle.FindDirectionalLight(정본)를 그대로 쓴다.
 
         /// <summary>
         /// 매 프레임 수중 판정 후, 수중일 때만 안개/환경광을 덮어쓴다. LateUpdate인 이유는
@@ -201,7 +191,7 @@ namespace MakeGame.Systems
             if (dayNight == null && Time.frameCount % 60 == 0)
                 dayNight = FindAnyObjectByType<DayNightCycle>();
             if (sunLight == null && Time.frameCount % 60 == 0)
-                sunLight = FindDirectionalLight();
+                sunLight = DayNightCycle.FindDirectionalLight();
 
             // 현재 조명 강도(0~1). DayNightCycle.Update가 이번 프레임 sunLight.intensity에 기록한
             // 값을 그대로 읽어 dayIntensity로 정규화한다 - 밤/비까지 이미 반영된 최종값이라
