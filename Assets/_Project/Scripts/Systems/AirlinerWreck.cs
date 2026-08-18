@@ -55,6 +55,20 @@ namespace MakeGame.Systems
         private static bool probeWarned = false;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시/래치가 이전 실행의 값을 들고
+        /// 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            System.Array.Clear(partMeshes, 0, partMeshes.Length);
+            mergedMesh = null;
+            probeFrame = -1;
+            probeAttempts = 0;
+            probeWarned = false;
+        }
+
+        /// <summary>
         /// 콜라이더/연기 위치의 정렬 오프셋. 모델 빌드 단계에서 파츠 배치 좌표(로컬)를 최종 메시
         /// 좌표로 옮기며 생긴 값이라, 명세의 로컬 center에 이 값을 더해야 메시와 정확히 겹친다.
         /// v2 모델(실물급 37×9.6×39m) 재제작으로 값이 갱신됐다 - 메시를 다시 구우면 이 값과

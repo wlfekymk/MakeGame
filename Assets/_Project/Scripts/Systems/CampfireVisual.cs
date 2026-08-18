@@ -33,6 +33,18 @@ namespace MakeGame.Systems
         /// <summary>프레임당 1회 프로브 가드(AirlinerWreck.probeFrame과 같은 규칙). -1 = 아직 프로브 안 함.</summary>
         private static int probeFrame = -1;
 
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 메시를 들고
+        /// 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            System.Array.Clear(partMeshes, 0, partMeshes.Length);
+            mergedMesh = null;
+            probeFrame = -1;
+        }
+
         /// <summary>이 인스턴스가 시각 교체를 이미 끝냈는지(1회 빌드 가드). 시각 전용이라 세이브와 무관하다.</summary>
         private bool built = false;
 

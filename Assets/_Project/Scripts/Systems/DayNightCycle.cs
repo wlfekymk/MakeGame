@@ -221,6 +221,9 @@ namespace MakeGame.Systems
         {
             SceneManager.sceneLoaded += (scene, mode) =>
             {
+                if (FindAnyObjectByType<DayNightCycle>() != null)
+                    return;
+
                 var go = new GameObject("DayNightCycle");
                 go.AddComponent<DayNightCycle>();
             };

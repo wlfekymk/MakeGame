@@ -31,6 +31,16 @@ namespace MakeGame.Systems
             return mesh;
         }
 
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 메시를 들고
+        /// 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            meshCache.Clear();
+        }
+
         // ── 곰 [B33 - 감독 실측 스펙판] ────────────────────────────────────────────────
         // 좌표는 전부 **미터**이고 y는 피벗 기준이다(피벗은 지면 위 0.90m → **지면 = -0.90**).
         // +z가 앞(머리 방향) · +y가 위 · 몸통에 회전이 없어서(rotationEuler 0) 뜻이 그대로다.

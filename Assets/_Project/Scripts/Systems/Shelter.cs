@@ -320,6 +320,16 @@ namespace MakeGame.Systems
 
         private static SurvivalClock cachedClock;
 
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 참조를 들고
+        /// 시작하지 않게 초기 상태로 되돌린다(activeShelters는 OnEnable/OnDisable이 관리한다).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            cachedClock = null;
+        }
+
         /// <summary>저장궤에 보관 중인 재료(연료/물통/생식품). 세이브 전용 읽기 창구다.</summary>
         public IReadOnlyList<ShelterItemStack> ChestStock => chestStock;
 

@@ -81,6 +81,21 @@ namespace MakeGame.Systems
         private static Material bearModelMaterial;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 자원을 들고
+        /// 시작하지 않게 초기 상태로 되돌린다(이 partial 파일이 선언한 static만 다룬다).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetBearStaticCache()
+        {
+            bearModelPrefab = null;
+            bearModelProbeFrame = -1;
+            bearModelMaterial = null;
+            bearCubModelPrefab = null;
+            bearCubModelProbeFrame = -1;
+            emptyMesh = null;
+        }
+
+        /// <summary>
         /// 곰 모델 프리팹(없으면 null). Resources.Load는 **한 번만** 부른다 - 곰이 여러 마리 스폰되고
         /// 규격 프로퍼티(BearBodyScale/BearGroundOffset)가 매 프레임 읽힐 수 있어서다.
         /// </summary>

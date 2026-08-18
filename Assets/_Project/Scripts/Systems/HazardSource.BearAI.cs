@@ -207,6 +207,18 @@ namespace MakeGame.Systems
         private static int bearPhysicsSyncFrame = -1;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 참조/값을 들고
+        /// 시작하지 않게 초기 상태로 되돌린다(이 partial 파일이 선언한 static만 다룬다).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetBearAICache()
+        {
+            cachedPlayerStats = null;
+            cachedPlayerStatsTime = -999f;
+            bearPhysicsSyncFrame = -1;
+        }
+
+        /// <summary>
         /// 곰 AI를 초기화한다. Start의 곰 분기에서만 불린다.
         /// 여기서 정하는 것: 리쉬 앵커(처음 자리) · 지면에서 띄울 높이 · 해수면 · 추격 속도 · 배회 난수.
         /// </summary>

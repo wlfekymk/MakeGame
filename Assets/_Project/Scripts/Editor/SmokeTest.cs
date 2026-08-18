@@ -14,7 +14,8 @@ namespace MakeGame.EditorTools
     /// 목적: 정적 검사로 못 잡는 부류(도메인 리로드 NRE, 생성자 시점 Resources.Load,
     /// 씬 참조 깨짐)를 배포 전에 잡는다. 콘솔 에러/예외/경고를 종류별로 집계하고
     /// 매 5초마다 씬 핵심 오브젝트(Player · Managers · Island_0_* 지형 · SurvivalHudUI ·
-    /// Ocean · DayNightCycle · BuildingSystem · CursorLockController) 존재를 확인한다.
+    /// Ocean · DayNightCycle · BuildingSystem · CursorLockController · GrassFieldDriver ·
+    /// UnderwaterAmbience · SunkenCargo_* 침몰 화물 · AirlinerWreckVisual) 존재를 확인한다.
     ///
     /// ★ 도메인 리로드 생존 구조 ★
     /// 플레이 진입/이탈(및 플레이 중 재컴파일) 때마다 에디터 static이 전부 초기화된다.
@@ -60,6 +61,12 @@ namespace MakeGame.EditorTools
         // 근거: Player/Managers = SampleScene.unity 씬 배치 오브젝트.
         // Island_0_ = WorldMapManager.SpawnPlaceholder의 "Island_{id}_{size}" 명명(0번 = 시작 섬).
         // 나머지는 RuntimeInitializeOnLoadMethod 부트스트랩 또는 WorldMapManager가 만드는 이름.
+        // grassField/underwaterAmbience = 부트스트랩이 만드는 "GrassFieldDriver"/"UnderwaterAmbience"
+        // (GrassFieldSystem.cs:789 / UnderwaterAmbience.cs:112의 new GameObject 이름 그대로).
+        // sunkenCargo = SeabedFloraSpawner.PlaceCargoPile의 "SunkenCargo_{pileIndex}" - 대형/특대 섬
+        // 해저 전용이지만 월드 생성(WorldMapManager.Start의 동기 전체 섬 루프 → SeabedGenerator.Build →
+        // SeabedFloraSpawner.Spawn) 때 일괄 생성되므로 시작 직후부터 존재한다(거리 지연 생성 아님).
+        // airlinerWreck = AirlinerWreck.TryBuild의 "AirlinerWreckVisual"(시작 섬 해안, 모델 로드 후 생성).
         private static readonly (string key, string objectName, bool prefix)[] Checks =
         {
             ("player", "Player", false),
@@ -70,6 +77,10 @@ namespace MakeGame.EditorTools
             ("dayNightCycle", "DayNightCycle", false),
             ("buildingSystem", "BuildingSystem", false),
             ("cursorLock", "CursorLockController", false),
+            ("grassField", "GrassFieldDriver", false),
+            ("underwaterAmbience", "UnderwaterAmbience", false),
+            ("sunkenCargo", "SunkenCargo_", true),
+            ("airlinerWreck", "AirlinerWreckVisual", false),
         };
 
         // ---- 도메인 로컬 상태 (리로드 직후 SessionState에서 복원) ----
@@ -359,6 +370,10 @@ namespace MakeGame.EditorTools
             public bool dayNightCycle;
             public bool buildingSystem;
             public bool cursorLock;
+            public bool grassField;
+            public bool underwaterAmbience;
+            public bool sunkenCargo;
+            public bool airlinerWreck;
         }
 
         [Serializable]
@@ -400,6 +415,10 @@ namespace MakeGame.EditorTools
                 dayNightCycle = SessionState.GetBool(KeyCheckPrefix + "dayNightCycle", false),
                 buildingSystem = SessionState.GetBool(KeyCheckPrefix + "buildingSystem", false),
                 cursorLock = SessionState.GetBool(KeyCheckPrefix + "cursorLock", false),
+                grassField = SessionState.GetBool(KeyCheckPrefix + "grassField", false),
+                underwaterAmbience = SessionState.GetBool(KeyCheckPrefix + "underwaterAmbience", false),
+                sunkenCargo = SessionState.GetBool(KeyCheckPrefix + "sunkenCargo", false),
+                airlinerWreck = SessionState.GetBool(KeyCheckPrefix + "airlinerWreck", false),
             };
 
             var result = new SmokeResult

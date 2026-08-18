@@ -49,6 +49,16 @@ namespace MakeGame.Systems
 
         /// <summary>디버그 우회가 실제로 발동 중인지. 토글 값에 Debug.isDebugBuild를 한 번 더 곱한다.</summary>
         public static bool DebugRevealAllActive => Debug.isDebugBuild && debugRevealAllIslands;
+
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 토글이 이전 실행의 값을 들고 시작하지 않게
+        /// 초기값(기본 ON)으로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            debugRevealAllIslands = true;
+        }
 #endif
 
         /// <summary>

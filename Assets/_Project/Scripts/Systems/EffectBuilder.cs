@@ -46,6 +46,17 @@ namespace MakeGame.Systems
         private static Texture2D cachedSoftDotTexture;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 머티리얼/텍스처를
+        /// 들고 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            cachedParticleMaterial = null;
+            cachedSoftDotTexture = null;
+        }
+
+        /// <summary>
         /// 모든 파티클이 공유하는 머티리얼 하나를 만들어 캐시한다. 입자별 색은 머티리얼이 아니라
         /// ParticleSystem의 startColor/colorOverLifetime(정점 색)이 결정하므로, 색이 달라도 머티리얼은
         /// 하나면 충분하다 — 이펙트마다 new Material()을 만들면 드로우콜과 메모리가 그만큼 늘어난다.

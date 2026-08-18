@@ -213,6 +213,25 @@ namespace MakeGame.Systems
         private static int swayTimeFrame = -1;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시/래치가 이전 실행의 파괴된 자원을 들고
+        /// 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            System.Array.Clear(coralPrimary, 0, coralPrimary.Length);
+            System.Array.Clear(coralSecondary, 0, coralSecondary.Length);
+            System.Array.Clear(kelpMeshes, 0, kelpMeshes.Length);
+            System.Array.Clear(rockMeshes, 0, rockMeshes.Length);
+            System.Array.Clear(cargoMeshes, 0, cargoMeshes.Length);
+            probeFrame = -1;
+            kelpSwayShader = null;
+            kelpShaderProbeFrame = -1;
+            System.Array.Clear(kelpSwayMaterials, 0, kelpSwayMaterials.Length);
+            swayTimeFrame = -1;
+        }
+
+        /// <summary>
         /// _MG_SwayTime을 매 프레임 넣는 최소 드라이버. 섬의 생태 루트(SeabedFlora_*)에 붙어
         /// RegenerateWorld의 섬 파괴에 함께 편승한다(스포너의 "생명주기 편승" 원칙 - 별도 정리 불요).
         /// Time.time은 timeScale = 0에서 멈추므로 타이틀 화면에서 해초도 바다처럼 정지한다.

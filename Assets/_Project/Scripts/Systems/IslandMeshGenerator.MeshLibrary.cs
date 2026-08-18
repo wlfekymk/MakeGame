@@ -1028,5 +1028,31 @@ namespace MakeGame.Systems
         private static Mesh grassBladeMesh;
         private static Mesh palmTrunkPrismMesh;
 
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 메시를 들고
+        /// 시작하지 않게 초기 상태로 되돌린다(이 partial 파일이 선언한 static만 다룬다).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetMeshLibraryStaticCache()
+        {
+            primitiveMeshCache.Clear();
+            collisionHullByRenderMesh.Clear();
+            decorationMeshCache.Clear();
+            System.Array.Clear(rockModelMeshes, 0, rockModelMeshes.Length);
+            rockModelProbeFrame = -1;
+            System.Array.Clear(palmTrunkMeshes, 0, palmTrunkMeshes.Length);
+            System.Array.Clear(palmCrownMeshes, 0, palmCrownMeshes.Length);
+            palmModelProbeFrame = -1;
+            System.Array.Clear(bushModelMeshes, 0, bushModelMeshes.Length);
+            bushModelProbeFrame = -1;
+            System.Array.Clear(grassModelMeshes, 0, grassModelMeshes.Length);
+            grassModelProbeFrame = -1;
+            System.Array.Clear(driftModelMeshes, 0, driftModelMeshes.Length);
+            driftModelProbeFrame = -1;
+            System.Array.Clear(stoneModelMeshes, 0, stoneModelMeshes.Length);
+            stoneModelProbeFrame = -1;
+            grassBladeMesh = null;
+            palmTrunkPrismMesh = null;
+        }
     }
 }

@@ -266,6 +266,17 @@ namespace MakeGame.Systems
         private static bool activeHazardsRebuiltWarned;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 래치가 이전 실행의 값을 들고 시작하지 않게
+        /// 초기 상태로 되돌린다(이 partial 파일이 선언한 static만 다룬다. activeHazards는
+        /// OnEnable/OnDisable이 관리하므로 여기서 비우지 않는다).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetHazardStatics()
+        {
+            activeHazardsRebuiltWarned = false;
+        }
+
+        /// <summary>
         /// activeHazards를 씬 실물에서 다시 만든다. 평상시에는 절대 불리지 않는다 - OnEnable/OnDisable이
         /// 목록을 정확히 관리하기 때문이다. 도메인 리로드로 static 목록만 비워졌을 때의 복구 경로다.
         /// Unity 6.5: FindObjectsByType은 **1인자 형태만** 쓴다(FindObjectsSortMode 오버로드는 CS0618).

@@ -83,6 +83,19 @@ namespace MakeGame.Systems
         private static bool loggerScheduled;
 
         /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 레지스트리/누적기가 이전 실행의 값을 들고
+        /// 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            registry.Clear();
+            pendingVertexTotal = 0;
+            pendingSkirtCount = 0;
+            loggerScheduled = false;
+        }
+
+        /// <summary>
         /// 섬 하나의 해저 스커트를 생성한다. 섬 메시 생성 직후 같은 동기 흐름에서 호출된다
         /// (IslandMeshGenerator.BuildGroundCaps → 여기. 코루틴/지연 없음).
         /// </summary>

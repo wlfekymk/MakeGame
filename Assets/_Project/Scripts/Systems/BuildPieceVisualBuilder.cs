@@ -88,6 +88,24 @@ namespace MakeGame.Systems
         private static Material[] tierPlankMaterials;
         private static Material[] tierLashingMaterials;
 
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 메시/머티리얼을
+        /// 들고 시작하지 않게 초기 상태로 되돌린다.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticCache()
+        {
+            roofMesh = null;
+            postMaterial = null;
+            plankMaterial = null;
+            lashingMaterial = null;
+            ghostValidMaterial = null;
+            ghostInvalidMaterial = null;
+            tierPostMaterials = null;
+            tierPlankMaterials = null;
+            tierLashingMaterials = null;
+        }
+
         /// <summary>고스트 반투명도. 뒤의 지형이 비쳐 보이되 형태는 읽혀야 한다.</summary>
         private const float GhostAlpha = 0.38f;
 
