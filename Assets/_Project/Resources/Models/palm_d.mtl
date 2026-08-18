@@ -1,0 +1,6 @@
+newmtl palm_d_trunk
+Kd 0.8 0.8 0.8
+
+newmtl palm_d_crown
+Kd 0.8 0.8 0.8
+

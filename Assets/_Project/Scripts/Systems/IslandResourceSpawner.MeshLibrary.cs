@@ -259,16 +259,75 @@ namespace MakeGame.Systems
             }
         }
 
-        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음).</summary>
+        /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음).
+        /// [B57] 대나무 8종. a~f는 **같은 이름으로 재제작**됐고 실측 높이는 그대로다(아래 배열 앞 6개 =
+        /// 예전 값). 신규 g 마른 죽간이 섞인 군생 3.650 / h 끄덕이는 군생 5대 4.750.</summary>
         private static readonly string[] BambooModelResourcePaths =
         {
             "Models/bamboo_a", "Models/bamboo_b", "Models/bamboo_c",
-            "Models/bamboo_d", "Models/bamboo_e", "Models/bamboo_f"
+            "Models/bamboo_d", "Models/bamboo_e", "Models/bamboo_f",
+            "Models/bamboo_g", "Models/bamboo_h"
         };
 
         /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.
-        /// d~f도 OBJ 정점의 maxY를 실측한 값이다(d 4.113(v2 재제작) / e 5.070 / f 4.252).</summary>
-        private static readonly float[] BambooModelHeights = { 3.349f, 3.885f, 4.463f, 4.113f, 5.070f, 4.252f };
+        /// d~f도 OBJ 정점의 maxY를 실측한 값이다(d 4.113(v2 재제작) / e 5.070 / f 4.252).
+        /// [B57] g 3.650 / h 4.750 추가.</summary>
+        private static readonly float[] BambooModelHeights =
+        {
+            3.349f, 3.885f, 4.463f, 4.113f, 5.070f, 4.252f,
+            3.650f, 4.750f
+        };
+
+        /// <summary>
+        /// [B57] 변종 후보 밴드. 목표 높이(스폰 세로 지터가 정하는 3.57~5.25m)의 ±22% 안에 있는 모델을
+        /// 후보로 모은다. 야자수(IslandMeshGenerator.MeshLibrary.VariantSizeBand = 0.35)보다 좁은 이유는
+        /// 균등 배율(fit)의 허용 폭이 그대로 이 값에서 나오기 때문이다: ±22%면 fit이 0.82~1.28로
+        /// 묶여 죽간 굵기가 실물 비례를 벗어나지 않는다(±35%면 0.74~1.54까지 벌어져 굵은 통나무가 된다).
+        ///
+        /// [왜 "최근접 1개"를 버렸나 - bamboo_a 사문화]
+        /// 종전 선택은 목표 높이에 **가장 가까운** 모델 1개였다. 그러면 등록 높이 3.349m인 bamboo_a는
+        /// 이웃(b 3.885)과의 중간값 3.617m 아래에서만 뽑히는데, 목표 높이의 하한이 3.57m이라
+        /// 당첨 구간이 3.57~3.617의 47mm뿐이었다(= 전체의 2.8%). 여기에 신규 g(3.650)가 들어오면
+        /// a|g 중간값이 3.4995m로 내려가 **하한보다 낮아지므로 a의 선택 확률이 정확히 0**이 된다.
+        /// 모델 재제작(높이 조정)은 이 작업 범위 밖이므로, 대역 쪽을 넓혀 살린다:
+        /// 밴드 방식에서는 a가 |3.349 − t| ≤ 0.22t, 즉 t ≤ 4.294m 구간에서 항상 후보에 들어가
+        /// 선택 확률이 6.7%로 회복된다(8종 균등선인 12.5%보다는 낮다 - 하한 밖의 짧은 모델이라는
+        /// 사실 자체는 남는다).
+        /// </summary>
+        private const float BambooVariantSizeBand = 0.22f;
+
+        /// <summary>[B57] 대나무 변종 선택용 위치 해시 salt. IslandMeshGenerator의 0x51A7B0xx 대역,
+        /// SeabedFloraSpawner의 0x6B3E1Fxx 대역과 겹치지 않는 별도 대역이다.</summary>
+        private const uint BambooVariantSalt = 0xBA3B0001u;
+
+        /// <summary>2단계 선택의 후보 버퍼. 메인 스레드 전용이라 재사용해도 안전하다(할당 방지).
+        /// [R1 리셋 훅 검토] 이 static은 리셋 대상이 **아니다.** 담는 것이 int(인덱스)뿐이라 파괴된
+        /// UnityEngine.Object를 들고 있을 수 없고, 쓰기 직전에 항상 Clear()한다. 이 클래스가
+        /// SubsystemRegistration 훅을 두지 않는 이유도 같다 - 메시/머티리얼 캐시는 조회 시점에
+        /// `cached != null`(Unity의 파괴 판정 오버로드)로 스스로 낫는다.</summary>
+        private static readonly List<int> bambooCandidateBuffer = new List<int>(8);
+
+        /// <summary>
+        /// [B57] 배치 위치 → 결정적 해시. IslandMeshGenerator.MeshLibrary.DecorationPositionHash /
+        /// SeabedFloraSpawner의 사본과 **완전히 같은 식**이다(0.1m 양자화 → 소수 곱 → xorshift-곱 마무리).
+        /// 그 두 곳은 이 어셈블리의 다른 클래스라 private이고, 이 파일은 수정 가능 범위 안에서
+        /// 자급해야 하므로 사본을 둔다. rng 소비 0인 순수 함수다.
+        /// </summary>
+        private static uint BambooPositionHash(Vector3 worldPosition, uint salt)
+        {
+            unchecked
+            {
+                int qx = Mathf.RoundToInt(worldPosition.x * 10f);
+                int qz = Mathf.RoundToInt(worldPosition.z * 10f);
+                uint h = (uint)(qx * 73856093) ^ (uint)(qz * 19349663) ^ salt;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                return h;
+            }
+        }
 
         // 배열 크기는 경로 배열 길이에서 온다(모델을 더 붙일 때 세 곳을 같이 고치는 실수 방지).
         // 필드 초기자는 선언 순서대로 실행되므로 BambooModelResourcePaths(위)가 먼저 채워진다.
@@ -277,14 +336,24 @@ namespace MakeGame.Systems
         private static int bambooModelProbeFrame = -1;
 
         /// <summary>
-        /// 목표 높이에 가장 가까운 대나무 모델의 **공유 메시 두 장**(줄기 다발 / 잎)을 돌려준다.
+        /// 목표 높이에 맞는 대나무 모델의 **공유 메시 두 장**(줄기 다발 / 잎)을 돌려준다.
         /// 하나도 못 찾으면 false이고, 그때 호출부는 예전 절차 포기(곁줄기 + 잎다발)로 돌아간다.
         ///
         /// 바위·야자수와 완전히 같은 규칙이다: 프레임당 1회만 프로브하고(섬 하나에 대나무 노드가
         /// 최대 8개라 가드가 없으면 한 프레임에 Load가 24번 불린다), 실패를 영구 캐시하지 않으며,
         /// 변종 선택에 난수를 쓰지 않는다(이미 뽑아 둔 세로 지터가 정한 높이로 고른다).
+        ///
+        /// [B57] 선택이 "최근접 1개" → **2단계**(±<see cref="BambooVariantSizeBand"/> 후보 수집 →
+        /// 배치 위치 해시로 하나 선택)로 바뀌었다. 야자수/바위가 이미 쓰는 방식과 같은 규칙이며,
+        /// bamboo_a가 사문화되던 문제를 여기서 갚는다(위 BambooVariantSizeBand 주석에 계산 근거).
+        /// 후보가 하나도 없으면 종전과 똑같이 최근접 1개로 떨어진다 - 폴백은 유지된다.
+        /// rng 소비는 여전히 **0회**다: 입력은 (이미 뽑힌 세로 지터가 정한 목표 높이,
+        /// 이미 확정된 노드 위치)뿐이라 같은 worldSeed면 같은 변종이 나온다.
         /// </summary>
-        public static bool TryGetBambooModel(float targetHeight, out Mesh culms, out Mesh leaves, out float modelHeight)
+        /// <param name="worldPosition">노드 루트의 월드 위치(SpawnSingleNode가 이미 확정해 둔 값).
+        /// 변종 선택 해시의 입력일 뿐 배치에는 쓰지 않는다.</param>
+        public static bool TryGetBambooModel(float targetHeight, Vector3 worldPosition,
+            out Mesh culms, out Mesh leaves, out float modelHeight)
         {
             culms = null;
             leaves = null;
@@ -314,22 +383,41 @@ namespace MakeGame.Systems
                 }
             }
 
-            float bestDelta = float.MaxValue;
+            var candidates = bambooCandidateBuffer;
+            candidates.Clear();
+
+            int nearest = -1;
+            float nearestDelta = float.MaxValue;
+            float band = targetHeight * BambooVariantSizeBand;
             for (int i = 0; i < bambooCulmMeshes.Length; i++)
             {
                 if (bambooCulmMeshes[i] == null)
                     continue;
 
                 float delta = Mathf.Abs(BambooModelHeights[i] - targetHeight);
-                if (delta >= bestDelta)
-                    continue;
-
-                bestDelta = delta;
-                culms = bambooCulmMeshes[i];
-                leaves = bambooLeafMeshes[i];
-                modelHeight = BambooModelHeights[i];
+                if (delta < nearestDelta)
+                {
+                    nearestDelta = delta;
+                    nearest = i;
+                }
+                if (delta <= band)
+                    candidates.Add(i);
             }
 
+            int pick;
+            if (candidates.Count == 0)
+                pick = nearest;                 // 로드된 모델이 밴드 밖뿐 - 종전 최근접 규칙으로 폴백
+            else if (candidates.Count == 1)
+                pick = candidates[0];
+            else
+                pick = candidates[(int)(BambooPositionHash(worldPosition, BambooVariantSalt) % (uint)candidates.Count)];
+
+            if (pick < 0)
+                return false;                   // 로드된 모델이 하나도 없다 - 호출부가 절차 포기로 폴백
+
+            culms = bambooCulmMeshes[pick];
+            leaves = bambooLeafMeshes[pick];
+            modelHeight = BambooModelHeights[pick];
             return culms != null;
         }
 

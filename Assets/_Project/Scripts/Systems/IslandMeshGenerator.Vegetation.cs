@@ -321,6 +321,36 @@ namespace MakeGame.Systems
             for (int i = 0; i < groveCount; i++)
                 groveCenters[i] = SampleOnIsland(islandObject.transform.position, rng, innerClearRadius, radius * 0.45f);
 
+            // ── [B57] 숲 안 간격을 수관 실측에 맞춘다 ────────────────────────────────
+            // 재제작한 야자 12종의 수관 지름은 모델 실측 3.92~7.62m로, 예전 6종(3.5~5.5m) 대비
+            // **평균 +19%**다. a~f는 높이가 그대로라 fit(=목표높이/모델높이)도 그대로이므로,
+            // 월드에서 보이는 수관 지름도 정확히 같은 +19%로 넓어진다.
+            //
+            // ★ 여기서 palmCount를 깎아도 겹침은 **하나도** 줄지 않는다 ★ groveCount가 palmCount/4라
+            // 그루 수를 줄이면 숲의 개수만 줄고 숲 하나당 그루 수는 항상 ~4로 고정이다. 국소 밀도를
+            // 정하는 것은 오직 이 산포 반지름이다: 숲 하나의 수관 점유율 = 4 × π(d/2)² / πR².
+            // d가 1.19배가 됐으므로 R을 같은 1.19배(11 → 13.1m)로 키우면 점유율이 재제작 전과
+            // **정확히 같아진다**(1.19²/1.19² = 1). 그루 수는 1도 줄지 않으므로 정글섬(야자 최대 144)의
+            // 밀집감도 그대로 유지된다 - "허전해지면 안 된다"는 요구를 개수가 아니라 간격으로 갚는 이유다.
+            //
+            // 다만 소형 섬은 야자 고리가 [innerClearRadius, 0.50R] = [12, 25]m로 폭 13m뿐이라,
+            // 13.1m 산포를 그대로 주면 ClampToIslandRing이 대부분을 고리 경계에 눌러 붙여 오히려
+            // "동그란 띠"가 생긴다. 그래서 고리 폭의 85%를 상한으로 함께 건다:
+            //   소형(R=50) 11.1m(사실상 종전 11m 유지) / 중형 이상 13.1m.
+            // rng 소비는 0으로 불변이다(아래 NextInsideUnitCircle 호출 횟수·순서가 그대로다).
+            float groveSpread = Mathf.Min(PalmGroveSpread, (radius * 0.50f - innerClearRadius) * 0.85f);
+            groveSpread = Mathf.Max(6f, groveSpread);
+
+            // [B57] "거목 야자" 당첨 확률. 신규 j(8.6)/k(9.5)/l(10.4)은 밴드 상한(목표 높이 ×1.35)
+            // 때문에 목표 높이가 4.6~7.6m뿐이면 실물 크기로는 결코 서지 못한다(l은 후보조차 못 된다).
+            // 그래서 **드물게** 목표 높이 자체를 8.4~10.4m로 올린다. 확률은 섬 반지름에 선형이고
+            // 소형 섬에서는 0이다 - 요구("큰 개체는 드물게, 대형·특대 위주")를 그대로 옮긴 값이다.
+            //   소형 R=50 → 0.0% (0그루) / 중형 R=90 → 1.71% (54그루 중 0.9)
+            //   대형 R=140 → 4.57% (80그루 중 3.7) / 특대 R=200 → 8.00% (80그루 중 6.4)
+            // 정글섬은 그루 수 자체가 많아(대형 144) 거목도 자연히 늘어난다(6.6그루) - 원시림에
+            // 고목이 더 많은 것은 의도한 결과다. rng 소비 0(위치 해시로만 판정한다).
+            float emergentPalmChance = Mathf.InverseLerp(60f, 200f, radius) * MaxEmergentPalmChance;
+
             for (int i = 0; i < palmCount; i++)
             {
                 // 야자수/덤불의 바깥 한계는 둘 다 0.50R이다(값은 바꾸지 않는다 - 기존 배치 보존).
@@ -328,7 +358,7 @@ namespace MakeGame.Systems
                 // 모래 경계가 높이 기준으로 바뀌면서 더 이상 존재하지 않는다. 지금 이 값을 지탱하는
                 // 근거는 "물가에서 충분히 안쪽" 하나이며, 물에 잠긴 자리는 SnapToLand가 따로 막는다.
                 Vector3 center = groveCenters[i % groveCount];
-                Vector2 jitter = rng.NextInsideUnitCircle() * 11f;
+                Vector2 jitter = rng.NextInsideUnitCircle() * groveSpread; // [B57] 종전 고정 11m → 위 수관 실측 보정
                 Vector3 spot = center + new Vector3(jitter.x, 0f, jitter.y);
                 spot = ClampToIslandRing(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f);
                 // 머티리얼 선택은 인덱스로만 한다 - rng를 한 번이라도 더 소비하면 같은 worldSeed에서
@@ -340,7 +370,8 @@ namespace MakeGame.Systems
                 Vector3 palmSpot = SnapToLand(spot, islandObject.transform.position, innerClearRadius, radius * 0.50f, VegetationMinGroundY);
                 CreatePalm(root.transform, palmSpot, rng, trunkMaterial, frondMaterials[i % frondMaterials.Length],
                     ShouldSkipSubmergedSpot(palmSpot, VegetationMinGroundY)
-                    || IsRockPatchCore(rockField, palmSpot)); // [B55] 암반 지대에는 나무가 서지 않는다
+                    || IsRockPatchCore(rockField, palmSpot), // [B55] 암반 지대에는 나무가 서지 않는다
+                    archetype.archetype, emergentPalmChance); // [B57] 변종 편향 + 거목 당첨 확률
             }
 
             for (int i = 0; i < bushCount; i++)
@@ -1882,6 +1913,23 @@ namespace MakeGame.Systems
         /// <summary>야자수 1그루를 이루는 줄기 마디 수. 마디마다 기울기를 조금씩 더해 휜 기둥을 만든다.</summary>
         private const int PalmTrunkSegments = 3;
 
+        /// <summary>[B57] 숲(grove) 안 산포 반지름의 기준값(m). 종전 고정 11m를 수관 실측(+19%)에 맞춰
+        /// 1.19배 한 값이다. 실제 사용값은 섬 고리 폭에 눌리므로 호출부의 groveSpread 주석을 볼 것.</summary>
+        private const float PalmGroveSpread = 13.1f;
+
+        /// <summary>[B57] 거목 야자 당첨 확률의 상한(특대 섬 R=200 기준). 반지름 60~200m에 선형이다.</summary>
+        private const float MaxEmergentPalmChance = 0.08f;
+
+        /// <summary>[B57] 거목의 목표 높이 하한(m). 일반 상한 7.6m보다 확실히 커야 층이 갈린다.</summary>
+        private const float EmergentPalmMinHeight = 8.4f;
+
+        /// <summary>[B57] 거목의 목표 높이 상한(m). 최장 모델 palm_l의 실측 높이와 같게 두어,
+        /// 밴드가 l을 후보로 받아들이면서도 fit이 1을 넘지 않게(=늘려 붙이지 않게) 한다.</summary>
+        private const float EmergentPalmMaxHeight = 10.4f;
+
+        /// <summary>[B57] 줄기 차단 캡슐 반지름 = baseRadius × 이 값. 근거는 CreatePalm의 캡슐 주석.</summary>
+        private const float TrunkBlockerRadiusScale = 0.75f;
+
         /// <summary>
         /// 야자수 줄기 프리즘의 각 수. 내장 Cylinder(20각, 마디당 80삼각형)를 대체한다.
         ///
@@ -1925,8 +1973,13 @@ namespace MakeGame.Systems
         /// <param name="skipSubmerged">[B53] true면 이 자리는 물속이라 **아무 것도 만들지 않는다.**
         /// 단, 본 경로가 소비하는 rng draw(상단 7회 + 잎 루프 3회×5)는 비트 단위로 똑같이 소비한다 -
         /// 한 번이라도 덜 뽑으면 같은 worldSeed에서 뒤따르는 덤불·풀·바위·표류물이 통째로 밀린다.</param>
+        /// <param name="archetype">[B57] 섬 유형. 변종 선택 확률만 기울인다(PalmArchetypeWeights).
+        /// 높이·굵기·배치는 이 값과 무관하다 - rng도 한 번 더 쓰지 않는다.</param>
+        /// <param name="emergentPalmChance">[B57] 이 그루가 "거목"이 될 확률(0이면 종전과 동일).
+        /// 판정은 rng가 아니라 배치 위치 해시로 한다(호출부 emergentPalmChance 주석).</param>
         private static void CreatePalm(Transform parent, Vector3 groundPosition, System.Random rng,
-            Material trunkMaterial, Material frondMaterial, bool skipSubmerged = false)
+            Material trunkMaterial, Material frondMaterial, bool skipSubmerged = false,
+            IslandArchetype archetype = IslandArchetype.Tropical, float emergentPalmChance = 0f)
         {
             // 굵기: 예전 0.16~0.26m는 5~7m 높이에 대해 너무 가늘어 장대로 보였다. 밑동을 0.26~0.38m로
             // 올리고 위로 갈수록 62%까지 가늘어지게 해서 "굵은 밑동 → 가는 목"의 야자수 비례를 만든다.
@@ -1941,6 +1994,22 @@ namespace MakeGame.Systems
             // 난수 소비는 그대로 1회다. NextFloat(min,max)는 범위와 무관하게 스트림을 한 번만 당기므로
             // 상·하한을 바꿔도 같은 worldSeed에서 이후 배치가 밀리지 않는다(파일 상단 [결정성] 전제 유지).
             float height = rng.NextFloat(4.6f, 7.6f);
+
+            // ── [B57] 거목(emergent) 승급 ────────────────────────────────────────────
+            // 위 4.6~7.6m 범위는 변종 밴드(±35%)와 곱해져 **모델 높이 10.26m가 실질 상한**이 된다.
+            // 그래서 신규 palm_l(10.4m)은 어떤 자리에서도 후보에 들지 못했고, j(8.6)/k(9.5)도
+            // 목표 높이 쪽으로 축소(fit 0.74~0.88)돼서만 뽑혀 "키 큰 야자"가 월드에 존재하지 않았다.
+            // 목표 높이를 8.4~10.4m로 올린 그루만 실제로 거목이 된다. 여기서 **rng를 쓰지 않는 것**이
+            // 핵심이다 - 새 draw를 끼우면 뒤따르는 잎 루프·덤불·풀·바위가 통째로 밀린다.
+            // 8.4를 하한으로 둔 이유: 일반 상한 7.6보다 확실히 위여야 "가끔 튀는 큰 나무"가 아니라
+            // **명백히 다른 층(캐노피 위로 솟은 나무)** 으로 읽힌다.
+            if (emergentPalmChance > 0f
+                && DecorationPositionHash01(groundPosition, EmergentPalmSalt) < emergentPalmChance)
+            {
+                height = Mathf.Lerp(EmergentPalmMinHeight, EmergentPalmMaxHeight,
+                    DecorationPositionHash01(groundPosition, EmergentPalmHeightSalt));
+            }
+
             float baseRadius = rng.NextFloat(0.266f, 0.388f);
             float leanDirection = rng.NextFloat(0f, 360f);   // 어느 쪽으로 휘는가
             float leanStart = rng.NextFloat(1f, 5f);         // 밑동 마디의 기울기(거의 수직)
@@ -1971,15 +2040,23 @@ namespace MakeGame.Systems
 
             // [줄기 차단 캡슐 — 파일 상단 [콜라이더 정책] 주석] 플레이어가 나무를 통과해 걷지 않게
             // 뿌리에 수직 캡슐 하나를 단다. 잎(크라운)은 통과 유지 — 콜라이더 없음.
-            //  · 반지름 = baseRadius(밑동 외접 반지름 0.266~0.388m). 모델 경로도 같은 값을 쓴다 -
-            //    모델 줄기 굵기가 이 분포에 맞춰 fit되므로 오차는 수 cm다.
+            //  · 반지름 = baseRadius × TrunkBlockerRadiusScale.
+            //    [B57 정정] "모델 줄기 굵기가 이 분포에 맞춰 fit되므로 오차는 수 cm"라던 종전 주석은
+            //    재제작 모델에서 **사실이 아니게 됐다.** 12종의 줄기 단면 반지름을 실측하면
+            //    밑동 0.269~0.396m / 지상 1m 0.163~0.303m / 중간 0.179~0.279m이고, 여기에 fit
+            //    (0.74~1.54)을 곱한 월드 값은 플레이어가 실제로 닿는 0.5~1.8m 구간에서 **0.15~0.30m**다.
+            //    즉 캡슐(0.266~0.388)이 줄기보다 굵어서 "나무에 닿기 전에 막히는" 상태였다.
+            //    0.75를 곱하면 0.200~0.291m가 되어 실측 중앙값(약 0.21m)을 +17%만 웃돈다 -
+            //    시야에서 껍질을 파고들지 않을 만큼의 여유는 남기고, 헛벽은 없앤다.
+            //    절차 폴백 경로에도 같은 값을 쓴다(폴백 줄기는 캡슐 구간 평균이 baseRadius×0.886이라
+            //    0.75는 약 15% 얇은데, 그쪽은 원래 모델보다 굵은 폴백이므로 문제가 되지 않는다).
             //  · 높이 = 나무 높이의 60%. 줄기는 위로 갈수록 휘지만(마디당 4~9° 누적) 플레이어가 닿는
             //    2m 아래에서는 수평 이탈이 0.2m 미만이라 수직 캡슐로 충분하다. 위쪽 40%를 비워
             //    휜 상단 줄기·크라운에 보이지 않는 벽이 생기는 것을 막는다.
             //  · rng 소비 0 — 이미 뽑힌 height/baseRadius만 쓴다(배치 재현성 불변).
             var trunkBlocker = palm.AddComponent<CapsuleCollider>();
             trunkBlocker.direction = 1; // Y축
-            trunkBlocker.radius = baseRadius;
+            trunkBlocker.radius = baseRadius * TrunkBlockerRadiusScale;
             trunkBlocker.height = height * 0.6f;
             trunkBlocker.center = new Vector3(0f, height * 0.3f, 0f);
 
@@ -1999,7 +2076,8 @@ namespace MakeGame.Systems
             //    아래 잎 루프의 draw는 **모델 경로에서도 전부 그대로 뽑는다**(파일 상단 [결정성] 주석).
             Mesh palmTrunkMesh, palmCrownMesh;
             float palmModelHeight;
-            bool useModel = TryGetPalmModel(height, groundPosition, out palmTrunkMesh, out palmCrownMesh, out palmModelHeight);
+            bool useModel = TryGetPalmModel(height, groundPosition, archetype,
+                out palmTrunkMesh, out palmCrownMesh, out palmModelHeight);
             if (useModel)
             {
                 float fit = height / Mathf.Max(0.01f, palmModelHeight);

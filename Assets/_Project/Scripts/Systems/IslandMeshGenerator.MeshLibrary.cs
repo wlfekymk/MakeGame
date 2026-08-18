@@ -245,6 +245,10 @@ namespace MakeGame.Systems
         private const uint PalmVariantSalt = 0x51A7B002u;
         private const uint BushVariantSalt = 0x51A7B003u;
         private const uint GrassVariantSalt = 0x51A7B004u;
+        /// <summary>[B57] "거목 야자" 당첨 판정용 salt(Vegetation.cs CreatePalm).</summary>
+        private const uint EmergentPalmSalt = 0x51A7B005u;
+        /// <summary>[B57] 당첨된 거목의 목표 높이를 정하는 salt. 당첨 판정과 독립이어야 하므로 따로 둔다.</summary>
+        private const uint EmergentPalmHeightSalt = 0x51A7B006u;
         private const uint BushStretchSalt = 0x51A7B013u;
         private const uint GrassStretchSalt = 0x51A7B014u;
 
@@ -283,6 +287,11 @@ namespace MakeGame.Systems
         /// <summary>
         /// [B50] 변종 선택 2단계: (1) 로드된 변종 중 |기본크기 − 목표| ≤ 목표×35%를 후보로 모으고
         /// (없으면 최근접 1개), (2) 위치 해시로 후보 중 하나를 고른다. 로드된 변종이 없으면 -1이다.
+        ///
+        /// [B57] 이 float[] 오버로드의 유일한 호출부였던 야자수는 아키타입 가중이 붙으면서
+        /// PickPalmVariant로 옮겨 갔다. 지우지 않고 남겨 두는 이유는 (a) 아래 Vector3 오버로드와 쌍이라
+        /// 한쪽만 없으면 "폭 기준 표는 되고 높이 기준 표는 안 된다"로 읽히고, (b) 높이 한 축으로 fit하는
+        /// 다음 모델군(대나무 계열을 이 파일로 옮기는 등)이 그대로 쓸 수 있기 때문이다.
         /// </summary>
         private static int PickVariantByPosition(float[] baseSizes, Mesh[] loadedMeshes, float targetSize,
             Vector3 worldPosition, uint salt)
@@ -431,19 +440,132 @@ namespace MakeGame.Systems
 
         /// <summary>모델 에셋 경로(Resources 기준, 확장자 없음 - 붙이면 항상 null이 돌아온다).
         /// [B50] palm_d(어린 3.29m)·palm_e(노목 잎13장 7.41m)·palm_f(V왕관 잎8장 6.52m) 3종 추가.
+        /// [B57] 야자수 **전면 재제작 + 12종**. a~f는 **같은 이름으로 교체**됐고 실측 높이는 1mm도
+        /// 바뀌지 않았다(아래 PalmModelHeights 앞 6개 = 예전 값 그대로 - 이 파일이 지켜야 할 계약이다.
+        /// 바뀐 것은 형태와 수관 폭뿐이며, 수관이 평균 +19% 넓어진 것을 Vegetation.cs의 숲 간격이 받는다).
+        /// 신규 6종: g 어린 해안목 4.320 / h 폭풍 피해(소엽 결손) 4.960 / i 쌍둥이 줄기 5.850 /
+        /// j 코코넛 다량 8.600 / k C커브 9.500 / l 고목 10.400.
         /// 전부 `o` 2개(palm?_trunk / palm?_crown)라 TryLoadTwoPartModel의 이름 규칙에 그대로 걸린다.</summary>
         private static readonly string[] PalmModelResourcePaths =
         {
             "Models/palm_a", "Models/palm_b", "Models/palm_c",
-            "Models/palm_d", "Models/palm_e", "Models/palm_f"
+            "Models/palm_d", "Models/palm_e", "Models/palm_f",
+            "Models/palm_g", "Models/palm_h", "Models/palm_i",
+            "Models/palm_j", "Models/palm_k", "Models/palm_l"
         };
 
-        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.</summary>
-        private static readonly float[] PalmModelHeights = { 5.295f, 6.789f, 7.954f, 3.291f, 7.406f, 6.521f };
+        /// <summary>각 모델의 실측 전체 높이(m, 밑면 y=0 기준). 위 경로와 인덱스가 일대일로 대응한다.
+        /// (앞 6개는 재제작 전과 동일한 값이다 - 위 경로 주석의 "높이 계약".)</summary>
+        private static readonly float[] PalmModelHeights =
+        {
+            5.295f, 6.789f, 7.954f, 3.291f, 7.406f, 6.521f,
+            4.320f, 4.960f, 5.850f, 8.600f, 9.500f, 10.400f
+        };
 
-        private static readonly Mesh[] palmTrunkMeshes = new Mesh[6];
-        private static readonly Mesh[] palmCrownMeshes = new Mesh[6];
+        // [B57] 배열 크기는 경로 배열 길이에서 온다(대나무 쪽에서 먼저 쓴 규칙 - 종 수가 6→12로
+        // 바뀔 때 고칠 곳을 한 군데로 묶는다). 리셋 훅(ResetMeshLibraryStaticCache)의 Array.Clear도
+        // .Length를 쓰므로 크기 변경이 저절로 따라온다 - 훅에 새로 등록할 static은 없다.
+        // 필드 초기자는 선언 순서대로 실행되므로 PalmModelResourcePaths(위)가 먼저 채워진다.
+        private static readonly Mesh[] palmTrunkMeshes = new Mesh[PalmModelResourcePaths.Length];
+        private static readonly Mesh[] palmCrownMeshes = new Mesh[PalmModelResourcePaths.Length];
         private static int palmModelProbeFrame = -1;
+
+        /// <summary>
+        /// [B57] 아키타입별 야자 변종 가중치. 행 = <see cref="IslandArchetype"/> **선언 순서** 8종
+        /// (Tropical / Rocky / Sandy / Jungle / Volcanic / Atoll / Marsh / Cliff),
+        /// 열 = 위 PalmModelResourcePaths의 12종(a~l). 1.0이 기준이고 크면 자주, 작으면 드물게 나온다.
+        ///
+        /// [왜 가중치이고 필터가 아닌가] 후보 집합은 **여전히 높이 밴드**(목표 높이 ±35%)가 먼저 정한다.
+        /// 가중치는 그 후보 안에서만 확률을 기울인다 - 즉 "절벽섬에는 폭풍 피해목만"이 아니라
+        /// "절벽섬에서는 폭풍 피해목이 더 자주"다. 0을 쓰지 않는 이유도 같다: 어떤 높이에서 후보가
+        /// 하나뿐일 때 그 하나의 가중치가 0이면 선택이 무너진다(아래 total<=0 방어와 같은 이유).
+        ///
+        /// 편향 근거(제작 담당 메모 그대로): h 폭풍 피해 → 바람 맞는 절벽/바위/화산암섬,
+        /// j 코코넛 다량 → 열대/정글, l 고목 → 정글(원시림), i 쌍둥이 줄기 → 정글/습지,
+        /// d·g 어린 해안목 → 백사장/산호섬, k C커브(바람에 휜 줄기) → 해안 노출이 큰 백사장/절벽.
+        /// rng 소비는 0이다(아래 PickPalmVariant는 위치 해시만 쓴다).
+        /// </summary>
+        private static readonly float[,] PalmArchetypeWeights =
+        {
+            //                 a     b     c     d     e     f     g     h     i     j     k     l
+            /* Tropical */ { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.7f, 1.0f, 2.0f, 1.0f, 1.0f },
+            /* Rocky    */ { 1.0f, 0.9f, 0.8f, 1.2f, 0.7f, 1.0f, 1.2f, 2.2f, 0.8f, 0.6f, 1.4f, 0.5f },
+            /* Sandy    */ { 1.2f, 1.0f, 0.9f, 1.6f, 0.8f, 1.0f, 1.8f, 1.0f, 0.7f, 1.2f, 1.8f, 0.6f },
+            /* Jungle   */ { 1.0f, 1.2f, 1.4f, 0.8f, 2.0f, 1.1f, 0.7f, 0.5f, 1.8f, 1.6f, 0.7f, 2.2f },
+            /* Volcanic */ { 1.0f, 0.9f, 0.8f, 1.2f, 0.7f, 1.0f, 1.1f, 2.0f, 0.7f, 0.6f, 1.2f, 0.5f },
+            /* Atoll    */ { 1.2f, 1.0f, 0.8f, 1.6f, 0.7f, 1.0f, 1.8f, 1.2f, 0.7f, 1.4f, 1.6f, 0.5f },
+            /* Marsh    */ { 1.0f, 1.1f, 1.1f, 1.0f, 1.4f, 1.0f, 0.9f, 0.7f, 1.8f, 1.0f, 0.7f, 1.2f },
+            /* Cliff    */ { 1.0f, 1.0f, 1.0f, 1.0f, 0.9f, 1.0f, 1.0f, 2.2f, 0.8f, 0.7f, 1.8f, 0.8f },
+        };
+
+        /// <summary>가중치 표 조회(표가 짧아도 죽지 않게 1.0으로 폴백 · 음수는 0으로 자른다).</summary>
+        private static float PalmVariantWeight(int archetypeRow, int variantIndex)
+        {
+            if (archetypeRow < 0 || archetypeRow >= PalmArchetypeWeights.GetLength(0))
+                return 1f;
+            if (variantIndex < 0 || variantIndex >= PalmArchetypeWeights.GetLength(1))
+                return 1f;
+            return Mathf.Max(0f, PalmArchetypeWeights[archetypeRow, variantIndex]);
+        }
+
+        /// <summary>
+        /// [B57] 야자 전용 변종 선택. 공용 PickVariantByPosition과
+        /// 1단계(목표 높이 ±<see cref="VariantSizeBand"/> 후보 수집)는 **완전히 같고**, 2단계만
+        /// 균등 선택 → 아키타입 가중 선택으로 바뀐다. 공용 함수를 건드리지 않고 여기 사본을 두는 이유는
+        /// 바위/덤불/풀이 같은 함수를 쓰기 때문이다(그쪽 선택이 이 변경으로 흔들리면 안 된다).
+        /// rng 소비 0 - 입력은 (이미 뽑힌 목표 높이, 이미 확정된 위치, 섬이 이미 정한 아키타입)뿐이라
+        /// 같은 worldSeed면 항상 같은 결과다.
+        /// </summary>
+        private static int PickPalmVariant(float targetHeight, Vector3 worldPosition, IslandArchetype archetype)
+        {
+            var candidates = variantCandidateBuffer;
+            candidates.Clear();
+
+            int nearest = -1;
+            float nearestDelta = float.MaxValue;
+            float band = targetHeight * VariantSizeBand;
+            for (int i = 0; i < palmTrunkMeshes.Length; i++)
+            {
+                if (palmTrunkMeshes[i] == null)
+                    continue;
+
+                float delta = Mathf.Abs(PalmModelHeights[i] - targetHeight);
+                if (delta < nearestDelta)
+                {
+                    nearestDelta = delta;
+                    nearest = i;
+                }
+                if (delta <= band)
+                    candidates.Add(i);
+            }
+
+            if (candidates.Count == 0)
+                return nearest;
+            if (candidates.Count == 1)
+                return candidates[0];
+
+            // 행 폴백 규칙은 PlaceRockforms(archetypeRow)와 같다 - 알 수 없는 값은 Tropical(0행).
+            int row = (int)archetype;
+            if (row < 0 || row >= PalmArchetypeWeights.GetLength(0))
+                row = 0;
+
+            float total = 0f;
+            for (int c = 0; c < candidates.Count; c++)
+                total += PalmVariantWeight(row, candidates[c]);
+
+            // 표가 어긋났거나 후보가 전부 0가중이면 공용 함수와 똑같이 균등 선택으로 되돌린다.
+            if (total <= 0f)
+                return candidates[(int)(DecorationPositionHash(worldPosition, PalmVariantSalt) % (uint)candidates.Count)];
+
+            float roll = DecorationPositionHash01(worldPosition, PalmVariantSalt) * total;
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                roll -= PalmVariantWeight(row, candidates[c]);
+                if (roll < 0f)
+                    return candidates[c];
+            }
+            return candidates[candidates.Count - 1];
+        }
 
         /// <summary>
         /// 목표 높이에 맞는 야자수 모델의 **공유 메시 두 장**(줄기 / 크라운)을 돌려준다.
@@ -460,8 +582,14 @@ namespace MakeGame.Systems
         /// 0.74~1.54 안이다(최악은 어린 palm_d 3.29m가 4.6m 목표에 뽑히는 1.40배 - 균등 배율이라
         /// 비례는 유지된다). 같은 높이 목표라도 위치가 다르면 다른 변종이 나와, 노목(잎 13장)과
         /// V왕관(잎 8장)이 실제로 숲에 섞인다.
+        ///
+        /// [B57] 12종이 되면서 2단계가 <see cref="PickPalmVariant"/>(아키타입 가중 선택)로 바뀌었다.
+        /// 1단계 밴드는 그대로다. **키 큰 모델(j 8.6 / k 9.5 / l 10.4)** 은 밴드 상한이 목표 높이의
+        /// 1.35배라, 목표 높이가 4.6~7.6m뿐이면 10.26m를 넘는 l이 영원히 후보에 못 든다 -
+        /// 그래서 "목표 높이"쪽을 손봤다(Vegetation.cs CreatePalm의 emergentChance 주석).
+        /// 이 함수는 목표 높이를 그대로 받기만 한다(여기서 높이를 만들지 않는다).
         /// </summary>
-        private static bool TryGetPalmModel(float targetHeight, Vector3 worldPosition,
+        private static bool TryGetPalmModel(float targetHeight, Vector3 worldPosition, IslandArchetype archetype,
             out Mesh trunk, out Mesh crown, out float modelHeight)
         {
             trunk = null;
@@ -493,8 +621,7 @@ namespace MakeGame.Systems
                 }
             }
 
-            int pick = PickVariantByPosition(PalmModelHeights, palmTrunkMeshes, targetHeight,
-                worldPosition, PalmVariantSalt);
+            int pick = PickPalmVariant(targetHeight, worldPosition, archetype);
             if (pick < 0)
                 return false;
 

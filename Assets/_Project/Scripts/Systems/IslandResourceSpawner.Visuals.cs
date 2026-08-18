@@ -275,20 +275,25 @@ namespace MakeGame.Systems
                         // 루트 스케일을 키워도 곁줄기 밑동은 자동으로 지면에 붙는다(계산을 다시 할 필요가 없다).
                         float groundY = -parentScale.y;
 
-                        // ── [B48] 실물 대나무 모델(bamboo_a~f) ──────────────────────────────
+                        // ── [B48] 실물 대나무 모델(bamboo_a~h) ──────────────────────────────
                         //  · 모델 하나가 이미 **한 포기**(줄기 여러 대 + 잎)라, 절차 곁줄기·잎다발을 통째로
                         //    대체한다. 파츠는 최대 8개 → 2개다.
                         //  · 목표 높이는 **이미 뽑아 둔 세로 지터**가 정한 루트 높이(parentScale.y × 2 =
                         //    3.57~5.25m)다. 새 난수는 0회이고, 변종 선택도 그 값으로 결정론적으로 한다.
                         //  · 크기 규약: 모델은 이미 미터 규격(밑면 y=0)이다. 그래서 AddMeshPart의 미터
-                        //    좌표계에 **fit = 목표 높이 / 모델 실측 높이**의 균등 배율만 곱한다(6종 기준 0.93~1.08).
+                        //    좌표계에 **fit = 목표 높이 / 모델 실측 높이**의 균등 배율만 곱한다.
                         //  · ★ 채집 콜라이더는 손대지 않는다 ★ 루트 캡슐(지름 0.30m × 세로 지터)이 조준
                         //    판정이고, 여기서 만드는 것은 콜라이더가 없는 순수 시각 파츠뿐이다.
+                        //  · [B57] 8종이 되면서 변종 선택이 "최근접 1개" → "±22% 후보 → 위치 해시"로
+                        //    바뀌었고(TryGetBambooModel 주석), 그래서 **노드의 월드 위치**를 넘긴다.
+                        //    go.transform.position은 SpawnSingleNode가 이 호출 전에 이미 확정한 값이라
+                        //    (접지 보정 포함) 여기서 새로 계산하거나 rng를 더 뽑지 않는다. fit은 0.82~1.28.
                         float clumpHeight = parentScale.y * 2f;
                         Mesh bambooCulms, bambooLeaves;
                         float bambooModelHeight;
                         bool useBambooModel = ResourceVisualLibrary.TryGetBambooModel(
-                            clumpHeight, out bambooCulms, out bambooLeaves, out bambooModelHeight);
+                            clumpHeight, go.transform.position,
+                            out bambooCulms, out bambooLeaves, out bambooModelHeight);
 
                         int culmCount = rng.NextInt(2, 5); // 루트 줄기 + 2~4 = 한 포기에 3~5줄기
                         for (int i = 0; i < culmCount; i++)
