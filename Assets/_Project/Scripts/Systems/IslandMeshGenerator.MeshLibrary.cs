@@ -1113,6 +1113,285 @@ namespace MakeGame.Systems
         private static Mesh grassBladeMesh;
         private static Mesh palmTrunkPrismMesh;
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        //  [해변 스와시] 물가 거리장(shore SDF) 굽기 + MGShoreline 에셋 프로브
+        // ═══════════════════════════════════════════════════════════════════════════
+        //
+        // 왜 필요한가: MGShoreline 셰이더는 파도 위상을 **해안선과 평행하게** 진행시켜야 한다
+        // (만은 오목하게 밀려들고, 곶은 늦게 닿는다). 그러려면 각 지점의 "물가까지의 수평 거리"가
+        // 필요한데, 이 프로젝트는 섬을 절차 생성하므로 **지형 생성 시점에 정점별로 한 번 구워** 두면
+        // 런타임 비용이 0이 된다(셰이더는 보간된 UV2를 읽기만 한다).
+        //
+        // ★ 근사가 아니라 실제 등고선 거리를 쓴 이유 ★
+        // 가장 싼 근사는 "정점 y ÷ 해변 경사"로 수평 거리를 환산하는 것이다. 실측(아래 값)으로
+        // 해변 경사가 섬마다 0.23~0.69(m/m)로 3배 벌어지고, 만/수로/석호가 있는 프로파일에서는
+        // **같은 높이라도 물가가 두 방향에 있다**(수로 안쪽 물가와 바깥 바다). 높이 환산은 그 둘을
+        // 구분하지 못해 수로 옆 모래가 파도 위상에서 통째로 빠진다. 반면 등고선 거리는
+        //   (1) 지형 삼각형에서 y=0 등고선을 마칭 트라이앵글로 뽑고
+        //   (2) 정점마다 그 선분들까지의 최소 거리를 재는
+        // 두 단계뿐이고, 지형 토폴로지(중심 + 링 × 세그먼트 원판)와 무관하게 성립한다.
+        // 비용은 세계 생성 1회뿐이다(아래 성능 주석).
+        //
+        // ★ 결정성 ★ 입력이 이미 확정된 정점 배열뿐인 **순수 기하 계산**이다. System.Random을
+        // 만들지도 소비하지도 않으므로 월드 배치 재현성(같은 worldSeed = 같은 월드)에 무영향이고,
+        // 세이브 포맷과도 무관하다(구운 값은 메시에만 들어간다).
+        //
+        // ★ 실측 값 범위(Tools/terrain/preview.py의 높이식으로 검산) ★
+        //   시작 섬 R=50 · 프로파일 0 : 거리장 -13.8m ~ +37.1m, 등고선 선분 158개
+        //       물가 → WetTop(0.30m) 0.43m / DampTop(0.75m) 1.30m / 1.30m 4.4m / 잔디선(1.93m) 15.3m
+        //   R=90 · 프로파일 4(수로)   : -29.1m ~ +33.5m, 선분 438개 (0.70 / 2.30 / 11.7m)
+        //   R=200 · 프로파일 3(초승달): -138.6m ~ +121.2m, 선분 272개 (2.48 / 7.20 / 18.8m)
+        //   → 해변 경사 0.23~0.69. 스와시 도달거리 1.3m(잔잔)~2.8m(거침)가 이 폭에 정확히 얹힌다.
+
+        /// <summary>
+        /// 등고선을 하나도 못 찾았을 때 쓰는 "무한히 멀다" 값(m). 셰이더의 도달거리(최대 3m 남짓)를
+        /// 한참 넘으므로 젖음/거품이 전혀 나오지 않는다 - 올바른 무동작이다.
+        /// </summary>
+        private const float ShoreFieldFar = 9999f;
+
+        /// <summary>
+        /// 지형 메시의 정점마다 **물가(y=0 등고선)까지의 부호 있는 수평 거리**를 구워 UV2로 돌려준다.
+        ///   x = 거리(m). + = 내륙(해발), - = 물속.
+        ///   y = 그 정점의 해수면 기준 높이(m). 예비 채널(셰이더는 현재 x만 쓴다).
+        ///
+        /// 섬은 로컬 y가 곧 해수면 기준 높이다(WorldMapManager.seaLevel = 0이고 섬 오브젝트는
+        /// y = 0에 놓인다) - 그래서 등고선은 그냥 y = 0이다.
+        ///
+        /// 성능: 정점 V × 등고선 선분 S. 최악(R=200: V=3601, S=272)이 98만 쌍인데,
+        ///   (a) 앞 정점의 결과 + 두 정점 사이 거리를 상한으로 물려받고(거리장은 1-Lipschitz라
+        ///       항상 유효한 상한이다. 정점은 링/세그먼트 순서라 이웃이 3~5m 안에 있다)
+        ///   (b) 선분의 중점·반길이로 만든 하한이 그 상한을 못 이기면 정확 계산을 건너뛴다
+        /// 두 가지로 대부분의 쌍이 곱셈 4번에서 걸러진다. 최소 거리를 내는 선분은 하한 정의상
+        /// 절대 걸러지지 않으므로 결과는 완전 탐색과 **동일하다**(근사가 아니다).
+        /// 호출은 섬 하나당 1회, 월드 생성 시점뿐이다(프레임당 할당·계산 0).
+        /// </summary>
+        private static Vector2[] BakeShoreField(Vector3[] vertices, int[] triangles)
+        {
+            var field = new Vector2[vertices.Length];
+
+            // ── (1) 마칭 트라이앵글로 y = 0 등고선 선분을 모은다 ──
+            // 삼각형 하나에서 부호가 갈리는 변은 항상 0개 또는 2개다(세 정점의 부호 조합상).
+            // 2개면 두 교점을 잇는 선분 하나가 그 삼각형 안의 등고선이다.
+            var segAx = new List<float>();
+            var segAz = new List<float>();
+            var segBx = new List<float>();
+            var segBz = new List<float>();
+
+            for (int t = 0; t + 2 < triangles.Length; t += 3)
+            {
+                Vector3 p0 = vertices[triangles[t]];
+                Vector3 p1 = vertices[triangles[t + 1]];
+                Vector3 p2 = vertices[triangles[t + 2]];
+
+                Vector2 first = default;
+                Vector2 second = default;
+                int found = 0;
+
+                if (ShoreEdgeCrossing(p0, p1, out Vector2 h01))
+                {
+                    first = h01;
+                    found = 1;
+                }
+                if (ShoreEdgeCrossing(p1, p2, out Vector2 h12))
+                {
+                    if (found == 0) first = h12; else second = h12;
+                    found++;
+                }
+                if (found < 2 && ShoreEdgeCrossing(p2, p0, out Vector2 h20))
+                {
+                    if (found == 0) first = h20; else second = h20;
+                    found++;
+                }
+
+                if (found < 2)
+                    continue;
+
+                segAx.Add(first.x); segAz.Add(first.y);
+                segBx.Add(second.x); segBz.Add(second.y);
+            }
+
+            int segmentCount = segAx.Count;
+            if (segmentCount == 0)
+            {
+                // 섬 전체가 물 위이거나 전체가 물속 - 이 지형에서는 있을 수 없지만(바깥 테두리가
+                // 항상 해수면 아래로 잠긴다), 값이 없으면 조용히 "물가 없음"으로 둔다.
+                for (int i = 0; i < vertices.Length; i++)
+                {
+                    float y = vertices[i].y;
+                    field[i] = new Vector2(y >= 0f ? ShoreFieldFar : -ShoreFieldFar, y);
+                }
+                return field;
+            }
+
+            // 리스트 인덱서를 벗기고(내부 루프가 수십만 번 돈다) 하한 판정용 중점/반길이를 미리 만든다.
+            float[] ax = segAx.ToArray();
+            float[] az = segAz.ToArray();
+            float[] bx = segBx.ToArray();
+            float[] bz = segBz.ToArray();
+            var midX = new float[segmentCount];
+            var midZ = new float[segmentCount];
+            var halfLength = new float[segmentCount];
+            for (int s = 0; s < segmentCount; s++)
+            {
+                midX[s] = (ax[s] + bx[s]) * 0.5f;
+                midZ[s] = (az[s] + bz[s]) * 0.5f;
+                float ex = bx[s] - ax[s];
+                float ez = bz[s] - az[s];
+                halfLength[s] = Mathf.Sqrt(ex * ex + ez * ez) * 0.5f;
+            }
+
+            // ── (2) 정점마다 등고선까지의 최소 거리 ──
+            float previousBest = -1f;
+            float previousX = 0f;
+            float previousZ = 0f;
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                Vector3 v = vertices[i];
+
+                // 이웃 정점의 결과를 상한으로 물려받는다(1-Lipschitz). 처음 한 번만 무한대로 시작한다.
+                float best = float.MaxValue;
+                if (previousBest >= 0f)
+                {
+                    float dx = v.x - previousX;
+                    float dz = v.z - previousZ;
+                    best = previousBest + Mathf.Sqrt(dx * dx + dz * dz);
+                }
+
+                for (int s = 0; s < segmentCount; s++)
+                {
+                    // 하한: 선분 위 어떤 점도 중점에서 halfLength보다 멀지 않다.
+                    float mx = v.x - midX[s];
+                    float mz = v.z - midZ[s];
+                    float reachable = best + halfLength[s];
+                    if (mx * mx + mz * mz > reachable * reachable)
+                        continue;
+
+                    float d = PointSegmentDistance2D(v.x, v.z, ax[s], az[s], bx[s], bz[s]);
+                    if (d < best)
+                        best = d;
+                }
+
+                previousBest = best;
+                previousX = v.x;
+                previousZ = v.z;
+
+                field[i] = new Vector2(v.y >= 0f ? best : -best, v.y);
+            }
+
+            return field;
+        }
+
+        /// <summary>
+        /// 변 (a, b)가 해수면(y = 0)을 가로지르면 그 교점의 XZ를 돌려준다.
+        /// 두 끝점의 y 부호가 같으면 교차가 없다.
+        /// </summary>
+        private static bool ShoreEdgeCrossing(Vector3 a, Vector3 b, out Vector2 hit)
+        {
+            hit = default;
+            if ((a.y > 0f) == (b.y > 0f))
+                return false;
+
+            float denominator = a.y - b.y;
+            if (Mathf.Abs(denominator) < 1e-6f)
+                return false;
+
+            float s = a.y / denominator; // a + s·(b − a) 에서 y = 0
+            hit = new Vector2(a.x + (b.x - a.x) * s, a.z + (b.z - a.z) * s);
+            return true;
+        }
+
+        /// <summary>
+        /// 점 (px, pz)에서 선분 (x0,z0)-(x1,z1)까지의 XZ 평면 거리.
+        /// IslandMeshGenerator.SegmentDistance와 같은 식이지만, 이쪽은 수십만 번 도는 내부 루프
+        /// 전용이라 인자를 풀어 둔 별도 사본이다(높이장 쪽 식은 한 글자도 건드리지 않는다).
+        /// </summary>
+        private static float PointSegmentDistance2D(float px, float pz, float x0, float z0, float x1, float z1)
+        {
+            float ex = x1 - x0;
+            float ez = z1 - z0;
+            float lengthSq = ex * ex + ez * ez;
+
+            float t = lengthSq > 1e-12f
+                ? Mathf.Clamp01(((px - x0) * ex + (pz - z0) * ez) / lengthSq)
+                : 0f;
+
+            float dx = px - (x0 + ex * t);
+            float dz = pz - (z0 + ez * t);
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        // ── MGShoreline 에셋 프로브 ────────────────────────────────────────────────
+        // [로드 규칙] Resources.Load는 정적 필드 초기자에서 부르지 않는다(초기자는 Unity가 Load를
+        // 막는 시점에 돌 수 있다 - 위 ProbeSingleMeshModels 주석과 같은 함정). 그리고 **실패를
+        // 영구히 캐시하지 않는다** - 거품 텍스처(Textures/shore_foam)는 다른 에이전트가 동시에
+        // 만드는 중이라 지금은 없을 수 있고, 그 null을 굳히면 텍스처가 들어와도 세션 내내 거품이
+        // 안 나온다. 성공할 때까지 프레임당 한 번만 다시 살핀다.
+
+        private static Shader shorelineShader;
+        private static int shorelineShaderProbeFrame = -1;
+        private static Texture2D shoreFoamTexture;
+        private static int shoreFoamProbeFrame = -1;
+
+        /// <summary>MGShoreline의 거품 텍스처 슬롯. 문자열 조회를 섬마다 반복하지 않으려고 ID로 굳힌다.</summary>
+        private static readonly int FoamMapProperty = Shader.PropertyToID("_FoamMap");
+
+        /// <summary>
+        /// 모래 캡용 MG/Shoreline 셰이더. 없으면 null이고, 그때 캡은 예전 그대로 URP Lit으로 남는다
+        /// (해변이 정적인 모래로 보일 뿐 렌더는 멀쩡하다 - MGOcean/MGGrass와 같은 폴백 계약).
+        /// </summary>
+        private static Shader GetShorelineShader()
+        {
+            if (shorelineShader != null || shorelineShaderProbeFrame == Time.frameCount)
+                return shorelineShader;
+
+            shorelineShaderProbeFrame = Time.frameCount;
+            shorelineShader = Resources.Load<Shader>("Shaders/MGShoreline");
+            return shorelineShader;
+        }
+
+        /// <summary>
+        /// 스와시 거품 텍스처(RGBA = 거품 마스크 / 디졸브 노이즈 / 미세 디테일 / 큰 덩어리).
+        /// 없으면 null이고, 셰이더의 _FoamMap 기본값 "black"이 그대로 남아 **거품만 조용히 생략**된다
+        /// (R = 0 → 거품 마스크 0). 젖은 모래 연출은 텍스처 없이도 그대로 동작한다.
+        /// </summary>
+        private static Texture2D GetShoreFoamTexture()
+        {
+            if (shoreFoamTexture != null || shoreFoamProbeFrame == Time.frameCount)
+                return shoreFoamTexture;
+
+            shoreFoamProbeFrame = Time.frameCount;
+            shoreFoamTexture = Resources.Load<Texture2D>("Textures/shore_foam");
+            return shoreFoamTexture;
+        }
+
+        /// <summary>
+        /// 이미 만들어진 캡 머티리얼의 셰이더를 MG/Shoreline으로 갈아 끼운다(성공하면 true).
+        ///
+        /// 새 머티리얼을 만들지 않고 갈아 끼우는 이유: StructureVisualBuilder.CreateColorMaterial이
+        /// 런타임 머티리얼 이름 접두사([B29] "지워도 되는 인스턴스" 표식)와 모래 텍스처 로드를
+        /// 한 곳에서 담당한다. 그 경로를 그대로 통과시키고 셰이더만 바꾸면 표식/텍스처 규약이
+        /// 저절로 유지된다. 프로퍼티는 이름이 같으면 셰이더 교체 후에도 살아남으므로
+        /// material.color([MainColor] _BaseColor)와 mainTexture([MainTexture] _BaseMap)가
+        /// URP Lit 때와 같은 의미로 이어진다 - **아키타입 sandColor가 그대로 유지되는 근거**다.
+        /// URP Lit 전용이던 _Smoothness는 새 셰이더에 없어 조용히 버려진다(그래서 새 셰이더는
+        /// 이름이 겹치지 않는 _DrySmoothness/_WetSmoothness를 쓴다).
+        /// </summary>
+        private static bool TryApplyShorelineShader(Material material)
+        {
+            Shader shader = GetShorelineShader();
+            if (material == null || shader == null)
+                return false;
+
+            material.shader = shader;
+
+            var foam = GetShoreFoamTexture();
+            if (foam != null)
+                material.SetTexture(FoamMapProperty, foam);
+
+            return true;
+        }
+
         /// <summary>
         /// 도메인 리로드를 끈 플레이 모드에서 static 캐시가 이전 실행의 파괴된 메시를 들고
         /// 시작하지 않게 초기 상태로 되돌린다(이 partial 파일이 선언한 static만 다룬다).
@@ -1140,6 +1419,10 @@ namespace MakeGame.Systems
             rockformModelProbeFrame = -1;
             grassBladeMesh = null;
             palmTrunkPrismMesh = null;
+            shorelineShader = null;
+            shorelineShaderProbeFrame = -1;
+            shoreFoamTexture = null;
+            shoreFoamProbeFrame = -1;
         }
     }
 }

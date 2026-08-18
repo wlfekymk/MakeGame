@@ -959,9 +959,23 @@ namespace MakeGame.Systems
                 }
             }
 
+            int[] triangleArray = triangles.ToArray();
+
             mesh.vertices = vertices;
             mesh.uv = uvs;
-            mesh.triangles = triangles.ToArray();
+            mesh.triangles = triangleArray;
+
+            // [해변 스와시] 물가(y=0 등고선)까지의 수평 거리를 정점마다 구워 **UV2**에 싣는다.
+            //   uv2.x = 부호 있는 거리(m, + 내륙 / - 물속), uv2.y = 해수면 기준 높이(m).
+            // MGShoreline 셰이더가 파도 위상·젖음·거품을 전부 이 값 하나로 계산한다(런타임 비용 0).
+            // BuildCapLayer가 캡 메시로 정점을 옮길 때 UV2도 함께 옮긴다.
+            //
+            // 이 한 줄이 메시에 더하는 것은 정점당 float2 하나뿐이다 - 정점 좌표·인덱스·UV0·
+            // 삼각형 감는 방향은 한 비트도 바뀌지 않으므로 콜라이더 footprint, 스포너 산포 반경,
+            // TerrainSampler 스냅, 캡 선택 조건이 전부 그대로다. 계산도 이미 확정된 정점 배열만
+            // 보는 순수 기하라 rng를 0회 소비한다(월드 생성 결정성 불변).
+            mesh.uv2 = BakeShoreField(vertices, triangleArray);
+
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
@@ -1220,12 +1234,30 @@ namespace MakeGame.Systems
                     2, 0.22f, StructureVisualBuilder.FrondGreen);
             }
 
+            // ── [해변 스와시] 모래 캡 3장을 MG/Shoreline 셰이더로 그린다 ──────────────────
+            // 파도가 밀려왔다 빠지는 연출(젖은 모래 + 스와시 거품)은 전부 그 셰이더의 프래그먼트
+            // 계산이고, 입력은 GenerateIslandMesh가 UV2에 구워 둔 물가 거리장 하나뿐이다.
+            // ★ 여기서 바뀌는 것은 **머티리얼의 셰이더 한 줄뿐**이다 ★
+            //   · 캡의 개수·경계식(DryTop/DampTop/WetTop)·색(아키타입 sandColor의 1.0/0.88/0.78 계단)·
+            //     y 오프셋(capOffset 0.08m)·렌더 순서(Opaque/Geometry)·머티리얼 개수는 전부 그대로다
+            //     → 드로우콜 증가 0, z-파이팅 상황 불변.
+            //   · 셰이더가 없으면(Resources 로드 실패) 예전 URP Lit 캡 그대로다.
+            // ★ 중복 연출 조율 ★
+            //   · WorldMapManager.CreateShorelineBand(0.95R 원형 반투명 고리)는 MGOcean이 살아 있으면
+            //     아예 만들어지지 않고, 만들어지는 폴백 경로에서도 안쪽 끝(0.95R)이 실측 물가
+            //     (0.72~0.87R)보다 바다 쪽이라 스와시 구간(물가 ±3m)과 겹치지 않는다.
+            //   · 실제로 겹칠 뻔한 MGOcean의 깊이 기반 해안 거품(물 기둥 0~0.7m)과는, 이쪽 거품을
+            //     **물가 안쪽(모래 위)** 으로 제한해 물가를 사이에 두고 한 줄로 이어지게 했다
+            //     (MGShoreline 헤더의 "중복 방지" 항목).
             BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", archetype.sandColor,
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
                     centroid.y >= DampTop(centroid, angle) && centroid.y < DryTop(centroid, angle),
                 // 젖은 모래와 같은 규칙의 2톤(채도만 내리는 색조 변주, 명도 단차 0%).
-                1);
+                // [해변 스와시] 모래 3단 모두 MG/Shoreline으로 그린다. 마른 모래까지 포함하는 이유는
+                // 거친 바다의 도달거리(2.8m)가 물가~DampTop(실측 1.3m)을 넘어 마른 모래 아래쪽까지
+                // 올라오기 때문이다 - 여기를 빼면 폭풍에 파도가 캡 경계에서 잘린다.
+                1, shoreline: true);
 
             // [B22 신규] 축축한 모래. 마른 모래와 젖은 모래 사이의 중간 단계다.
             // 예전에는 마른(100%) → 젖은(80%) 두 단계뿐이라 밝기가 한 번에 20% 떨어져,
@@ -1235,7 +1267,7 @@ namespace MakeGame.Systems
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) =>
                     centroid.y >= WetTop(centroid, angle) && centroid.y < DampTop(centroid, angle),
-                1);
+                1, shoreline: true);
 
             // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
             // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
@@ -1247,7 +1279,7 @@ namespace MakeGame.Systems
             BuildCapLayer(surfaceRoot, source, radius, "WetSandCap", Shade(archetype.sandColor, 0.78f),
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) => centroid.y < WetTop(centroid, angle),
-                1);
+                1, shoreline: true);
         }
 
         /// <summary>
@@ -1274,21 +1306,34 @@ namespace MakeGame.Systems
         /// 상대휘도는 ToneVariant가 기준색에 고정하므로 이 값이 아무리 커도 명도 단차는 0이다.
         /// </param>
         /// <param name="toneShift">톤이 섞여 들어갈 상대 색. 비우면 변주 없음(단색)과 같다.</param>
+        /// <param name="shoreline">
+        /// [해변 스와시] 이 캡을 MG/Shoreline 셰이더로 그릴지(모래 캡 3장만 true).
+        /// true면 (a) 지형 메시의 물가 거리장(UV2)을 캡 메시로 함께 옮기고,
+        /// (b) 캡 머티리얼의 셰이더를 MG/Shoreline으로 갈아 끼운다. 셰이더 로드가 실패하면
+        /// 조용히 예전 URP Lit 그대로 남는다(드로우콜·머티리얼 개수는 어느 쪽이든 동일하다).
+        /// </param>
         private static void BuildCapLayer(Transform surfaceRoot, Mesh source, float radius, string name,
             Color color, float yOffset, float textureTiling, string textureName,
             System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.30f,
-            Color? toneShift = null)
+            Color? toneShift = null, bool shoreline = false)
         {
             Vector3[] sourceVertices = source.vertices;
             int[] sourceTriangles = source.triangles;
             Vector2[] sourceUvs = source.uv;
             bool hasSourceUv = sourceUvs != null && sourceUvs.Length == sourceVertices.Length;
 
+            // [해변 스와시] 물가 거리장(GenerateIslandMesh가 UV2에 구워 둔 값). 스와시 캡에서만 옮긴다.
+            // 소스에 없으면(플레이스홀더 지형 등) 정점마다 "무한히 멀다"를 채워 넣어, 셰이더가
+            // 젖음/거품을 하나도 그리지 않는 마른 모래로 떨어진다(조용한 폴백).
+            Vector2[] sourceShore = shoreline ? source.uv2 : null;
+            bool hasSourceShore = sourceShore != null && sourceShore.Length == sourceVertices.Length;
+
             toneCount = Mathf.Clamp(toneCount, 1, 4);
 
             var remap = new Dictionary<int, int>(sourceVertices.Length);
             var vertices = new List<Vector3>();
             var uvs = new List<Vector2>();
+            var shoreUvs = shoreline ? new List<Vector2>() : null;
             var toneTriangles = new List<int>[toneCount];
             for (int i = 0; i < toneCount; i++)
                 toneTriangles[i] = new List<int>();
@@ -1307,9 +1352,12 @@ namespace MakeGame.Systems
                     continue;
 
                 var bucket = toneTriangles[ToneIndex(centroid, toneCount)];
-                bucket.Add(RemapVertex(i0, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
-                bucket.Add(RemapVertex(i1, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
-                bucket.Add(RemapVertex(i2, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs));
+                bucket.Add(RemapVertex(i0, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                    sourceShore, hasSourceShore, shoreUvs));
+                bucket.Add(RemapVertex(i1, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                    sourceShore, hasSourceShore, shoreUvs));
+                bucket.Add(RemapVertex(i2, remap, sourceVertices, sourceUvs, hasSourceUv, radius, vertices, uvs,
+                    sourceShore, hasSourceShore, shoreUvs));
                 selectedCount++;
             }
 
@@ -1328,6 +1376,9 @@ namespace MakeGame.Systems
             mesh.name = $"Island{name}";
             mesh.SetVertices(vertices);
             mesh.SetUVs(0, uvs);
+            // [해변 스와시] 물가 거리장을 UV2로 그대로 넘긴다(MGShoreline의 TEXCOORD1 계약).
+            if (shoreUvs != null)
+                mesh.SetUVs(1, shoreUvs);
             mesh.subMeshCount = usedTones.Count;
             for (int s = 0; s < usedTones.Count; s++)
                 mesh.SetTriangles(toneTriangles[usedTones[s]], s);
@@ -1353,6 +1404,12 @@ namespace MakeGame.Systems
                     : usedTones[s] / (float)(toneCount - 1) * toneSpread;
                 var material = StructureVisualBuilder.CreateColorMaterial(
                     ToneVariant(color, toneShift ?? color, mix), textureName);
+                // [해변 스와시] 모래 캡만 셰이더를 MG/Shoreline으로 갈아 끼운다. 머티리얼을 새로
+                // 만들지 않고 셰이더만 바꾸므로 색([MainColor] _BaseColor = 아키타입 sandColor)과
+                // 텍스처([MainTexture] _BaseMap = sand.png)가 그대로 살아남고, 머티리얼 개수 =
+                // 드로우콜도 그대로다. 셰이더가 없으면 아무 일도 일어나지 않는다(예전 URP Lit 유지).
+                if (shoreline)
+                    TryApplyShorelineShader(material);
                 // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
                 // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
                 // WorldMapManager.CreateDefaultTerrainMaterial의 모래 타일링과 같은 계산 방식이다.
@@ -1372,9 +1429,12 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 원본 지형 정점을 캡 메시로 옮기고(중복 없이) 새 인덱스를 돌려준다.
+        /// [해변 스와시] shoreUvs가 null이 아니면 물가 거리장(UV2)도 같은 순서로 함께 옮긴다.
+        /// 원본에 거리장이 없으면 "무한히 멀다"(ShoreFieldFar)를 채워 젖음/거품이 안 나오게 한다.
         /// </summary>
         private static int RemapVertex(int sourceIndex, Dictionary<int, int> remap, Vector3[] sourceVertices,
-            Vector2[] sourceUvs, bool hasSourceUv, float radius, List<Vector3> vertices, List<Vector2> uvs)
+            Vector2[] sourceUvs, bool hasSourceUv, float radius, List<Vector3> vertices, List<Vector2> uvs,
+            Vector2[] sourceShore, bool hasSourceShore, List<Vector2> shoreUvs)
         {
             if (remap.TryGetValue(sourceIndex, out int existing))
                 return existing;
@@ -1385,6 +1445,12 @@ namespace MakeGame.Systems
             uvs.Add(hasSourceUv
                 ? sourceUvs[sourceIndex]
                 : new Vector2(v.x / radius * 0.5f + 0.5f, v.z / radius * 0.5f + 0.5f));
+            if (shoreUvs != null)
+            {
+                shoreUvs.Add(hasSourceShore
+                    ? sourceShore[sourceIndex]
+                    : new Vector2(v.y >= 0f ? ShoreFieldFar : -ShoreFieldFar, v.y));
+            }
             remap[sourceIndex] = newIndex;
             return newIndex;
         }
