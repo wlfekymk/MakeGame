@@ -45,9 +45,6 @@ namespace MakeGame.Systems
         [Tooltip("섬이 생성될 때 위험 요소를 함께 배치할 스포너 (비워두면 위험 요소를 배치하지 않는다)")]
         public HazardSpawner hazardSpawner;
 
-        [Tooltip("섬이 생성될 때 배 도면 습득 지점을 함께 배치할 스포너 (비워두면 도면을 배치하지 않는다)")]
-        public BoatBlueprintSpawner blueprintSpawner;
-
         [Tooltip("섬이 생성될 때 사냥감/물고기를 함께 배치할 스포너 (비워두면 사냥감을 배치하지 않는다).\n" +
                  "이게 없으면 생고기/생선 자체를 얻을 방법이 없어 사냥/낚시/조리 시스템이 전부 죽은 콘텐츠가 된다.")]
         public CreatureSpawner creatureSpawner;
@@ -88,11 +85,6 @@ namespace MakeGame.Systems
 
         /// <summary>시작 시선을 이미 한 번 잡았는지 여부(불러오기로 월드를 재생성해도 다시 돌리지 않기 위함).</summary>
         private bool startingFacingApplied = false;
-
-        [Header("배 제작 엔딩")]
-        [Tooltip("시작 섬에 배치할 배 작업대가 진행 상태를 갱신할 배 제작 시스템 (비워두면 작업대를 배치하지 않는다).\n" +
-                 "작업대가 없으면 도면과 재료를 다 모아도 실제로 배를 조립할 방법이 없으므로 반드시 연결해야 한다.")]
-        public BoatConstructionSystem boatConstruction;
 
         [Header("테스트용 자동 생성")]
         [Tooltip("플레이 시작 시 자동으로 시작 섬 + 여러 섬을 생성해서 맵을 미리 확인할 수 있게 한다.")]
@@ -532,7 +524,9 @@ namespace MakeGame.Systems
 
             SpawnIslandContent(startIsland);
             SpawnAirlinerWreck(startIsland);
-            SpawnBoatWorkbench(startIsland);
+            // [뗏목 재배선] 예전에는 여기서 시작 섬 캠프에 배 작업대(BoatWorkbench)를 놓았다. 새 뗏목은
+            // 해안에서 바닥판을 직접 놓는 방식이라 작업대가 없고, 뗏목 본체는 RaftStructure가 스스로
+            // 씬 로드마다 만들어 해안에 자리를 잡는다(월드 생성 rng를 한 번도 소비하지 않는다).
             islands.Add(startIsland);
             return startIsland;
         }
@@ -595,42 +589,6 @@ namespace MakeGame.Systems
                 playerTransform = controller.transform;
 
             return playerTransform;
-        }
-
-        /// <summary>
-        /// 시작 섬(캠프)에 배 작업대를 한 번 배치한다. 도면과 재료를 다 모아도 이 오브젝트와 상호작용(E키)해야
-        /// 실제로 재료가 투입되고 단계가 진행되므로, 배 엔딩 경로에 반드시 필요한 배치다.
-        /// 간단한 작업대(받침대+공구대) 형태를 프리미티브 조합으로 표현한다.
-        /// </summary>
-        private void SpawnBoatWorkbench(IslandInstance startIsland)
-        {
-            if (boatConstruction == null)
-                return;
-
-            Vector3 position = startIsland.mapPosition + new Vector3(-6f, 0f, -3f);
-            position = TerrainSampler.SnapToGround(position);
-
-            var go = new GameObject("BoatWorkbench");
-            go.transform.SetParent(transform);
-            go.transform.position = position;
-
-            // 작업대 상판(넓적한 큐브) + 다리 2개(가는 원기둥) + 위에 놓인 공구(작은 큐브)로 작업대 형태를 표현한다.
-            StructureVisualBuilder.CreateVisualPart(go.transform, "Tabletop", PrimitiveType.Cube,
-                Vector3.up * 0.8f, new Vector3(2.2f, 0.15f, 1.2f), new Color(0.5f, 0.35f, 0.2f));
-            StructureVisualBuilder.CreateVisualPart(go.transform, "LegLeft", PrimitiveType.Cylinder,
-                new Vector3(-0.8f, 0.4f, 0f), new Vector3(0.12f, 0.4f, 0.12f), new Color(0.35f, 0.24f, 0.14f));
-            StructureVisualBuilder.CreateVisualPart(go.transform, "LegRight", PrimitiveType.Cylinder,
-                new Vector3(0.8f, 0.4f, 0f), new Vector3(0.12f, 0.4f, 0.12f), new Color(0.35f, 0.24f, 0.14f));
-            StructureVisualBuilder.CreateVisualPart(go.transform, "Tool", PrimitiveType.Cube,
-                new Vector3(0.4f, 0.95f, 0.2f), new Vector3(0.5f, 0.12f, 0.12f), new Color(0.4f, 0.4f, 0.42f),
-                Quaternion.Euler(0f, 30f, 0f));
-
-            var boxCollider = go.AddComponent<BoxCollider>();
-            boxCollider.center = new Vector3(0f, 0.6f, 0f);
-            boxCollider.size = new Vector3(2.4f, 1.2f, 1.4f);
-
-            var workbench = go.AddComponent<BoatWorkbench>();
-            workbench.boatConstruction = boatConstruction;
         }
 
         /// <summary>
@@ -866,7 +824,7 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원, 위험 요소, 배 도면 습득 지점을 함께 배치한다.
+        /// 섬이 생성된 직후, 연결된 스포너가 있다면 채집 자원, 위험 요소, 사냥감을 함께 배치한다.
         /// B3-3: 각 스포너가 이 섬 전용 결정적 System.Random 스트림을 만들 수 있도록 worldSeed를 함께
         /// 넘긴다(스포너 내부에서 island.islandId와 조합해 시드를 만든다 - SeededRandomExtensions 참고).
         /// </summary>
@@ -874,7 +832,6 @@ namespace MakeGame.Systems
         {
             resourceSpawner?.SpawnResourcesForIsland(island, transform, worldSeed);
             hazardSpawner?.SpawnHazardsForIsland(island, transform, worldSeed);
-            blueprintSpawner?.SpawnBlueprintForIsland(island, transform, worldSeed);
             creatureSpawner?.SpawnCreaturesForIsland(island, transform, worldSeed);
         }
 
@@ -1455,17 +1412,19 @@ namespace MakeGame.Systems
         /// 매 프레임 호출해도 되는 비용(인벤토리 1회 순회 × 최대 4번)이며, 부작용이 전혀 없다.
         /// </summary>
         public static ProgressionStage Evaluate(PlayerInventory inventory, SurvivalStats stats,
-            BoatConstructionSystem boat, AircraftRepairSystem aircraft, IslandTravel travel)
+            RaftStructure raft, AircraftRepairSystem aircraft, IslandTravel travel)
         {
             // 5단계 - 한쪽 경로가 100%에 도달했다.
-            if ((boat != null && boat.isFullyComplete) || (aircraft != null && aircraft.isRepairComplete))
+            // 뗏목 쪽 기준은 "대양에 나갈 준비가 끝났는가"(IsOceanReady)다 - 엔딩 판정과 같은 값을 봐야
+            // HUD가 "탈출 준비 완료"라고 말한 뒤에도 엔딩이 안 나는 어긋남이 생기지 않는다.
+            if ((raft != null && raft.IsOceanReady) || (aircraft != null && aircraft.isRepairComplete))
                 return ProgressionStage.Escape;
 
-            // 4단계 - 탈출 경로에 실제로 착수했다. 도면 습득/단계 완료/재료 투입/금속조각 최초 획득 중 하나.
-            bool boatStarted = boat != null &&
-                (boat.hasCurrentStageBlueprint || boat.highestCompletedStage >= 1 || boat.GetOverallProgress() > 0f);
+            // 4단계 - 탈출 경로에 실제로 착수했다. 뗏목 바닥판을 한 칸이라도 놓았거나, 경비행기 재료를
+            // 투입했거나, 금속조각을 처음 얻었거나.
+            bool raftStarted = raft != null && raft.Exists;
             bool aircraftStarted = aircraft != null && aircraft.GetOverallProgress() > 0f;
-            if (boatStarted || aircraftStarted || CountByName(inventory, MetalScrapItemName) > 0)
+            if (raftStarted || aircraftStarted || CountByName(inventory, MetalScrapItemName) > 0)
                 return ProgressionStage.EscapePreparation;
 
             // 3단계 - 손도끼를 얻었거나(문서의 전환 신호), 이미 시작 섬을 떠나 탐험을 시작했다.
@@ -1488,10 +1447,10 @@ namespace MakeGame.Systems
         /// 단계에 대응하는 HUD 목표 문구를 반환한다. 문구는 Docs/Design_Progression.md 3장에 확정된 것을
         /// 그대로 옮긴 것이다(임의로 바꾸지 말 것 - 키 안내가 문구의 핵심이다).
         /// 4단계만 두 줄('\n' 구분)이며, 이는 "두 갈래가 처음 명시되는 유일한 지점"이라는 설계 의도다.
-        /// boat/aircraft를 넘기면 4단계 문구에 실제 진행도가 채워지고, 넘기지 않으면 진행도 없이 나온다.
+        /// raft/aircraft를 넘기면 4단계 문구에 실제 진행도가 채워지고, 넘기지 않으면 진행도 없이 나온다.
         /// </summary>
         public static string GetObjectiveText(ProgressionStage stage,
-            BoatConstructionSystem boat = null, AircraftRepairSystem aircraft = null)
+            RaftStructure raft = null, AircraftRepairSystem aircraft = null)
         {
             switch (stage)
             {
@@ -1503,19 +1462,16 @@ namespace MakeGame.Systems
 
                 case ProgressionStage.EscapePreparation:
                 {
-                    // 배는 "몇 단계까지 왔는가", 경비행기는 "재료를 몇 % 모았는가"가 각각 자연스러운 단위다
-                    // (BoatConstructionSystem은 단계제, AircraftRepairSystem은 재료 누적제).
-                    int boatStage = boat != null
-                        ? Mathf.Clamp(boat.currentStage, 1, BoatConstructionSystem.TotalStages)
-                        : 1;
+                    // 뗏목은 "바닥판을 몇 칸 깔았는가", 경비행기는 "재료를 몇 % 모았는가"가 각각
+                    // 자연스러운 단위다(뗏목은 격자 누적제, AircraftRepairSystem은 재료 누적제).
+                    int raftTiles = raft != null ? raft.BaseTileCount : 0;
                     int aircraftPercent = aircraft != null
                         ? Mathf.RoundToInt(Mathf.Clamp01(aircraft.GetOverallProgress()) * 100f)
                         : 0;
 
-                    // 배(A)를 먼저 쓴다 - Design_Progression 4장의 결정(기본 안내 경로를 배로 둔다).
-                    // 경비행기 잔해가 특대 섬으로 이전되면서(WorldMapManager.SpawnAircraftWreck 참고)
-                    // 두 번째 줄의 위치 표기만 문서 원문과 달리 갱신했다 - 틀린 길 안내가 더 나쁘다.
-                    return $"탈출 경로 A — 배 제작 (작업대: 시작 섬)  [{BoatConstructionSystem.TotalStages}단계 중 {boatStage}단계]\n" +
+                    // 뗏목(A)을 먼저 쓴다 - Design_Progression 4장의 결정(기본 안내 경로를 배로 둔다).
+                    // 작업대가 사라졌으므로 위치 표기는 "시작 섬 해안"으로 바꿨다 - 틀린 길 안내가 더 나쁘다.
+                    return $"탈출 경로 A — 뗏목 건조 (시작 섬 해안)  [바닥판 {raftTiles}/{RaftStructure.MaxBaseTiles}칸]\n" +
                            $"탈출 경로 B — 경비행기 수리 (잔해: 특대 섬)  [재료 {aircraftPercent}%]";
                 }
 
@@ -1532,9 +1488,9 @@ namespace MakeGame.Systems
         /// 판정과 문구 생성을 한 번에 한다(UI가 가장 자주 쓸 형태). Evaluate와 동일하게 부작용이 없다.
         /// </summary>
         public static string GetObjectiveText(PlayerInventory inventory, SurvivalStats stats,
-            BoatConstructionSystem boat, AircraftRepairSystem aircraft, IslandTravel travel)
+            RaftStructure raft, AircraftRepairSystem aircraft, IslandTravel travel)
         {
-            return GetObjectiveText(Evaluate(inventory, stats, boat, aircraft, travel), boat, aircraft);
+            return GetObjectiveText(Evaluate(inventory, stats, raft, aircraft, travel), raft, aircraft);
         }
 
         /// <summary>

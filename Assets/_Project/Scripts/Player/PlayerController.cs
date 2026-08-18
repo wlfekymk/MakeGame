@@ -100,6 +100,21 @@ namespace MakeGame.Player
         private Vector3 verticalVelocity;
         private float cameraPitch = 0f;
 
+        /// <summary>
+        /// 이동 입력을 통째로 넘겨받은 시스템이 있는가(지금은 뗏목 조종 - MakeGame.Systems.RaftSailing).
+        ///
+        /// [왜 "이동만" 끄는가] 조종 중에도 **시점 회전은 살아 있어야 한다**(HandleLook은 이 값을 보지
+        /// 않는다). 배를 돌리면서 주위를 둘러보지 못하면 항해가 아니라 궤도 이동이 된다.
+        ///
+        /// [왜 컨트롤러를 끄지 않는가] CharacterController를 비활성화하면 RaftStructure.CarryRider가
+        /// 쓰는 Move가 죽어 플레이어가 갑판에 붙어 있지 못한다. 조종 중 플레이어를 옮기는 것은 오직
+        /// CarryRider뿐이고, 그러려면 컨트롤러는 켜져 있되 스스로 걷지만 않으면 된다.
+        ///
+        /// [직렬화하지 않는다] 순수 런타임 상태다. 이 값이 켜진 채 씬이 저장/복원되면 플레이어가
+        /// 영영 못 움직이므로, 소유자(RaftSailing)가 OnDisable에서도 반드시 되돌린다.
+        /// </summary>
+        [System.NonSerialized] public bool MovementSuspended;
+
         // 커서 잠금 상태가 바뀐 프레임을 알아보기 위한 직전 상태와, 그때 회전을 건너뛸 남은 프레임 수.
         private bool lookCursorWasLocked;
         private int lookSettleCounter;
@@ -330,6 +345,16 @@ namespace MakeGame.Player
         /// </summary>
         private void HandleMove()
         {
+            // [뗏목 조종] 이동 권한을 넘긴 동안에는 WASD/점프를 아예 읽지 않는다. 같은 키가 배 조종에
+            // 쓰이므로 여기서 소비하면 갑판 위를 걸어 나가면서 배도 돌아간다. 자세 유지는 전적으로
+            // RaftStructure.CarryRider가 맡는다(그쪽이 뗏목 로컬 좌표를 보존해 Move를 부른다).
+            if (MovementSuspended)
+            {
+                // 중력 누적을 비워 둔다 - 조종을 그만두는 순간 그동안 쌓인 낙하 속도로 갑판을 뚫지 않게.
+                verticalVelocity = Vector3.zero;
+                return;
+            }
+
             float speed = moveSpeed;
             if (survivalStats != null && survivalStats.hasBrokenBone)
                 speed *= brokenBoneSpeedMultiplier;

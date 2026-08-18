@@ -54,8 +54,21 @@ namespace MakeGame.Systems
                 // 일어나지 않는다. 상자 창은 조준했을 때만 열리는 창이라 전용 토글 키를 따로 만들지
                 // 않았다(Tab/V/J/M/B/Esc가 이미 차 있다). CloseIfOpen은 **실제로 닫았을 때만** true를
                 // 돌려주므로 상자와 무관한 상황의 E를 삼키지 않는다.
-                if (!MakeGame.UI.ChestUI.CloseIfOpen())
-                    InteractWithTarget();
+                // [뗏목] 제작 창도 상자 창과 **완전히 같은 규약**이다: 조준해서 여는 창이라 전용 토글
+                // 키가 없고, 열려 있는 동안 E는 곧 '닫기'다. CloseIfOpen은 실제로 닫았을 때만 true라
+                // 두 창이 모두 닫혀 있는 평범한 E를 삼키지 않는다.
+                if (!MakeGame.UI.ChestUI.CloseIfOpen() && !MakeGame.UI.RaftBuildUI.CloseIfOpen())
+                {
+                    // [뗏목 항해] 조종 중의 E는 **조준과 무관하게** '조종 그만두기'다. 조종 자리에
+                    // 고정된 플레이어는 시점만 자유로우므로, 나가려고 고물 쪽을 다시 겨누게 만들면
+                    // (뒤를 돌아봐야 한다) 조작이 아니라 퍼즐이 된다. 위 두 창과 완전히 같은 규약이다:
+                    // "열려 있는 동안 E는 곧 닫기"이고, 그 프레임의 월드 상호작용은 일어나지 않는다.
+                    var sailing = RaftSailing.Active;
+                    if (sailing != null && sailing.IsSteering)
+                        sailing.ExitSteering();
+                    else
+                        InteractWithTarget();
+                }
             }
 
             if (Input.GetKeyDown(cookKey))
@@ -77,7 +90,7 @@ namespace MakeGame.Systems
                 return;
 
             // 보관 상자: 조준하고 누르면 보관 창(ChestUI)이 열린다. 자식 파츠(뚜껑·손잡이 등)에 레이가
-            // 맞아도 같은 상자로 이어지도록 GetComponentInParent를 쓴다(BoatWorkbench와 같은 이유).
+            // 맞아도 같은 상자로 이어지도록 GetComponentInParent를 쓴다(자식 파츠에 콜라이더가 붙는 구성 대응).
             var storageChest = target.GetComponentInParent<StorageChest>();
             if (storageChest != null)
             {
@@ -118,22 +131,15 @@ namespace MakeGame.Systems
                 return;
             }
 
-            var blueprint = target.GetComponent<BoatBlueprintPickup>();
-            if (blueprint != null)
-            {
-                blueprint.TryObtain();
-                return;
-            }
-
-            // GetComponentInParent를 쓴다(자기 자신도 포함하므로 기존 작업대는 동작이 100% 동일하다).
-            // 실체 뗏목(RaftStructure)은 본체에 BoatWorkbench를 달고 있지만, 승선 발판처럼 콜라이더를
-            // 가진 자식 파츠도 있어서 레이가 자식에 맞을 수 있다. 그때도 같은 작업대로 이어져야 한다.
-            var workbench = target.GetComponentInParent<BoatWorkbench>();
-            if (workbench != null)
-            {
-                workbench.TryBuild(inventory);
-                return;
-            }
+            // [뗏목 재배선] 배 도면 습득 지점(BoatBlueprintPickup)과 배 작업대(BoatWorkbench) 분기는
+            // 두 컴포넌트가 함께 삭제되면서 사라졌다. 새 뗏목은 해안에서 바닥판을 직접 놓는 방식이라
+            // 도면도 작업대도 쓰지 않는다.
+            //
+            // **뗏목 본체 분기는 여기가 아니라 이 메서드 맨 아래에 있다.** 자리를 옮긴 이유는 하나다:
+            // 뗏목 조준 판정은 GetComponentInParent<RaftStructure>여야 하는데(선체·승선 발판·갑판
+            // 콜라이더가 전부 자식이다), 갑판 위에 지은 건축 부품과 상자도 뗏목의 **자손**이라
+            // 이 분기를 위쪽에 두면 갑판 위 조각 승급과 상자 열기가 통째로 뗏목 창에 먹힌다.
+            // 자세한 내용은 아래 뗏목 분기의 주석 참고.
 
             var aircraftWreck = target.GetComponent<AircraftWreck>();
             if (aircraftWreck != null)
@@ -154,7 +160,7 @@ namespace MakeGame.Systems
             }
 
             // 여객기 잔해(시작 섬 해안): 1회 한정 물자 수색. 콜라이더가 동체/날개 등 자식 파츠에
-            // 붙어 있으므로 GetComponentInParent를 쓴다(BoatWorkbench와 같은 이유).
+            // 붙어 있으므로 GetComponentInParent를 쓴다(자식 파츠에 콜라이더가 붙는 구성 대응).
             var airliner = target.GetComponentInParent<AirlinerWreck>();
             if (airliner != null)
             {
@@ -192,6 +198,34 @@ namespace MakeGame.Systems
             if (building != null && building.TryGetPieceTier(target.transform, out _, out _))
             {
                 building.TryUpgradePiece(target.transform, inventory);
+                return;
+            }
+
+            // [뗏목 항해] 조타 자리(고물 뒤편 트리거 상자)를 조준한 E는 **조종 시작**이다.
+            // 반드시 바로 아래 뗏목 제작 분기보다 **먼저** 와야 한다 - 조타 자리도 뗏목의 자손이라
+            // 순서가 뒤집히면 조종 대신 제작 창이 열려 조종에 들어갈 방법이 원리적으로 사라진다.
+            // 반대로 상자/건축 부품 분기보다는 뒤에 둔다: RaftHelm은 전용 표식 컴포넌트라 그 둘과
+            // 절대 겹치지 않지만, 이 파일과 InteractionPromptUI의 우선순위를 한 줄도 다르지 않게
+            // 맞춰 두는 편이 나중에 갈라질 여지를 없앤다. 판정·사유는 전부 RaftSailing이 소유한다.
+            var helm = target.GetComponent<RaftHelm>();
+            if (helm != null && helm.sailing != null)
+            {
+                helm.sailing.TryEnterSteering(out _);
+                return;
+            }
+
+            // [뗏목 제작] 뗏목(선체 상자 · 승선 발판 · 갑판 윗면 콜라이더 · 바닥판 0칸일 때의 "제작
+            // 예정지" 상자)을 조준한 E는 제작 창을 연다. **반드시 위의 모든 분기보다 뒤여야 한다.**
+            //  · 갑판 위 건축 부품과 보관 상자는 DeckRoot의 자손이라 GetComponentInParent가 뗏목을
+            //    잡아 버린다. 상자는 맨 위 StorageChest 분기가, 건축 부품은 바로 위 TryGetPieceTier
+            //    분기가 먼저 가져가므로, 이 분기가 마지막일 때만 셋이 서로를 가리지 않는다.
+            //  · InParent를 쓰는 이유는 뗏목 본체에 콜라이더가 하나가 아니기 때문이다(선체는 루트,
+            //    갑판 윗면은 DeckRoot의 자식, 승선 발판은 RaftVisual의 자식).
+            // 제작 판정·재료 소모는 전부 RaftBuildCatalog가 하고 여기서는 창만 연다.
+            var raft = target.GetComponentInParent<RaftStructure>();
+            if (raft != null)
+            {
+                MakeGame.UI.RaftBuildUI.OpenFor(raft);
                 return;
             }
 

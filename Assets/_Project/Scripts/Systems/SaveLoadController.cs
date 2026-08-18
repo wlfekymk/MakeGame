@@ -31,7 +31,6 @@ namespace MakeGame.Systems
         public SurvivalStats survivalStats;
         public PlayerSkills playerSkills;
         public PlayerInventory playerInventory;
-        public BoatConstructionSystem boatConstruction;
         public AircraftRepairSystem aircraftRepair;
         public SurvivalClock survivalClock;
         public IslandTravel islandTravel;
@@ -94,6 +93,8 @@ namespace MakeGame.Systems
                 hasCompletedFirstEnding = GameManager.Instance != null && GameManager.Instance.HasCompletedFirstEnding,
                 // [세이브 키 v2] 이 파일의 채집/처치/포획 목록이 안정 키(stableKey)로 기록됐음을 표시.
                 saveKeyVersion = SaveData.CurrentSaveKeyVersion,
+                // [뗏목 v1] 이 파일이 해안 뗏목 시스템으로 기록됐음을 표시(옛 배 진행 필드는 없다).
+                saveContentVersion = SaveData.CurrentSaveContentVersion,
             };
 
             // 발견한 섬 목록을 함께 저장한다. RegenerateWorld는 섬을 처음부터 다시 만들기 때문에
@@ -154,19 +155,19 @@ namespace MakeGame.Systems
                 }
             }
 
-            if (boatConstruction != null)
+            // 뗏목 상태. 씬에 배선하는 참조가 없다 - RaftStructure는 씬 로드마다 스스로 생기는
+            // 런타임 오브젝트라 static Active로만 접근한다. 뗏목이 아직 없으면 두 값 모두 0이 나가고,
+            // 그것이 정확히 "한 칸도 안 깔았다"는 뜻이다.
+            var raft = RaftStructure.Active;
+            if (raft != null)
             {
-                data.boatCurrentStage = boatConstruction.currentStage;
-                data.boatHasBlueprint = boatConstruction.hasCurrentStageBlueprint;
-                data.boatHighestCompletedStage = boatConstruction.highestCompletedStage;
-                data.boatIsFullyComplete = boatConstruction.isFullyComplete;
+                data.raftBaseTileCount = raft.BaseTileCount;
+                data.raftInstalledParts = (int)raft.InstalledParts;
 
-                foreach (var entry in boatConstruction.collectedMaterialsForCurrentStage)
-                {
-                    if (entry.item == null)
-                        continue;
-                    data.boatCollectedMaterials.Add(new ItemCountEntry { itemName = entry.item.itemName, count = entry.quantity });
-                }
+                // [콘텐츠 v2] 칸별 구성(종류 + 갑판 바닥재). raftBaseTileCount는 **그대로 함께 기록한다** -
+                // 두 값이 어긋날 일이 없고(같은 상태에서 뽑는다), 이 파일을 여는 옛 빌드가 칸 수만 읽어도
+                // 뗏목이 그럭저럭 되살아난다. WriteBaseTileCodes는 넘긴 목록을 채우므로 할당이 없다.
+                raft.WriteBaseTileCodes(data.raftBaseTiles);
             }
 
             // [B25] 건축 조각. BuildingSystem은 RuntimeInitializeOnLoadMethod로 스스로 생기므로
@@ -301,7 +302,7 @@ namespace MakeGame.Systems
 
             // [세이브 키 v2] 옛(v1 이하) 세이브의 채집/처치/포획 목록은 러닝 카운터(spawnOrder) 키로
             // 기록돼 있어 새 안정 키(stableKey)와 대조할 수 없다. **그 세 목록만 버리고** 나머지
-            // (인벤토리·건축·상자·구조물·배/비행기 진행·시계·발견 섬 등)는 전부 그대로 복원한다 -
+            // (인벤토리·건축·상자·구조물·뗏목/비행기 진행·시계·발견 섬 등)는 전부 그대로 복원한다 -
             // 월드는 worldSeed로 재생성되므로 세 목록을 버리면 노드/위험요소/사냥감이 전부 "온전한
             // 상태"로 시작할 뿐, 다른 진행은 아무것도 잃지 않는다. 마이그레이션은 하지 않는다
             // (SaveData.saveKeyVersion 주석 참고 - 사용자가 옛 세이브 포기를 허락했다).
@@ -312,6 +313,26 @@ namespace MakeGame.Systems
                 data.partialResourceNodes?.Clear();
                 data.defeatedHazards?.Clear();
                 data.caughtCreatures?.Clear();
+            }
+
+            // [뗏목 v1] 3단계 도면-작업대 배 시스템 시절의 세이브(saveContentVersion 없음 = 0)를 열었다.
+            // 옛 boat* 키는 JsonUtility가 조용히 버리므로 데이터가 깨지지는 않지만, 플레이어 입장에서는
+            // "배 진행이 사라졌다"로 보이므로 로그 한 줄로 이유를 남긴다. 그 외 모든 진행은 그대로다.
+            //
+            // [콘텐츠 v2] 버전이 둘로 늘었으므로 **단계별로** 안내한다. 예전처럼
+            // "< CurrentSaveContentVersion" 하나로 묶으면, 배 진행과 아무 상관없는 v1(해안 뗏목) 세이브를
+            // 열 때마다 "배 단계가 사라졌다"는 엉뚱한 경고가 나온다.
+            if (data.saveContentVersion < SaveData.RaftContentVersion)
+            {
+                Debug.LogWarning("[SaveLoadController] 옛 배 제작 시스템 시절의 세이브입니다." +
+                    " 배 단계/도면/투입 재료는 더 이상 존재하지 않아 사라지고, 뗏목은 바닥판 0칸에서" +
+                    " 시작합니다. 나머지 진행(인벤토리·건축·구조물·시계 등)은 그대로 불러옵니다.");
+            }
+            else if (data.saveContentVersion < SaveData.RaftTileDetailContentVersion)
+            {
+                Debug.LogWarning("[SaveLoadController] 바닥판 칸별 구성이 없던 시절의 세이브입니다." +
+                    $" 뗏목 {data.raftBaseTileCount}칸을 모두 '통나무 바닥판 + 갑판 바닥재'로 되살립니다" +
+                    " (갑판 높이가 같아 갑판 위 건축물은 그대로 유지됩니다). 장착 부품은 그대로입니다.");
             }
 
             // 저장된 worldSeed로 섬/바다/자원/위험요소/사냥감 배치를 처음부터 다시 만들어, 저장 시점과
@@ -389,31 +410,27 @@ namespace MakeGame.Systems
                 }
             }
 
-            if (boatConstruction != null)
+            // 뗏목 상태 복원. **건축 조각 복원보다 반드시 앞이어야 한다** - 갑판(BuildSpace.Deck) 위에
+            // 지은 조각은 뗏목에 갑판이 있어야만 되살아나고(BuildingSystem.IsDeckReady), 갑판 유무는
+            // 바로 아래에서 되돌리는 바닥판 칸 수가 정한다. 순서가 뒤집히면 갑판 조각이 전부
+            // pendingDeckEntries로 밀려 그 세션 동안 보이지 않는다.
+            //
+            // RaftStructure.EnsureInstance()로 확보하는 이유: 뗏목은 씬 로드 훅으로 생기는데, 그 훅과
+            // 이 복원 코드의 실행 순서는 보장되지 않는다(AGENT_BRIEF 4장). 이미 있으면 그대로 쓴다.
+            var raft = RaftStructure.EnsureInstance();
+            if (raft != null)
             {
-                boatConstruction.currentStage = data.boatCurrentStage;
-                boatConstruction.hasCurrentStageBlueprint = data.boatHasBlueprint;
-                boatConstruction.highestCompletedStage = data.boatHighestCompletedStage;
-                boatConstruction.isFullyComplete = data.boatIsFullyComplete;
-
-                boatConstruction.collectedMaterialsForCurrentStage.Clear();
-                foreach (var saved in data.boatCollectedMaterials)
-                {
-                    ItemData itemData = FindItemDataByName(saved.itemName);
-                    if (itemData == null)
-                        continue;
-
-                    boatConstruction.collectedMaterialsForCurrentStage.Add(
-                        new BoatConstructionSystem.MaterialRequirement { item = itemData, quantity = saved.count });
-                }
-
-                // [B22] 위 복원은 필드 직접 대입이라 ProgressChanged가 뜨지 않는다. RaftStructure는
-                // 0.2초 폴링 안전망을 갖고 있지만, 여기서 한 번 알려 주면 불러온 그 프레임에 뗏목
-                // 외형이 맞는 단계로 돌아온다. (systems-engineer 요청, 소유권상 감독이 넣는다.)
-                boatConstruction.NotifyProgressChanged();
+                // ApplySavedState 하나로 값 대입 + 외형 재생성 + ProgressChanged 발행이 모두 끝난다.
+                // 뗏목이 아직 해안 자리를 못 잡았으면 외형은 정박 직후 프레임에 자동으로 세워진다.
+                //
+                // [콘텐츠 v2] 칸별 구성을 함께 넘긴다. 목록이 비었거나(v1 이하) 칸 수보다 짧으면
+                // ApplySavedState가 모자란 칸을 통나무 + 갑판 바닥재로 승격한다 - 승격 규칙을 여기
+                // 두지 않는 이유는, 로드 경로가 늘어날 때마다 규칙이 갈라지면 갑판 높이가 어긋나기 때문이다.
+                raft.ApplySavedState(data.raftBaseTileCount, (RaftPart)data.raftInstalledParts,
+                    data.raftBaseTiles);
             }
 
-            // [B25] 건축 조각 복원. **반드시 RegenerateWorld(위쪽 291줄) 뒤여야 한다** -
+            // [B25] 건축 조각 복원. **반드시 RegenerateWorld(위쪽) 뒤여야 한다** -
             // 순서가 뒤집히면 새 지형을 만드는 도중의 레이캐스트에 방금 되살린 조각이 섞인다.
             // 조각은 저장된 절대 좌표로 되살아나므로 지형 재생성 자체에는 의존하지 않는다.
             if (BuildingSystem.Instance != null)

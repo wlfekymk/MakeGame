@@ -18,7 +18,7 @@ namespace MakeGame.UI
     ///
     /// 판정 로직은 이 UI가 새로 만들지 않는다. 대상 컴포넌트가 이미 public으로 노출한 판정
     /// (ResourceNode.GetHarvestFailure, Campfire.isLit/fuelItem,
-    /// BoatConstructionSystem.CanFindBlueprintOnIsland/GetCurrentStageRequirements 등)과
+    /// AircraftRepairSystem.requiredMaterials, RaftStructure.DescribeState 등)과
     /// PlayerInventory의 보유 수량만 읽어 문장으로 옮긴다. UI가 같은 조건을 다시 구현하는 순간
     /// 화면에 보이는 것과 실제 동작이 조용히 갈라지기 때문이다.
     ///
@@ -144,6 +144,22 @@ namespace MakeGame.UI
                 }
             }
 
+            // [뗏목 항해] 조종 중에는 조준 대상과 무관하게 **항상** 항해 상태를 띄운다. 조종은
+            // "무엇을 겨누고 있는가"와 상관없이 계속되는 모드이고(E도 조준과 무관하게 나가기다 -
+            // InteractionController의 같은 분기), 속도·바람·연료·적재는 겨눌 대상이 없는 먼바다에서
+            // 오히려 더 필요한 정보이기 때문이다. 문장은 전부 RaftSailing이 만든다(판정 재구현 금지).
+            var sailing = MakeGame.Systems.RaftSailing.Active;
+            if (sailing != null && sailing.IsSteering)
+            {
+                // 항해 문구는 회색으로 낮추지 않는다. 이 UI의 회색은 "지금은 못 한다"라는 뜻인데
+                // (클래스 주석), 항해 중에 뜨는 것은 전부 진행 중인 사실과 경고라 뜻이 정반대다.
+                ShowPrompt(
+                    sailing.GetSteeringHeadline(interaction.interactKey.ToString()),
+                    sailing.GetSteeringDetail(),
+                    false);
+                return;
+            }
+
             // 조준 판정은 InteractionController가 실제 상호작용에 쓰는 그 메서드를 그대로 부른다
             // (UI 전용 레이캐스트 사본 금지 - 클래스 주석 참고).
             if (!interaction.TryGetLookTarget(out GameObject target))
@@ -158,9 +174,21 @@ namespace MakeGame.UI
                 return;
             }
 
+            ShowPrompt(main, sub, blocked);
+        }
+
+        /// <summary>
+        /// 프롬프트 두 줄을 실제로 화면에 올린다. 조준 대상에서 만든 문구와 항해 상태 문구가 **같은
+        /// 한 곳**을 통과하도록 뽑아 둔 것이다(색 규칙이 두 벌이 되지 않게).
+        ///
+        /// 불가 상태는 문구 전체를 회색으로 낮춘다 - "지금은 못 하지만 조건만 갖추면 된다"는 신호이지
+        /// 위험 경고(Danger Red)가 아니기 때문이다. 색은 팔레트 밖으로 나가지 않는 무채색만 쓴다.
+        /// 문자열이 실제로 달라졌을 때만 Text에 대입한다(레이아웃 재계산을 매 갱신마다 부르지 않게).
+        /// </summary>
+        private void ShowPrompt(string main, string sub, bool blocked)
+        {
             SetOpen(true);
-            // 불가 상태는 문구 전체를 회색으로 낮춘다 - "지금은 못 하지만 조건만 갖추면 된다"는 신호이지
-            // 위험 경고(Danger Red)가 아니기 때문이다. 색은 팔레트 밖으로 나가지 않는 무채색만 쓴다.
+
             mainLabel.color = blocked ? BlockedColor : AvailableColor;
             subLabel.color = blocked ? BlockedColor : SubInfoColor;
 
@@ -229,38 +257,13 @@ namespace MakeGame.UI
             if (campfire != null)
                 return BuildCampfirePrompt(campfire, inventory, key, out main, out sub, out blocked);
 
-            var blueprint = target.GetComponent<BoatBlueprintPickup>();
-            if (blueprint != null)
-            {
-                var boat = blueprint.boatConstruction;
-                main = $"{key} 배 도면 습득";
-                if (boat == null)
-                {
-                    blocked = true;
-                    sub = "지금은 습득할 수 없다";
-                }
-                else if (!boat.CanFindBlueprintOnIsland(blueprint.islandSize))
-                {
-                    blocked = true;
-                    // 규칙은 BoatConstructionSystem이 정한다(1~2단계=대형 섬, 3단계=특대 섬). 여기서는 문장만 만든다.
-                    sub = boat.currentStage <= 2
-                        ? $"{boat.currentStage}단계 도면은 대형 섬에서만 습득 가능"
-                        : "최종 단계 도면은 특대 섬에서만 습득 가능";
-                }
-                else
-                {
-                    main = $"{key} 배 {boat.currentStage}단계 도면 습득";
-                    sub = "도면이 있어야 그 단계를 조립할 수 있다";
-                }
-                return true;
-            }
-
-            // [B22] GetComponent → GetComponentInParent. 뗏목은 승선 발판이 콜라이더를 가진
-            // 자식이라, 발판을 조준하면 프롬프트만 사라지고 E는 먹는 불일치가 났다.
-            // InteractionController.cs는 이미 InParent 기준이다.
-            var workbench = target.GetComponentInParent<BoatWorkbench>();
-            if (workbench != null)
-                return BuildBoatWorkbenchPrompt(workbench, inventory, key, out main, out sub, out blocked);
+            // [뗏목 재배선] 배 도면 습득 지점 / 배 작업대 프롬프트는 두 컴포넌트가 삭제되면서 사라졌다
+            // ("n/3단계" 문구도 함께 없어졌다 - 뗏목에는 단계가 없다).
+            //
+            // **뗏목 프롬프트는 여기가 아니라 이 메서드 맨 아래에 있다.** InteractionController가
+            // 뗏목 분기를 모든 분기의 뒤로 보냈기 때문이다(갑판 위 건축 부품·상자가 뗏목의 자손이라
+            // 앞에 두면 그 둘을 통째로 가린다 - 그쪽 주석 참고). 이 파일의 절대 규칙은 "컨트롤러와
+            // **동일한 우선순위**"이므로 여기서도 같은 자리에 둔다.
 
             var wreck = target.GetComponent<AircraftWreck>();
             if (wreck != null)
@@ -294,7 +297,53 @@ namespace MakeGame.UI
             if (building != null && building.TryGetPieceTier(target.transform, out BuildPieceType pieceType, out int pieceTier))
                 return BuildPieceUpgradePrompt(building, pieceType, pieceTier, key, out main, out sub, out blocked);
 
+            // [뗏목 항해] 조타 자리. InteractionController와 **같은 자리**(뗏목 제작 분기 바로 앞)다 -
+            // 순서가 뒤집히면 화면에는 "조종 시작"이 뜨는데 E는 제작 창을 열게 된다.
+            var helm = target.GetComponent<RaftHelm>();
+            if (helm != null && helm.sailing != null)
+            {
+                main = helm.sailing.GetHelmHeadline(key);
+                sub = helm.sailing.GetHelmDetail(out blocked);
+                return true;
+            }
+
+            // [뗏목 제작] 모든 분기의 맨 뒤 - InteractionController.InteractWithTarget의 뗏목 분기와
+            // 같은 자리다(순서가 어긋나면 화면에 보이는 행동과 E키가 실제로 하는 행동이 갈라진다).
+            var raft = target.GetComponentInParent<RaftStructure>();
+            if (raft != null)
+                return BuildRaftPrompt(raft, key, out main, out sub, out blocked);
+
             return false;
+        }
+
+        /// <summary>
+        /// 뗏목(또는 바닥판 0칸일 때의 "제작 예정지") 프롬프트. 예: "[E] 뗏목 제작" / "바닥판 3/8 · 돛".
+        ///
+        /// 상태 문장은 <see cref="RaftStructure.DescribeState"/> **하나만** 쓴다. HUD·퀘스트·디버그
+        /// 패널·제작 창이 전부 같은 문장을 쓰는 단일 출처이므로, 여기서 "칸 3개, 부품 1개" 같은 문장을
+        /// 새로 조립하면 화면마다 다른 표현이 생긴다.
+        ///
+        /// 재료가 모자란지는 여기서 보지 않는다 - 항목이 아홉 개라 한 줄에 담을 수 없고, 창을 열면
+        /// 줄마다 필요/보유가 숫자로 나온다. 프롬프트의 역할은 "여기서 창이 열린다"까지다.
+        /// 그래서 blocked도 항상 false다(뗏목은 언제 조준해도 창이 열린다).
+        /// </summary>
+        private bool BuildRaftPrompt(RaftStructure raft, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            blocked = false;
+
+            if (raft.BaseTileCount <= 0)
+            {
+                // 아직 아무것도 없는 상태. "제작"이 아니라 "시작"이라고 말해야 여기서 뗏목이라는
+                // 기능이 시작된다는 것이 전달된다(이 표시가 유일한 발견 경로다).
+                main = $"{key} 뗏목 만들기 시작";
+                sub = $"제작 예정지 · {raft.DescribeState()}";
+                return true;
+            }
+
+            main = $"{key} 뗏목 제작";
+            sub = raft.DescribeState();
+            return true;
         }
 
         /// <summary>
@@ -547,42 +596,6 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 배 작업대 프롬프트. 현재 단계 필요 재료는 BoatConstructionSystem에서 읽고(하드코딩하지 않는다),
-        /// 아직 부족한 재료를 이름과 개수까지 보여준다.
-        /// </summary>
-        private bool BuildBoatWorkbenchPrompt(BoatWorkbench workbench, PlayerInventory inventory, string key,
-            out string main, out string sub, out bool blocked)
-        {
-            main = "";
-            sub = "";
-            blocked = false;
-
-            var boat = workbench.boatConstruction;
-            if (boat == null)
-            {
-                main = $"{key} 배 조립";
-                blocked = true;
-                sub = "제작 진행 정보를 찾을 수 없다";
-                return true;
-            }
-
-            main = $"{key} 배 조립 ({boat.currentStage}/{BoatConstructionSystem.TotalStages}단계)";
-
-            if (!boat.hasCurrentStageBlueprint)
-            {
-                blocked = true;
-                sub = $"{boat.currentStage}단계 도면 필요";
-                return true;
-            }
-
-            string missing = BuildMissingMaterialsText(inventory, boat.GetCurrentStageRequirements(), boat);
-            sub = string.IsNullOrEmpty(missing)
-                ? "재료 충족 - 지금 이 단계를 완성할 수 있다"
-                : $"부족: {missing}";
-            return true;
-        }
-
-        /// <summary>
         /// 경비행기 잔해 프롬프트. 필요 재료는 AircraftRepairSystem에서 읽는다.
         /// </summary>
         private bool BuildAircraftWreckPrompt(AircraftWreck wreck, PlayerInventory inventory, string key,
@@ -703,35 +716,7 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 배 제작(BoatConstructionSystem) 요구 재료 목록에서 아직 부족한 항목을 "이름 n개" 형태로 잇는다.
-        /// 작업대는 인벤토리 재료를 자동 투입하므로(BoatWorkbench.ContributeAvailableMaterials),
-        /// "이미 투입한 양 + 지금 들고 있는 양"을 합쳐 남은 부족분을 계산한다.
-        /// </summary>
-        private string BuildMissingMaterialsText(PlayerInventory inventory,
-            System.Collections.Generic.List<BoatConstructionSystem.MaterialRequirement> requirements,
-            BoatConstructionSystem boat)
-        {
-            if (requirements == null)
-                return "";
-
-            var parts = new System.Collections.Generic.List<string>();
-            foreach (var req in requirements)
-            {
-                if (req == null || req.item == null)
-                    continue;
-
-                int owned = boat.GetCollectedQuantity(req.item) + (inventory != null ? inventory.GetItemCount(req.item) : 0);
-                int shortage = req.quantity - owned;
-                if (shortage > 0)
-                    parts.Add($"{req.item.itemName} {shortage}개");
-            }
-
-            return string.Join(", ", parts);
-        }
-
-        /// <summary>
         /// 경비행기 수리(AircraftRepairSystem) 요구 재료 목록에서 아직 부족한 항목을 "이름 n개" 형태로 잇는다.
-        /// (두 시스템의 MaterialRequirement는 이름만 같고 서로 다른 타입이라 오버로드로 나눠 둔다.)
         /// </summary>
         private string BuildMissingMaterialsText(PlayerInventory inventory,
             System.Collections.Generic.List<AircraftRepairSystem.MaterialRequirement> requirements,

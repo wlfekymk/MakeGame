@@ -25,8 +25,9 @@ namespace MakeGame.UI
         [Tooltip("표시할 생존 수치")]
         public SurvivalStats survivalStats;
 
-        [Tooltip("표시할 배 제작 진행 상태")]
-        public BoatConstructionSystem boatConstruction;
+        [Tooltip("표시할 뗏목. 비워두면 씬에 살아 있는 뗏목(RaftStructure.Active)을 자동으로 쓴다 -" +
+            " 뗏목은 런타임에 스스로 생기는 오브젝트라 정상 경로에서는 이 칸이 비어 있는 것이 맞다.")]
+        public RaftStructure raftStructure;
 
         [Tooltip("표시할 경비행기 수리 진행 상태")]
         public AircraftRepairSystem aircraftRepair;
@@ -57,7 +58,7 @@ namespace MakeGame.UI
         private float refreshTimer = 0f;
 
         // ── 결말 화면 미리보기(개발 전용) ────────────────────────────────────────────────────
-        // 배 엔딩은 경과 15일(매일 취침해도 실질 74분, 안 자면 150분)이 조건이라 실기로는 도달할 수
+        // 뗏목 엔딩은 경과 15일(매일 취침해도 실질 74분, 안 자면 150분)이 조건이라 실기로는 도달할 수
         // 없고, 사망 화면은 실제로 죽어야 뜬다. 그래서 이 세 화면은 지금까지 아무도 실행 중에 본 적이
         // 없다. F3 패널이 열려 있는 동안만 받는 키로 화면만 띄운다.
         //
@@ -80,7 +81,7 @@ namespace MakeGame.UI
         // #if UNITY_EDITOR || DEVELOPMENT_BUILD + Debug.isDebugBuild 이중 가드 안에서만 산다.
         private const KeyCode GrantMaterialsKey = KeyCode.F4;
 
-        // 디버그 전체 지도 + 자유 이동 토글 키. 감독은 "F6 같은 빈 키"라 했지만 F6은 이미 배 엔딩
+        // 디버그 전체 지도 + 자유 이동 토글 키. 감독은 "F6 같은 빈 키"라 했지만 F6은 이미 뗏목 엔딩
         // 미리보기다 - F3~F9가 전부 사용 중(F3 이 패널, F4 재료, F5 저장, F6/F7/F8 미리보기, F9
         // 불러오기)이라 비어 있는 F10을 쓴다. 플래그 자체는 IslandTravel.debugRevealAllIslands가
         // 들고 있다(소비자가 Systems/UI 양쪽이라 Systems 쪽 소유 - 해당 필드 주석 참고). 기본 ON.
@@ -315,11 +316,18 @@ namespace MakeGame.UI
                     .Append(" 골절:").Append(survivalStats.hasBrokenBone ? "O" : "X").Append('\n');
             }
 
-            if (boatConstruction != null)
+            // 뗏목은 씬 배선이 아니라 런타임 생성이므로 매 갱신마다 Active를 한 번 확인한다
+            // (static 프로퍼티 읽기라 전역 검색 비용이 없다).
+            if (raftStructure == null)
+                raftStructure = RaftStructure.Active;
+
+            if (raftStructure != null)
             {
-                builder.Append("배 제작: ").Append(boatConstruction.currentStage)
-                    .Append(" / ").Append(BoatConstructionSystem.TotalStages)
-                    .Append("단계 (도면 ").Append(boatConstruction.hasCurrentStageBlueprint ? "보유" : "없음").Append(")\n");
+                builder.Append("뗏목: ").Append(raftStructure.DescribeState())
+                    .Append("  [").Append(Mathf.RoundToInt(raftStructure.GetOverallProgress() * 100f)).Append("%]")
+                    .Append(raftStructure.IsOceanReady ? " 대양 준비"
+                        : raftStructure.IsSeaworthy ? " 항해 가능" : "")
+                    .Append('\n');
             }
 
             if (aircraftRepair != null)
@@ -351,7 +359,7 @@ namespace MakeGame.UI
             {
                 builder.Append('\n');
                 builder.Append("── 결말 화면 미리보기 (상태 변경 없음) ──\n");
-                builder.Append('[').Append(PreviewBoatEndingKey.ToString()).Append("] 배 엔딩   ")
+                builder.Append('[').Append(PreviewBoatEndingKey.ToString()).Append("] 뗏목 엔딩   ")
                     .Append('[').Append(PreviewAircraftEndingKey.ToString()).Append("] 비행기 엔딩   ")
                     .Append('[').Append(PreviewGameOverKey.ToString()).Append("] 사망 화면\n");
                 builder.Append("같은 키를 다시 누르면 닫힘\n");

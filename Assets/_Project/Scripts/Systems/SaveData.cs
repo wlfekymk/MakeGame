@@ -65,12 +65,13 @@ namespace MakeGame.Systems
         [Header("인벤토리")]
         public List<InventorySaveEntry> inventory = new List<InventorySaveEntry>();
 
-        [Header("배 제작 진행")]
-        public int boatCurrentStage;
-        public bool boatHasBlueprint;
-        public int boatHighestCompletedStage;
-        public bool boatIsFullyComplete;
-        public List<ItemCountEntry> boatCollectedMaterials = new List<ItemCountEntry>();
+        // ── 배 제작 진행 (제거됨) ──────────────────────────────────────────────────
+        // 3단계 도면-작업대 배 시스템(BoatConstructionSystem)이 통째로 삭제되면서 여기 있던 다섯 필드
+        // (boatCurrentStage / boatHasBlueprint / boatHighestCompletedStage / boatIsFullyComplete /
+        // boatCollectedMaterials)도 함께 없앴다. **옛 세이브를 여는 데는 아무 문제가 없다** -
+        // JsonUtility.FromJson은 대상 타입에 없는 JSON 키를 조용히 버리므로, 옛 파일의 boat* 값은
+        // 읽히지 않고 사라질 뿐 예외도 경고도 나지 않는다. 새 뗏목 상태는 파일 맨 끝에 추가했다
+        // (아래 raftBaseTileCount/raftInstalledParts - "추가만, 맨 끝에" 관례).
 
         [Header("경비행기 수리 진행")]
         public bool aircraftRepairComplete;
@@ -136,6 +137,55 @@ namespace MakeGame.Systems
 
         /// <summary>현재 세이브 키 스키마 버전. Save()가 기록하고 Load()가 비교한다.</summary>
         public const int CurrentSaveKeyVersion = 2;
+
+        // ── 뗏목 (해안 건조) ────────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례). 이 필드가 없는 옛 세이브는 전부 0으로 읽히고,
+        // 그것이 정확히 "아직 뗏목을 한 칸도 안 깔았다"는 뜻이라 별도 마이그레이션이 필요 없다.
+
+        [Header("뗏목 (해안 건조)")]
+        [Tooltip("해안에 깐 바닥판 칸 수(0 ~ RaftStructure.MaxBaseTiles). 복원 시 범위 밖 값은 잘린다.")]
+        public int raftBaseTileCount;
+
+        [Tooltip("장착된 뗏목 부품 비트 플래그((int)RaftPart). 돛=1 · 키=2 · 닻=4 · 노=8 · 모터=16.\n" +
+            "enum이 아니라 int로 저장하는 이유: JsonUtility는 enum을 정수로 쓰긴 하지만, 나중에 열거자" +
+            " 이름이 바뀌어도 파일 형식이 흔들리지 않도록 저장 계층에서는 정수로 고정한다.")]
+        public int raftInstalledParts;
+
+        // ── 콘텐츠 스키마 버전 ───────────────────────────────────────────────────────
+        // saveKeyVersion과 **일부러 분리했다.** 그쪽은 "절차 생성 개체의 대조 키" 전용이고, 값이
+        // 올라가면 로드 시 채집/처치/포획 목록을 통째로 버린다. 배→뗏목 전환은 그 목록들과 아무 관계가
+        // 없으므로, 거기에 얹어서 올리면 멀쩡한 진행을 이유 없이 날리게 된다.
+        [Tooltip("게임 콘텐츠 스키마 버전. 0(필드 없음) = 3단계 도면-작업대 배 시스템 시절의 세이브," +
+            " 1 = 해안 뗏목 시스템(칸 수만 기록), 2 = 칸별 구성(종류·바닥재)까지 기록.\n" +
+            "로드 시 0이면 배 진행이 사라졌다는 안내 로그를, 1이면 칸별 구성이 없어 통나무 바닥판으로" +
+            " 승격했다는 안내 로그를 남긴다. 어느 경우든 그 외 모든 데이터는 그대로 복원한다.")]
+        public int saveContentVersion;
+
+        /// <summary>현재 콘텐츠 스키마 버전. v2 = 뗏목 바닥판 칸별 구성(raftBaseTiles).</summary>
+        public const int CurrentSaveContentVersion = 2;
+
+        /// <summary>3단계 도면-작업대 배 시스템이 사라진 버전(뗏목 도입). 이 미만이면 배 진행이 없어진다.</summary>
+        public const int RaftContentVersion = 1;
+
+        /// <summary>바닥판 칸별 구성이 들어간 버전. 이 미만이면 raftBaseTiles가 비어 있다.</summary>
+        public const int RaftTileDetailContentVersion = 2;
+
+        // ── 뗏목 바닥판 칸별 구성 (콘텐츠 v2) ──────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례). 이 필드가 없는 v1 세이브는 빈 목록으로 읽히고,
+        // RaftStructure.ApplySavedState가 그 경우를 "통나무 바닥판 + 갑판 바닥재 n칸"으로 승격한다
+        // (승격 규칙은 그 메서드 한 곳에만 있다 - 로드 경로마다 다르게 채우면 갑판이 갈라진다).
+        //
+        // 왜 raftBaseTileCount 하나로는 부족한가: 이제 칸마다 **종류**(통나무/부력통/드럼통)와
+        // **갑판 바닥재 유무**가 따로 있고, 종류는 부력(항해 성능)까지 정한다. 칸 수만 저장하면
+        // 드럼통 8칸으로 만든 뗏목이 불러오기 한 번에 통나무 8칸이 된다.
+
+        [Header("뗏목 바닥판 칸별 구성 (콘텐츠 v2)")]
+        [Tooltip("격자 순번대로 한 칸에 정수 하나. 하위 3비트 = RaftBaseTileKind(1=통나무 · 2=부력통 ·" +
+            " 3=드럼통), 8비트(값 8) = 갑판 바닥재가 깔림.\n" +
+            "예: 9 = 통나무 + 바닥재, 3 = 드럼통(바닥재 없음). 목록 길이는 raftBaseTileCount와 같다.\n" +
+            "문자열로 압축하지 않고 List<int>로 두는 이유: 칸이 최대 8개뿐이라 압축 이득이 없고," +
+            " JsonUtility가 List<int>를 그대로 직렬화하므로 파싱 코드(=버그 자리)가 아예 필요 없다.")]
+        public List<int> raftBaseTiles = new List<int>();
     }
 
     /// <summary>
@@ -221,7 +271,7 @@ namespace MakeGame.Systems
         public int Count => count > 0 ? count : 1;
     }
 
-    /// <summary>아이템 이름 + 개수 쌍 (배 제작 투입 재료 등 수량 기반 저장에 사용).</summary>
+    /// <summary>아이템 이름 + 개수 쌍 (경비행기 수리 투입 재료·저장궤 내용물 등 수량 기반 저장에 사용).</summary>
     [System.Serializable]
     public class ItemCountEntry
     {

@@ -60,7 +60,7 @@ namespace MakeGame.UI
         private SurvivalClock survivalClock;
         private WorldMapManager worldMapManager;
         private CraftingSystem craftingSystem;
-        private BoatConstructionSystem boatConstruction;
+        private RaftStructure raftStructure;
         private PlayerSkills playerSkills;
 
         // [B8 디렉터] "겪은 위기" 통계용. systems가 SurvivalStats.CrisisCount를 실제로 만들었다.
@@ -170,7 +170,7 @@ namespace MakeGame.UI
         /// <summary>
         /// 씬에서 EndingChecker와 통계 출처 컴포넌트들을 찾아 참조를 캐시하고 UI를 생성한다.
         /// 기본적으로는 닫힌 상태로 둔다. EndingChecker가 이미 들고 있는 참조(survivalClock,
-        /// boatConstruction)를 우선 재사용해, 같은 값을 서로 다른 인스턴스에서 읽을 여지를 없앤다.
+        /// Raft)를 우선 재사용해, 같은 값을 서로 다른 인스턴스에서 읽을 여지를 없앤다.
         /// </summary>
         private void Start()
         {
@@ -179,9 +179,9 @@ namespace MakeGame.UI
             survivalClock = endingChecker != null && endingChecker.survivalClock != null
                 ? endingChecker.survivalClock
                 : FindAnyObjectByType<SurvivalClock>();
-            boatConstruction = endingChecker != null && endingChecker.boatConstruction != null
-                ? endingChecker.boatConstruction
-                : FindAnyObjectByType<BoatConstructionSystem>();
+            raftStructure = endingChecker != null && endingChecker.Raft != null
+                ? endingChecker.Raft
+                : RaftStructure.Active;
             worldMapManager = FindAnyObjectByType<WorldMapManager>();
             craftingSystem = FindAnyObjectByType<CraftingSystem>();
             playerSkills = FindAnyObjectByType<PlayerSkills>();
@@ -763,7 +763,7 @@ namespace MakeGame.UI
             SetStatRow(2, "제작한 물건", GetCraftedKindText(), true);
 
             // 4~6번: 배 엔딩에서만 공개한다.
-            SetStatRow(3, "배 제작 진행", isAircraft ? UnknownValue : GetBoatProgressText(), !isAircraft);
+            SetStatRow(3, "뗏목 건조 진행", isAircraft ? UnknownValue : GetRaftProgressText(), !isAircraft);
             SetStatRow(4, "채집 스킬 레벨", isAircraft ? UnknownValue : GetHarvestingLevelText(), !isAircraft);
             // [B8 디렉터] 집계가 들어왔다. SurvivalStats.CrisisCount는 "원인별 에피소드 수"다 -
             // 같은 곰에게 연속으로 맞으면 1회, 곰에 맞다가 중독되면 2회(systems 판정 근거는
@@ -836,14 +836,22 @@ namespace MakeGame.UI
             return craftedKinds > 0 ? $"{craftedKinds}종" : UnknownValue;
         }
 
-        /// <summary>배 제작 전체 진행률(0~1 → 백분율).</summary>
-        private string GetBoatProgressText()
+        /// <summary>
+        /// 뗏목 건조 전체 진행률(0~1 → 백분율)과 바닥판 칸 수. 진행률의 정의는 RaftStructure가
+        /// 소유한다(바닥판 채움 비율 + 부품 장착 비율을 반씩) - 여기서는 읽어서 보여주기만 한다.
+        /// 참조는 매번 다시 확인한다: 뗏목은 씬 리로드마다 새 인스턴스가 되므로 Start에서 잡아 둔
+        /// 참조가 죽어 있을 수 있다.
+        /// </summary>
+        private string GetRaftProgressText()
         {
-            if (boatConstruction == null)
+            if (raftStructure == null)
+                raftStructure = RaftStructure.Active;
+
+            if (raftStructure == null)
                 return UnknownValue;
 
-            int percent = Mathf.RoundToInt(Mathf.Clamp01(boatConstruction.GetOverallProgress()) * 100f);
-            return $"{percent}%";
+            int percent = Mathf.RoundToInt(Mathf.Clamp01(raftStructure.GetOverallProgress()) * 100f);
+            return $"{percent}% ({raftStructure.BaseTileCount}/{RaftStructure.MaxBaseTiles}칸)";
         }
 
         /// <summary>채집 스킬 레벨.</summary>

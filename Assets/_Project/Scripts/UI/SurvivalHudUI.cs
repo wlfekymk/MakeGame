@@ -27,7 +27,7 @@ namespace MakeGame.UI
     {
         private SurvivalStats survivalStats;
         private SurvivalClock survivalClock;
-        private BoatConstructionSystem boatConstruction;
+        private RaftStructure raftStructure;
         private AircraftRepairSystem aircraftRepair;
 
         private Image healthFill;
@@ -123,7 +123,7 @@ namespace MakeGame.UI
 
             survivalStats = FindAnyObjectByType<SurvivalStats>();
             survivalClock = FindAnyObjectByType<SurvivalClock>();
-            boatConstruction = FindAnyObjectByType<BoatConstructionSystem>();
+            raftStructure = RaftStructure.Active;
             aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
             playerInventory = FindAnyObjectByType<PlayerInventory>();
 
@@ -428,7 +428,7 @@ namespace MakeGame.UI
             }
 
             // [배치 24] 배/경비행기 진행도 갱신 블록은 제거됐다(라벨 자체가 퀘스트 창으로 옮겨졌다).
-            // boatConstruction / aircraftRepair 참조는 그대로 남긴다 - 목표 1줄 판정(ProgressionTracker
+            // raftStructure / aircraftRepair 참조는 그대로 남긴다 - 목표 1줄 판정(ProgressionTracker
             // 폴백)이 여전히 두 시스템을 읽는다.
 
             UpdateInventoryCapacityChip();
@@ -501,7 +501,7 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 지금 이 코드베이스에 실제로 존재하는 public 시그니처(BoatConstructionSystem.currentStage,
+        /// 지금 이 코드베이스에 실제로 존재하는 public 시그니처(RaftStructure.BaseTileCount,
         /// AircraftRepairSystem.GetOverallProgress, PlayerInventory.items, SurvivalStats)만으로 만든
         /// 아주 단순한 단계 판정이다. Design_Progression.md 3장의 정식 진입 신호(도면 습득/금속조각
         /// 최초 획득 등)는 여기서 알 수 없으므로 근사치이며, 정식 판정 API가 들어오면
@@ -521,16 +521,20 @@ namespace MakeGame.UI
             // [B6 디렉터] 이 메서드는 원래 판정 API가 없던 동안 쓰는 임시 폴백이었다. 이제
             // ProgressionTracker(systems-engineer-B, WorldMapManager.cs)가 들어왔으므로 그쪽으로 위임한다.
             //
-            // 임시 폴백에 실제 버그가 있었다: `boatConstruction.currentStage >= 1` 로 4단계를 판정했는데
-            // currentStage의 초기값이 1이다(= "1단계를 아직 안 지었다"는 뜻이지 "1단계를 지었다"가 아니다).
-            // 그래서 게임 시작 0초에 곧바로 "탈출 준비" 목표가 떴다. 실기 확인에서 잡혔다.
-            // ProgressionTracker.Evaluate는 hasCurrentStageBlueprint / highestCompletedStage / 진행률로
-            // 판정하므로 같은 함정에 빠지지 않는다.
+            // 옛 임시 폴백에 실제 버그가 있었다: 배 단계 카운터의 초기값(1)을 "이미 1단계를 지었다"로
+            // 읽어 게임 시작 0초에 곧바로 "탈출 준비" 목표가 떴다. 새 뗏목 계약에는 그런 함정이 없다 -
+            // ProgressionTracker.Evaluate는 RaftStructure.Exists(= 바닥판 1칸 이상)를 보므로,
+            // 아무것도 안 지은 상태는 명확히 false다.
             //
+            // 뗏목 참조는 매번 다시 확인한다: 씬 리로드마다 새 인스턴스가 되므로 Start에서 잡아 둔
+            // 참조가 죽어 있을 수 있다(전역 검색이 아니라 static 프로퍼티 읽기라 비용이 없다).
+            if (raftStructure == null)
+                raftStructure = RaftStructure.Active;
+
             // 인자는 전부 null 허용이다. islandTravel 참조는 이 UI가 들고 있지 않아 null을 넘기는데,
             // 그러면 "시작 섬을 떠났다" 신호만 빠지고 손도끼 보유 신호로 3단계 판정이 유지된다.
             return ProgressionTracker.GetObjectiveText(
-                playerInventory, survivalStats, boatConstruction, aircraftRepair, null);
+                playerInventory, survivalStats, raftStructure, aircraftRepair, null);
         }
 
         /// <summary>

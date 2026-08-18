@@ -7,10 +7,16 @@ namespace MakeGame.Systems
     /// <summary>
     /// 섬과 섬 사이를 뗏목/보트로 이동하는 시스템.
     /// 고무보트(무제한 사용, 단 특대 섬은 해류 제약으로 못 감)를 이용해 섬으로 이동한다.
-    /// 대형 섬은 배 도면(1~2단계)을 구할 수 있는 유일한 장소라 처음부터 갈 수 있고,
-    /// 특대 섬(최종 도면)만 뗏목 진행도가 stageRequiredToBypassCurrent 이상이어야 갈 수 있다
+    /// 대형 섬까지는 고무보트만으로 처음부터 갈 수 있고, 특대 섬만 **해안에 지은 뗏목이 항해 가능
+    /// 상태(RaftStructure.IsSeaworthy)** 여야 해류를 뚫고 갈 수 있다
     /// (PlayerInventory.CanCarryToIsland 참고 - 예전에는 대형 섬까지 막아서 배 엔딩이 영원히
     /// 잠겨 있는 순환 잠금 버그가 있었다).
+    ///
+    /// [뗏목 계약 교체] 예전에는 삭제된 BoatConstructionSystem.HasCompletedStage(1)이 이 판정을 했다.
+    /// 그 허브를 지우기 전에 이 조건부터 새 계약으로 옮겨야 특대 섬이 영구 잠기지 않는다(경비행기
+    /// 엔딩의 재료가 특대 섬에만 있으므로 그쪽까지 함께 죽는다).
+    /// **뗏목이 아예 없어도 고무보트만으로 일반 섬(소/중/대) 이동은 종전과 똑같이 가능하다** -
+    /// 아래 판정은 CanCarryToIsland가 막는 경우를 뚫어 주는 우회 조건일 뿐이다.
     /// </summary>
     public class IslandTravel : MonoBehaviour
     {
@@ -23,11 +29,14 @@ namespace MakeGame.Systems
         [Tooltip("현재 플레이어가 위치한 섬 번호 (0번은 항상 불시착한 시작 섬)")]
         public int currentIslandId = 0;
 
-        [Tooltip("뗏목(배) 제작 진행도를 확인할 시스템. 비워두면 뗏목 진행도에 의한 이동 범위 확장은 적용되지 않는다.")]
-        public BoatConstructionSystem boatConstruction;
+        [Tooltip("해류 제약(특대 섬 접근 불가)을 무시하려면 뗏목이 이 조건을 넘어야 한다.\n" +
+            "켜면 뗏목이 '항해 가능(IsSeaworthy = 바닥판 4칸 이상 + 노/돛+키/모터 중 하나)' 상태일 때만" +
+            " 우회가 열린다. 끄면 바닥판 칸 수만 본다(아래 baseTilesRequiredToBypassCurrent).")]
+        public bool requireSeaworthyRaftToBypassCurrent = true;
 
-        [Tooltip("이 단계까지 배(뗏목)를 완성하면 고무보트의 해류 제약(특대 섬 접근 불가)을 무시하고 갈 수 있다.")]
-        public int stageRequiredToBypassCurrent = 1;
+        [Tooltip("해류를 뚫는 데 필요한 최소 바닥판 칸 수. requireSeaworthyRaftToBypassCurrent가 꺼져 있을 때만" +
+            " 단독 기준으로 쓰인다(켜져 있으면 IsSeaworthy가 이미 같은 칸 수를 요구한다).")]
+        public int baseTilesRequiredToBypassCurrent = RaftStructure.SeaworthyTileCount;
 
         // ── 디버그 전체 지도 / 자유 이동 ─────────────────────────────────────────────────
         // 감독 요청: "디버그 모드에서는 전체 지도가 다 보이고, 세계지도에서 모두 갈 수 있게".
@@ -64,7 +73,7 @@ namespace MakeGame.Systems
         /// <summary>
         /// 지정한 섬으로 이동을 시도한다.
         /// 목적지가 존재하고, 플레이어가 고무보트를 보유하고 있어야 한다.
-        /// 뗏목(배) 제작이 stageRequiredToBypassCurrent 단계 이상 진행되지 않았다면,
+        /// 해안의 뗏목이 아직 항해 가능(IsSeaworthy) 상태가 아니라면,
         /// 고무보트만으로는 특대 섬까지 해류를 뚫고 갈 수 없다 (대형 섬은 처음부터 갈 수 있다).
         /// 성공 시 목적지 섬을 발견 상태로 표시하고 현재 위치를 갱신한다.
         /// </summary>
@@ -97,7 +106,7 @@ namespace MakeGame.Systems
                 if (inventory.GetItemCount(rubberBoatItem) <= 0)
                     return false;
 
-                bool raftOvercomesCurrent = boatConstruction != null && boatConstruction.HasCompletedStage(stageRequiredToBypassCurrent);
+                bool raftOvercomesCurrent = RaftOvercomesCurrent();
 
                 if (!raftOvercomesCurrent && !inventory.CanCarryToIsland(rubberBoatItem, destination.size))
                     return false; // 고무보트만으로는 특대 섬까지 해류를 뚫고 갈 수 없음
@@ -114,6 +123,24 @@ namespace MakeGame.Systems
             TeleportPlayerToIsland(inventory.transform, destination);
 
             return true;
+        }
+
+        /// <summary>
+        /// 해안에 지은 뗏목이 고무보트의 해류 제약을 뚫을 만큼 자랐는지 판정한다.
+        /// 뗏목 참조는 씬에 배선하지 않는다 - RaftStructure는 씬 로드마다 스스로 만들어지는
+        /// 런타임 오브젝트라(RaftStructure.Bootstrap) 인스펙터에 넣어 둘 대상이 없기 때문이다.
+        /// 뗏목이 아직 없으면 false이고, 그때도 일반 섬 이동은 그대로 된다.
+        /// </summary>
+        private bool RaftOvercomesCurrent()
+        {
+            var raft = RaftStructure.Active;
+            if (raft == null)
+                return false;
+
+            if (requireSeaworthyRaftToBypassCurrent)
+                return raft.IsSeaworthy;
+
+            return raft.BaseTileCount >= baseTilesRequiredToBypassCurrent;
         }
 
         /// <summary>

@@ -13,13 +13,14 @@ namespace MakeGame.Systems
     public enum EndingKind
     {
         None,
-        Boat,      // 배를 만들어 떠나는 정공법 경로 - 제목 "귀환"
+        Boat,      // 뗏목을 지어 떠나는 정공법 경로 - 제목 "귀환"
         Aircraft,  // 경비행기를 수리해 떠나는 속성 경로 - 제목 "탈출"
     }
 
     /// <summary>
     /// 엔딩 달성 조건을 매 프레임 확인한다. 두 가지 엔딩 경로 중 먼저 달성한 쪽으로 게임을 종료시킨다.
-    /// 1) 탈출선(배) 엔딩: 배 3단계 100% 완성 + 상하지 않는 음식/물 30일치 확보 + 연료 확보
+    /// 1) 탈출선(뗏목) 엔딩: 뗏목이 대양 항해 준비 완료(RaftStructure.IsOceanReady = 바닥판 6칸 이상 +
+    ///    돛+키 또는 모터) + 상하지 않는 음식/물 확보 + 연료 확보
     ///    + 최소 경과 일수(requiredElapsedDays, Spec_11 기준 15일) 도달. 여러 단계를 밟아 꾸준히
     ///    자원을 모으는 정공법 경로.
     /// 2) 경비행기 수리 엔딩: 특대(XL) 섬의 경비행기 잔해(AircraftWreck)에서 엔진부품 등 희귀 재료를 모아
@@ -44,8 +45,17 @@ namespace MakeGame.Systems
             " 0은 '그 조건을 끈다'는 의미 있는 값이라 폴백 대상이 아니다(0을 넣으면 0이 그대로 쓰인다).")]
         public SurvivalBalanceConfig balanceConfig;
 
-        [Tooltip("완성 여부를 확인할 배 제작 시스템")]
-        public BoatConstructionSystem boatConstruction;
+        [Tooltip("탈출 준비 여부(IsOceanReady)를 확인할 뗏목. 비워두면 씬에서 살아 있는 뗏목" +
+            "(RaftStructure.Active)을 자동으로 쓴다 - 뗏목은 씬에 배선하는 오브젝트가 아니라" +
+            " 런타임에 스스로 생기므로, 정상 경로에서는 이 칸이 비어 있는 것이 맞다.")]
+        public RaftStructure raftStructure;
+
+        /// <summary>
+        /// 지금 판정에 쓸 뗏목. 인스펙터 연결이 있으면 그것을, 없으면 RaftStructure.Active를 쓴다.
+        /// EndingUI가 같은 인스턴스를 재사용할 수 있도록 public이다(값을 캐시하지 않는다 - 뗏목은
+        /// 씬 리로드마다 새 인스턴스가 되므로 죽은 참조를 들고 있으면 엔딩이 통째로 막힌다).
+        /// </summary>
+        public RaftStructure Raft => raftStructure != null ? raftStructure : RaftStructure.Active;
 
         [Tooltip("완성 여부를 확인할 경비행기 수리 시스템 (비워두면 경비행기 엔딩을 검사하지 않는다)")]
         public AircraftRepairSystem aircraftRepair;
@@ -302,7 +312,7 @@ namespace MakeGame.Systems
         /// 배를 먼저 검사하고 return 하는 **코드 순서의 부산물**로 배가 이겼고, 그것이 판단인지 우연인지
         /// 코드에서 읽을 수 없었다(qa-reviewer 지적).
         ///
-        /// 확정: **동시 성립 시 배 엔딩("귀환")을 보여준다.** 배는 3단계 누적 + 도면 3장 + 비축 물자 +
+        /// 확정: **동시 성립 시 배 엔딩("귀환")을 보여준다.** 뗏목은 바닥판 6칸 + 돛·키 + 비축 물자 +
         /// 경과 15일을 요구하는 훨씬 긴 경로다(Design_Progression.md 4장: 경비행기가 재료 4배·시간
         /// 3~5배 싸다). 둘 다 달성했다면 더 어려운 쪽의 결말을 보여주는 것이 플레이어가 실제로 한 일에
         /// 대한 정확한 응답이다.
@@ -360,18 +370,22 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 배 엔딩의 모든 조건(배 100% 완성, 식량/식수 30일치, 연료, 최소 경과 일수)을 만족하는지 확인한다.
+        /// 배 엔딩의 모든 조건(뗏목 대양 준비 완료, 식량/식수, 연료, 최소 경과 일수)을 만족하는지 확인한다.
         /// 경과 일수 조건 추가(B2-2, Spec_11): 배를 지나치게 빨리(초반 몇 시간 만에) 완성해 탈출해버리면
         /// 생존 게임의 긴장감을 충분히 느끼기 전에 끝나버린다는 기획 의도를 반영해, 최소 경과 일수
         /// (requiredElapsedDays) 조건을 추가했다.
         /// </summary>
         private bool CheckBoatEndingConditions()
         {
-            if (boatConstruction == null || inventory == null)
+            var raft = Raft;
+            if (raft == null || inventory == null)
                 return false;
 
-            bool boatComplete = boatConstruction.currentStage >= BoatConstructionSystem.TotalStages
-                && boatConstruction.CanAdvanceStage();
+            // [뗏목 재배선] 예전 조건은 "3단계 도면+재료를 다 넣었는가"(BoatConstructionSystem)였다.
+            // 이제는 해안에 실제로 지은 뗏목이 **대양에 나갈 수 있는 모양인가**를 본다:
+            // 바닥판 OceanReadyTileCount칸 이상 + 방향을 유지할 수 있는 추진(돛+키 또는 모터).
+            // 보급품(비상식량 12 / 생수 12 / 연료 1)과 최소 경과 15일 조건은 한 글자도 바뀌지 않았다.
+            bool boatComplete = raft.IsOceanReady;
 
             bool hasEnoughFood = nonPerishableFoodItem == null
                 || inventory.GetItemCount(nonPerishableFoodItem) >= requiredFoodCount;

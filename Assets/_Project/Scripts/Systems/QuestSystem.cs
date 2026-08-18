@@ -56,7 +56,7 @@ namespace MakeGame.Systems
     /// 설계 규칙:
     /// 1. **다른 시스템에 새 필드를 추가하지 않는다.** 판정은 전부 이미 존재하는 public 시그니처만
     ///    읽어서 만든다(Shelter.ActiveShelters/level/levelNRequirements/DescribeNextBuildAction,
-    ///    Campfire.Active/isLit, WaterStill.Active, BoatConstructionSystem의 단계 API,
+    ///    Campfire.Active/isLit, WaterStill.Active, RaftStructure의 뗏목 상태 API,
     ///    AircraftRepairSystem.GetOverallProgress, ProgressionTracker.CountByName).
     /// 2. **씬에 인스턴스가 없다.** SurvivalHudUI와 동일하게 RuntimeInitializeOnLoadMethod +
     ///    sceneLoaded로 씬이 로드될 때마다 새로 생성된다. 코드 기본값이 유일한 진실이다.
@@ -95,7 +95,7 @@ namespace MakeGame.Systems
 
         private PlayerInventory playerInventory;
         private SurvivalStats survivalStats;
-        private BoatConstructionSystem boatConstruction;
+        private RaftStructure raft;
         private AircraftRepairSystem aircraftRepair;
 
         private readonly List<QuestEntry> quests = new List<QuestEntry>();
@@ -142,7 +142,7 @@ namespace MakeGame.Systems
 
             playerInventory = FindAnyObjectByType<PlayerInventory>();
             survivalStats = FindAnyObjectByType<SurvivalStats>();
-            boatConstruction = FindAnyObjectByType<BoatConstructionSystem>();
+            raft = RaftStructure.Active;
             aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
 
             // 첫 프레임부터 목록이 채워져 있어야 창을 바로 열어도 비어 있지 않다.
@@ -187,8 +187,8 @@ namespace MakeGame.Systems
                 playerInventory = FindAnyObjectByType<PlayerInventory>();
             if (survivalStats == null)
                 survivalStats = FindAnyObjectByType<SurvivalStats>();
-            if (boatConstruction == null)
-                boatConstruction = FindAnyObjectByType<BoatConstructionSystem>();
+            if (raft == null)
+                raft = RaftStructure.Active;
             if (aircraftRepair == null)
                 aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
 
@@ -438,7 +438,7 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 요구 재료 대비 소지 비율(0~1). 종류별 충족률의 평균이라
-        /// BoatConstructionSystem.GetCurrentStageMaterialFraction과 같은 셈법이다.
+        /// 종류별 충족률의 평균이라는 점에서 다른 진행률 계산과 같은 셈법이다.
         /// </summary>
         private float MaterialFraction(List<ShelterMaterialRequirement> requirements)
         {
@@ -491,13 +491,19 @@ namespace MakeGame.Systems
         // ── 항해 ────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 뗏목 3단계 + 경비행기 수리. 감독 방향상 **맨 아래**에 둔다. 여기 새 목표를 넣지 않는다
-        /// (AGENT_BRIEF: 엔딩에 새 작업을 넣지 마라) - HUD에 상시 노출되던 두 줄을 옮겨 담기만 한다.
+        /// 뗏목 건조 + 경비행기 수리. 감독 방향상 **맨 아래**에 둔다. 여기 새 목표를 넣지 않는다
+        /// (AGENT_BRIEF: 엔딩에 새 작업을 넣지 마라) - 판정 대상만 새 뗏목 계약으로 갈아 끼웠다.
+        ///
+        /// [퀘스트 id 교체] 예전 3줄(quest.boat1/2/3)은 3단계 도면-작업대 시스템의 단계였다.
+        /// 그 시스템이 사라졌으므로 뗏목 기반 3줄(quest.raft.tiles / quest.raft.rig / quest.raft.supply)로
+        /// 바꿨다. **세이브 영향 없음** - 완료 래치(latchedComplete)는 이 컴포넌트의 메모리에만 있고
+        /// SaveData에 퀘스트 필드가 하나도 없다(확인 완료). 옛 id는 그냥 다시 등장하지 않을 뿐이다.
         /// </summary>
         private void BuildVoyageQuests()
         {
-            for (int stage = 1; stage <= BoatConstructionSystem.TotalStages; stage++)
-                WriteBoatStageQuest(stage);
+            WriteRaftTileQuest();
+            WriteRaftRigQuest();
+            WriteRaftSupplyQuest();
 
             int aircraftPercent = aircraftRepair != null
                 ? Mathf.RoundToInt(Mathf.Clamp01(aircraftRepair.GetOverallProgress()) * 100f)
@@ -509,75 +515,103 @@ namespace MakeGame.Systems
                 completed: aircraftDone, locked: aircraftRepair == null, latch: true);
         }
 
-        private void WriteBoatStageQuest(int stage)
+        /// <summary>1단계: 해안에 바닥판을 깔아 항해 가능한 크기까지 키운다.</summary>
+        private void WriteRaftTileQuest()
         {
-            string id = $"quest.boat{stage}";
-            string title = $"뗏목 {stage}단계를 건조한다";
+            const string Id = "quest.raft.tiles";
+            string title = $"해안에 뗏목 바닥판을 {RaftStructure.SeaworthyTileCount}칸 깐다";
 
-            if (boatConstruction == null)
+            if (raft == null)
             {
-                Write(QuestCategory.Voyage, id, title, "작업대를 찾지 못했다", 0f,
+                Write(QuestCategory.Voyage, Id, title, "해안을 찾지 못했다", 0f,
                     completed: false, locked: true, latch: true);
                 return;
             }
 
-            if (boatConstruction.isFullyComplete || boatConstruction.HasCompletedStage(stage))
-            {
-                Write(QuestCategory.Voyage, id, title, "완료", 1f,
-                    completed: true, locked: false, latch: true);
-                return;
-            }
+            int tiles = raft.BaseTileCount;
+            int target = RaftStructure.SeaworthyTileCount;
+            bool done = tiles >= target;
 
-            if (boatConstruction.currentStage != stage)
+            Write(QuestCategory.Voyage, Id, title,
+                done ? "완료" : $"바닥판 {tiles}/{target}칸",
+                target > 0 ? (float)tiles / target : 0f,
+                completed: done, locked: false, latch: true);
+        }
+
+        /// <summary>2단계: 돛과 키를 달아 방향을 잡을 수 있게 만든다(모터가 있으면 그것으로 대체).</summary>
+        private void WriteRaftRigQuest()
+        {
+            const string Id = "quest.raft.rig";
+            const string Title = "뗏목에 돛과 키를 단다";
+
+            if (raft == null)
             {
-                Write(QuestCategory.Voyage, id, title, $"{stage - 1}단계 먼저", 0f,
+                Write(QuestCategory.Voyage, Id, Title, "뗏목이 없다", 0f,
                     completed: false, locked: true, latch: true);
                 return;
             }
 
-            float fraction = Mathf.Clamp01(boatConstruction.GetCurrentStageMaterialFraction());
-            string detail = boatConstruction.hasCurrentStageBlueprint
-                ? DescribeBoatMissing()
-                : "도면이 없다 — 큰 섬에서 도면을 찾아라";
+            bool motor = raft.HasPart(RaftPart.Motor);
+            bool sail = raft.HasPart(RaftPart.Sail);
+            bool rudder = raft.HasPart(RaftPart.Rudder);
+            bool done = motor || (sail && rudder);
 
-            Write(QuestCategory.Voyage, id, title, detail, fraction,
-                completed: false, locked: false, latch: true);
-        }
-
-        /// <summary>현재 단계에서 아직 덜 넣은 재료를 최대 3종까지 적는다.</summary>
-        private string DescribeBoatMissing()
-        {
-            var requirements = boatConstruction.GetCurrentStageRequirements();
-            if (requirements == null || requirements.Count == 0)
-                return "요구 재료 없음";
-
-            var builder = new System.Text.StringBuilder();
-            int shown = 0;
-            for (int i = 0; i < requirements.Count && shown < 3; i++)
+            // 바닥판이 먼저다 - 깔 자리가 없으면 돛대를 세울 수 없다.
+            if (!done && raft.BaseTileCount < RaftStructure.SeaworthyTileCount)
             {
-                var requirement = requirements[i];
-                if (requirement == null || requirement.item == null || requirement.quantity <= 0)
-                    continue;
-
-                int collected = boatConstruction.GetCollectedQuantity(requirement.item);
-                if (collected >= requirement.quantity)
-                    continue;
-
-                if (shown > 0)
-                    builder.Append(" · ");
-                builder.Append(ItemLabel(requirement.item)).Append(' ')
-                    .Append(collected).Append('/').Append(requirement.quantity);
-                shown++;
+                Write(QuestCategory.Voyage, Id, Title, "바닥판 먼저", 0f,
+                    completed: false, locked: true, latch: true);
+                return;
             }
 
-            return shown == 0 ? "재료 투입 완료 — 작업대에서 완성하라" : builder.ToString();
+            int installed = (sail ? 1 : 0) + (rudder ? 1 : 0);
+            string detail = done
+                ? (motor ? "모터 장착" : "완료")
+                : DescribeMissingParts(sail, rudder);
+
+            Write(QuestCategory.Voyage, Id, Title, detail, installed * 0.5f,
+                completed: done, locked: false, latch: true);
         }
 
-        private static string ItemLabel(ItemData item)
+        /// <summary>3단계: 대양에 나갈 크기까지 바닥판을 마저 깔고 탈출 준비를 끝낸다.</summary>
+        private void WriteRaftSupplyQuest()
         {
-            if (item == null)
-                return "재료";
-            return string.IsNullOrEmpty(item.itemName) ? item.name : item.itemName;
+            const string Id = "quest.raft.supply";
+            string title = $"뗏목을 대양 항해 규격(바닥판 {RaftStructure.OceanReadyTileCount}칸)까지 키운다";
+
+            if (raft == null)
+            {
+                Write(QuestCategory.Voyage, Id, title, "뗏목이 없다", 0f,
+                    completed: false, locked: true, latch: true);
+                return;
+            }
+
+            int tiles = raft.BaseTileCount;
+            int target = RaftStructure.OceanReadyTileCount;
+            bool done = raft.IsOceanReady;
+
+            if (!raft.IsSeaworthy)
+            {
+                Write(QuestCategory.Voyage, Id, title, "먼저 항해 가능한 뗏목으로", 0f,
+                    completed: false, locked: true, latch: true);
+                return;
+            }
+
+            Write(QuestCategory.Voyage, Id, title,
+                done ? "출항 준비 완료 — 비축 물자를 채워라" : $"바닥판 {tiles}/{target}칸 · {raft.DescribeState()}",
+                target > 0 ? Mathf.Clamp01((float)tiles / target) : 0f,
+                completed: done, locked: false, latch: true);
+        }
+
+        /// <summary>아직 없는 삭구 부품을 적는다("돛 · 키" 형태).</summary>
+        private static string DescribeMissingParts(bool sail, bool rudder)
+        {
+            if (!sail && !rudder)
+                return $"{RaftStructure.GetPartName(RaftPart.Sail)} · {RaftStructure.GetPartName(RaftPart.Rudder)} 필요";
+
+            return sail
+                ? $"{RaftStructure.GetPartName(RaftPart.Rudder)} 필요"
+                : $"{RaftStructure.GetPartName(RaftPart.Sail)} 필요";
         }
 
         // ────────────────────────────────────────────────────────────────────────
