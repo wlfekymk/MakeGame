@@ -99,7 +99,11 @@ namespace MakeGame.Systems
             CampfireEffect.EnsureAttached(gameObject);
 
             // 실물 모델(Models/campfire_a) 시각 교체 - CampfireEffect와 같은 시각 전용 훅.
-            if (GetComponent<CampfireVisual>() == null) gameObject.AddComponent<CampfireVisual>();
+            // [식량 루프] **훈연기 위에서는 붙이지 않는다.** 훈연기는 같은 오브젝트에 이 컴포넌트를 달아
+            // E(점화)/R(투입) 경로를 물려받는데(Smoker 클래스 주석), 모델 교체까지 따라오면 훈연대
+            // 밑에 모닥불 실물 모델이 통째로 겹쳐 서 버린다. 불꽃/연기 이펙트는 훈연기에도 맞으므로 그대로 둔다.
+            if (GetComponent<Smoker>() == null && GetComponent<CampfireVisual>() == null)
+                gameObject.AddComponent<CampfireVisual>();
         }
 
         /// <summary>
@@ -137,6 +141,16 @@ namespace MakeGame.Systems
         {
             if (!isLit)
                 return;
+
+            // [식량 루프] 이 불이 훈연기의 것이면 **태운 연료 시간만큼** 훈연을 진행시킨다.
+            // 훈연 진행을 Smoker.Update의 Time.deltaTime이 아니라 여기 두는 이유: 이 Tick은 실시간
+            // (Update)뿐 아니라 취침으로 건너뛴 시간(Shelter.SettleHomesForSkippedTime)과 우천 가속
+            // (WeatherSystem)에서도 불린다. 훈연을 따로 재면 "자는 동안 연료만 타고 고기는 그대로"가
+            // 되어 연료가 조용히 증발한다. "훈연 진행 = 실제로 탄 연료"로 묶으면 세 경로가 저절로 맞는다.
+            // 남은 연료보다 더 진행하지는 않는다 - 60초치 연료로 300초를 건너뛰면 그 60초만 익는다.
+            var smoker = GetComponent<Smoker>();
+            if (smoker != null)
+                smoker.AdvanceSmoking(Mathf.Min(deltaTime, Mathf.Max(0f, remainingFuelSeconds)));
 
             remainingFuelSeconds -= deltaTime;
             if (remainingFuelSeconds <= 0f)
@@ -216,6 +230,14 @@ namespace MakeGame.Systems
         {
             if (!isLit || inventory == null || rawFood == null)
                 return false;
+
+            // [식량 루프] 이 불이 훈연기의 것이면 즉시 굽지 않고 훈연대에 건다.
+            // 조작(훈연기를 조준하고 R)과 입력 처리(InteractionController.CookFirstRawFoodAtTarget)를
+            // 한 줄도 바꾸지 않고 훈연기를 얹기 위한 분기다 - 새 키도, 새 입력 분기도 없다.
+            // 평범한 모닥불에는 Smoker가 없으므로 이 검사 한 번 외에는 예전과 완전히 같은 경로다.
+            var smoker = GetComponent<Smoker>();
+            if (smoker != null)
+                return smoker.TryInsert(inventory, skills, rawFood);
 
             if (!rawFood.isRawFood || rawFood.cookedResult == null)
                 return false;

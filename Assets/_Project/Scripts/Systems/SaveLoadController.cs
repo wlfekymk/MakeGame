@@ -150,7 +150,11 @@ namespace MakeGame.Systems
                     {
                         itemName = stack.data.itemName,
                         remainingUses = stack.RemainingUses,
-                        count = stack.count
+                        count = stack.count,
+                        // [식량 루프] 한 칸의 부패 경과는 **그 칸에서 가장 오래된 것**의 값을 적는다
+                        // (스택 신선도의 정의 자체가 그것이다 - InventoryStack.oldest 주석).
+                        // 부패 대상이 아닌 아이템은 나이가 늘지 않으므로 항상 0이 나간다.
+                        spoilAgeSeconds = stack.oldest != null ? stack.oldest.spoilAgeSeconds : 0f,
                     });
                 }
             }
@@ -194,6 +198,7 @@ namespace MakeGame.Systems
             }
 
             SaveStructures(data);
+            SaveSmokers(data); // [식량 루프] 훈연기는 StructureType을 늘리지 않으려고 별도 목록으로 나간다.
             SaveResourceNodes(data);
             SaveHazardsAndCreatures(data);
             SaveBossProgress(data);
@@ -402,9 +407,11 @@ namespace MakeGame.Systems
                     // 스택 뷰(GetStacks)에서 3칸으로 접혀 보인다 - 아이템이 사라지는 경로가 없다.
                     // 용량 검사를 거치지 않는 AddItemIgnoringCapacity를 쓰는 이유는 PlayerInventory
                     // 쪽 주석 참고(넘치면 버리는 대신 넘친 채로 복원하고 경고만 남긴다).
+                    // [식량 루프] 부패 경과도 함께 되돌린다. 옛 세이브에는 이 키가 없어 0으로 읽히므로
+                    // 예전 세이브의 음식은 전부 "신선"으로 복원된다(SaveData.InventorySaveEntry 주석).
                     int count = saved.Count;
                     for (int i = 0; i < count; i++)
-                        playerInventory.AddItemIgnoringCapacity(itemData, saved.remainingUses);
+                        playerInventory.AddItemIgnoringCapacity(itemData, saved.remainingUses, saved.spoilAgeSeconds);
                 }
 
                 playerInventory.NotifyInventoryChanged();
@@ -476,6 +483,9 @@ namespace MakeGame.Systems
                 GameManager.Instance.CompleteEnding();
 
             RestoreStructures(data);
+            // [식량 루프] 반드시 RestoreStructures **뒤**여야 한다 - 그 안의 ClearExistingStructures가
+            // 씬에 남아 있던 훈연기를 먼저 지운다(순서가 뒤집히면 방금 되살린 훈연기가 그대로 지워진다).
+            RestoreSmokers(data);
             RestoreResourceNodes(data);
             RestoreHazardsAndCreatures(data);
 
@@ -596,6 +606,13 @@ namespace MakeGame.Systems
         {
             foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Exclude))
             {
+                // [식량 루프] 훈연기는 E(점화)/R(투입) 경로를 물려받으려고 같은 오브젝트에 Campfire를
+                // 달고 있다(Smoker 클래스 주석). 여기서 걸러내지 않으면 훈연기 한 대가 모닥불로도
+                // 저장되어, 불러올 때 같은 자리에 모닥불이 한 채 더 생긴다. 훈연기의 불 상태는
+                // SaveSmokers가 SmokerSaveEntry에 함께 싣는다.
+                if (cf.GetComponent<Smoker>() != null)
+                    continue;
+
                 data.structures.Add(new StructureSaveEntry
                 {
                     type = StructureType.Campfire,
@@ -760,7 +777,24 @@ namespace MakeGame.Systems
         private void ClearExistingStructures()
         {
             foreach (var cf in Object.FindObjectsByType<Campfire>(FindObjectsInactive.Include))
+            {
+                // [식량 루프] 훈연기의 불은 훈연기와 같은 오브젝트다. 여기서 지우면 훈연 진행/완성품까지
+                // 함께 사라지므로 건너뛰고, 훈연기는 바로 아래에서 Smoker.Active로 따로 정리한다
+                // (그 목록은 설치 원본(템플릿)을 포함하지 않아 원본이 파괴되는 사고도 막는다 -
+                //  CraftStation이 FindObjectsByType을 피한 것과 정확히 같은 이유).
+                if (cf.GetComponent<Smoker>() != null)
+                    continue;
+
                 Destroy(cf.gameObject);
+            }
+
+            var smokers = Smoker.Active;
+            for (int i = smokers.Count - 1; i >= 0; i--)
+            {
+                Smoker smoker = smokers[i];
+                if (smoker != null)
+                    Destroy(smoker.gameObject);
+            }
 
             foreach (var sh in Object.FindObjectsByType<Shelter>(FindObjectsInactive.Include))
                 Destroy(sh.gameObject);
@@ -953,6 +987,152 @@ namespace MakeGame.Systems
             station.useRadius = CraftStation.DefaultUseRadius;
 
             go.SetActive(true);
+        }
+
+        // ── 훈연기 (식량 루프) ────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 설치된 훈연기를 전부 data.smokers에 기록한다.
+        ///
+        /// **FindObjectsByType을 쓰지 않는다.** Smoker도 CraftStation처럼 설치 원본(템플릿)을
+        /// DontDestroyOnLoad로 y = -5000에 세워 두는데, 그 원본까지 잡히면 저장할 때마다 지하에
+        /// 훈연기가 한 대씩 기록되고 불러올 때마다 유령이 늘어난다. Smoker.Active는 원본을 등록하지
+        /// 않는 목록이라 그 함정을 구조적으로 피한다(CraftStation.Active와 같은 규약).
+        ///
+        /// 불(점화 상태·남은 연료)은 같은 오브젝트의 Campfire에서 읽어 함께 싣는다. 그쪽은
+        /// SaveStructures가 건너뛰므로 두 곳에 겹쳐 저장되지 않는다.
+        /// </summary>
+        private void SaveSmokers(SaveData data)
+        {
+            var smokers = Smoker.Active;
+            for (int i = 0; i < smokers.Count; i++)
+            {
+                Smoker smoker = smokers[i];
+                if (smoker == null)
+                    continue;
+
+                Campfire fire = smoker.Fire;
+
+                data.smokers.Add(new SmokerSaveEntry
+                {
+                    posX = smoker.transform.position.x,
+                    posY = smoker.transform.position.y,
+                    posZ = smoker.transform.position.z,
+                    rotY = smoker.transform.eulerAngles.y,
+                    isLit = fire != null && fire.isLit,
+                    remainingFuelSeconds = fire != null ? fire.remainingFuelSeconds : 0f,
+                    pendingRaw = ToItemCountEntriesFromItems(smoker.PendingRaw),
+                    readyOutput = ToItemCountEntriesFromItems(smoker.ReadyOutput),
+                    progressSeconds = smoker.ProgressSeconds,
+                });
+            }
+        }
+
+        /// <summary>
+        /// 저장된 훈연기를 되살린다. **RestoreStructures 뒤에 불러야 한다** - 그 안의
+        /// ClearExistingStructures가 씬에 남아 있던 훈연기를 먼저 정리하기 때문이다.
+        ///
+        /// 프리팹 필드를 새로 만들지 않는다(프리팹 에셋 자체가 없다 - AGENT_BRIEF 1장). 설치 경로와
+        /// 완전히 같은 절차로 코드로 세운다: 비활성으로 만들어 위치·회전을 채운 **다음** 켠다.
+        /// 활성 오브젝트에 AddComponent를 하면 그 자리에서 Awake가 돌아 아직 원점인 위치에서 지면
+        /// 스냅이 일어난다(RestoreCraftStation과 같은 이유). 불 상태는 Awake가 Campfire를 붙인
+        /// **뒤**라야 쓸 수 있으므로 SetActive 다음에 넣는다.
+        /// </summary>
+        private void RestoreSmokers(SaveData data)
+        {
+            if (data.smokers == null)
+                return;
+
+            foreach (var entry in data.smokers)
+            {
+                if (entry == null)
+                    continue;
+
+                var go = new GameObject("Smoker");
+                go.SetActive(false);
+                go.transform.SetPositionAndRotation(
+                    new Vector3(entry.posX, entry.posY, entry.posZ),
+                    Quaternion.Euler(0f, entry.rotY, 0f));
+
+                var smoker = go.AddComponent<Smoker>();
+                go.SetActive(true);
+
+                Campfire fire = smoker.Fire;
+                if (fire != null)
+                {
+                    fire.isLit = entry.isLit;
+                    fire.remainingFuelSeconds = entry.remainingFuelSeconds;
+                }
+
+                smoker.ApplySavedState(
+                    ToItemDataList(entry.pendingRaw),
+                    ToItemDataList(entry.readyOutput),
+                    entry.progressSeconds);
+            }
+        }
+
+        /// <summary>
+        /// 아이템 목록(1개 = 1항목)을 이름+개수로 접는다. 훈연 재료/완성품은 개체별 상태가 없어
+        /// 접어도 잃는 정보가 없다(훈제품은 부패하지 않으므로 나이도 필요 없다).
+        /// </summary>
+        private static List<ItemCountEntry> ToItemCountEntriesFromItems(IReadOnlyList<ItemData> items)
+        {
+            var entries = new List<ItemCountEntry>();
+            if (items == null)
+                return entries;
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                ItemData item = items[i];
+                if (item == null || string.IsNullOrEmpty(item.itemName))
+                    continue;
+
+                ItemCountEntry found = null;
+                for (int e = 0; e < entries.Count; e++)
+                {
+                    if (entries[e].itemName == item.itemName)
+                    {
+                        found = entries[e];
+                        break;
+                    }
+                }
+
+                if (found != null)
+                    found.count++;
+                else
+                    entries.Add(new ItemCountEntry { itemName = item.itemName, count = 1 });
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// 이름+개수 목록을 ItemData 목록(1개 = 1항목)으로 되돌린다. 이름이 풀리지 않는 항목은 조용히
+        /// 버려진다 - 인벤토리 복원이 미해결 이름을 다루는 방식과 같은 규칙이다.
+        /// </summary>
+        private List<ItemData> ToItemDataList(List<ItemCountEntry> entries)
+        {
+            var items = new List<ItemData>();
+            if (entries == null)
+                return items;
+
+            foreach (var entry in entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
+                    continue;
+
+                ItemData data = FindItemDataByName(entry.itemName);
+                if (data == null)
+                {
+                    Debug.LogWarning($"[SaveLoadController] 훈연기에 있던 '{entry.itemName}'의 ItemData를 찾지 못해 복원하지 못했습니다.");
+                    continue;
+                }
+
+                for (int i = 0; i < entry.count; i++)
+                    items.Add(data);
+            }
+
+            return items;
         }
 
         /// <summary>

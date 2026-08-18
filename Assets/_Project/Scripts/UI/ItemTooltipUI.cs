@@ -167,6 +167,19 @@ namespace MakeGame.UI
             if (data.isPlaceable)
                 AddLine("설치형 - 월드에 지을 수 있다", 12, NeutralGray);
 
+            // [식량 루프] 상하지 않는 음식임을 못 박아 준다(훈제육 · 훈제생선 · 비상식량).
+            //
+            // **지금 이 칸이 얼마나 신선한가**는 여기서 알 수 없다 - 이 메서드는 ItemData만 받고
+            // 신선도는 칸(InventoryStack.oldest)의 값이기 때문이다. 그래서 그쪽은 호출부가 사용법
+            // 줄(usageLine)에 실어 보내고(InventoryUI.BuildFreshnessText), 여기서는 **종류만 보면
+            // 알 수 있는 사실** 하나만 적는다. 두 곳이 같은 판정을 두 벌로 갖지 않게 하려는 것이고,
+            // 판정도 새로 만들지 않고 FoodSpoilage.CanSpoil 하나만 부른다.
+            //
+            // 조건에 hungerRestoreAmount를 함께 거는 이유: CanSpoil은 재료·키트·음료에서도 false라,
+            // 이 검사가 없으면 돌조각 툴팁에까지 "상하지 않는다"가 붙는다(의미 없는 줄이다).
+            if (data.hungerRestoreAmount > 0f && !MakeGame.Systems.FoodSpoilage.CanSpoil(data))
+                AddLine("상하지 않는다 - 오래 보관할 수 있다", 12, MedicGreen);
+
             // 경고 계열은 마지막에 모아 눈에 걸리게 한다.
             if (data.isRawFood)
                 AddLine("생식품 - 익히지 않고 먹으면 식중독 위험", 12, SunstrokeGold);

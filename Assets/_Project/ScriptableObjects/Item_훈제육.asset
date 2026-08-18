@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_훈제육
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 훈제육
+  description: "훈연기에서 오래 연기를 쐰 고기. 수분이 빠지고 연기가 배어 절대 상하지 않는다. 장기 항해에 실을 수 있는 유일한 고기다."
+  icon: {fileID: 21300000, guid: 89a8a65d8e4c4fb13f4fe59da251eb29, type: 3}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0
+  hungerRestoreAmount: 45
+  thirstRestoreAmount: 0
+  isRawFood: 0
+  cookedResult: {fileID: 0}
+  isCoconutWaterSource: 0
+  spoilDays: -1

@@ -211,6 +211,56 @@ namespace MakeGame.Systems
         [Tooltip("보스 3종의 전리품 수거 여부(인덱스 = BossKind). 셋을 모두 모으면 세 번째 엔딩" +
             "(정복)이 열린다. 처치했지만 아직 안 주운 전리품은 그 보스가 지키던 자리에 다시 놓인다.")]
         public List<bool> bossTrophyCollected = new List<bool>();
+
+        // ── 훈연기 (식량 루프) ───────────────────────────────────────────────────────────
+        // **맨 끝에 추가만 했다**(JsonUtility 관례 - 위 필드들과 같은 이유). 이 필드가 없는 옛 세이브는
+        // 빈 목록으로 읽히고, 그것이 정확히 "아직 훈연기를 하나도 안 놓았다"는 뜻이라 마이그레이션이
+        // 필요 없다. saveContentVersion도 올리지 않는다(bossDefeated와 같은 판단).
+        //
+        // **structures(StructureSaveEntry) 목록에 넣지 않고 별도 목록으로 나가는 이유는 하나다:**
+        // 그쪽에 넣으려면 종류 구분자인 Data.StructureType에 값을 하나 추가해야 하는데 그 파일이 이
+        // 작업의 락 밖이다(보고서 [막힘] 항목). 목록을 따로 두면 enum을 한 글자도 건드리지 않고
+        // 저장할 수 있고, 기존 세 구조물의 복원 규칙도 한 줄도 바뀌지 않는다.
+
+        [Header("훈연기 (식량 루프)")]
+        [Tooltip("설치된 훈연기 각각의 위치·회전·불 상태·훈연 진행 상황.")]
+        public List<SmokerSaveEntry> smokers = new List<SmokerSaveEntry>();
+    }
+
+    /// <summary>
+    /// 훈연기 한 대의 저장 항목.
+    ///
+    /// 불(점화 상태·남은 연료)은 훈연기가 같은 오브젝트에 달고 있는 Campfire의 값이다. 그래서 훈연기는
+    /// **모닥불 목록(structures)에 저장되지 않는다** - SaveLoadController가 Campfire를 훑을 때 Smoker가
+    /// 달린 것을 건너뛰고, 대신 이 항목이 불 상태까지 함께 싣는다(두 곳에 다 실으면 불러올 때 훈연기
+    /// 자리에 모닥불이 하나 더 생긴다).
+    ///
+    /// 재료/완성품은 인벤토리(InventorySaveEntry)와 같은 관례대로 itemName + 개수로만 적는다
+    /// (ItemData는 직렬화할 수 없다). 훈연은 개수만 의미가 있고 개체별 상태가 없으므로 접어도 잃는
+    /// 정보가 없다 - 훈제품은 부패하지 않아 나이를 따로 실을 필요도 없다.
+    /// </summary>
+    [System.Serializable]
+    public class SmokerSaveEntry
+    {
+        [Header("위치/회전")]
+        public float posX;
+        public float posY;
+        public float posZ;
+        public float rotY;
+
+        [Header("불 (같은 오브젝트의 Campfire 값)")]
+        public bool isLit;
+        public float remainingFuelSeconds;
+
+        [Header("훈연 진행")]
+        [Tooltip("훈연대에 걸려 있는(아직 안 된) 재료의 이름+개수.")]
+        public List<ItemCountEntry> pendingRaw = new List<ItemCountEntry>();
+
+        [Tooltip("다 됐지만 아직 플레이어에게 넘기지 못한 완성품의 이름+개수.")]
+        public List<ItemCountEntry> readyOutput = new List<ItemCountEntry>();
+
+        [Tooltip("지금 처리 중인 재료의 진행 시간(초).")]
+        public float progressSeconds;
     }
 
     /// <summary>
@@ -294,6 +344,21 @@ namespace MakeGame.Systems
 
         /// <summary>실제 개수. 0 이하(= count 키가 없던 옛 세이브)는 1로 해석한다.</summary>
         public int Count => count > 0 ? count : 1;
+
+        // ── 부패 (식량 루프) ─────────────────────────────────────────────────────────────
+        // **추가만 했다.** 위 세 필드는 이름·타입·의미 전부 그대로다.
+        //
+        // 옛 세이브에는 이 키가 없어 0으로 읽히고, 0은 정확히 "갓 만든 것"이라는 뜻이다 -
+        // 즉 **옛 세이브의 음식은 전부 신선한 상태로 복원된다**(마이그레이션 불필요, 안내 로그 불필요).
+        // 그래서 saveContentVersion도 올리지 않는다(bossDefeated를 추가할 때와 같은 판단 - 없으면
+        // 없는 대로 정답이 나오는 필드는 복원 규칙이 달라진 것이 아니다).
+        //
+        // 한 줄(=한 칸)에 값이 하나뿐인 것은 의도적이다. 스택의 신선도는 "그 칸에서 가장 오래된 것"
+        // 하나로 정의돼 있으므로(InventoryStack.oldest 주석) 접을 때 잃는 정보가 없다. 복원하면 그 칸
+        // 전체가 가장 오래된 것의 나이를 갖게 되는데, 이는 플레이어에게 불리한 방향이라 안전하다
+        // (반대로 평균이나 최솟값을 쓰면 저장/불러오기를 반복해 신선도를 되돌리는 악용이 가능해진다).
+        [Tooltip("이 줄의 부패 경과 시간(초). 그 칸에서 가장 오래된 것 기준이며, 0이면 갓 만든 것이다.")]
+        public float spoilAgeSeconds;
     }
 
     /// <summary>아이템 이름 + 개수 쌍 (경비행기 수리 투입 재료·저장궤 내용물 등 수량 기반 저장에 사용).</summary>

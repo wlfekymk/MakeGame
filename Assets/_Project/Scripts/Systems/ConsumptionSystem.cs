@@ -76,9 +76,25 @@ namespace MakeGame.Systems
             if (!item.data.IsConsumable)
                 return false;
 
+            // [식량 루프] **같은 종류 중 가장 오래된 것부터 먹는다(FIFO).**
+            // 인벤토리 한 칸은 그 칸에서 가장 상한 것의 신선도를 표시하는데(InventoryStack.oldest),
+            // 정작 먹을 때 목록 앞쪽의 신선한 인스턴스가 소모되면 화면과 실제가 갈리고, 플레이어가
+            // 상한 것만 계속 쌓아 두는(그리고 영원히 안 먹는) 상태가 된다. 부패 대상이 아닌
+            // 아이템(치료제·음료·재료)은 이 경로를 타지 않으므로 예전 동작 그대로다.
+            if (FoodSpoilage.CanSpoil(item.data))
+            {
+                InventoryItem oldest = inventory.FindMostSpoiled(item.data);
+                if (oldest != null)
+                    item = oldest;
+            }
+
+            FoodSpoilStage stage = FoodSpoilage.GetStage(item);
+
             if (item.data.hungerRestoreAmount > 0f)
             {
-                survivalStats.ConsumeFood(item.data.hungerRestoreAmount);
+                // 상할수록 허기 회복이 줄어든다(신선 1.0 / 상하기 시작 0.6 / 부패 0.25).
+                // 갈증 회복에는 적용하지 않는다 - 음료는 부패 대상이 아니다(FoodSpoilage.GetSpoilDays).
+                survivalStats.ConsumeFood(item.data.hungerRestoreAmount * FoodSpoilage.GetRestoreMultiplier(stage));
                 AudioManager.Instance?.PlayEat(); // 음식 섭취 효과음
             }
 
@@ -92,7 +108,14 @@ namespace MakeGame.Systems
                 AudioManager.Instance?.PlayDrink(); // 음료 섭취 효과음
             }
 
-            if (item.data.isRawFood && Random.value < GetRawFoodPoisonChance())
+            // [식량 루프] 식중독 확률 = (생음식이면 기존 확률) + (부패 단계별 가산분).
+            // 익힌 음식이라도 썩으면 위험해지고, 생음식은 원래 위험에 부패분이 더해진다.
+            // 판정은 예전과 같이 UnityEngine.Random 한 번이다(월드 생성 스트림이 아니라 무관 -
+            // AGENT_BRIEF 2장 6번의 "조리 확률 등 비생성 계열은 예외").
+            float poisonChance = item.data.isRawFood ? GetRawFoodPoisonChance() : 0f;
+            poisonChance = Mathf.Clamp01(poisonChance + FoodSpoilage.GetExtraPoisonChance(stage));
+
+            if (poisonChance > 0f && Random.value < poisonChance)
                 survivalStats.ApplyPoison();
 
             // 치료 효과가 있는 아이템(붕대/해독제/부목 등)을 사용하면 해당 상태 이상을 치료한다.

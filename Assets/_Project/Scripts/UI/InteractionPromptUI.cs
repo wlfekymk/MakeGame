@@ -269,7 +269,20 @@ namespace MakeGame.UI
                 return true;
             }
 
+            // [식량 루프 - 훈연기] Smoker는 **Campfire와 같은 오브젝트에** 붙는다(Smoker 클래스 주석:
+            // E는 Campfire.TryLight로, R은 Campfire.CookItem → Smoker.TryInsert로 들어간다). 그래서
+            // Campfire 분기가 먼저 걸리면 훈연기를 조준해도 화면에는 "모닥불 피우기"가 떴다.
+            //
+            // 자리는 **Campfire 분기 바로 앞**이다(분기 순서 규약을 어기지 않는다):
+            //  · E가 실제로 하는 일은 두 분기가 완전히 같다(점화 / 장작 추가 - 둘 다 Campfire의 것).
+            //    즉 순서를 바꿔도 "화면이 약속한 행동"과 "E키가 하는 행동"이 갈라지지 않는다. 바뀌는
+            //    것은 문구뿐이다.
+            //  · 평범한 모닥불에는 Smoker가 없으므로 이 검사 한 번 외에 기존 경로는 그대로다.
+            var smoker = target.GetComponent<Smoker>();
             var campfire = target.GetComponent<Campfire>();
+            if (smoker != null)
+                return BuildSmokerPrompt(smoker, campfire, inventory, key, out main, out sub, out blocked);
+
             if (campfire != null)
                 return BuildCampfirePrompt(campfire, inventory, key, out main, out sub, out blocked);
 
@@ -651,6 +664,101 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// [식량 루프] 훈연기 프롬프트. 훈연기는 모닥불(Campfire)을 부품으로 얹고 있어 E 동작(점화 /
+        /// 장작 추가)이 모닥불과 완전히 같으므로, 여기서는 **같은 행동을 훈연기의 말로** 안내하고
+        /// 훈연기에만 있는 정보(R 투입 · 훈연대 현황)를 한 줄에 덧붙인다.
+        ///
+        /// 판정은 전부 기존 소스를 읽기만 한다 - 점화 조건은 Campfire(fireStarterItem / fuelItem /
+        /// isLit), R이 집는 재료는 InteractionController.FindFirstRawFoodInInventory와 **같은 규칙**
+        /// (첫 isRawFood), 훈연 가능 여부는 Smoker.TryGetSmokedResult다. UI가 규칙을 새로 만들지 않는다.
+        ///
+        /// campfire가 null인 경우(설치 직후 아직 Campfire가 붙기 전)에도 안전하다 - 그때는 "불을
+        /// 지펴야 한다"만 알려주고 어떤 필드도 건드리지 않는다.
+        /// </summary>
+        private bool BuildSmokerPrompt(Smoker smoker, Campfire campfire, PlayerInventory inventory, string key,
+            out string main, out string sub, out bool blocked)
+        {
+            main = "";
+            sub = "";
+            blocked = false;
+
+            string fuelName = campfire != null && campfire.fuelItem != null
+                ? campfire.fuelItem.itemName
+                : Smoker.FuelItemName;
+
+            // R을 누르면 실제로 집히는 재료(= 컨트롤러와 같은 "첫 생음식")와, 그것이 훈연되는지 여부.
+            ItemData rawFood = FindFirstRawFood(inventory);
+            bool canSmoke = rawFood != null && Smoker.TryGetSmokedResult(rawFood, out ItemData _);
+            string insertHint = canSmoke
+                ? $" · [{interaction.cookKey}] {rawFood.itemName} 투입"
+                : "";
+
+            // 불이 꺼져 있으면 E가 하는 일은 점화다(Campfire.TryLight). 훈연은 불이 붙어야만 진행된다.
+            if (campfire == null || !campfire.isLit)
+            {
+                main = $"{key} {Smoker.DisplayName} 불 지피기";
+
+                if (campfire == null)
+                {
+                    sub = "불을 지펴야 훈연이 시작된다";
+                    return true;
+                }
+
+                bool needsStarter = campfire.fireStarterItem != null || campfire.alternateFireStarterItem != null;
+                bool hasStarter = !needsStarter || HasAnyOf(inventory, campfire.fireStarterItem, campfire.alternateFireStarterItem);
+                bool hasFuelToLight = campfire.fuelItem == null
+                    || (inventory != null && inventory.GetItemCount(campfire.fuelItem) > 0);
+                string starterName = campfire.fireStarterItem != null
+                    ? campfire.fireStarterItem.itemName
+                    : (campfire.alternateFireStarterItem != null ? campfire.alternateFireStarterItem.itemName : "발화 도구");
+
+                if (!hasStarter)
+                {
+                    blocked = true;
+                    sub = $"{starterName} 필요";
+                }
+                else if (!hasFuelToLight)
+                {
+                    blocked = true;
+                    sub = $"{fuelName} 필요";
+                }
+                else
+                {
+                    sub = $"{fuelName} 1개 소모 · 불이 붙어야 훈연이 진행된다{insertHint}";
+                }
+                return true;
+            }
+
+            // 불이 붙어 있을 때. 훈연대 현황은 Smoker가 이미 읽기 전용으로 공개한 값만 쓴다.
+            int pending = smoker.PendingRaw != null ? smoker.PendingRaw.Count : 0;
+            int ready = smoker.ReadyOutput != null ? smoker.ReadyOutput.Count : 0;
+            string status = $"훈연 중 {pending}개 · 완성 {ready}개 (칸 {pending + ready}/{smoker.capacity})";
+
+            bool hasFuel = campfire.fuelItem == null
+                || (inventory != null && inventory.GetItemCount(campfire.fuelItem) > 0);
+
+            if (hasFuel)
+            {
+                main = $"{key} {Smoker.DisplayName}에 {fuelName} 넣기";
+                sub = $"연료 {campfire.remainingFuelSeconds:F0}초 남음 · {status}{insertHint}";
+                return true;
+            }
+
+            // 연료가 떨어졌어도 넣을 재료가 있으면 R 안내가 주 행동이다("아무 반응 없음" 방지).
+            if (canSmoke)
+            {
+                main = $"[{interaction.cookKey}] {rawFood.itemName} 훈연";
+                sub = $"{fuelName}이(가) 없어 장작은 넣을 수 없다 · {status}";
+                return true;
+            }
+
+            main = $"{key} {Smoker.DisplayName}에 {fuelName} 넣기";
+            blocked = true;
+            sub = $"{fuelName} 필요 · {status}";
+            return true;
+        }
+
+        /// <summary>
         /// 모닥불 프롬프트. 꺼져 있으면 점화(발화 도구 + 연료), 켜져 있으면 장작 추가/조리를 안내한다.
         /// 점화 조건 판정 자체는 Campfire.TryLight의 규칙(파이어스타터 우선, 없으면 라이터, 연료 1개 소모)을
         /// 그대로 읽어 문장으로만 옮긴다.
@@ -810,7 +918,7 @@ namespace MakeGame.UI
             if (!hazard.IsActive)
                 return false;
 
-            string hazardName = GetHazardDisplayName(hazard.hazardType);
+            string hazardName = GetHazardDisplayName(hazard);
 
             if (!hazard.isCombatTarget)
             {
@@ -929,6 +1037,93 @@ namespace MakeGame.UI
                     best = item;
             }
             return best;
+        }
+
+        /// <summary>
+        /// 조준한 위험 요소의 표시 이름. **보스면 보스 이름을 쓴다.**
+        ///
+        /// 보스 3종(거대 상어 / 대왕 곰치 / 심해 괴수)은 전부 HazardSource를 얹고 hazardType을
+        /// Shark로 **고정**한다(수중 피해 + 출혈 + SharkAttack 사인이 필요해서다 - BossCreature 클래스
+        /// 주석 참고). 그 대가로 hazardType만 보는 아래 표에서는 세 보스가 모두 "상어"로 나왔다.
+        /// 여기서 BossCreature가 붙어 있는지만 한 번 더 보고 이름을 바로잡는다 - 전투 규칙은 한 줄도
+        /// 건드리지 않고 표시 문자열만 고르는 것이라 UI에 두는 것이 맞다.
+        /// </summary>
+        private static string GetHazardDisplayName(HazardSource hazard)
+        {
+            var boss = hazard.GetComponent<BossCreature>();
+            if (boss != null)
+            {
+                string bossName = GetBossDisplayName(boss);
+                if (!string.IsNullOrEmpty(bossName))
+                    return bossName;
+            }
+
+            return GetHazardDisplayName(hazard.hazardType);
+        }
+
+        /// <summary>
+        /// 보스 개체의 표시 이름을 BossCreature에게 물어본다. 못 알아내면 빈 문자열(호출부가 기존
+        /// hazardType 표로 폴백한다 - 화면에서 이름이 사라지는 경우는 만들지 않는다).
+        ///
+        /// [왜 오브젝트 이름으로 종류를 되찾는가] BossCreature의 종류(kind)는 private 필드이고
+        /// **공개 인스턴스 접근자가 없다**(공개된 인스턴스 멤버는 Home 하나뿐이다). 그 파일은 이 작업의
+        /// 락 밖이라 접근자를 추가할 수도 없다. 대신 BossCreature.Spawn이 오브젝트 이름을
+        /// `"Boss_" + (BossKind)kind`로 **결정적으로** 짓고, 이름 → 이름 변환에 필요한 나머지
+        /// (BossKind · KindCount · GetDisplayName)는 전부 공개 API다. 그래서 그 규칙을 그대로 되짚는다.
+        /// 이름 규칙이 깨지면 조용히 폴백할 뿐 오작동하지 않는다.
+        /// [요청] systems-engineer: BossCreature에 `public int Kind => kind;` 한 줄이 생기면 이
+        /// 이름 되짚기는 그 자리에서 지울 수 있다.
+        /// </summary>
+        private static string GetBossDisplayName(BossCreature boss)
+        {
+            string[] names = BossObjectNames;
+            string objectName = boss.gameObject.name;
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (string.Equals(objectName, names[i], System.StringComparison.Ordinal))
+                    return BossCreature.GetDisplayName(i);
+            }
+
+            return "";
+        }
+
+        /// <summary>
+        /// 보스 종류별 오브젝트 이름 캐시("Boss_GiantShark" 등). 프롬프트는 매 프레임 갱신되므로
+        /// 여기서 문자열을 조립하면 그대로 프레임당 할당이 된다 - 최초 1회만 만들어 두고 재사용한다.
+        /// </summary>
+        private static string[] bossObjectNames;
+
+        private static string[] BossObjectNames
+        {
+            get
+            {
+                if (bossObjectNames == null)
+                {
+                    bossObjectNames = new string[BossCreature.KindCount];
+                    for (int i = 0; i < BossCreature.KindCount; i++)
+                        bossObjectNames[i] = "Boss_" + (BossKind)i;
+                }
+                return bossObjectNames;
+            }
+        }
+
+        /// <summary>
+        /// 인벤토리의 첫 생음식. **InteractionController.FindFirstRawFoodInInventory와 같은 규칙**
+        /// (isRawFood 하나만 본다 - cookedResult는 보지 않는다)이라, R을 눌렀을 때 실제로 집히는
+        /// 재료와 화면에 적히는 재료가 어긋나지 않는다. 훈연기 프롬프트 전용이다.
+        /// </summary>
+        private static ItemData FindFirstRawFood(PlayerInventory inventory)
+        {
+            if (inventory == null)
+                return null;
+
+            foreach (var item in inventory.items)
+            {
+                if (item.data != null && item.data.isRawFood)
+                    return item.data;
+            }
+            return null;
         }
 
         /// <summary>

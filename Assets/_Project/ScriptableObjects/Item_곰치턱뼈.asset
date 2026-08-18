@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_곰치턱뼈
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: "곰치 턱뼈"
+  description: "대왕 곰치의 턱뼈. 안쪽으로 굽은 이빨이 촘촘히 박혀 있어, 한 번 물리면 왜 빠져나올 수 없는지 알 수 있다."
+  icon: {fileID: 21300000, guid: 4d2b909b038bca71fb03a9b038bf02fe, type: 3}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0

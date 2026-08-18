@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc03dbb5ea3a2a44ea5624a49b0aa223, type: 3}
+  m_Name: Recipe_훈연기키트
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.CraftingRecipe
+  recipeName: "훈연기 키트"
+  description: "나뭇가지로 살을 엮고 노끈으로 묶어 돌 화덕을 앉힌 훈연기 설치 키트를 만든다. 설치하고 불을 지피면 생고기와 생선을 상하지 않는 훈제로 바꿀 수 있다."
+  requiredMaterials:
+  - item: {fileID: 11400000, guid: 519258073502428085c5b0ec1011eb9d, type: 2}
+    quantity: 8
+  - item: {fileID: 11400000, guid: 4dfa08c680734e5abc2e6ed6904ac0c1, type: 2}
+    quantity: 4
+  - item: {fileID: 11400000, guid: 5d951f1b7640476989632c5784092378, type: 2}
+    quantity: 4
+  resultItem: {fileID: 11400000, guid: b2d64e99a1394a7ca848787badeb0ea3, type: 2}
+  resultQuantity: 1
+  requiredSkill: 1
+  requiredSkillLevel: 2
+  experienceReward: 28

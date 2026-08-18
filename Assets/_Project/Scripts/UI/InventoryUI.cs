@@ -183,6 +183,11 @@ namespace MakeGame.UI
         private int lastTooltipCount = -1;
         private int lastTooltipRemaining = int.MinValue;
 
+        // [식량 루프] 사용법 줄에 신선도가 붙으므로 **신선도 문구도 캐시 키에 넣는다.** 넣지 않으면
+        // 칸의 내용(종류·개수·내구도)이 그대로인 채 신선도만 "신선 → 상하기 시작"으로 넘어갔을 때
+        // 아래 조기 반환에 걸려 툴팁이 영영 갱신되지 않는다(커서를 뺐다 넣어야 바뀐다).
+        private string lastTooltipFreshness;
+
         // 캡처가 없는 정적 람다는 컴파일러가 한 번만 만들어 캐시하므로 정렬마다 델리게이트가 새로 생기지 않는다.
         private static readonly Comparison<InventoryStack> StackOrder = (a, b) =>
         {
@@ -1035,17 +1040,21 @@ namespace MakeGame.UI
             }
 
             int remaining = stack.RemainingUses;
+            string freshness = BuildFreshnessText(stack);
 
             // 커서가 같은 칸에 머무는 동안(0.2초 폴링) 같은 내용을 다시 만들지 않는다. 위치 추적은
             // 툴팁 쪽 LateUpdate가 알아서 하므로 내용이 그대로면 아무것도 할 일이 없다.
-            if (stack.data == lastTooltipData && stack.count == lastTooltipCount && remaining == lastTooltipRemaining)
+            if (stack.data == lastTooltipData && stack.count == lastTooltipCount && remaining == lastTooltipRemaining
+                && freshness == lastTooltipFreshness)
                 return;
 
             lastTooltipData = stack.data;
             lastTooltipCount = stack.count;
             lastTooltipRemaining = remaining;
+            lastTooltipFreshness = freshness;
 
-            tooltip.Show(stack.data, stack.count, remaining, GetUsageHint(stack.data), GetDropHint(stack.data));
+            tooltip.Show(stack.data, stack.count, remaining,
+                CombineUsageLine(GetUsageHint(stack.data), freshness), GetDropHint(stack.data));
         }
 
         /// <summary>툴팁을 숨기고 "마지막으로 보여준 내용" 캐시를 비운다(같은 칸에 다시 들어와도 다시 뜨게).</summary>
@@ -1054,6 +1063,7 @@ namespace MakeGame.UI
             lastTooltipData = null;
             lastTooltipCount = -1;
             lastTooltipRemaining = int.MinValue;
+            lastTooltipFreshness = null;
 
             if (tooltip != null)
                 tooltip.Hide();
@@ -1084,6 +1094,41 @@ namespace MakeGame.UI
                 return $"[{interactKey}] 공격";
 
             return "";
+        }
+
+        /// <summary>
+        /// [식량 루프] 이 칸의 신선도 문구("신선 82%" 같은 것). 신선도를 표시할 종류가 아니면 빈 문자열이라
+        /// 음식이 아닌 칸의 툴팁은 한 글자도 달라지지 않는다.
+        ///
+        /// 판정을 여기서 새로 만들지 않는다 - 표시 여부(ShowsFreshness) · 단계 문구(FreshnessLabel) ·
+        /// 비율(Freshness01)은 전부 InventoryStack이 이미 공개한 값이고, 그 값들은 다시 FoodSpoilage
+        /// 하나에서 나온다(칸의 신선도는 **그 칸에서 가장 오래된 것**을 따른다 - InventoryStack.oldest).
+        /// </summary>
+        private static string BuildFreshnessText(InventoryStack stack)
+        {
+            if (stack == null || !stack.ShowsFreshness)
+                return "";
+
+            string label = stack.FreshnessLabel;
+            if (string.IsNullOrEmpty(label))
+                return "";
+
+            return $"{label} {Mathf.RoundToInt(stack.Freshness01 * 100f)}%";
+        }
+
+        /// <summary>
+        /// 툴팁의 사용법 줄을 만든다. 사용법 힌트와 신선도 문구 중 있는 것만 " · "로 잇는다
+        /// (둘 다 없으면 빈 문자열 - ItemTooltipUI가 그 줄을 통째로 생략한다).
+        /// </summary>
+        private static string CombineUsageLine(string usageHint, string freshness)
+        {
+            if (string.IsNullOrEmpty(freshness))
+                return usageHint;
+
+            if (string.IsNullOrEmpty(usageHint))
+                return freshness;
+
+            return $"{usageHint} · {freshness}";
         }
 
         /// <summary>툴팁 맨 아래 줄. 되돌릴 수 없는 물건이면 확인 절차가 있다는 사실까지 알려준다.</summary>

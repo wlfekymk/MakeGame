@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 498c0db9026bbd0479dcf44911bc878a, type: 3}
+  m_Name: Item_훈제생선
+  m_EditorClassIdentifier: Assembly-CSharp::MakeGame.Data.ItemData
+  itemName: 훈제생선
+  description: "훈연기에서 연기를 쐬어 말린 생선. 짭짤하고 질기지만 상하지 않아, 며칠 앞을 내다보고 챙길 수 있다."
+  icon: {fileID: 21300000, guid: d4446ed0623c200cafcf92318c481202, type: 3}
+  maxUses: 1
+  blockedFromLargeIslandsByCurrent: 0
+  hungerRestoreAmount: 32
+  thirstRestoreAmount: 0
+  isRawFood: 0
+  cookedResult: {fileID: 0}
+  isCoconutWaterSource: 0
+  spoilDays: -1

@@ -371,6 +371,11 @@ namespace MakeGame.UI
             cell.index = dataIndex;
             cell.representative = stack != null ? stack.representative : null;
 
+            // 막대(내구도 / 신선도)는 **내용 캐시보다 앞에서** 갱신한다. 신선도는 칸의 내용
+            // (종류·개수·내구도)이 하나도 바뀌지 않아도 시간이 흐르면 변하기 때문에, 아래 조기 반환
+            // 뒤에 두면 게이지가 그 자리에 얼어붙는다(툴팁 캐시에 신선도를 넣은 것과 같은 이유).
+            UpdateSlotBar(cell, stack, data, remaining);
+
             if (cell.data == data && cell.count == count && cell.remaining == remaining)
             {
                 onStyle?.Invoke(cell);
@@ -428,25 +433,55 @@ namespace MakeGame.UI
                 visual.countLabel.gameObject.SetActive(false);
             }
 
-            // 내구도 막대: 겹쳐지지 않는 유한 내구도 도구(창 15·손도끼 20·라이터 5)에서만.
-            bool durableTool = !data.IsStackable && !data.IsUnlimited && data.maxUses > 1 && remaining != int.MinValue;
-            if (visual.durabilityBarGo != null)
-            {
-                if (durableTool)
-                {
-                    float ratio = Mathf.Clamp01((float)remaining / data.maxUses);
-                    visual.durabilityBarGo.SetActive(true);
-                    visual.durabilityFill.fillAmount = ratio;
-                    visual.durabilityFill.color = ratio <= 0.2f ? UIBuilder.DangerRed
-                        : ratio <= 0.4f ? SunstrokeGold : UIBuilder.MedicGreen;
-                }
-                else
-                {
-                    visual.durabilityBarGo.SetActive(false);
-                }
-            }
+            // 막대(내구도 / 신선도)는 이 메서드 위쪽에서 UpdateSlotBar가 이미 그렸다. 여기서 다시
+            // 손대면 조기 반환 경로와 전체 갱신 경로가 서로 다른 막대를 그리게 된다.
 
             onStyle?.Invoke(cell);
+        }
+
+        /// <summary>
+        /// 칸 아래 가로 막대 하나를 갱신한다. 이 막대는 **둘 중 하나**를 보여준다:
+        ///  · 내구도 - 겹쳐지지 않는 유한 내구도 도구(창 15 · 손도끼 20 · 라이터 5).
+        ///  · [식량 루프] 신선도 - 부패하는 음식(InventoryStack.ShowsFreshness).
+        ///
+        /// 하나를 나눠 쓰는 것이 안전한 이유: 두 조건은 **동시에 참이 될 수 없다.** 내구도 막대는
+        /// !IsStackable(= maxUses &gt; 1)일 때만 뜨는데 음식은 전부 maxUses == 1이라 IsStackable이다.
+        /// (칸에 막대를 하나 더 만들려면 UIBuilder.CreateItemSlot을 고쳐야 하는데 그 파일은 이 작업의
+        /// 락 밖이다 - 그래서 새 오브젝트를 만들지 않는 이 방법을 골랐다. 표시도 그만큼 조용하다.)
+        ///
+        /// 신선도 색의 경계값은 <see cref="MakeGame.Systems.FoodSpoilage"/>의 단계 경계를 **그대로**
+        /// 쓴다. 여기에 별도의 숫자를 적으면 막대는 노란데 툴팁에는 "신선"이라고 적히는 일이 생긴다.
+        /// </summary>
+        private void UpdateSlotBar(Cell cell, InventoryStack stack, ItemData data, int remaining)
+        {
+            GameObject barGo = cell.visual.durabilityBarGo;
+            if (barGo == null)
+                return;
+
+            if (data != null && !data.IsStackable && !data.IsUnlimited && data.maxUses > 1
+                && remaining != int.MinValue)
+            {
+                float ratio = Mathf.Clamp01((float)remaining / data.maxUses);
+                barGo.SetActive(true);
+                cell.visual.durabilityFill.fillAmount = ratio;
+                cell.visual.durabilityFill.color = ratio <= 0.2f ? UIBuilder.DangerRed
+                    : ratio <= 0.4f ? SunstrokeGold : UIBuilder.MedicGreen;
+                return;
+            }
+
+            if (stack != null && stack.ShowsFreshness)
+            {
+                float freshness = Mathf.Clamp01(stack.Freshness01);
+                barGo.SetActive(true);
+                cell.visual.durabilityFill.fillAmount = freshness;
+                cell.visual.durabilityFill.color =
+                    freshness < MakeGame.Systems.FoodSpoilage.RottenThreshold01 ? UIBuilder.DangerRed
+                    : freshness < MakeGame.Systems.FoodSpoilage.SpoilingThreshold01 ? SunstrokeGold
+                    : UIBuilder.MedicGreen;
+                return;
+            }
+
+            barGo.SetActive(false);
         }
     }
 }

@@ -191,10 +191,24 @@ namespace MakeGame.Player
         /// </summary>
         public InventoryItem AddItemIgnoringCapacity(ItemData itemData, int remainingUses)
         {
+            return AddItemIgnoringCapacity(itemData, remainingUses, 0f);
+        }
+
+        /// <summary>
+        /// [식량 루프] 위와 같지만 부패 경과 시간까지 지정해 넣는다(세이브 복원 전용).
+        /// 옛 세이브에는 이 값이 없어 0(= 신선)이 들어오므로, 예전 세이브의 음식은 전부 갓 만든
+        /// 상태로 되살아난다 - 기존 세이브 호환의 핵심이다.
+        /// </summary>
+        public InventoryItem AddItemIgnoringCapacity(ItemData itemData, int remainingUses, float spoilAgeSeconds)
+        {
             if (itemData == null)
                 return null;
 
-            var item = new InventoryItem(itemData) { remainingUses = remainingUses };
+            var item = new InventoryItem(itemData)
+            {
+                remainingUses = remainingUses,
+                spoilAgeSeconds = Mathf.Max(0f, spoilAgeSeconds),
+            };
             items.Add(item);
             InventoryChanged?.Invoke();
             return item;
@@ -275,9 +289,19 @@ namespace MakeGame.Player
                 }
 
                 if (target != null)
+                {
                     target.count++;
+
+                    // [식량 루프] 한 칸의 신선도는 그 칸에서 **가장 오래된 것**을 따른다
+                    // (근거는 InventoryStack.oldest 주석). 합칠 때마다 더 상한 쪽으로 갱신한다.
+                    // 부패 대상이 아닌 아이템도 경과 시간은 전부 0이라 이 비교가 대표를 바꾸지 않는다.
+                    if (target.oldest == null || item.spoilAgeSeconds > target.oldest.spoilAgeSeconds)
+                        target.oldest = item;
+                }
                 else
+                {
                     buffer.Add(new InventoryStack(item.data, 1, item));
+                }
             }
         }
 
@@ -382,6 +406,34 @@ namespace MakeGame.Player
                     return item;
             }
             return null;
+        }
+
+        /// <summary>
+        /// [식량 루프] 지정한 종류 중 **가장 많이 상한(가장 오래된) 인스턴스**를 찾는다. 없으면 null.
+        ///
+        /// 왜 필요한가: 인벤토리 표시(InventoryStack.oldest)는 칸에서 가장 오래된 것을 보여주는데,
+        /// 정작 먹을 때 목록 앞쪽의 신선한 것이 소모되면 화면과 실제가 갈린다. 섭취(ConsumptionSystem)가
+        /// 이 메서드를 거쳐 항상 오래된 것부터 먹게 하면 세 곳(표시·섭취·세이브)이 같은 기준이 된다.
+        /// 부패하지 않는 아이템은 경과 시간이 전부 0이라 목록에서 처음 찾은 것이 그대로 나온다
+        /// (= 예전 FindItem과 같은 결과).
+        /// </summary>
+        public InventoryItem FindMostSpoiled(ItemData itemData)
+        {
+            if (itemData == null)
+                return null;
+
+            InventoryItem best = null;
+            for (int i = 0; i < items.Count; i++)
+            {
+                InventoryItem item = items[i];
+                if (item == null || item.data != itemData)
+                    continue;
+
+                if (best == null || item.spoilAgeSeconds > best.spoilAgeSeconds)
+                    best = item;
+            }
+
+            return best;
         }
 
         /// <summary>
