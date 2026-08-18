@@ -1582,6 +1582,262 @@ namespace MakeGame.Systems
             return Mathf.Sqrt(dx * dx + dz * dz);
         }
 
+        // ── [비 젖음] 하늘 노출도(sky exposure) 굽기 ───────────────────────────────
+        // 비에 젖는 것은 **하늘이 보이는 곳뿐**이다. 절벽 아래·협곡 바닥까지 똑같이 젖으면
+        // "지붕 아래는 마른 채로 남는다"는 연출 자체가 성립하지 않는다. 그래서 지형 기하만 보고
+        // 정점별 하늘 노출도를 월드 생성 시점에 한 번 구워 캡 메시의 UV 채널 3(TEXCOORD3)에 싣는다.
+        //
+        // ── 계산 방식(레이캐스트 없음) ────────────────────────────────────────────
+        // 표준 SVF(sky view factor)의 지평선 근사다. 점 p에서 방위 SkyAzimuthCount개를 잡고,
+        // 각 방위마다 SkySampleDistances의 수평 거리에서 **지형 높이**를 읽어 최대 앙각을 구한다.
+        //   tanθ = max_d ( h(p + dir·d) - p.y ) / d
+        // 코사인 가중 하늘에서 앙각 θ의 지평선이 그 방위 쐐기를 가리는 비율은 정확히 sin²θ이므로
+        //   SVF = 1 - (1/N) Σ sin²θ_i
+        // 가 된다. 물리 레이캐스트(Physics.Raycast)를 한 번도 쓰지 않는다 - 콜라이더 존재 여부·
+        // 레이어·실행 순서에 의존하지 않고, 순수 산술이라 **난수를 0회 소비**한다(결정성 불변).
+        //
+        // ── 지형 높이는 어디서 읽는가 ─────────────────────────────────────────────
+        // 섬 메시는 극좌표 격자다(GenerateIslandMesh: 인덱스 0 = 중심, 그 뒤 링 × 세그먼트).
+        // 그 규칙을 되짚어(TryPolarGrid) 임의의 (x,z)에서 O(1) 이중선형 높이를 얻는다. 별도 자료구조
+        // (해시 격자·BVH)를 만들지 않으므로 추가 메모리는 정점당 float+bool 두 배열뿐이다.
+        // 규칙을 못 되짚으면(플레이스홀더 지형 등) null을 돌려주고, 그때 캡은 채널을 굽지 않으며
+        // 셰이더도 _SkyBaked = 0을 받아 **하늘이 전부 열린 것으로** 동작한다(우아한 열화).
+        //
+        // ── 비용 (섬 규모별 계산) ────────────────────────────────────────────────
+        // SVF는 **정점 인덱스별로 지연 계산 + 메모**한다(BuildCapLayer의 clipValues와 같은 수법).
+        // 모래 캡이 실제로 건드리는 것은 해변 띠의 정점뿐이라, 섬 전체가 아니라 그 부분집합만 돈다.
+        // 정점 하나당 SkyAzimuthCount × SkySampleDistances = 6 × 5 = 30회 높이 샘플이고,
+        // 높이 샘플 하나는 sqrt 1 + atan2 1 + 배열 4회 읽기다(자료구조를 새로 만들지 않는다).
+        //
+        //   반지름  링×세그  총정점  해변띠 링수  SVF 계산 정점  높이 샘플
+        //    R=50    10×75     751        7           525        15,750
+        //    R=90    18×90   1,621        7           630        18,900
+        //    R=140   28×90   2,521       10           900        27,000
+        //    R=200   40×90   3,601       13         1,170        35,100
+        //   (해변 띠 폭 = 물가 0.80R 바깥 + 잔디선까지의 수평 거리 실측 11.7~18.8m)
+        //
+        // 실측 월드는 50섬이다. Small 20 / Medium 15 / Large 10 / XL 5로 잡으면 총 104만 샘플 =
+        // **월드 생성 1회에 26~42ms**(샘플당 25~40ns 가정)다. 프레임당 비용은 정확히 0이고,
+        // 추가 메모리는 섬당 float[] + bool[] (R=200에서 18KB, 캡을 다 만들면 회수) + 캡 정점당
+        // float2 하나(섬당 10KB 남짓)뿐이다. 드로우콜 증가 0.
+        //
+        // 더 줄이고 싶으면 SkyAzimuthCount를 4로 내리면 된다(비용 -33%). 대신 절벽이 방위 하나에만
+        // 걸릴 때 가림이 과소평가된다 - 6은 "방위 하나당 60°"라 5m 폭 절벽도 반드시 한 방위에 잡힌다.
+        //
+        // ── 무엇을 못 잡는가 ─────────────────────────────────────────────────────
+        // (a) 런타임에 짓는 건축물 아래. 정점은 월드 생성 때 한 번 구우므로 원리적으로 불가능하다.
+        //     WeatherSystem이 이미 쓰는 실내 판정(BuildingSystem.IsInsideEnclosedStructure)은
+        //     **플레이어 한 점**의 판정이라 지면 픽셀마다 적용할 수 없다 - 지면 젖음은 이 굽기만으로
+        //     충분하다고 보고 넣지 않았다(연출상 집 안 바닥이 조금 젖어 보이는 것은 무해하다).
+        // (b) 초목(야자수 그늘). 초목 배치는 캡 생성보다 뒤이고 난수를 쓰는 경로라, 여기서 읽으면
+        //     생성 순서 결합이 생긴다. 지형 기하만 본다.
+
+        /// <summary>하늘 노출도를 재는 방위 수. 위쪽 반구를 등간격으로 나눈다.</summary>
+        private const int SkyAzimuthCount = 6;
+
+        /// <summary>
+        /// 방위마다 지평선을 찾을 때 훑는 수평 거리(m). 기하급수로 벌려 바로 옆 절벽(2m)과
+        /// 멀리 있는 산등성이(32m)를 같은 개수의 샘플로 함께 잡는다.
+        /// </summary>
+        private static readonly float[] SkySampleDistances = { 2f, 4f, 8f, 16f, 32f };
+
+        /// <summary>섬 메시 밖(= 바다)의 대체 높이(m). 아주 낮게 둬서 가림이 0이 되게 한다.</summary>
+        private const float SkyOutsideHeight = -1000f;
+
+        /// <summary>SVF 리맵 하한 - 이보다 닫히면 노출도 0(완전한 그늘).</summary>
+        private const float SkyClosedSvf = 0.45f;
+
+        /// <summary>SVF 리맵 상한 - 이보다 열리면 노출도 1(완전한 하늘). 평지·완만한 해변은 여기 붙는다.</summary>
+        private const float SkyOpenSvf = 0.88f;
+
+        /// <summary>
+        /// 극좌표 격자 규칙(GenerateIslandMesh)을 정점 배열에서 되짚는다.
+        /// 링 r·세그먼트 0의 정점은 각도 0이라 z가 **정확히 0**이고 x &gt; 0이다(Mathf.Sin(0) = 0).
+        /// 각도 π(반대편)는 x &lt; 0이고 Mathf.Sin(π) 도 0이 아니므로 혼동되지 않는다.
+        /// 규칙에 맞지 않으면 false - 호출부는 하늘 노출도 굽기를 통째로 건너뛴다.
+        /// </summary>
+        private static bool TryPolarGrid(Vector3[] verts, out int ringCount, out int radialSegments)
+        {
+            ringCount = 0;
+            radialSegments = 0;
+            if (verts == null || verts.Length < 4)
+                return false;
+
+            int segs = -1;
+            for (int i = 2; i < verts.Length; i++)
+            {
+                if (verts[i].z == 0f && verts[i].x > 0f)
+                {
+                    segs = i - 1;
+                    break;
+                }
+            }
+            if (segs < 3)
+                return false;
+
+            int rest = verts.Length - 1;
+            if (rest % segs != 0)
+                return false;
+
+            radialSegments = segs;
+            ringCount = rest / segs;
+            return ringCount >= 2;
+        }
+
+        /// <summary>
+        /// 섬 지형 메시에서 "월드(섬 로컬) 좌표 → 하늘 노출도 0~1" 함수를 만든다.
+        /// 반환값을 BuildCapLayer의 skyField 인자로 넘기면 캡 정점마다 UV 채널 3에 구워진다.
+        /// 극좌표 격자가 아니면 null(= 굽지 않음 = 셰이더가 하늘 전부 열림으로 동작).
+        ///
+        /// 난수 소비 0 · 정점 좌표/UV0/UV2 불변 · 추가 드로우콜 0.
+        /// </summary>
+        private static System.Func<Vector3, float> BuildSkyExposureField(Mesh source, float radius)
+        {
+            if (source == null || radius <= 0.01f)
+                return null;
+
+            Vector3[] verts = source.vertices;
+            if (!TryPolarGrid(verts, out int ringCount, out int radialSegments))
+                return null;
+
+            // 메서드 그룹을 그대로 델리게이트로 넘긴다(캡 3장이 같은 인스턴스 = 같은 SVF 캐시를 쓴다).
+            return new SkyExposureSampler(verts, radius, ringCount, radialSegments).Evaluate;
+        }
+
+        /// <summary>
+        /// 하늘 노출도 계산기. 섬 하나당 인스턴스 하나이고, 모래 캡 3장이 **같은 인스턴스**를 공유해
+        /// 경계에서 겹치는 정점을 세 번 계산하지 않는다.
+        ///
+        /// 지역 함수(local function) 대신 클래스로 둔 이유: 이 프로젝트의 정적 검증이 mcs --parse라
+        /// 지역 함수 문법에서 파서가 멈춘다. 상태가 배열 두 개뿐이라 클래스로 두는 비용이 없다.
+        /// </summary>
+        private sealed class SkyExposureSampler
+        {
+            private const float TwoPi = Mathf.PI * 2f;
+
+            private readonly Vector3[] verts;
+            private readonly float radius;
+            private readonly int ringCount;
+            private readonly int radialSegments;
+
+            /// <summary>정점별 하늘 노출도. evaluated[i]가 true인 칸만 유효하다(지연 계산 + 메모).</summary>
+            private readonly float[] exposure;
+            private readonly bool[] evaluated;
+
+            internal SkyExposureSampler(Vector3[] verts, float radius, int ringCount, int radialSegments)
+            {
+                this.verts = verts;
+                this.radius = radius;
+                this.ringCount = ringCount;
+                this.radialSegments = radialSegments;
+                exposure = new float[verts.Length];
+                evaluated = new bool[verts.Length];
+            }
+
+            /// <summary>
+            /// 임의의 위치(섬 로컬 XZ)에서의 하늘 노출도 0~1. 격자 네 정점의 값을 이중선형으로 섞어
+            /// 절단으로 새로 생긴 캡 정점도 자연스럽게 채운다(값이 정점 단위로 튀지 않는다).
+            /// </summary>
+            internal float Evaluate(Vector3 p)
+            {
+                float rf = Mathf.Sqrt(p.x * p.x + p.z * p.z) / radius * ringCount;
+                rf = Mathf.Clamp(rf, 0f, ringCount - 0.0001f);
+
+                float a = Mathf.Atan2(p.z, p.x);
+                if (a < 0f)
+                    a += TwoPi;
+                float sf = a / TwoPi * radialSegments;
+
+                int r0 = (int)rf;
+                float fr = rf - r0;
+                int s0 = (int)sf % radialSegments;
+                float fs = sf - (int)sf;
+                int s1 = s0 + 1 == radialSegments ? 0 : s0 + 1;
+
+                float e00 = ExposureOf(IndexOf(r0, s0));
+                float e01 = ExposureOf(IndexOf(r0, s1));
+                float e10 = ExposureOf(IndexOf(r0 + 1, s0));
+                float e11 = ExposureOf(IndexOf(r0 + 1, s1));
+                return Mathf.Clamp01(
+                    Mathf.Lerp(Mathf.Lerp(e00, e01, fs), Mathf.Lerp(e10, e11, fs), fr));
+            }
+
+            /// <summary>링/세그먼트 → 정점 인덱스(링 0은 중심 정점 하나뿐이라 세그먼트를 무시한다).</summary>
+            private int IndexOf(int ring, int seg)
+            {
+                if (ring <= 0)
+                    return 0;
+                return 1 + (ring - 1) * radialSegments + seg;
+            }
+
+            /// <summary>임의의 (x,z)에서의 지형 높이(m). 섬 밖이면 SkyOutsideHeight(= 가림 없음).</summary>
+            private float HeightAt(float x, float z)
+            {
+                float rf = Mathf.Sqrt(x * x + z * z) / radius * ringCount;
+                if (rf >= ringCount)
+                    return SkyOutsideHeight;
+                if (rf < 0f)
+                    rf = 0f;
+
+                float a = Mathf.Atan2(z, x);
+                if (a < 0f)
+                    a += TwoPi;
+                float sf = a / TwoPi * radialSegments;
+
+                int r0 = (int)rf;
+                float fr = rf - r0;
+                int s0 = (int)sf % radialSegments;
+                float fs = sf - (int)sf;
+                int s1 = s0 + 1 == radialSegments ? 0 : s0 + 1;
+
+                float h00 = verts[IndexOf(r0, s0)].y;
+                float h01 = verts[IndexOf(r0, s1)].y;
+                float h10 = verts[IndexOf(r0 + 1, s0)].y;
+                float h11 = verts[IndexOf(r0 + 1, s1)].y;
+                return Mathf.Lerp(Mathf.Lerp(h00, h01, fs), Mathf.Lerp(h10, h11, fs), fr);
+            }
+
+            /// <summary>
+            /// 정점 하나의 하늘 노출도. 한 번 계산하면 메모한다.
+            /// 방위 SkyAzimuthCount개 × 거리 SkySampleDistances개 = 30회 높이 샘플이 전부다.
+            /// </summary>
+            private float ExposureOf(int index)
+            {
+                if (evaluated[index])
+                    return exposure[index];
+
+                Vector3 p = verts[index];
+                float blocked = 0f;
+                for (int a = 0; a < SkyAzimuthCount; a++)
+                {
+                    // +0.5 오프셋: 방위가 격자 세그먼트 축과 정확히 겹쳐 같은 정점 열만 훑는 것을 막는다.
+                    float ang = (a + 0.5f) / SkyAzimuthCount * TwoPi;
+                    float dx = Mathf.Cos(ang);
+                    float dz = Mathf.Sin(ang);
+
+                    float tanMax = 0f;
+                    for (int j = 0; j < SkySampleDistances.Length; j++)
+                    {
+                        float d = SkySampleDistances[j];
+                        float tan = (HeightAt(p.x + dx * d, p.z + dz * d) - p.y) / d;
+                        if (tan > tanMax)
+                            tanMax = tan;
+                    }
+
+                    // sinθ = tanθ / sqrt(1 + tan²θ). 그 제곱이 이 방위가 가리는 반구 비율이다.
+                    float sin = tanMax / Mathf.Sqrt(1f + tanMax * tanMax);
+                    blocked += sin * sin;
+                }
+
+                float svf = 1f - blocked / SkyAzimuthCount;
+                float value = Mathf.SmoothStep(0f, 1f,
+                    Mathf.InverseLerp(SkyClosedSvf, SkyOpenSvf, svf));
+                exposure[index] = value;
+                evaluated[index] = true;
+                return value;
+            }
+        }
+
         // ── MGShoreline 에셋 프로브 ────────────────────────────────────────────────
         // [로드 규칙] Resources.Load는 정적 필드 초기자에서 부르지 않는다(초기자는 Unity가 Load를
         // 막는 시점에 돌 수 있다 - 위 ProbeSingleMeshModels 주석과 같은 함정). 그리고 **실패를

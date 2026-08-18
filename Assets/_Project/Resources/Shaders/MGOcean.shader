@@ -43,6 +43,21 @@
 //  * 파도 시간은 셰이더 내장 _Time이 아니라 C#(Update)이 매 프레임 넣는 _MG_WaveTime을 쓴다.
 //    Time.time은 Time.timeScale = 0에서 멈추므로 타이틀 화면에서 바다가 정지하는 기존 동작이
 //    그대로 유지된다(UV 스크롤도 같은 이유로 C#에서 멈춘다).
+//  * [비 파문 - RainWetness.cs가 단일 소스] 비가 올 때 수면에 빗방울 파문 노멀을 더한다.
+//    읽는 전역은 _MG_RainIntensity(비 세기 0~1) / _MG_RainTime(파문 시계 s) / _MG_RippleParams
+//    (x 타일링 1/m · y 속도 회/s · z sRGB 보정 스위치 · w 세기 배율) / _MG_RippleMap(파문 텍스처)이다.
+//    ※ MGShoreline(모래 캡)이 읽는 것과 **같은 전역·같은 텍스처**다. 두 셰이더가 같은 수를 보므로
+//      물가를 사이에 두고 모래 위 파문과 수면 파문의 위상/속도가 어긋나지 않는다.
+//    ※ 이 전역들도 Properties 블록 **밖**·CBUFFER **밖**이다(위 파도 v4와 같은 규약).
+//    합성 규칙(기존 계산과 싸우지 않게 하는 것이 요점):
+//      - 파문은 **slope에 더하기만** 한다. 큰 파도 기울기(waveSlope)와 잔물결(MGRippleSlope)이
+//        이미 쌓아 둔 같은 단위(dH/dx, dH/dz)의 양이고, 최종 노멀은 한 번만 normalize된다.
+//      - 화이트캡 판정은 예전 그대로 **waveSlope만** 본다(파문을 넣으면 비 오는 날 바다가 통째로
+//        하얘진다 - 잔물결을 뺀 것과 같은 이유다). 깊이 거품·투명도 계산도 한 글자도 건드리지 않는다.
+//      - 거칠기에 반비례시킨다(1 - 0.75·seaRough). 잔잔한 수면에서는 파문이 또렷하고, 파도가 거칠면
+//        1m 넘는 파고에 묻히는 것이 자연스럽다. 폭풍(거칠기 1)에서도 25%는 남겨 완전히 사라지지는 않는다.
+//      - 앞면 전용(frontGate) + 거리 감쇠(90m). 파문은 파장 수십 cm라 원거리에서는 알리아싱만 남는다.
+//    텍스처가 없으면(RainWetness가 검은 텍스처를 바인딩) A = 0 → 진폭 0 → 파문만 조용히 빠진다.
 //  * [MainTexture] _BaseMap + _BaseMap_ST - C#의 mainTexture/mainTextureScale(oceanSize/10)/
 //    mainTextureOffset(Update 스크롤)이 URP Lit 때와 같은 의미로 그대로 통한다
 //    ("1타일 = 월드 10미터" 툴팁 계약 유지).
@@ -67,6 +82,12 @@ Shader "MG/Ocean"
         _WaveAmplitude("큰 파도 노멀 세기 배율(1 = OceanWaves가 밀어준 진폭 그대로)", Range(0.0, 2.0)) = 1.0
         _RippleStrength("잔물결 노멀 퍼터베이션 세기", Range(0.0, 2.0)) = 1.0
         _MG_WaveTime("파도 시간(C#이 매 프레임 Time.time을 넣는다)", Float) = 0.0
+        // 세기 근거(rain_ripple.png 실측): 파문 함수의 출력 |n|은 평균 0.028 · p99 0.40 · 최대 0.89이다.
+        // 0.45를 곱하면 기울기가 p99 0.18 / 최대 0.40이 되어, 큰 파도 기울기(최대 0.15)와 잔물결
+        // (최대 0.36)에 **묻히지 않으면서 압도하지도 않는** 크기가 된다. 런타임 튜닝 손잡이는
+        // RainWetness.rippleStrength(전역 _MG_RippleParams.w)이고 이 값과 곱해진다.
+        _RainRippleStrength("빗방울 파문 노멀 세기(수면)", Range(0.0, 2.0)) = 0.45
+        _RainRippleFadeDistance("파문이 사라지는 카메라 거리(m)", Float) = 90.0
     }
 
     SubShader
@@ -117,6 +138,8 @@ Shader "MG/Ocean"
                 half _WaveAmplitude;
                 half _RippleStrength;
                 float _MG_WaveTime;
+                half _RainRippleStrength;
+                float _RainRippleFadeDistance;
             CBUFFER_END
 
             TEXTURE2D(_BaseMap);
@@ -132,6 +155,15 @@ Shader "MG/Ocean"
             float4 _MG_WaveDirX;    // D_i.x (단위벡터)
             float4 _MG_WaveDirZ;    // D_i.z (단위벡터)
             float4 _MG_SeaState;    // x = 바다 거칠기 0~1, y = 평균 해수면 y(m)
+
+            // ---- [비 파문] RainWetness.cs가 미는 전역(위 헤더의 계약) ----
+            float _MG_RainIntensity;  // 비 세기 0~1(0이면 아래 분기가 통째로 빠진다)
+            float _MG_RainTime;       // 파문 시계(초). timeScale = 0에서 멈춘다(타이틀 정지 계약)
+            float4 _MG_RippleParams;  // x 타일링(1/m) · y 속도(회/s) · z sRGB 보정 · w 세기 배율
+
+            // 전역 텍스처. RainWetness가 부트스트랩에서 반드시 무언가를 바인딩한다(실패 시 검정).
+            TEXTURE2D(_MG_RippleMap);
+            SAMPLER(sampler_MG_RippleMap);
 
             // 알파 계약(v3): 내려다볼 때 ~0.5(바닥이 보인다) → 스치는 각 ~0.95(수평선은
             // 하늘 반사처럼 사실상 불투명). 프레넬 색 블렌드와 같은 항(fresnel)을 재사용한다.
@@ -208,6 +240,36 @@ Shader "MG/Ocean"
                 return n * 0.625; // 대략 -1~1로 정규화.
             }
 
+            // ---- [비 파문] 빗방울 파문의 기울기(dH/dx, dH/dz). MGShoreline과 **같은 식·같은 전역** ----
+            // 텍스처 계약: RG = 접선공간 노멀 xy(0.5 = 평평) / B = 파문별 위상 오프셋 / A = 세기 마스크.
+            // 수명 곡선 t(1-t)·4는 0에서 솟아 0.5에서 1이 되고 1에서 닫히는 포물선이라 frac이 감길 때
+            // 튀지 않는다(C0 연속). 수면은 법선이 거의 +Y라 접선공간 xy를 그대로 XZ 기울기로 쓴다.
+            //
+            // [sRGB 방어] 데이터 텍스처라 Linear 임포트가 전제다. sRGB로 임포트되면 0.5가 0.214로
+            // 읽혀 파문이 한쪽으로 기운 판이 되는데, .meta는 셰이더의 편집 범위 밖이다. RainWetness가
+            // 런타임에 Texture.isDataSRGB를 조회해 _MG_RippleParams.z에 1을 넣으면 여기서
+            // pow(c, 1/2.2)로 저장값을 되돌린다(0.214 → 0.496 ≈ 0.5). A 채널은 감마 변환 대상이 아니다.
+            float2 MGRainRippleSlope(float2 p, float t)
+            {
+                float tiling = max(_MG_RippleParams.x, 0.001);
+                float speed = _MG_RippleParams.y;
+                float srgb = saturate(_MG_RippleParams.z);
+
+                float4 r0 = SAMPLE_TEXTURE2D(_MG_RippleMap, sampler_MG_RippleMap, p * tiling);
+                float3 c0 = lerp(r0.rgb, pow(saturate(r0.rgb), 1.0 / 2.2), srgb);
+                float t0 = frac(t * speed + c0.b);
+                float2 n = (c0.rg * 2.0 - 1.0) * (r0.a * t0 * (1.0 - t0) * 4.0);
+
+                // 둘째 겹: 타일링을 0.47배로 어긋내 1024² 한 장의 반복 격자를 깬다.
+                float4 r1 = SAMPLE_TEXTURE2D(_MG_RippleMap, sampler_MG_RippleMap,
+                    p * (tiling * 0.47) + float2(0.37, -0.23));
+                float3 c1 = lerp(r1.rgb, pow(saturate(r1.rgb), 1.0 / 2.2), srgb);
+                float t1 = frac(t * speed * 0.83 + c1.b + 0.5);
+                n += (c1.rg * 2.0 - 1.0) * (r1.a * t1 * (1.0 - t1) * 4.0);
+
+                return n * (0.5 * max(_MG_RippleParams.w, 0.0));
+            }
+
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
@@ -243,6 +305,25 @@ Shader "MG/Ocean"
                 float2 waveSlope = MGWaveSlope(IN.positionWS.xz, t) * _WaveAmplitude;
                 float2 slope = waveSlope;
                 slope += MGRippleSlope(IN.positionWS.xz, t, viewDist) * (_RippleStrength * (1.0 + 0.8 * seaRough));
+
+                // [비 파문] 비가 올 때만 도는 분기다. 조건이 **전역 하나**뿐이라 드로우콜 전체에서
+                // 상수이고(워프가 갈라지지 않는다), 맑은 날에는 텍스처 샘플 2회가 통째로 빠진다.
+                // 거칠기에 반비례(1 - 0.75·seaRough) · 거리 감쇠(_RainRippleFadeDistance) ·
+                // 앞면 전용. 화이트캡 판정은 위 waveSlope를 그대로 쓰므로 여기 결과에 영향받지 않는다.
+                UNITY_BRANCH
+                if (_MG_RainIntensity > 0.001)
+                {
+                    float rippleFade = saturate(1.0 - viewDist / max(_RainRippleFadeDistance, 1.0));
+                    float rippleAmt = saturate(_MG_RainIntensity) * rippleFade
+                        * (1.0 - 0.75 * seaRough) * (isFrontFace ? 1.0 : 0.0);
+                    // 부호가 **빼기**인 이유: 최종 노멀이 float3(-slope.x, 1, -slope.y)라,
+                    // 접선공간 노멀 xy를 그대로 더하려면(= MGShoreline과 같은 규약) slope에서 빼야 한다.
+                    // 파문은 좌우대칭이라 부호를 틀려도 화면상 거의 같지만, 두 셰이더가 같은 텍스처를
+                    // 같은 뜻으로 읽는다는 계약을 지켜 둔다.
+                    slope -= MGRainRippleSlope(IN.positionWS.xz, _MG_RainTime)
+                        * (_RainRippleStrength * rippleAmt);
+                }
+
                 float3 normalWS = normalize(float3(-slope.x, 1.0, -slope.y));
                 // [v3] 수중 처리: Cull Off로 그려지는 뒷면(카메라가 물속에서 위를 올려다볼 때)은
                 // 노멀을 뒤집어야 프레넬/라이팅이 성립한다. 뒤집지 않으면 dot(N,V)가 음수로 포화되어

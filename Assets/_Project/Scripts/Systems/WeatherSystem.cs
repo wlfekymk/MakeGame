@@ -74,6 +74,37 @@ namespace MakeGame.Systems
         [Tooltip("빗방울이 땅/수면에 부딪히는 물튀김 파티클을 켤지 여부.")]
         public bool enableRainSplashes = true;
 
+        // ── [B33] 빗줄기 텍스처 + 근/원 2겹 ─────────────────────────────────────
+        // (a) Resources/Textures/rain_streak.png를 빗줄기 머티리얼에 얹는다. 이 텍스처는 512²
+        //     **시트**다 — 세로로 무이음이고 옅은 청백 줄기 약 20가닥이 가로로 흩어져 있다.
+        //     한 파티클이 시트 전체를 보면 거의 투명한 얼룩이 되므로, textureSheetAnimation으로
+        //     가로 16칸(32px)으로 잘라 파티클마다 **한 칸(=줄기 하나)** 을 고정으로 물린다.
+        //     16칸 각각의 알파 최대값이 83~203(실측)이라 빈 칸이 하나도 없다 — 어떤 파티클도
+        //     투명하게 사라지지 않는다.
+        // (b) 텍스처 알파가 시트 평균 기준으로 옅기 때문에, 텍스처를 적용할 때만 startColor를
+        //     흰색·알파 0.95로 올리고 폭을 넓힌다(색조는 텍스처의 청백이 낸다 — 기존 startColor
+        //     색을 그대로 곱하면 두 번 어두워진다). 텍스처가 없으면 전부 예전 값 그대로다.
+        // (c) 근경 레이어를 한 겹 더 얹어 깊이감을 만든다. 예산은 **maxParticles 합계 900 유지** —
+        //     원경 700 + 근경 200. 원경 실제 동시 생존이 약 430개라(rainEmissionRate 주석) 700도
+        //     1.6배 여유가 있고, 남긴 200을 근경에 넘겨 총량을 늘리지 않았다.
+        [Header("빗줄기 텍스처 · 근경 레이어 (B33 — 연출만)")]
+        [Tooltip("빗줄기 시트를 가로로 몇 칸으로 자를지. 파티클마다 한 칸(줄기 하나)을 무작위로 물린다.")]
+        public int rainStreakTilesX = 16;
+
+        [Tooltip("근경 빗줄기 레이어를 켤지 여부. 끄면 예전처럼 원경 한 겹만 내린다.")]
+        public bool enableNearRainLayer = true;
+
+        [Tooltip("근경 빗줄기 에미터를 카메라 머리 위 얼마나 높은 곳에 둘지(m). 원경(15m)보다 낮아야" +
+            " 화면을 빠르게 스쳐 지나가며 시차가 생긴다.")]
+        public float nearRainHeightAboveTarget = 5.5f;
+
+        [Tooltip("최대 강우일 때 근경 레이어의 초당 방출 개수. 수명 0.8초라 동시 생존은 약 75개다.")]
+        public float nearRainEmissionRate = 95f;
+
+        [Tooltip("근경 빗줄기의 알파(0~1). 카메라 코앞을 지나므로 원경보다 옅어야 시야를 가리지 않는다.")]
+        [Range(0f, 1f)]
+        public float nearRainAlpha = 0.4f;
+
         // ── [B29] "비가 2층 바닥을 뚫고 실내에 내린다" 수정 ──────────────────────
         // 감독 실기 보고. 원인은 단순하다 - 빗줄기는 플레이어 머리 위 15m에 떠 있는 Box 에미터에서
         // 쏟아지는데 충돌 모듈이 없어서 무엇이든 그대로 통과했다. 두 층위로 고친다.
@@ -201,8 +232,21 @@ namespace MakeGame.Systems
         private float phaseTimer;
         private float phaseDuration;
         private ParticleSystem rainParticles;
+        private ParticleSystem nearRainParticles;
         private ParticleSystem rainSplashes;
         private Transform followTarget;
+
+        /// <summary>
+        /// [B33] 원경/근경 빗줄기가 **공유하는** 머티리얼 1장. 두 시스템이 같은 머티리얼을 쓰면
+        /// Unity가 파티클 배치를 합칠 여지가 생기고(최악의 경우에도 드로우콜 +1로 끝난다),
+        /// 무엇보다 텍스처/셰이더 설정을 한 곳에서만 관리하면 된다.
+        /// renderer.material(자동 인스턴스화)이 아니라 sharedMaterial로 꽂고 여기서 소유·파괴한다 —
+        /// 예전 코드는 renderer.material에 new Material을 넣어 인스턴스가 두 겹 생기고 있었다.
+        /// </summary>
+        private Material rainMaterial;
+
+        /// <summary>[B33] 빗줄기 텍스처를 이미 머티리얼에 얹었는지. 실패는 래치하지 않고 다시 시도한다.</summary>
+        private bool rainStreakApplied;
 
         // 물튀김 파티클을 놓을 지면 높이. 매 프레임 레이캐스트하면 낭비라 주기적으로만 갱신한다.
         private float splashGroundY;
@@ -213,6 +257,17 @@ namespace MakeGame.Systems
         private bool indoorNow;
         private float indoorCheckTimer;
         private float shelteredFactor = 1f;
+
+        /// <summary>
+        /// [B33] 실외 계수 0~1(1 = 실외로 비를 그대로 맞는다, 0 = 실내라 비가 닿지 않는다).
+        /// 빗줄기·물튀김에 곱하는 것과 **완전히 같은 값**이라, 이 값을 읽는 다른 연출(StormEffects의
+        /// 화면 물방울)은 판정을 새로 짜지 않고도 빗줄기와 정확히 같은 타이밍에 켜지고 꺼진다.
+        /// 게임플레이 수치에는 관여하지 않는다(IsRaining이 여전히 단독 소유자다).
+        /// </summary>
+        public float ShelteredFactor01 => shelteredFactor;
+
+        /// <summary>[B33] 현재 실내(지붕 덮인 건축물/쉼터 반경 안)로 판정됐는지. 연출 전용 읽기값.</summary>
+        public bool IsIndoors => indoorNow;
 
         /// <summary>[B29] 빗줄기가 부딪힐 레이어(Default=0만). 근거는 BuildRainParticles의 collision 주석.</summary>
         private const int RainCollisionMask = 1 << 0;
@@ -260,6 +315,14 @@ namespace MakeGame.Systems
         {
             if (Active == this)
                 Active = null;
+
+            // [B33] 공유 빗줄기 머티리얼은 이 컴포넌트가 소유한다(HideAndDontSave라 씬 전환으로
+            // 자동 파괴되지 않는다). 직접 지우지 않으면 씬을 다시 로드할 때마다 한 장씩 샌다.
+            if (rainMaterial != null)
+            {
+                Destroy(rainMaterial);
+                rainMaterial = null;
+            }
         }
 
         /// <summary>
@@ -328,9 +391,11 @@ namespace MakeGame.Systems
             main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.09f);
             main.startColor = new Color(0.75f, 0.82f, 0.92f, 0.55f);
             // [B29] 1500 → 900. 충돌을 켜면 빗방울 하나하나가 매 프레임 스윕 검사를 받으므로 상한이
-            // 곧 최악의 경우 비용이다. 실제 동시 생존은 약 430개(rainEmissionRate 주석)라 900이면
-            // 방출량을 인스펙터에서 두 배로 올려도 잘리지 않는 여유가 있다.
-            main.maxParticles = 900;
+            // 곧 최악의 경우 비용이다. 실제 동시 생존은 약 430개(rainEmissionRate 주석)다.
+            // [B33] 900 → 700. **총 예산 900은 그대로 두고** 남긴 200을 근경 레이어에 넘겼다.
+            // 700도 실제 동시 생존(430)의 1.6배라 잘릴 일이 없고, 스윕 검사를 받는 입자 수의
+            // 최악값은 오히려 줄었다(근경 레이어는 충돌을 켜지 않는다).
+            main.maxParticles = 700;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             // [B22] Time.timeScale = 0이 되는 순간(엔딩/사망 화면)에 비가 얼어붙어 **공중에 멈춘
             // 빗줄기 벽**이 되는 것을 막는다. AGENT_BRIEF 4장의 "연출은 unscaled로"와 같은 취지다.
@@ -395,21 +460,31 @@ namespace MakeGame.Systems
             var renderer = rainParticles.GetComponent<ParticleSystemRenderer>();
             if (renderer != null)
             {
-                Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
-                if (shader == null)
-                    shader = Shader.Find("Sprites/Default"); // URP에서도 안전하게 동작하는 대체 셰이더
-                if (shader != null)
-                    renderer.material = new Material(shader);
-
                 // 퀄리티 개선: 예전엔 둥근 점(Billboard)이라 정지된 빗방울처럼 보였다.
                 // Stretched Billboard로 바꾸면 낙하 속도에 비례해 입자가 세로로 길게 늘어나
                 // 실제 빗줄기처럼 보인다. lengthScale을 키워 속도감을 더 강조했다.
+                // [B33] 텍스처의 줄기가 **세로**(v축)이고 Stretch는 속도 방향으로 v축을 늘리므로
+                // 방향이 정확히 일치한다 — 별도 회전 보정이 필요 없다.
                 renderer.renderMode = ParticleSystemRenderMode.Stretch;
                 renderer.velocityScale = 0.12f;
                 renderer.lengthScale = 3.5f;
+
+                // 머티리얼을 못 만들었으면(두 셰이더가 다 없는 환경) **건드리지 않는다** —
+                // null을 넣으면 파티클이 통째로 안 보인다(예전 코드도 같은 이유로 조건부였다).
+                Material shared = EnsureRainMaterial();
+                if (shared != null)
+                    renderer.sharedMaterial = shared;
             }
 
             rainParticles.Stop();
+
+            // [B33] 근경 레이어를 **먼저** 만든다. 아래 텍스처 적용이 두 레이어의 색/크기/시트 분할을
+            // 한 번에 손보기 때문에, 순서를 뒤집으면 근경만 보정을 못 받는다.
+            if (enableNearRainLayer)
+                BuildNearRainParticles();
+
+            // [B33] 빗줄기 텍스처. 실패해도 조용히 예전 모습(기본 파티클)으로 남는다.
+            TryApplyRainStreakTexture();
 
             // [B22] 땅/수면에 부딪히는 물튀김. 빗줄기만 있으면 비가 "카메라 앞에 떠 있는 레이어"로
             // 보이고 월드에 닿지 않는다 - 지면에 닿는 신호가 하나 있어야 비가 세계 안에 있게 된다.
@@ -420,6 +495,200 @@ namespace MakeGame.Systems
                 if (rainSplashes != null)
                     rainSplashes.Stop();
             }
+        }
+
+        /// <summary>
+        /// [B33] 원경/근경 빗줄기가 공유하는 머티리얼을 만든다(최초 1회).
+        /// URP 프로젝트에서 파티클 기본 머티리얼(빌트인 전용)을 그대로 두면 마젠타로 뜨는 사고가
+        /// 이미 있었으므로(BuildRainParticles 주석), URP Particles/Unlit → Sprites/Default 순으로
+        /// 찾는 기존 폴백 사슬을 그대로 유지한다. 둘 다 없으면 null을 돌려주고 렌더러는 손대지 않는다.
+        /// </summary>
+        private Material EnsureRainMaterial()
+        {
+            if (rainMaterial != null)
+                return rainMaterial;
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            if (shader == null)
+                shader = Shader.Find("Sprites/Default"); // URP에서도 안전하게 동작하는 대체 셰이더
+            if (shader == null)
+                return null;
+
+            rainMaterial = new Material(shader);
+            rainMaterial.name = "MG_RainStreak";
+            rainMaterial.hideFlags = HideFlags.HideAndDontSave;
+            ConfigureTransparentBlending(rainMaterial);
+            return rainMaterial;
+        }
+
+        /// <summary>
+        /// [B33] 파티클 머티리얼을 **알파 블렌딩**으로 바꾼다.
+        ///
+        /// 이게 없으면 빗줄기 텍스처가 통째로 망가진다: `new Material(URP Particles/Unlit)`의
+        /// 기본 Surface는 **Opaque**라 알파 채널이 무시된다. 지금까지는 텍스처 없이 단색 쿼드를
+        /// 그렸기 때문에 "옅은 청백 막대"로 그럭저럭 보였지만(그래서 아무도 눈치채지 못했다),
+        /// 알파에 줄기 모양이 들어 있는 rain_streak을 얹는 순간 **줄기 대신 불투명한 직사각형**이
+        /// 화면을 가득 채운다. startColor의 알파(0.55)가 여태 실제로는 무시되고 있었다는 뜻이기도 하다.
+        ///
+        /// 프로퍼티/키워드 이름은 URP Particles/Unlit의 것이고, 전부 HasProperty로 감싸서
+        /// 폴백 셰이더(Sprites/Default — 이미 알파 블렌딩이라 손댈 것이 없다)에서는 조용히 건너뛴다.
+        /// </summary>
+        private static void ConfigureTransparentBlending(Material material)
+        {
+            if (material == null)
+                return;
+
+            // _Surface: 0 = Opaque, 1 = Transparent. _Blend: 0 = Alpha, 1 = Premultiply, 2 = Additive.
+            if (material.HasProperty("_Surface"))
+                material.SetFloat("_Surface", 1f);
+            if (material.HasProperty("_Blend"))
+                material.SetFloat("_Blend", 0f);
+            if (material.HasProperty("_SrcBlend"))
+                material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (material.HasProperty("_DstBlend"))
+                material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (material.HasProperty("_ZWrite"))
+                material.SetFloat("_ZWrite", 0f);
+            if (material.HasProperty("_AlphaClip"))
+                material.SetFloat("_AlphaClip", 0f);
+
+            // 셰이더 변형 키워드도 같이 맞춰야 한다(프로퍼티만 바꾸면 컴파일된 변형은 그대로다).
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.DisableKeyword("_ALPHATEST_ON");
+            material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material.SetOverrideTag("RenderType", "Transparent");
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        /// <summary>
+        /// [B33] 빗줄기 텍스처(Textures/rain_streak)를 공유 머티리얼에 얹고, 두 파티클 시스템의
+        /// 시트 분할·색·크기를 텍스처에 맞게 보정한다.
+        ///
+        /// 텍스처가 없으면 **아무것도 바꾸지 않고** 조용히 빠진다(기존 모습 그대로). 실패를 영구
+        /// 래치하지 않으므로(AGENT_BRIEF 4장 3번) 비가 시작될 때마다 한 번 더 시도한다 —
+        /// 임포트가 늦어 첫 Start에서 못 잡혀도 다음 강우에 자연히 복구된다.
+        ///
+        /// 색/크기 보정의 근거: 시트의 알파 평균이 낮아(줄기가 가늘다) 기존 startColor
+        /// (청백 0.75/0.82/0.92 · 알파 0.55)를 그대로 곱하면 색은 두 번 어두워지고 알파는 절반이
+        /// 되어 비가 거의 안 보인다. 색조는 텍스처(옅은 청백)가 이미 갖고 있으므로 startColor는
+        /// **흰색**으로 두고 알파만 0.95로 올린다. 폭은 줄기가 칸 안에서 8% 남짓만 차지하므로
+        /// (0.03~0.09 → 0.05~0.14) 넓혀서 화면상 줄기 굵기를 예전 수준으로 맞춘다.
+        /// </summary>
+        private void TryApplyRainStreakTexture()
+        {
+            if (rainStreakApplied)
+                return;
+
+            Material material = EnsureRainMaterial();
+            if (material == null)
+                return;
+
+            // [로드 규칙] 필드 초기자가 아니라 메서드 안에서 부른다(초기자는 Unity가 Load를 막는
+            // 시점에 돌 수 있다 — AGENT_BRIEF 4장 3번).
+            var streak = Resources.Load<Texture2D>("Textures/rain_streak");
+            if (streak == null)
+                return;
+
+            material.mainTexture = streak;
+            rainStreakApplied = true;
+
+            ApplyStreakLook(rainParticles, new Color(1f, 1f, 1f, 0.95f), 0.05f, 0.14f);
+            ApplyStreakLook(nearRainParticles, new Color(1f, 1f, 1f, Mathf.Clamp01(nearRainAlpha)),
+                0.09f, 0.20f);
+        }
+
+        /// <summary>
+        /// [B33] 한 파티클 시스템에 시트 분할(textureSheetAnimation)과 텍스처용 색/크기를 건다.
+        ///
+        /// 시트 분할 설정의 의미: 가로 rainStreakTilesX칸 × 세로 1칸으로 자르고,
+        /// frameOverTime을 상수 0으로 고정한 뒤 startFrame을 0~칸수 사이의 난수로 준다.
+        /// 즉 파티클마다 **수명 내내 바뀌지 않는 한 칸**(= 줄기 하나)을 물게 된다. 프레임이 흐르면
+        /// 낙하 중에 줄기 모양이 바뀌어 깜빡이는 것처럼 보이므로 일부러 정지시킨 것이다.
+        /// 이 난수는 파티클 시스템 내부 난수라 UnityEngine.Random / 월드 생성 스트림을 소비하지 않는다.
+        /// </summary>
+        private void ApplyStreakLook(ParticleSystem ps, Color startColor, float sizeMin, float sizeMax)
+        {
+            if (ps == null)
+                return;
+
+            var main = ps.main;
+            main.startColor = startColor;
+            main.startSize = new ParticleSystem.MinMaxCurve(sizeMin, sizeMax);
+
+            int tiles = Mathf.Clamp(rainStreakTilesX, 1, 64);
+            var sheet = ps.textureSheetAnimation;
+            sheet.enabled = tiles > 1;
+            if (tiles <= 1)
+                return;
+
+            sheet.mode = ParticleSystemAnimationMode.Grid;
+            sheet.numTilesX = tiles;
+            sheet.numTilesY = 1;
+            sheet.animation = ParticleSystemAnimationType.WholeSheet;
+            sheet.frameOverTime = new ParticleSystem.MinMaxCurve(0f);
+            sheet.startFrame = new ParticleSystem.MinMaxCurve(0f, tiles - 0.001f);
+            sheet.cycleCount = 1;
+        }
+
+        /// <summary>
+        /// [B33] 근경 빗줄기 레이어를 만든다. 원경(머리 위 15m · 얇고 촘촘)과 달리 머리 위 5.5m에서
+        /// 굵고 빠르게 떨어져 카메라를 스쳐 지나간다 — 두 레이어의 낙하 속도 차이가 그대로 시차가
+        /// 되어 "비에 깊이가 있다"로 읽힌다.
+        ///
+        /// 원경과 다른 점(그리고 그 이유):
+        ///  · 충돌 없음 — 실내 판정(shelteredFactor)이 이미 지붕 아래에서 이 레이어를 끄므로,
+        ///    코앞 입자에 매 프레임 스윕 검사를 돌릴 이유가 없다. 예산 절약이 곧 이 레이어의 비용이다.
+        ///  · 알파 낮음(nearRainAlpha 0.4) — 카메라 코앞을 지나므로 원경과 같은 진하기면 시야를 가린다.
+        ///  · maxParticles 200 · 방출 95/s · 수명 0.8s → 동시 생존 약 75개(상한의 38%).
+        ///  · velocityOverLifetime의 x/y/z를 **셋 다 TwoConstants로** 준다. 하나라도 모드가 갈리면
+        ///    "Particle Velocity curves must all be in the same mode" 에러가 매 프레임 쏟아진다(B25).
+        /// </summary>
+        private void BuildNearRainParticles()
+        {
+            var go = new GameObject("NearRainParticles");
+            go.transform.SetParent(transform, false);
+            nearRainParticles = go.AddComponent<ParticleSystem>();
+
+            var main = nearRainParticles.main;
+            main.loop = true;
+            main.playOnAwake = false;
+            main.startLifetime = 0.8f;
+            main.startSpeed = 5f;
+            main.gravityModifier = 4f;
+            main.startSize = new ParticleSystem.MinMaxCurve(0.07f, 0.16f);
+            main.startColor = new Color(0.78f, 0.85f, 0.95f, Mathf.Clamp01(nearRainAlpha));
+            main.maxParticles = 200;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.useUnscaledTime = true;
+
+            var emission = nearRainParticles.emission;
+            emission.rateOverTime = 0f; // 세기에 따라 UpdateRainVisuals가 채운다
+
+            var shape = nearRainParticles.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(11f, 0.4f, 11f);
+
+            var velocity = nearRainParticles.velocityOverLifetime;
+            velocity.enabled = true;
+            velocity.space = ParticleSystemSimulationSpace.World;
+            velocity.x = new ParticleSystem.MinMaxCurve(rainWind.x * 1.0f, rainWind.x * 1.5f);
+            velocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+            velocity.z = new ParticleSystem.MinMaxCurve(rainWind.y * 1.0f, rainWind.y * 1.5f);
+
+            var renderer = nearRainParticles.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+            {
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.velocityScale = 0.14f;
+                renderer.lengthScale = 4.5f;
+                Material shared = EnsureRainMaterial();
+                if (shared != null)
+                    renderer.sharedMaterial = shared;
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+            }
+
+            nearRainParticles.Stop();
         }
 
         /// <summary>매 프레임 날씨 단계(맑음/비) 타이머를 진행시키고, 비가 올 때 파티클을 따라오게 한다.</summary>
@@ -512,6 +781,8 @@ namespace MakeGame.Systems
             {
                 if (rainParticles != null && rainParticles.isPlaying)
                     rainParticles.Stop();
+                if (nearRainParticles != null && nearRainParticles.isPlaying)
+                    nearRainParticles.Stop();
                 if (rainSplashes != null && rainSplashes.isPlaying)
                     rainSplashes.Stop();
                 return;
@@ -531,6 +802,20 @@ namespace MakeGame.Systems
                 emission.rateOverTime = Mathf.Max(0f, rainEmissionRate) * visibleIntensity;
                 if (!rainParticles.isPlaying)
                     rainParticles.Play();
+            }
+
+            // [B33] 근경 레이어. 이 GameObject가 머리 위 rainHeightAboveTarget에 있으므로,
+            // 로컬 y 오프셋으로 nearRainHeightAboveTarget 높이에 내려 둔다(인스펙터에서 두 높이를
+            // 바꿔도 매 프레임 따라온다 — 값을 굳혀 두면 "고쳤는데 안 바뀐다"가 된다).
+            if (nearRainParticles != null)
+            {
+                nearRainParticles.transform.localPosition = new Vector3(
+                    0f, nearRainHeightAboveTarget - rainHeightAboveTarget, 0f);
+
+                var nearEmission = nearRainParticles.emission;
+                nearEmission.rateOverTime = Mathf.Max(0f, nearRainEmissionRate) * visibleIntensity;
+                if (!nearRainParticles.isPlaying)
+                    nearRainParticles.Play();
             }
 
             UpdateRainSplashes(visibleIntensity);
@@ -760,6 +1045,10 @@ namespace MakeGame.Systems
             // [B9] 비가 시작되는 프레임에 대상 목록을 즉시 훑도록 타이머를 0으로 만든다.
             // (맑은 동안 설치/철거된 증류기·모닥불이 캐시에 반영돼 있지 않기 때문)
             rainRescanTimer = 0f;
+
+            // [B33] Start() 시점에 텍스처를 못 잡았으면(임포트 지연 등) 여기서 한 번 더 시도한다.
+            // 이미 얹었으면 즉시 return하므로 비용이 없다(실패를 영구 래치하지 않는 규칙).
+            TryApplyRainStreakTexture();
 
             if (followTarget != null)
                 transform.position = followTarget.position + Vector3.up * rainHeightAboveTarget;

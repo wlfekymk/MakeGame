@@ -1376,6 +1376,12 @@ namespace MakeGame.Systems
             // (DampTop)는 예전 그대로 무게중심 판정이다.
             // groundColor를 함께 넘겨, 셰이더가 캡 상단 0.9m를 초지색으로 녹인다(MGShoreline의
             // _GroundColor / _GrassFadeHeight) - 잘린 가장자리에 색 단차가 남지 않게 하는 3번째 층이다.
+            // [비 젖음] 하늘 노출도 필드. 섬당 **한 번만** 만들고 모래 캡 3장이 공유한다
+            // (내부 SVF 캐시도 함께 공유되므로 경계에서 겹치는 정점을 세 번 계산하지 않는다).
+            // 순수 기하라 난수 소비 0이고, 극좌표 격자를 못 되짚으면 null이라 굽기가 통째로
+            // 생략된다 - 그때 셰이더는 _SkyBaked = 0을 받아 하늘이 전부 열린 것으로 동작한다.
+            System.Func<Vector3, float> skyField = BuildSkyExposureField(source, radius);
+
             BuildCapLayer(surfaceRoot, source, radius, "DrySandCap", archetype.sandColor,
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) => centroid.y >= dampTop(centroid),
@@ -1384,7 +1390,8 @@ namespace MakeGame.Systems
                 // 거친 바다의 도달거리(2.8m)가 물가~DampTop(실측 1.3m)을 넘어 마른 모래 아래쪽까지
                 // 올라오기 때문이다 - 여기를 빼면 폭풍에 파도가 캡 경계에서 잘린다.
                 1, shoreline: true, clipKeep: sandKeep, bandField: dryField,
-                groundColor: archetype.groundColor, grassFadeHeight: colorFadeHeight);
+                groundColor: archetype.groundColor, grassFadeHeight: colorFadeHeight,
+                skyField: skyField);
 
             // [B22 신규] 축축한 모래. 마른 모래와 젖은 모래 사이의 중간 단계다.
             // 예전에는 마른(100%) → 젖은(80%) 두 단계뿐이라 밝기가 한 번에 20% 떨어져,
@@ -1398,7 +1405,7 @@ namespace MakeGame.Systems
                 // 값이 항상 0이지만, 절벽 지형에서 삼각형 하나가 두 경계를 함께 걸칠 때를 위해
                 // 세 모래 캡이 **같은 채널 계약**을 갖게 해 둔다(셰이더 분기 없음).
                 1, shoreline: true, bandField: dryField, groundColor: archetype.groundColor,
-                grassFadeHeight: colorFadeHeight);
+                grassFadeHeight: colorFadeHeight, skyField: skyField);
 
             // 해안의 젖은 모래. [B11] 바깥 한계 0.955R을 없애고 메시 가장자리까지 덮는다.
             // 예전에는 0.955R~1.0R이 맨 지형이었는데 그 색이 마침 모래였을 뿐이다 - 지형이 초록이 된
@@ -1411,7 +1418,7 @@ namespace MakeGame.Systems
                 capOffset, radius * 1.5f, "sand",
                 (centroid, distance, angle) => centroid.y < wetTop(centroid),
                 1, shoreline: true, bandField: dryField, groundColor: archetype.groundColor,
-                grassFadeHeight: colorFadeHeight);
+                grassFadeHeight: colorFadeHeight, skyField: skyField);
         }
 
         /// <summary>
@@ -1478,12 +1485,21 @@ namespace MakeGame.Systems
         /// [B57] 위 페이드가 수렴할 초지색(아키타입 groundColor). MGShoreline._GroundColor로 들어간다.
         /// 셰이더 로드에 실패해 URP Lit으로 남으면 없는 프로퍼티라 조용히 무시된다.
         /// </param>
+        /// <param name="skyField">
+        /// [비 젖음] 정점마다 "하늘 노출도 0~1"을 구워 **UV 채널 3(TEXCOORD3)** 에 싣는다.
+        /// MGShoreline이 이 값으로 비 젖음/파문을 마스킹한다(1 = 하늘이 열림 = 비를 맞는다).
+        /// null이면 채널을 만들지 않고 머티리얼의 _SkyBaked도 0으로 남아, 셰이더가 **하늘이 전부
+        /// 열린 것으로** 동작한다(채널 없는 캡이 통째로 마른 채 남는 실패 모드를 구조로 막는다 -
+        /// _GrassFadeHeight와 정확히 같은 방어 패턴이다).
+        /// 값의 계산은 IslandMeshGenerator.MeshLibrary의 BuildSkyExposureField 하나뿐이다(단일 소스).
+        /// </param>
         private static void BuildCapLayer(Transform surfaceRoot, Mesh source, float radius, string name,
             Color color, float yOffset, float textureTiling, string textureName,
             System.Func<Vector3, float, float, bool> selector, int toneCount = 1, float toneSpread = 0.30f,
             Color? toneShift = null, bool shoreline = false,
             System.Func<Vector3, float> clipKeep = null, System.Func<Vector3, float> bandField = null,
-            Color? groundColor = null, float grassFadeHeight = 0f)
+            Color? groundColor = null, float grassFadeHeight = 0f,
+            System.Func<Vector3, float> skyField = null)
         {
             Vector3[] sourceVertices = source.vertices;
             int[] sourceTriangles = source.triangles;
@@ -1613,6 +1629,17 @@ namespace MakeGame.Systems
                     bandUvs.Add(new Vector2(bandField(vertices[i]), 0f));
                 mesh.SetUVs(2, bandUvs);
             }
+            // [비 젖음] 하늘 노출도를 UV 채널 3(TEXCOORD3)에 굽는다. bandField와 같은 형태의
+            // **순수 위치 함수**라 절단으로 새로 생긴 정점도 같은 식으로 채워진다.
+            // 정점당 float2 하나 = 캡 메시 기준 8바이트(섬 하나에 10KB 남짓). UV0/UV2(물가 거리장)/
+            // UV3(잔디선 거리장)은 한 비트도 건드리지 않으므로 기존 계약이 전부 그대로다.
+            if (skyField != null)
+            {
+                var skyUvs = new List<Vector2>(vertices.Count);
+                for (int i = 0; i < vertices.Count; i++)
+                    skyUvs.Add(new Vector2(Mathf.Clamp01(skyField(vertices[i])), 0f));
+                mesh.SetUVs(3, skyUvs);
+            }
             mesh.subMeshCount = usedTones.Count;
             for (int s = 0; s < usedTones.Count; s++)
                 mesh.SetTriangles(toneTriangles[usedTones[s]], s);
@@ -1653,6 +1680,10 @@ namespace MakeGame.Systems
                         material.SetColor(GroundColorProperty, groundColor.Value);
                     if (bandField != null && grassFadeHeight > 0f)
                         material.SetFloat(GrassFadeHeightProperty, grassFadeHeight);
+                    // [비 젖음] 하늘 노출도 채널을 **실제로 구운 캡에만** 1을 넣는다. 셰이더 기본값이
+                    // 0(= 하늘 전부 열림)이라, 채널 없는 캡이 통째로 마른 채 남는 실패 모드가 없다.
+                    if (skyField != null)
+                        material.SetFloat(SkyBakedProperty, 1f);
                 }
                 // UV가 섬 전체에 0~1로 정규화돼 있어(GenerateIslandMesh) 타일 반복을 반지름에 비례시키지
                 // 않으면 큰 섬에서 잎 무늬 한 칸이 수십 미터로 늘어나 흐릿한 단색이 된다.
@@ -1704,6 +1735,9 @@ namespace MakeGame.Systems
 
         /// <summary>[B57] 같은 페이드의 폭 프로퍼티 ID.</summary>
         private static readonly int GrassFadeHeightProperty = Shader.PropertyToID("_GrassFadeHeight");
+
+        /// <summary>[비 젖음] 하늘 노출도 채널(UV3)을 실제로 구웠는지 알리는 스위치 프로퍼티 ID.</summary>
+        private static readonly int SkyBakedProperty = Shader.PropertyToID("_SkyBaked");
 
         // ── [B57] 전이대·색 페이드 폭 (수평 미터 기준) ────────────────────────────────
         // 목표를 **수평 폭**으로 잡고 경계 경사를 곱해 높이 대역으로 되돌린다(BuildGroundCaps의

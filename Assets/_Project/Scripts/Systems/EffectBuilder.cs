@@ -503,6 +503,117 @@ namespace MakeGame.Systems
             return ps;
         }
 
+        /// <summary>
+        /// [낙수] 지붕 처마·야자 잎끝에서 **간헐적으로 떨어지는 물방울** 본체. RainDrips가 월드 전체에
+        /// 이것 하나만 만들어 두고, 대상 지점마다 Emit(EmitParams)로 위치를 지정해 한 방울씩 뿌린다.
+        ///
+        /// 왜 대상마다 시스템을 만들지 않는가: 처마·잎끝은 섬 하나에 수십 곳이라 각각에 ParticleSystem을
+        /// 달면 컴포넌트/드로우콜이 그 수만큼 늘어난다. ShorelineRibbon의 물보라(ShoreSprayFX)가 이미
+        /// 같은 이유로 "월드에 1개 + Emit 호출"을 쓰고 있어 그 규약을 그대로 따른다.
+        ///  · emission.enabled = false — 자동 방출은 전부 끈다. 사출은 오직 Emit() 호출로만.
+        ///  · simulationSpace = World — 에미터가 어디 있든 방울은 뿜은 자리에 남아 그대로 떨어져야 한다.
+        ///  · startSpeed = 0 — 초기 속도는 EmitParams.velocity가 준다(맺혔다 떨어지므로 거의 0이다).
+        ///  · gravityModifier = 1 — 실제 중력. 낙하 시간은 √(2h/9.81)이라 3m 처마 0.78초 ·
+        ///    12m 야자 잎끝(이 게임에서 가장 높은 낙수 지점) 1.56초다. 수명 2.0초면 가장 높은
+        ///    지점에서도 방울이 공중에서 사라지지 않고 끝까지 떨어진다(최대 19.6m까지 커버).
+        ///  · renderMode = Stretch — 떨어지는 물방울은 점이 아니라 짧은 줄기로 보인다. velocityScale이
+        ///    속도에 비례해 늘려 주므로 맺힌 순간엔 점, 빨라질수록 늘어난다(공짜로 얻는 낙하감).
+        /// 비용: 시스템 1개 · maxParticles 48(초당 15.6방울 × 수명 2.0초 = 약 31개라 여유 55%) ·
+        /// useUnscaledTime(timeScale 0에서도 얼지 않게, RainSplashes와 동일).
+        /// </summary>
+        public static ParticleSystem CreateRainDripDrops(Transform parent)
+        {
+            // pointUpward=false: shape을 끄고 위치/속도를 전부 EmitParams로 주므로 회전이 의미 없다.
+            ParticleSystem ps = CreateSystem("RainDripDrops", parent, Vector3.zero, false);
+
+            var main = ps.main;
+            main.loop = true;
+            main.duration = 4f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(2f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0f); // 속도는 EmitParams가 준다
+            main.startSize = new ParticleSystem.MinMaxCurve(0.030f, 0.055f);
+            // 알파는 아래 ApplyFadeOut의 시작 알파(0.85)가 단독으로 정하게 1로 둔다
+            // (colorOverLifetime은 startColor를 "곱한다" - 이 파일 ApplyFadeOut 주석의 함정).
+            main.startColor = new ParticleSystem.MinMaxGradient(
+                new Color(0.86f, 0.93f, 0.98f, 1f), new Color(0.74f, 0.85f, 0.95f, 1f));
+            main.gravityModifier = new ParticleSystem.MinMaxCurve(1f);
+            main.maxParticles = 48;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.useUnscaledTime = true;
+
+            var emission = ps.emission;
+            emission.enabled = false; // 사출은 전부 Emit() 호출로만 한다
+
+            var shape = ps.shape;
+            shape.enabled = false;
+
+            ApplyFadeOut(ps, 0.85f);
+
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+            {
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.lengthScale = 1.4f;
+                renderer.velocityScale = 0.05f; // 낙하 속도 5m/s에서 약 0.25m 길이의 물줄기
+                // 물방울에 그림자는 의미가 없다(ShorelineRibbon의 물보라와 같은 판단).
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+            }
+
+            return ps;
+        }
+
+        /// <summary>
+        /// [낙수] 물방울이 지면에 닿아 튀는 아주 작은 파문. RainDrips가 방울을 뿌릴 때 낙하 시간을
+        /// 계산해 두었다가, 그 시각이 되면 착지 지점에 Emit으로 한 번 띄운다(방울과 같은 "월드 1개" 규약).
+        ///
+        /// WeatherSystem의 빗줄기 물튀김(CreateRainSplashes)과 역할이 다르다: 저쪽은 비가 오는 동안
+        /// 플레이어 주변 12m를 **면으로** 덮는 연출이고, 이쪽은 처마 밑 한 점에서 **띄엄띄엄** 튀는
+        /// 개별 사건이다. 비가 그친 뒤 30~60초 동안 화면에 남는 물의 움직임은 전적으로 이것뿐이라
+        /// 크기(0.06~0.13)를 저쪽(0.10~0.22)보다 작게 잡아 "잔여물"로 읽히게 했다.
+        /// HorizontalBillboard라 파문이 지면에 납작하게 눕는다(View 정렬이면 공중에 뜬 점으로 보인다).
+        /// 비용: 시스템 1개 · maxParticles 24 · useUnscaledTime.
+        /// </summary>
+        public static ParticleSystem CreateRainDripSplashes(Transform parent)
+        {
+            ParticleSystem ps = CreateSystem("RainDripSplashes", parent, Vector3.zero, false);
+
+            var main = ps.main;
+            main.loop = true;
+            main.duration = 4f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(0.28f, 0.45f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0f); // 파문은 번지기만 한다
+            main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.13f);
+            main.startColor = new Color(0.80f, 0.88f, 0.96f, 1f); // 알파는 ApplyFadeOut(0.55)이 정한다
+            main.gravityModifier = new ParticleSystem.MinMaxCurve(0f);
+            main.maxParticles = 24;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.useUnscaledTime = true;
+
+            var emission = ps.emission;
+            emission.enabled = false;
+
+            var shape = ps.shape;
+            shape.enabled = false;
+
+            // 수명 동안 커지면서 흐려진다 = 물에 번지는 파문(RainSplashes와 같은 곡선).
+            var sizeOverLifetime = ps.sizeOverLifetime;
+            sizeOverLifetime.enabled = true;
+            sizeOverLifetime.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.EaseInOut(0f, 0.3f, 1f, 1f));
+
+            ApplyFadeOut(ps, 0.55f);
+
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+            {
+                renderer.renderMode = ParticleSystemRenderMode.HorizontalBillboard;
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+            }
+
+            return ps;
+        }
+
         /// <summary>수명이 다할수록 입자가 작아지게 한다(불꽃이 사그라들고, 튄 조각이 잦아드는 느낌).</summary>
         private static void ApplyShrinkOverLifetime(ParticleSystem ps)
         {

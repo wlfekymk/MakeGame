@@ -54,6 +54,49 @@ namespace MakeGame.Systems
         [Tooltip("비네트 가장자리 부드러움")]
         public float vignetteSmoothness = 0.5f;
 
+        // ── [B33] 폭풍우 연출 (강우 시야 안개 · 번개 화면 반응) ────────────────────
+        // 안개(RenderSettings)의 단독 소유자는 DayNightCycle.Update다. 맑은 날 기준값을 계산하고
+        // WeatherSystem의 rainFogColor/rainFogDensity까지 RainIntensity01로 보간해 매 프레임
+        // 기록한다(DayNightCycle.cs:376-387). 여기서는 그 계약을 **한 줄도 건드리지 않고**,
+        // UnderwaterAmbience가 쓰는 것과 같은 LateUpdate 순서 규약으로 그 위에 한 겹만 얹는다:
+        //   DayNightCycle.Update(기준 안개 기록) → 본 LateUpdate(폭풍 헤이즈 가산) → 렌더
+        // **수중이면 통째로 물러난다** — 그 프레임 안개의 주인은 UnderwaterAmbience이고,
+        // 두 LateUpdate의 실행 순서는 보장되지 않으므로 겹치는 순간 결과가 갈리기 때문이다.
+        //
+        // 밀도 수치 근거(FogMode.ExponentialSquared, 잔여 시야 = exp(-(밀도·거리)²)):
+        //   DayNightCycle이 만드는 최대 강우 기준값 0.006 → 100m 70% · 200m 24% · 300m 4%
+        //   여기서 최대 +0.0015를 더한 0.0075   → 100m 57% · 150m 29% · 200m 11% · 300m 0.6%
+        // 즉 근거리는 여전히 선명하고 **원경만** 뚜렷하게 뿌옇게 잠긴다. 더 올리면 답답해진다.
+        [Header("폭풍우 (B33 — 강우 시야 안개 · 번개)")]
+        [Tooltip("최대 강우에서 DayNightCycle의 기준 안개 밀도에 **더할** 값. 0이면 이 기능이 꺼진다.")]
+        public float stormFogExtraDensity = 0.0015f;
+
+        [Tooltip("폭풍 헤이즈가 붙기 시작하는 강우 세기. 이 아래로는 DayNightCycle 기준값 그대로다.")]
+        [Range(0f, 1f)]
+        public float stormFogRainThreshold = 0.5f;
+
+        [Tooltip("폭풍 안개가 밀리는 회청색. 과하면 화면이 납빛이 되므로 혼합량을 낮게 유지한다.")]
+        public Color stormFogTint = new Color(0.50f, 0.55f, 0.60f, 1f);
+
+        [Tooltip("최대 강우에서 안개색을 stormFogTint 쪽으로 미는 비율(0~1). 0.3이면 30%만 섞는다.")]
+        [Range(0f, 1f)]
+        public float stormFogTintAmount = 0.3f;
+
+        [Tooltip("번개 섬광이 만드는 최대 포스트 노출(EV). 하늘이 안 보이는 실내/숲에서도 화면 전체가" +
+            " 번쩍이게 하는 것이 이 항목의 역할이다(환경광/스카이박스는 StormEffects가 담당한다).")]
+        public float flashPostExposure = 0.7f;
+
+        [Tooltip("번개 섬광이 안개색을 섬광색 쪽으로 미는 최대 비율. 원경의 빗줄기 벽이 함께 번쩍인다.")]
+        [Range(0f, 1f)]
+        public float flashFogBrighten = 0.5f;
+
+        [Tooltip("최대 강우에서 비네트에 더할 값. 비 오는 날 시야가 조금 더 조여든다.")]
+        [Range(0f, 0.3f)]
+        public float rainVignetteBoost = 0.06f;
+
+        [Tooltip("최대 강우에서 채도에서 뺄 값. 색이 빠져 눅눅해 보인다(기본 채도 +8 기준 -9면 -1).")]
+        public float rainSaturationDrop = 9f;
+
         [Header("시간대 연동")]
         [Tooltip("골든아워 폭. TimeOfDay01이 일출(0.25)/일몰(0.75) ±이 값 안이면 골든아워 가중치가 붙는다.")]
         public float goldenHourHalfWidth = 0.045f;
@@ -68,8 +111,26 @@ namespace MakeGame.Systems
         private WhiteBalance whiteBalance;
         private Vignette vignette;
 
+        /// <summary>[B33] 강우 채도 저하 · 번개 포스트 노출에 쓴다(예전에는 지역 변수라 참조가 없었다).</summary>
+        private ColorAdjustments colorAdjustments;
+
         private SurvivalClock clock;
         private Camera targetCamera;
+
+        /// <summary>[B33] 수중 판정용. 못 찾았을 때만 저빈도로 재시도한다(정상 경로 탐색 비용 0).</summary>
+        private WorldMapManager worldMap;
+
+        // [B33] 안개 누적 폭주 방지용 스냅샷.
+        // DayNightCycle이 매 프레임 안개를 되써 주는 정상 구성에서는 "현재값 + 증분"이 옳지만,
+        // 그 컴포넌트가 없거나 enableAtmosphericFog를 끈 구성에서는 WeatherSystem이 단계 전환 때만
+        // 안개를 쓰므로 증분이 프레임마다 쌓여 순식간에 눈앞이 하얘진다. 그래서 **직전에 우리가 쓴
+        // 값**을 기억해 두고, 지금 값이 그것과 똑같으면(= 아무도 되쓰지 않았다) 우리가 기억한
+        // 기준값을 다시 쓴다. 두 구성 모두에서 결과가 정확히 같아진다.
+        private bool stormFogWritten;
+        private float lastWrittenFogDensity;
+        private float lastBaseFogDensity;
+        private Color lastWrittenFogColor;
+        private Color lastBaseFogColor;
 
         /// <summary>현재 카메라에 renderPostProcessing을 이미 켰는지. 카메라가 사라지면 다시 false로 돌린다.</summary>
         private bool cameraPostEnabled;
@@ -144,9 +205,11 @@ namespace MakeGame.Systems
             bloom.intensity.Override(bloomIntensityDay);
             bloom.scatter.Override(bloomScatter);
 
-            var colorAdjustments = profile.Add<ColorAdjustments>(true);
+            colorAdjustments = profile.Add<ColorAdjustments>(true);
             colorAdjustments.saturation.Override(saturation);
             colorAdjustments.contrast.Override(contrast);
+            // [B33] 번개 섬광이 밀어 올릴 자리. 평소에는 0(중립)이다.
+            colorAdjustments.postExposure.Override(0f);
 
             whiteBalance = profile.Add<WhiteBalance>(true);
             whiteBalance.temperature.Override(temperatureDay);
@@ -197,6 +260,133 @@ namespace MakeGame.Systems
             bloom.intensity.Override(curBloomIntensity);
             whiteBalance.temperature.Override(curTemperature);
             vignette.intensity.Override(curVignetteIntensity);
+        }
+
+        /// <summary>
+        /// [B33] 폭풍우 연출을 화면에 얹는다. **LateUpdate인 이유가 전부**다 —
+        /// 안개/환경광의 단독 소유자인 DayNightCycle.Update가 이번 프레임 값을 다 기록한 뒤에
+        /// 실행되어야 렌더 직전의 마지막 승자가 될 수 있고, 그래야 DayNightCycle 코드를 한 줄도
+        /// 건드리지 않고 그 위에 한 겹만 얹을 수 있다(UnderwaterAmbience 클래스 주석의 규약과 동일).
+        ///
+        /// 두 갈래로 나눈 이유:
+        ///  · 포스트 프로세싱(노출/비네트/채도)은 이 컴포넌트가 만든 볼륨이라 **수중이든 아니든**
+        ///    소유권 다툼이 없다. 다만 수중에서는 번개가 안 보이는 것이 맞으므로 섬광만 죽인다.
+        ///  · RenderSettings 안개는 수중이면 통째로 물러난다. 그 프레임의 주인은 UnderwaterAmbience고,
+        ///    LateUpdate끼리는 실행 순서가 보장되지 않아 둘이 겹치는 순간 결과가 갈리기 때문이다.
+        /// </summary>
+        private void LateUpdate()
+        {
+            WeatherSystem weather = WeatherSystem.Active;
+            float rain = weather != null ? Mathf.Clamp01(weather.RainIntensity01) : 0f;
+
+            bool underwater = IsCameraUnderwater();
+            // 섬광 세기는 StormEffects가 **Update에서** 갱신하므로 여기서 읽어도 이번 프레임 값이다.
+            float flash = underwater ? 0f : Mathf.Clamp01(StormEffects.FlashIntensity01);
+
+            ApplyStormPostProcessing(rain, flash);
+
+            if (!underwater)
+                ApplyStormFog(rain, flash);
+        }
+
+        /// <summary>
+        /// [B33] 강우/섬광을 포스트 프로세싱에 반영한다.
+        ///  · 포스트 노출: 섬광 세기에 정비례. **보간하지 않는다** — Update의 blendSpeed(2.5) 보간을
+        ///    태우면 0.1초짜리 섬광이 통째로 뭉개져 사라진다.
+        ///  · 비네트/채도: 강우에 정비례. Update가 매 프레임 자기 값을 다시 쓰므로, 여기서 더한 값은
+        ///    다음 프레임 Update에서 자동으로 원복된다(래치되는 상태가 없다).
+        /// </summary>
+        private void ApplyStormPostProcessing(float rain, float flash)
+        {
+            if (colorAdjustments != null)
+            {
+                colorAdjustments.postExposure.Override(flash * flashPostExposure);
+                colorAdjustments.saturation.Override(saturation - rainSaturationDrop * rain);
+            }
+
+            if (vignette != null && rain > 0f)
+                vignette.intensity.Override(curVignetteIntensity + rainVignetteBoost * rain);
+        }
+
+        /// <summary>
+        /// [B33] 강우 시야 안개와 섬광의 안개 반응.
+        ///
+        /// 밀도는 DayNightCycle이 이번 프레임에 기록한 기준값 위에 stormFogExtraDensity를 더하고,
+        /// 색은 회청색(stormFogTint)과 섬광색 쪽으로 민다. 헤이즈는 stormFogRainThreshold(0.5)부터
+        /// SmoothStep으로 붙으므로 약한 비에서는 예전과 완전히 같다.
+        ///
+        /// **RenderSettings.fog가 꺼져 있으면 아무것도 하지 않는다.** 안개를 켜고 끄는 결정은
+        /// DayNightCycle/WeatherSystem의 몫이고, 여기서 켜 버리면 그쪽 계약을 침범한다.
+        /// 누적 폭주 방지는 위 stormFogWritten 스냅샷 주석 참고.
+        /// </summary>
+        private void ApplyStormFog(float rain, float flash)
+        {
+            float haze = Mathf.SmoothStep(0f, 1f,
+                Mathf.InverseLerp(Mathf.Clamp01(stormFogRainThreshold), 1f, rain));
+            float extraDensity = Mathf.Max(0f, stormFogExtraDensity) * haze;
+            float tintAmount = Mathf.Clamp01(stormFogTintAmount) * rain;
+            float flashAmount = Mathf.Clamp01(flashFogBrighten) * flash;
+
+            if (!RenderSettings.fog || (extraDensity <= 0f && tintAmount <= 0f && flashAmount <= 0f))
+            {
+                stormFogWritten = false;
+                return;
+            }
+
+            // 아무도 되쓰지 않았으면(우리가 쓴 값이 그대로 남아 있으면) 우리가 기억한 기준값을 쓴다.
+            float baseDensity = stormFogWritten
+                && Mathf.Approximately(RenderSettings.fogDensity, lastWrittenFogDensity)
+                ? lastBaseFogDensity
+                : RenderSettings.fogDensity;
+
+            Color currentColor = RenderSettings.fogColor;
+            Color baseColor = stormFogWritten && ApproximatelyColor(currentColor, lastWrittenFogColor)
+                ? lastBaseFogColor
+                : currentColor;
+
+            float density = baseDensity + extraDensity;
+            Color color = Color.Lerp(baseColor, stormFogTint, tintAmount);
+            // 섬광은 안개까지 하얗게 띄운다 — 빗줄기로 채워진 원경이 통째로 번쩍이는 느낌이 여기서 난다.
+            if (flashAmount > 0f && StormEffects.Active != null)
+                color = Color.Lerp(color, StormEffects.Active.flashColor, flashAmount);
+
+            RenderSettings.fogDensity = density;
+            RenderSettings.fogColor = color;
+
+            lastBaseFogDensity = baseDensity;
+            lastWrittenFogDensity = density;
+            lastBaseFogColor = baseColor;
+            lastWrittenFogColor = color;
+            stormFogWritten = true;
+        }
+
+        /// <summary>안개색 스냅샷 비교용(Color에는 Mathf.Approximately가 없다).</summary>
+        private static bool ApproximatelyColor(Color a, Color b)
+        {
+            return Mathf.Approximately(a.r, b.r)
+                && Mathf.Approximately(a.g, b.g)
+                && Mathf.Approximately(a.b, b.b);
+        }
+
+        /// <summary>
+        /// [B33] 카메라가 해수면 아래인지 직접 판정한다. UnderwaterAmbience.IsUnderwater를 읽지 않는
+        /// 이유는 UnderwaterVisuals가 적어 둔 것과 같다 — 그 값도 LateUpdate에서 쓰이는데
+        /// LateUpdate끼리는 실행 순서가 보장되지 않아 프레임에 따라 한 프레임 늦은 값을 보게 된다.
+        /// </summary>
+        private bool IsCameraUnderwater()
+        {
+            // targetCamera 필드에 **대입하지 않는다.** TryEnableCameraPostProcessing이 "필드가
+            // null이 되는 순간"을 카메라 교체 신호로 삼아 cameraPostEnabled를 되돌리기 때문에,
+            // 여기서 몰래 채워 넣으면 새 카메라에 포스트 프로세싱이 영영 안 켜진다.
+            Camera cam = targetCamera != null ? targetCamera : Camera.main;
+
+            if (worldMap == null && Time.frameCount % 60 == 0)
+                worldMap = FindAnyObjectByType<WorldMapManager>();
+
+            if (cam == null || worldMap == null)
+                return false;
+
+            return cam.transform.position.y < worldMap.seaLevel;
         }
 
         /// <summary>기준 시각 center에서의 골든아워 가중치(0~1 텐트).</summary>
@@ -257,6 +447,7 @@ namespace MakeGame.Systems
             bloom = null;
             whiteBalance = null;
             vignette = null;
+            colorAdjustments = null;
         }
     }
 }

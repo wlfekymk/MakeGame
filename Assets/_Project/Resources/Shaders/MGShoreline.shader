@@ -40,6 +40,36 @@
 //   · 캡 머티리얼은 이 셰이더 로드 실패 시 URP Lit으로 남는데, URP Lit은 UV2를 라이트맵
 //     좌표로만 보고 라이트맵이 없으면 무시한다(정점 색과 마찬가지로 무해).
 //
+// ── [비] 비 젖음 + 빗방울 파문 (RainWetness.cs가 단일 소스) ────────────────────
+// 모래 캡은 이 월드에서 **플레이어가 밟는 지면의 대부분**이라, 비가 올 때 여기가 젖지 않으면
+// 비는 영원히 "화면에 얹힌 빗줄기"로만 남는다. 스와시 젖음과 같은 표현(_WetDarken / _WetSmoothness)을
+// 그대로 재사용하되 입력만 하나 더 받는다:
+//   _MG_Wetness       : 젖음 0~1. 빨리 젖고 아주 천천히 마르는 비대칭 곡선(RainWetness가 적분한다).
+//   _MG_RainIntensity : 지금 내리는 비의 세기 0~1. 파문 밀도/세기에만 쓴다(젖음과 달리 즉시 따라간다).
+//   _MG_RainTime      : 파문 시계(초). timeScale = 0에서 멈춘다(타이틀 정지 계약, _MG_ShoreTime과 동일).
+//   _MG_RippleParams  : x 타일링(1/m) · y 속도(회/s) · z sRGB 보정 스위치 · w 세기 배율.
+//   _MG_RippleMap     : 파문 텍스처(RG = 접선공간 노멀 xy(0.5 = 평평) / B = 파문별 위상 / A = 마스크).
+//
+// ★ 스와시 젖음과 **max로 합성**한다 ★
+//   둘 다 같은 _WetDarken(0.6)을 향하는 같은 축의 값이라, 곱하거나 더하면 파도가 닿은 자리가
+//   비 올 때만 0.36배(= 0.6²)로 새까매진다. max면 어느 쪽이 켜져도 젖음의 상한이 정확히 한 번이다.
+//   물리적으로도 맞다 - 이미 물이 고인 모래에 비가 더 온다고 더 젖지는 않는다.
+//
+// ★ 하늘 노출도 마스킹 (UV 채널 3 / TEXCOORD3) ★
+//   비는 하늘이 보이는 곳에만 내린다. IslandMeshGenerator.BuildSkyExposureField가 지형 기하만 보고
+//   정점마다 구운 0~1 값(1 = 하늘이 열림)을 여기서 곱한다. 절벽 아래·협곡 바닥이 마른 채 남는다.
+//   채널을 굽지 않은 캡은 _SkyBaked = 0이라 **하늘이 전부 열린 것으로** 동작한다(무동작 폴백).
+//   ※ 런타임에 짓는 건축물 아래는 정점 굽기로 잡을 수 없다(그건 WeatherSystem이 빗줄기 파티클을
+//     끄는 것으로 이미 처리한다). 지면 젖음은 지형 기하만으로 충분하다고 보고 넣지 않았다.
+//
+// ★ 파문은 **젖은 곳에만** ★
+//   빗방울 파문(rippleAmt)에 젖음을 곱한다. 마른 모래 위에 물자국 링이 뜨면 오히려 어색하고,
+//   비가 그친 뒤에는 파문이 먼저 사라지고 젖음이 천천히 남는 순서가 자연스럽다.
+//
+// ★ 텍스처가 없을 때 ★
+//   RainWetness가 로드 실패 시 Texture2D.blackTexture를 전역에 넣는다. 파문 진폭이 A 채널에
+//   비례하므로 A = 0 → 진폭 0 → **파문만 조용히 빠지고 젖음은 그대로 동작한다**(_FoamMap과 같은 계약).
+//
 // ── 시간·파라미터 전역 (ShorelineWaves.cs가 단일 소스) ─────────────────────────
 //   _MG_ShoreTime   : 파도 시계(초). C#이 매 프레임 Time.time을 넣는다. Time.timeScale = 0에서
 //                     멈추므로 타이틀 화면에서 파도가 정지하는 프로젝트 계약이 그대로 유지된다
@@ -113,6 +143,18 @@ Shader "MG/Shoreline"
         // 기본값 0 = 페이드 없음(안전한 무동작). C#은 잔디선 거리장(UV3)을 실제로 구운 캡에만
         // 0.9를 넣는다 - 채널이 없는 캡이 통째로 초지색이 되는 실패 모드를 구조로 막는다.
         _GrassFadeHeight("초지 페이드 높이(m) - 경계선 아래 이 구간에서 섞인다. 0 = 끔", Range(0.0, 3.0)) = 0.0
+
+        // ── [비] 비 젖음 ────────────────────────────────────────────────────────
+        // 스와시 젖음의 상한(1.0 = 파도가 닿은 자리와 완전히 같은 정도)에 대한 비율이다.
+        // 0.85: 비에 젖은 모래는 물이 고인 스와시 자국보다 아주 조금 덜 어둡다.
+        _RainWetMax("비 젖음의 최대치(스와시 젖음 대비 비율)", Range(0.0, 1.0)) = 0.85
+        // 세기 근거(rain_ripple.png 실측): 파문 함수의 출력 |n|은 평균 0.028 · p99 0.40 · 최대 0.89.
+        // 0.30을 곱하면 월드 노멀이 p99 7° / 최대 15° 기울어진다 - 젖은 모래에 빗방울 자국이
+        // 오돌토돌 뜨는 정도이고, 지면이 물결치는 것처럼 보이지는 않는다.
+        _RainRippleStrength("빗방울 파문 노멀 세기(모래 위)", Range(0.0, 1.0)) = 0.30
+        // 기본값 0 = 하늘이 전부 열린 것으로 취급(= 비가 어디나 내린다). C#은 하늘 노출도 채널(UV3)을
+        // **실제로 구운 캡에만** 1을 넣는다 - 채널이 없는 캡이 통째로 마른 채 남는 실패 모드를 막는다.
+        _SkyBaked("하늘 노출도 채널(UV3)을 구웠는가(C#이 1을 넣는다). 0 = 하늘 전부 열림", Range(0.0, 1.0)) = 0.0
     }
 
     SubShader
@@ -158,6 +200,9 @@ Shader "MG/Shoreline"
                 half _AlongshoreWobble;
                 half4 _GroundColor;
                 float _GrassFadeHeight;
+                half _RainWetMax;
+                half _RainRippleStrength;
+                float _SkyBaked;
             CBUFFER_END
 
             TEXTURE2D(_BaseMap);
@@ -170,6 +215,17 @@ Shader "MG/Shoreline"
             float4 _MG_ShoreParams; // ShorelineWaves.cs : (주기 s, 전선 속도 m/s, 도달 잔잔 m, 도달 거침 m)
             float4 _MG_SeaState;    // OceanWaves.cs(읽기 전용) : x = 거칠기 0~1, y = 해수면 y(m)
 
+            // ---- [비] RainWetness.cs가 미는 전역(위 헤더의 계약). 머티리얼 프로퍼티가 아니다 ----
+            float _MG_Wetness;        // 젖음 0~1(비대칭 곡선 - 빨리 젖고 천천히 마른다)
+            float _MG_RainIntensity;  // 지금 내리는 비의 세기 0~1(파문 전용)
+            float _MG_RainTime;       // 파문 시계(초). timeScale = 0에서 멈춘다
+            float4 _MG_RippleParams;  // x 타일링(1/m) · y 속도(회/s) · z sRGB 보정 · w 세기 배율
+
+            // 전역 텍스처. RainWetness가 부트스트랩에서 반드시 무언가를 바인딩한다(실패 시 검정) -
+            // 미바인딩 슬롯은 플랫폼마다 읽히는 값이 달라 RG가 0.5가 아니면 지면에 기운 노멀이 깔린다.
+            TEXTURE2D(_MG_RippleMap);
+            SAMPLER(sampler_MG_RippleMap);
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
@@ -177,6 +233,7 @@ Shader "MG/Shoreline"
                 float2 uv         : TEXCOORD0;
                 float2 shore      : TEXCOORD1; // 물가 거리장(x = 거리 m, y = 높이 m) - 위 계약 참고
                 float2 band       : TEXCOORD2; // [B57] x = 잔디선 기준 부호 높이(m). 위 계약 참고
+                float2 sky        : TEXCOORD3; // [비] x = 하늘 노출도 0~1(1 = 하늘이 열림). 위 계약 참고
             };
 
             struct Varyings
@@ -187,7 +244,9 @@ Shader "MG/Shoreline"
                 float3 normalWS   : TEXCOORD2;
                 float3 positionWS : TEXCOORD3;
                 float  fogFactor  : TEXCOORD4;
-                float  band       : TEXCOORD5; // [B57] 잔디선 기준 부호 높이(m)
+                // [비] 보간기 하나에 둘을 묶는다(x = 잔디선 기준 부호 높이 m, y = 하늘 노출도 0~1).
+                // 따로 두면 이 패스의 보간기가 7개가 되어 SM2.5 상한(8개)에 바짝 붙는다.
+                float2 bandSky    : TEXCOORD5;
             };
 
             // 연안(해안선을 따라가는) 방향의 도달 시각 변주. -1~1.
@@ -199,6 +258,40 @@ Shader "MG/Shoreline"
                      + 0.4 * sin(p.x * -0.043 + p.y * 0.152 + 2.1);
             }
 
+            // ---- [비] 빗방울 파문 노멀(접선공간 xy). 지면은 거의 수평이라 그대로 월드 XZ로 쓴다 ----
+            // 텍스처 계약: RG = 노멀 xy(0.5 = 평평, Unity 규약) / B = 파문별 위상 오프셋 / A = 세기 마스크.
+            // 수명 곡선 t(1-t)·4는 0에서 솟아 0.5에서 최대(1.0)가 되고 1에서 0으로 닫히는 포물선이라,
+            // 파문이 생겼다 사라지는 한 주기가 **경계에서 C0 연속**이다(frac이 감길 때 튀지 않는다).
+            //
+            // [sRGB 방어] 이 텍스처는 데이터 텍스처(0.5 = 평평)라 반드시 Linear로 임포트돼야 하는데,
+            // .meta는 이 셰이더의 편집 범위 밖이다. sRGB로 임포트되면 0.5가 0.214로 읽혀 파문 영역
+            // 전체가 한쪽으로 기운 판이 된다. RainWetness가 런타임에 Texture.isDataSRGB를 조회해
+            // _MG_RippleParams.z에 1을 넣어 주면 여기서 pow(c, 1/2.2)로 저장값을 되돌린다
+            // (0.214 → 0.496 ≈ 0.5). A 채널은 유니티가 감마 변환하지 않으므로 보정 대상이 아니다.
+            //
+            // 2겹을 쓰는 이유: 1024² 한 장을 3m 간격으로 깔면 반복 격자가 눈에 띈다. 타일링을 0.47배로
+            // 어긋낸 둘째 겹이 그 주기를 깨뜨린다(샘플 2회 - 비가 올 때만 도는 분기 안에 있다).
+            float2 MGRainRipple(float2 posXZ)
+            {
+                float tiling = max(_MG_RippleParams.x, 0.001);
+                float speed = _MG_RippleParams.y;
+                float srgb = saturate(_MG_RippleParams.z);
+
+                float2 uv0 = posXZ * tiling;
+                float4 r0 = SAMPLE_TEXTURE2D(_MG_RippleMap, sampler_MG_RippleMap, uv0);
+                float3 c0 = lerp(r0.rgb, pow(saturate(r0.rgb), 1.0 / 2.2), srgb);
+                float t0 = frac(_MG_RainTime * speed + c0.b);
+                float2 n = (c0.rg * 2.0 - 1.0) * (r0.a * t0 * (1.0 - t0) * 4.0);
+
+                float2 uv1 = posXZ * (tiling * 0.47) + float2(0.37, -0.23);
+                float4 r1 = SAMPLE_TEXTURE2D(_MG_RippleMap, sampler_MG_RippleMap, uv1);
+                float3 c1 = lerp(r1.rgb, pow(saturate(r1.rgb), 1.0 / 2.2), srgb);
+                float t1 = frac(_MG_RainTime * speed * 0.83 + c1.b + 0.5);
+                n += (c1.rg * 2.0 - 1.0) * (r1.a * t1 * (1.0 - t1) * 4.0);
+
+                return n * (0.5 * max(_MG_RippleParams.w, 0.0));
+            }
+
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
@@ -208,7 +301,7 @@ Shader "MG/Shoreline"
                 OUT.positionCS = TransformWorldToHClip(positionWS);
                 OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap);
                 OUT.shore = IN.shore;
-                OUT.band = IN.band.x;
+                OUT.bandSky = float2(IN.band.x, IN.sky.x);
                 OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS);
                 OUT.fogFactor = ComputeFogFactor(OUT.positionCS.z);
                 return OUT;
@@ -292,7 +385,7 @@ Shader "MG/Shoreline"
                 //   · _GrassFadeHeight = 0(기본값 = 거리장을 안 구운 캡)이면 step이 0을 곱해
                 //     페이드가 통째로 꺼진다 - 분기 없는 무동작 폴백이다.
                 float fadeSpan = max(_GrassFadeHeight, 0.001);
-                half toGround = (half)(smoothstep(0.0, 1.0, saturate(1.0 + IN.band / fadeSpan))
+                half toGround = (half)(smoothstep(0.0, 1.0, saturate(1.0 + IN.bandSky.x / fadeSpan))
                     * step(0.001, _GrassFadeHeight));
                 half3 ground = _GroundColor.rgb * (0.55 + 0.32 * sandTex.g);
                 sand = lerp(sand, ground, toGround);
@@ -304,8 +397,20 @@ Shader "MG/Shoreline"
                 wet *= landMask;
                 foam *= landMask;
 
-                half3 albedo = lerp(sand, sand * _WetDarken, wet);
-                half smoothness = lerp(_DrySmoothness, _WetSmoothness, wet);
+                // ---- [비] 비 젖음 ----
+                // 하늘 노출도. 채널을 굽지 않은 캡(_SkyBaked = 0)은 하늘이 전부 열린 것으로 본다.
+                half skyOpen = lerp((half)1.0, saturate((half)IN.bandSky.y), (half)saturate(_SkyBaked));
+                // landMask를 곱하는 이유: 캡 위쪽 가장자리는 이미 초지색으로 녹고 있는데, 그 너머의
+                // 지형 본체/초지 캡은 URP Lit이라 젖지 않는다. 여기서 끊지 않으면 잔디선에 **어두운
+                // 테두리**가 생긴다. 색이 수렴하는 바로 그 구간에서 젖음도 함께 0으로 수렴시킨다.
+                half rainWet = saturate((half)_MG_Wetness) * skyOpen * _RainWetMax * landMask;
+
+                // ★ max 합성 ★ 둘 다 같은 _WetDarken을 향하는 같은 축이라 곱/합이면 이중으로
+                // 어두워진다(0.6² = 0.36). max면 어느 쪽이 켜져도 상한이 정확히 한 번 걸린다.
+                float wetAll = max(wet, (float)rainWet);
+
+                half3 albedo = lerp(sand, sand * _WetDarken, wetAll);
+                half smoothness = lerp(_DrySmoothness, _WetSmoothness, wetAll);
                 albedo = lerp(albedo, foamCol, foam);
                 smoothness = lerp(smoothness, 0.30, foam);               // 거품은 젖은 모래만큼 반짝이지 않는다
 
@@ -313,6 +418,20 @@ Shader "MG/Shoreline"
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
                 float3 normalWS = normalize(IN.normalWS);
+
+                // ---- [비] 빗방울 파문 ----
+                // 분기 조건을 **전역 하나**로만 잡는 것이 중요하다. _MG_RainIntensity는 드로우콜
+                // 전체에서 상수라 워프가 갈라지지 않는다(비가 안 오는 동안 샘플 2회가 통째로 빠진다).
+                // 세기 자체는 분기 안에서 픽셀별로 곱한다(젖은 곳·하늘이 열린 곳에만 파문이 뜬다).
+                UNITY_BRANCH
+                if (_MG_RainIntensity > 0.001)
+                {
+                    // 거품 위에는 얹지 않는다(흰 막이 이미 표면을 덮었다).
+                    float rippleAmt = saturate(_MG_RainIntensity) * (float)skyOpen * wetAll
+                        * (1.0 - (float)foam);
+                    float2 rn = MGRainRipple(IN.positionWS.xz) * (_RainRippleStrength * rippleAmt);
+                    normalWS = normalize(normalWS + float3(rn.x, 0.0, rn.y));
+                }
                 half ndotl = saturate(dot(normalWS, mainLight.direction));
                 half shadow = mainLight.shadowAttenuation;
 
