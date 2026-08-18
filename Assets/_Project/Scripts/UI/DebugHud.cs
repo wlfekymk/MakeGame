@@ -99,6 +99,37 @@ namespace MakeGame.UI
             ("칼", 1), ("손도끼", 1), ("창", 1),
         };
 
+        // ── QA 치트 토글 (생명/일사병/산소/허기·갈증 무제한) ─────────────────────────────────
+        // 감독 요청: "디버그 모드에 생명, 일사병, 공기 무제한 설정을 넣어줘. 테스트를 하려니깐 힘드네"
+        // 실제 플래그는 SurvivalStats가 [System.NonSerialized]로 들고 있고(세이브/씬에 남지 않는다),
+        // **그 플래그를 true로 만들 수 있는 코드는 이 #if 블록 안이 전부다.** SurvivalStats 쪽 검사
+        // 코드도 같은 #if로 묶여 있어 출시 빌드에는 치트 자체가 컴파일되지 않는다.
+        //
+        // 키는 F11 하나만 새로 쓴다. F3~F10이 전부 사용 중이고(F3 패널, F4 재료, F5 저장, F6/F7/F8
+        // 미리보기, F9 불러오기, F10 전체 지도) F11/F12가 비어 있다. 개별 토글에 숫자키 1~4를 쓰는
+        // 안은 버렸다 - BuildMenuUI.SelectKeys가 Alpha1~7을 쓰고 있어서, 건축 모드를 켠 채 치트를
+        // 만지면 부품 선택과 정면으로 겹친다(QA는 건축 테스트 중에 무적을 켜고 싶어 한다).
+        // 개별 토글은 아래 버튼으로 한다 - 클릭 가능 여부는 BuildCheatControls 주석 참고.
+        private const KeyCode ToggleAllCheatsKey = KeyCode.F11;
+
+        /// <summary>치트 버튼 영역이 패널 아래쪽에서 차지하는 높이(px). 이만큼 패널을 키우고 본문을 띄운다.</summary>
+        private const float CheatAreaHeight = 118f;
+
+        /// <summary>켜짐 색(호박색). 회색 계열 패널 위에서 한눈에 튀는 색을 쓴다.</summary>
+        private static readonly Color CheatOnColor = new Color(0.85f, 0.62f, 0.13f, 1f);
+        /// <summary>꺼짐 색(어두운 회색).</summary>
+        private static readonly Color CheatOffColor = new Color(0.20f, 0.22f, 0.24f, 1f);
+
+        /// <summary>개별 치트 4종 + "전부" 1개의 순서. 버튼/라벨 배열 인덱스와 아래 헬퍼가 이 순서를 공유한다.</summary>
+        private const int CheatHealth = 0;
+        private const int CheatHeat = 1;
+        private const int CheatOxygen = 2;
+        private const int CheatFood = 3;
+        private const int CheatCount = 4;
+
+        private readonly Image[] cheatButtonImages = new Image[CheatCount + 1];
+        private readonly Text[] cheatButtonLabels = new Text[CheatCount + 1];
+
         private EndingUI cachedEndingUI;
         private GameOverUI cachedGameOverUI;
 
@@ -128,10 +159,23 @@ namespace MakeGame.UI
             // 이번 이관의 목적 자체가 사라진다.
             var canvas = UIBuilder.CreateCanvas("DebugHudCanvas", sortOrder: 15);
 
+            // 패널 아래쪽에 치트 버튼 줄이 붙는 개발 빌드에서만 그만큼 아래로 늘리고 본문을 띄운다.
+            // 출시 빌드에서는 두 값이 예전 그대로(-640 / 10)라 레이아웃이 1px도 변하지 않는다.
+            float panelBottom = -640f;
+            float bodyBottomPad = 10f;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            bool withCheatControls = Debug.isDebugBuild;
+            if (withCheatControls)
+            {
+                panelBottom -= CheatAreaHeight;
+                bodyBottomPad += CheatAreaHeight;
+            }
+#endif
+
             var panel = UIBuilder.CreatePanel(
                 canvas.transform, "DebugHudPanel",
                 anchorMin: new Vector2(1f, 1f), anchorMax: new Vector2(1f, 1f),
-                offsetMin: new Vector2(-360f, -640f), offsetMax: new Vector2(-20f, -200f),
+                offsetMin: new Vector2(-360f, panelBottom), offsetMax: new Vector2(-20f, -200f),
                 color: new Color(0f, 0f, 0f, 0.55f),
                 addTopBorder: true);
 
@@ -143,9 +187,87 @@ namespace MakeGame.UI
             var rt = bodyLabel.rectTransform;
             rt.anchorMin = Vector2.zero;
             rt.anchorMax = Vector2.one;
-            rt.offsetMin = new Vector2(10f, 10f);
+            rt.offsetMin = new Vector2(10f, bodyBottomPad);
             rt.offsetMax = new Vector2(-10f, -10f);
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (withCheatControls)
+                BuildCheatControls(panel);
+#endif
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// 패널 아래쪽에 치트 토글 버튼 5개(개별 4 + 전부 1)를 만든다.
+        ///
+        /// **버튼을 쓸 수 있는가(커서 문제) - 확인 결과.** 이 패널은 UIDragHandle을 붙이지 않으므로
+        /// CursorLockController가 "창 열림"으로 세지 않는다. 즉 F3를 눌러도 커서는 잠긴 채다.
+        /// 그런데 이 프로젝트에는 이미 같은 상황에 대한 정해진 답이 있다 - CursorLockController 클래스
+        /// 주석: 건축 핫바도 "창"으로 세지 않으며 "굳이 칸을 클릭하고 싶으면 Shift를 눌러 커서를 잠깐
+        /// 풀면 된다". 해제 키(LeftShift/RightShift)는 GetKey로 상태만 읽으므로 아무 키와도 다투지
+        /// 않고, 누르고 있는 동안 Cursor.lockState = None + visible = true가 되어 버튼 클릭이 실제로
+        /// 동작한다. 그래서 **버튼을 유지**하고, 패널 안내에 [Shift]를 함께 적었다.
+        /// 이 패널 자체에 UIDragHandle을 붙여 커서를 풀게 만드는 안은 버렸다 - F3를 여는 순간 시야가
+        /// 얼어붙어, 지금까지 "패널을 켜 둔 채 돌아다니며 수치를 보던" 기존 사용법이 깨진다.
+        /// 마우스에 손대기 싫은 가장 흔한 경우(전부 켜기)는 F11 한 키로 끝난다.
+        ///
+        /// 배치는 패널 좌하단 기준 절대 좌표다(pivot/anchor를 (0,0)으로 고정). 본문 텍스트는 위에서
+        /// offsetMin.y를 CheatAreaHeight만큼 올려 두었으므로 이 영역과 겹치지 않는다.
+        /// </summary>
+        private void BuildCheatControls(RectTransform panel)
+        {
+            const float pad = 10f;
+            const float gap = 6f;
+            const float rowH = 24f;
+            float fullW = 340f - pad * 2f;      // 패널 폭 340 - 좌우 여백
+            float colW = (fullW - gap) * 0.5f;
+
+            var header = UIBuilder.CreateText(panel, "CheatHeader",
+                "── QA 치트 ([Shift] 누르고 클릭 / [F11] 전부) ──",
+                11, new Color(0.75f, 0.78f, 0.8f, 1f), TextAnchor.LowerLeft);
+            header.horizontalOverflow = HorizontalWrapMode.Overflow;
+            PlaceAtPanelBottom(header.rectTransform, pad, 96f, fullW, 18f);
+
+            CreateCheatButton(panel, CheatHealth, "생명 무제한", pad, 70f, colW, rowH);
+            CreateCheatButton(panel, CheatHeat, "일사병 면역", pad + colW + gap, 70f, colW, rowH);
+            CreateCheatButton(panel, CheatOxygen, "산소 무제한", pad, 40f, colW, rowH);
+            CreateCheatButton(panel, CheatFood, "허기·갈증 정지", pad + colW + gap, 40f, colW, rowH);
+            CreateCheatButton(panel, CheatCount, "전부 켜기/끄기 [F11]", pad, 10f, fullW, rowH);
+        }
+
+        /// <summary>치트 버튼 하나를 만들고 배열에 담는다. index가 CheatCount면 "전부" 버튼이다.</summary>
+        private void CreateCheatButton(RectTransform panel, int index, string label,
+            float left, float bottom, float width, float height)
+        {
+            int captured = index; // 클로저가 루프 변수를 잡지 않도록(여기선 상수지만 규칙을 지킨다)
+            var button = UIBuilder.CreateButton(panel, "Cheat_" + captured, label, () => OnCheatButtonClicked(captured));
+
+            // Selectable에는 rectTransform 프로퍼티가 없다(Graphic에만 있다). UIBuilder.CreateCloseButton과
+            // 같은 방식으로 GetComponent로 집는다.
+            PlaceAtPanelBottom(button.GetComponent<RectTransform>(), left, bottom, width, height);
+
+            // UIBuilder.CreateButton의 기본 라벨은 16px이라 폭 157px 칸에서 줄바꿈된다. 11px + 넘침 허용.
+            var text = button.GetComponentInChildren<Text>();
+            if (text != null)
+            {
+                text.fontSize = 11;
+                text.horizontalOverflow = HorizontalWrapMode.Overflow;
+                cheatButtonLabels[captured] = text;
+            }
+
+            cheatButtonImages[captured] = button.GetComponent<Image>();
+        }
+
+        /// <summary>패널 좌하단(0,0) 기준 절대 좌표로 배치한다.</summary>
+        private static void PlaceAtPanelBottom(RectTransform rt, float left, float bottom, float width, float height)
+        {
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.zero;
+            rt.pivot = Vector2.zero;
+            rt.anchoredPosition = new Vector2(left, bottom);
+            rt.sizeDelta = new Vector2(width, height);
+        }
+#endif
 
         /// <summary>
         /// 토글 키를 처리하고, 패널이 켜져 있을 때만 주기적으로 텍스트를 다시 만든다.
@@ -235,12 +357,25 @@ namespace MakeGame.UI
                 builder.Append("같은 키를 다시 누르면 닫힘\n");
                 builder.Append('[').Append(ToggleFullMapKey.ToString()).Append("] 전체 지도 표시+자유 이동 (지금 ")
                     .Append(IslandTravel.DebugRevealAllActive ? "ON" : "OFF").Append(")\n");
+
+                // 치트 상태는 아래 버튼 색으로도 보이지만, 본문에도 한 줄 남긴다 - 패널을 스크린샷으로
+                // 주고받을 때 "이 값이 왜 안 줄어드는지"가 텍스트 한 줄로 설명된다.
+                builder.Append('\n');
+                // ResolveStats로 한 번 확보해 둔다 - 인스펙터 연결이 비어 있어도 치트 표기/버튼이
+                // 동작해야 하기 때문이다(찾으면 survivalStats에 캐시되므로 매 갱신마다 찾지 않는다).
+                AppendCheatSummary(ResolveStats());
+                builder.Append("↓ 아래 버튼: [Shift]를 누른 채 클릭 (커서 잠금 해제)\n");
             }
 #endif
 
             builder.Append('\n').Append('[').Append(toggleKey.ToString()).Append("] 디버그 패널 끄기");
 
             bodyLabel.text = builder.ToString();
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (Debug.isDebugBuild)
+                RefreshCheatButtons(survivalStats);
+#endif
         }
 
         /// <summary>
@@ -267,8 +402,105 @@ namespace MakeGame.UI
                 IslandTravel.debugRevealAllIslands = !IslandTravel.debugRevealAllIslands;
                 refreshTimer = 0f; // 도움말의 ON/OFF 표기를 다음 주기(최대 0.25초)까지 기다리지 않고 즉시 갱신
             }
+            else if (Input.GetKeyDown(ToggleAllCheatsKey))
+                OnCheatButtonClicked(CheatCount);
 #endif
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// 표시/조작 대상 SurvivalStats를 확보한다. 인스펙터 연결이 비어 있어도 동작해야 한다
+        /// (GrantDevelopmentMaterials가 PlayerInventory에 대해 쓰는 것과 같은 지연 탐색 패턴).
+        /// </summary>
+        private SurvivalStats ResolveStats()
+        {
+            if (survivalStats == null)
+                survivalStats = FindAnyObjectByType<SurvivalStats>();
+            return survivalStats;
+        }
+
+        /// <summary>
+        /// 치트 버튼(또는 F11)을 눌렀을 때. index가 CheatCount면 "전부" 토글이다 -
+        /// 하나라도 꺼져 있으면 전부 켜고, 전부 켜져 있으면 전부 끈다("켜기"가 기대 동작인 쪽으로 붙인다).
+        /// </summary>
+        private void OnCheatButtonClicked(int index)
+        {
+            SurvivalStats stats = ResolveStats();
+            if (stats == null)
+            {
+                Debug.LogWarning("[DebugHud] SurvivalStats를 찾지 못해 치트를 켜지 못했다.");
+                return;
+            }
+
+            switch (index)
+            {
+                case CheatHealth: stats.debugInfiniteHealth = !stats.debugInfiniteHealth; break;
+                case CheatHeat: stats.debugNoHeatstroke = !stats.debugNoHeatstroke; break;
+                case CheatOxygen: stats.debugInfiniteOxygen = !stats.debugInfiniteOxygen; break;
+                case CheatFood: stats.debugNoHungerThirst = !stats.debugNoHungerThirst; break;
+                default:
+                    bool allOn = stats.debugInfiniteHealth && stats.debugNoHeatstroke
+                        && stats.debugInfiniteOxygen && stats.debugNoHungerThirst;
+                    bool target = !allOn;
+                    stats.debugInfiniteHealth = target;
+                    stats.debugNoHeatstroke = target;
+                    stats.debugInfiniteOxygen = target;
+                    stats.debugNoHungerThirst = target;
+                    break;
+            }
+
+            // 다음 주기(최대 0.25초)를 기다리지 않고 즉시 반영한다 - 눌렀는데 색이 안 바뀌면
+            // "안 눌렸나?" 하고 두 번 누르게 되고, 토글이라 그러면 제자리로 돌아온다.
+            refreshTimer = 0f;
+            RefreshText();
+        }
+
+        /// <summary>버튼 배경색과 라벨의 ON/OFF 표기를 현재 플래그 상태에 맞춘다.</summary>
+        private void RefreshCheatButtons(SurvivalStats stats)
+        {
+            if (cheatButtonImages[CheatHealth] == null)
+                return; // 치트 UI를 만들지 않은 실행(Debug.isDebugBuild가 false)
+
+            bool health = stats != null && stats.debugInfiniteHealth;
+            bool heat = stats != null && stats.debugNoHeatstroke;
+            bool oxygen = stats != null && stats.debugInfiniteOxygen;
+            bool food = stats != null && stats.debugNoHungerThirst;
+
+            ApplyCheatButtonState(CheatHealth, "생명 무제한", health);
+            ApplyCheatButtonState(CheatHeat, "일사병 면역", heat);
+            ApplyCheatButtonState(CheatOxygen, "산소 무제한", oxygen);
+            ApplyCheatButtonState(CheatFood, "허기·갈증 정지", food);
+
+            bool allOn = health && heat && oxygen && food;
+            ApplyCheatButtonState(CheatCount, allOn ? "전부 끄기 [F11]" : "전부 켜기 [F11]", allOn);
+        }
+
+        private void ApplyCheatButtonState(int index, string label, bool on)
+        {
+            if (cheatButtonImages[index] != null)
+                cheatButtonImages[index].color = on ? CheatOnColor : CheatOffColor;
+
+            if (cheatButtonLabels[index] != null)
+                cheatButtonLabels[index].text = index == CheatCount ? label : (label + (on ? "  ON" : "  OFF"));
+        }
+
+        /// <summary>본문에 넣을 한 줄 요약("왜 안 죽지?" 혼란 방지용).</summary>
+        private void AppendCheatSummary(SurvivalStats stats)
+        {
+            builder.Append("치트: ");
+            if (stats == null || !stats.AnyDebugCheatActive)
+            {
+                builder.Append("전부 꺼짐\n");
+                return;
+            }
+
+            if (stats.debugInfiniteHealth) builder.Append("생명 ");
+            if (stats.debugNoHeatstroke) builder.Append("일사병 ");
+            if (stats.debugInfiniteOxygen) builder.Append("산소 ");
+            if (stats.debugNoHungerThirst) builder.Append("허기·갈증 ");
+            builder.Append("무제한\n");
+        }
+#endif
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// <summary>

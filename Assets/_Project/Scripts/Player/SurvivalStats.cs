@@ -228,6 +228,64 @@ namespace MakeGame.Player
             "config 값으로 채운다 - 조건을 세게 걸고 싶으면 0이 아니라 작은 양수를 넣을 것.")]
         public float coconutOverdoseThreshold = MaxStatValue;
 
+        // ── QA 치트 플래그 (개발 빌드 전용) ──────────────────────────────────────────────────
+        //
+        // 감독 요청: "디버그 모드에 생명, 일사병, 공기 무제한 설정을 넣어줘. 테스트를 하려니깐 힘드네"
+        // = 테스트 중 죽지 않고 자유롭게 돌아다니기 위한 도구다.
+        //
+        // **출시 빌드 격리 방식(#if로 필드와 검사 코드를 통째로 뺀다).** DebugHud의 결말 미리보기/
+        // 재료 지급 키가 쓰는 것과 같은 심볼이다. "플래그는 항상 두고 분기만 남긴다"도 가능했지만
+        // 이쪽을 택한 이유:
+        //   1. 출시 빌드의 IL이 이 작업 전과 **완전히 동일**해진다(분기 한 줄도 남지 않는다).
+        //      "치트 플래그가 꺼진 상태에서 기존 동작이 비트 단위로 동일한가"를 증명할 필요조차 없어진다.
+        //   2. 나중에 누가 #if 밖에서 이 플래그를 읽으면 **릴리스 빌드가 컴파일 에러로 시끄럽게
+        //      실패한다.** 조용히 치트 경로가 출시본에 실려 나가는 것보다 훨씬 낫다.
+        //   3. 이 파일과 DebugHud.cs는 같은 Assembly-CSharp이라 두 곳의 #if 결과가 항상 일치한다.
+        // 플래그를 true로 만드는 경로는 DebugHud(같은 #if 안)에만 있다. 이 파일은 읽기만 한다.
+        //
+        // [System.NonSerialized]인 이유: oxygenDrainMultiplier/isHeadInAirPocket과 같다. 세이브 포맷
+        // (SaveData)에도, 씬/프리팹 직렬화에도 절대 남기지 않는다 - 치트가 세이브에 굳어 버리면
+        // "왜 안 죽지"가 다음 세션까지 따라간다.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>체력이 줄지 않는다(항상 maxHealth). TakeDamage 전 경로 + Tick 고정으로 막는다.</summary>
+        [System.NonSerialized] public bool debugInfiniteHealth = false;
+
+        /// <summary>일사병 수치가 오르지 않는다(항상 0).</summary>
+        [System.NonSerialized] public bool debugNoHeatstroke = false;
+
+        /// <summary>산소가 줄지 않는다(항상 최대치, 익사 피해 없음).</summary>
+        [System.NonSerialized] public bool debugInfiniteOxygen = false;
+
+        /// <summary>허기·갈증이 줄지 않는다(현재 값에서 정지). 감독이 명시 요청하진 않았지만 같은 기구다.</summary>
+        [System.NonSerialized] public bool debugNoHungerThirst = false;
+
+        /// <summary>치트가 하나라도 켜져 있는지. DebugHud의 상태 표기용.</summary>
+        public bool AnyDebugCheatActive =>
+            debugInfiniteHealth || debugNoHeatstroke || debugInfiniteOxygen || debugNoHungerThirst;
+
+        /// <summary>
+        /// 켜져 있는 치트가 요구하는 "고정값"을 지금 값에 반영한다. 각 Update* 메서드가 감소/증가
+        /// 지점 자체를 건너뛰지만, **플래그를 켠 순간 이미 깎여 있던 값**은 그 분기만으로는 돌아오지
+        /// 않는다(예: 체력 12에서 무적을 켜면 12에 멈춘 채 "무제한"이 된다). 여기서 한 번 끌어올린다.
+        ///
+        /// 허기·갈증은 일부러 끌어올리지 않는다. 요구는 "줄지 않음"(정지)이고, 최대치로 밀어 버리면
+        /// 저허기 HUD 경고처럼 **테스터가 일부러 만들어 둔 상태를 지워 버린다.** 대신 굶주림 피해는
+        /// UpdateHungerAndThirst에서 함께 막아, 허기 0에서 켰을 때 "줄지도 않는데 계속 아픈" 모순이
+        /// 생기지 않게 했다.
+        /// </summary>
+        private void ApplyDebugCheatClamp()
+        {
+            if (debugInfiniteHealth && health < maxHealth)
+                health = maxHealth;
+
+            if (debugNoHeatstroke && sunstroke > 0f)
+                sunstroke = 0f;
+
+            if (debugInfiniteOxygen && oxygen < MaxStatValue)
+                oxygen = MaxStatValue;
+        }
+#endif
+
         /// <summary>현재 사망 상태인지 여부.</summary>
         public bool IsDead => health <= 0f;
 
@@ -325,6 +383,13 @@ namespace MakeGame.Player
         public void Tick(float deltaTime, bool isInShade, bool isUnderwater = false, bool isDaytime = true,
             bool isRaining = false)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // IsDead 검사보다 **먼저** 부른다. 이미 죽은 뒤에 무적을 켜면 체력이 최대치로 돌아오고
+            // IsDead가 다시 false가 되므로, "죽어서 아무것도 못 하는 상태"에서도 빠져나올 수 있다.
+            // 치트가 전부 꺼져 있으면 이 호출은 값을 하나도 건드리지 않는다(전부 조건부 대입).
+            ApplyDebugCheatClamp();
+#endif
+
             if (IsDead)
                 return;
 
@@ -354,6 +419,16 @@ namespace MakeGame.Player
         /// </summary>
         private void UpdateOxygen(float deltaTime, bool isUnderwater)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [QA 치트] 산소 무제한. 감소 지점 자체를 건너뛴다 - 아래 익사 TakeDamage 호출에
+            // 애초에 도달하지 않으므로, 무적(debugInfiniteHealth)과 무관하게 익사 피해가 사라진다.
+            if (debugInfiniteOxygen)
+            {
+                oxygen = MaxStatValue;
+                return;
+            }
+#endif
+
             // 에어포켓(수중 동굴 천장의 공기 주머니)에 머리를 넣고 있으면 잠수 중에도 산소가
             // **회복**되고, 익사 진행(아래 TakeDamage)도 여기서 함께 멈춘다. 회복 속도는 감소
             // 속도의 airPocketRecoveryMultiplier(기본 3)배 — 감소/회복이 상호 배타가 되도록
@@ -382,6 +457,14 @@ namespace MakeGame.Player
         /// </summary>
         private void UpdateHungerAndThirst(float deltaTime)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [QA 치트] 허기·갈증 정지. 감소와 굶주림 피해를 **함께** 건너뛴다(둘을 나누면
+            // 허기 0에서 켰을 때 값은 안 줄면서 피해만 계속 들어온다). 값은 현재 상태로 정지시키고
+            // 최대치로 밀지 않는 이유는 ApplyDebugCheatClamp 주석 참고.
+            if (debugNoHungerThirst)
+                return;
+#endif
+
             hunger = Mathf.Max(0f, hunger - hungerDecayPerSecond * deltaTime);
             thirst = Mathf.Max(0f, thirst - thirstDecayPerSecond * deltaTime);
 
@@ -399,6 +482,16 @@ namespace MakeGame.Player
         /// </summary>
         private void UpdateSunstroke(float deltaTime, bool isInShade, bool isDaytime, bool isRaining)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [QA 치트] 일사병 면역. 증가 지점 자체를 건너뛰고 0으로 고정하므로, 아래
+            // `sunstroke >= MaxStatValue` 피해 조건에 영원히 도달하지 않는다.
+            if (debugNoHeatstroke)
+            {
+                sunstroke = 0f;
+                return;
+            }
+#endif
+
             // [B13] 비가 오는 동안에는 증가도 회복도 하지 않는다. 회복까지 주면 비가 공짜 안전지대가
             // 되어, 우천이 "불이 꺼지고 시야가 나빠지는 불리한 이벤트"라는 설계와 정반대가 된다.
             // 멈추기만 해도 플레이어에게는 "지금은 밖에서 일할 수 있는 시간"으로 읽힌다.
@@ -434,6 +527,27 @@ namespace MakeGame.Player
         /// </summary>
         public void TakeDamage(float amount, DamageCause cause = DamageCause.Unknown)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // [QA 치트] 생명 무제한. **이 메서드가 체력을 깎는 유일한 통로다**(전수 확인:
+            // 굶주림/일사병/중독/출혈/익사 5곳 + HazardSource의 곰·식인종·대왕크랩·벌떼 Predator 4곳 +
+            // 상어 SharkAttack 1곳. 그 외에 health를 쓰는 곳은 SaveLoadController의 불러오기 대입뿐이다).
+            // 따라서 여기 한 곳만 막으면 즉사·게임오버를 포함한 모든 피해 경로가 닫힌다.
+            //
+            // 상태 이상(중독/출혈/골절) 자체는 **지우지 않는다.** ApplyPoison/ApplyBleeding/
+            // ApplyBrokenBone은 그대로 걸리고 HUD·디버그 패널에도 O로 표시되므로, "독사에 물리면
+            // 중독이 붙는가", "골절 시 이동 속도가 느려지는가" 같은 것을 무적 상태에서도 그대로
+            // 테스트할 수 있다. 막는 것은 그 상태가 체력을 깎는 부분(여기)뿐이다.
+            //
+            // lastDamageCause/RecordCrisis보다 먼저 반환한다: 맞지 않은 것으로 치므로 사인도 위기
+            // 횟수도 오염되지 않는다(치트를 끈 뒤의 통계가 그대로 유효하다).
+            if (debugInfiniteHealth)
+            {
+                if (health < maxHealth)
+                    health = maxHealth;
+                return;
+            }
+#endif
+
             health = Mathf.Max(0f, health - amount);
 
             if (amount > 0f && cause != DamageCause.Unknown)
