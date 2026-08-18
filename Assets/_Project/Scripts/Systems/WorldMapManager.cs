@@ -813,6 +813,11 @@ namespace MakeGame.Systems
             go.transform.position = beach; // 루트 y = 해변 지면 높이(착지).
             go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             go.AddComponent<AirlinerWreck>(); // 시각/콜라이더는 이 컴포넌트가 만든다(매개변수 없음).
+
+            // [불시착 현장] 잔해 배치(위 해변 탐색)가 확정된 뒤의 순수 후처리 - 트렌치(끌린 고랑)/
+            // 둔덕/초목 제거/흙색/잔해 재착지. rng 소비 0(전부 위치 해시)이라 배치 재현성이 불변이고,
+            // RegenerateWorld 경로에서도 이 메서드가 다시 불리므로(GenerateStartingIsland) 자동 적용된다.
+            CrashSiteSculptor.Apply(go.transform, startIsland);
         }
 
         /// <summary>

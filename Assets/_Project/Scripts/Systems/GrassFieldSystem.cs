@@ -477,6 +477,63 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
+        /// [불시착 현장] 지정한 섬의 잔디/꽃 인스턴스 중 회전 박스 존 안의 카드를 제거한다.
+        /// CrashSiteSculptor가 시작 섬 트렌치 존을 비울 때 1회 호출한다.
+        ///
+        ///  · 빌드 로직/해시/다른 섬 레코드는 건드리지 않는다 - 해당 섬 레코드의 배열만 압축 교체한다.
+        ///    렌더 루프(RenderGroup)는 배열 Length 기반이라 짧아진 배열을 그대로 소화한다
+        ///    (빈 배열이면 루프가 0회 돌 뿐이다).
+        ///  · 난수 소비 0(순수 기하 판정) - 호출 시점과 무관하게 재현성이 유지된다.
+        ///  · 인스턴스 위치는 TRS 행렬의 이동 성분(GetColumn(3), 월드 좌표)에서 읽는다.
+        /// </summary>
+        /// <param name="islandRoot">섬 지형 오브젝트("Island_{id}_{size}")의 트랜스폼(레코드 키).</param>
+        /// <param name="boxCenter">존 박스 중심(월드).</param>
+        /// <param name="boxRotation">존 박스 회전(잔해 yaw).</param>
+        /// <param name="boxHalfExtents">존 박스 반크기(m).</param>
+        public static void RemoveInstancesInOrientedBox(Transform islandRoot, Vector3 boxCenter,
+            Quaternion boxRotation, Vector3 boxHalfExtents)
+        {
+            if (islandRoot == null)
+                return;
+
+            Quaternion inverseRotation = Quaternion.Inverse(boxRotation);
+            for (int i = 0; i < registry.Count; i++)
+            {
+                GrassRecord record = registry[i];
+                if (record.root != islandRoot)
+                    continue;
+
+                record.groupA = FilterOutsideBox(record.groupA, boxCenter, inverseRotation, boxHalfExtents);
+                record.groupB = FilterOutsideBox(record.groupB, boxCenter, inverseRotation, boxHalfExtents);
+                record.flowerA = FilterOutsideBox(record.flowerA, boxCenter, inverseRotation, boxHalfExtents);
+                record.flowerB = FilterOutsideBox(record.flowerB, boxCenter, inverseRotation, boxHalfExtents);
+                return; // 레코드는 섬당 하나다(Build의 중복 등록 가드).
+            }
+        }
+
+        /// <summary>박스 밖 인스턴스만 남긴 압축 배열을 돌려준다(제거된 것이 없으면 원본 참조 그대로).</summary>
+        private static Matrix4x4[] FilterOutsideBox(Matrix4x4[] source, Vector3 boxCenter,
+            Quaternion inverseRotation, Vector3 halfExtents)
+        {
+            if (source == null || source.Length == 0)
+                return source;
+
+            var kept = new List<Matrix4x4>(source.Length);
+            for (int i = 0; i < source.Length; i++)
+            {
+                Vector3 position = source[i].GetColumn(3);
+                Vector3 local = inverseRotation * (position - boxCenter);
+                bool inside = Mathf.Abs(local.x) <= halfExtents.x
+                    && Mathf.Abs(local.y) <= halfExtents.y
+                    && Mathf.Abs(local.z) <= halfExtents.z;
+                if (!inside)
+                    kept.Add(source[i]);
+            }
+
+            return kept.Count == source.Length ? source : kept.ToArray();
+        }
+
+        /// <summary>
         /// 격자 셀 (ix, iz) 하나를 초지 후보로 평가한다. 지터 위치가 산포 원 안이고 지형 높이가
         /// 초지 경계(섬별 grassLine + 디더 반폭 = grassMinHeightBase) 위면 true와 함께
         /// 섬 로컬 (x, z, y)를 돌려준다.
