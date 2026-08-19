@@ -135,6 +135,9 @@ namespace MakeGame.UI
             public RectTransform fillRt;
             public Image ring;
             public RectTransform ringRt;
+            /// <summary>상세 줌 단계에서만 켜지는 실제 해안선 폴리곤(전체 지도 표식만 가진다).</summary>
+            public MapIslandShape shape;
+            public RectTransform shapeRt;
             public Text label;
             public Button hitButton;
             public int islandId = -1;
@@ -190,8 +193,6 @@ namespace MakeGame.UI
             dotSprite = null;
             ringSprite = null;
             arrowSprite = null;
-            hasSavedMapPosition = false;
-            savedMapPosition = Vector2.zero;
         }
 
         /// <summary>
@@ -338,10 +339,6 @@ namespace MakeGame.UI
         // ── 전체 지도 창
         private float mapRefreshTimer = 0f;
 
-        /// <summary>창을 옮긴 자리를 세션 동안 기억한다. 인벤토리와 같은 방식(static).</summary>
-        private static bool hasSavedMapPosition;
-        private static Vector2 savedMapPosition;
-
         private int selectedIslandId = -1;
 
         // ────────────────────────────────────────────────────────────────────────
@@ -362,10 +359,22 @@ namespace MakeGame.UI
             if (Input.GetKeyDown(toggleKey))
                 SetMapOpen(!IsMapOpen);
 
+            // 전체 지도가 열려 있는 동안 +/- 는 **전체 지도**의 줌이다. 지도를 보면서 누른 키가
+            // 뒤에 가려진 미니맵만 바꾸면 아무 반응이 없는 것처럼 보인다.
             if (IsZoomInPressed())
-                SetZoom(zoomIndex - 1);
+            {
+                if (IsMapOpen)
+                    SetMapZoomLevel(mapZoomLevel + 1, MapZoomFocusLocal());
+                else
+                    SetZoom(zoomIndex - 1);
+            }
             else if (IsZoomOutPressed())
-                SetZoom(zoomIndex + 1);
+            {
+                if (IsMapOpen)
+                    SetMapZoomLevel(mapZoomLevel - 1, MapZoomFocusLocal());
+                else
+                    SetZoom(zoomIndex + 1);
+            }
 
             RefreshMinimap();
 
@@ -758,6 +767,19 @@ namespace MakeGame.UI
 
             if (interactive)
             {
+                // 상세 해안선은 채움 원 **위**, 이름표 **아래**에 온다. 만들어만 두고 꺼 둔다 -
+                // 실루엣 단계에서 둘 다 켜면 원과 폴리곤이 겹쳐 보인다(RefreshMapMarkers가 전환한다).
+                var shapeGo = new GameObject("Shape", typeof(RectTransform), typeof(MapIslandShape));
+                shapeGo.transform.SetParent(marker.root, false);
+                marker.shape = shapeGo.GetComponent<MapIslandShape>();
+                marker.shape.raycastTarget = false;
+                marker.shapeRt = marker.shape.rectTransform;
+                marker.shapeRt.anchorMin = new Vector2(0.5f, 0.5f);
+                marker.shapeRt.anchorMax = new Vector2(0.5f, 0.5f);
+                marker.shapeRt.pivot = new Vector2(0.5f, 0.5f);
+                marker.shapeRt.anchoredPosition = Vector2.zero;
+                shapeGo.SetActive(false);
+
                 marker.label = UIBuilder.CreateText(marker.root, "Label", "", 11, Color.white, TextAnchor.UpperCenter);
                 marker.label.raycastTarget = false;
                 marker.label.horizontalOverflow = HorizontalWrapMode.Overflow;

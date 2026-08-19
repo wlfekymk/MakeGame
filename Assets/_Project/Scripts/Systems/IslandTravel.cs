@@ -50,7 +50,7 @@ namespace MakeGame.Systems
         public CurrentBypass currentBypassRequirement = CurrentBypass.OceanReadyWithMotor;
 
         // ── 디버그 전체 지도 / 자유 이동 ─────────────────────────────────────────────────
-        // 감독 요청: "디버그 모드에서는 전체 지도가 다 보이고, 세계지도에서 모두 갈 수 있게".
+        // 감독 요청: "디버그 모드에서는 전체 지도가 다 보이고, 전체 지도에서 모두 갈 수 있게".
         // 격리 방식은 DebugHud의 결말 미리보기(F6~F8)/재료 지급(F4)과 동일한 이중 가드다:
         //   1) 플래그·판정·우회 분기가 전부 #if UNITY_EDITOR || DEVELOPMENT_BUILD 안 - 출시 빌드에는
         //      컴파일조차 되지 않고, 소비처(MinimapUI.IsRevealed / 아래 TryTravelTo)의 참조도 같은

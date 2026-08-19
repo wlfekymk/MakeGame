@@ -892,8 +892,13 @@ namespace MakeGame.Systems
         /// 규약(IslandShapeProfile.radialMask): 0번 = +X축, 반시계 등간격, 하한 0.15 클램프와 64샘플
         /// 선형 보간은 소비 측(IslandMeshGenerator.MaskAt)이 처리한다.
         /// 시작 섬(0번)만 StartingIslandMaskRotationSamples만큼 돌린 사본을 준다(위 상수 주석 참고).
+        ///
+        /// **public인 이유**: 전체 지도의 상세 단계(MinimapUI → MapIslandShape)가 섬을 실제 해안선
+        /// 모양으로 그리는데, 지도가 MaldivesLayout.Islands[i].mask를 직접 읽으면 시작 섬만 회전이
+        /// 빠져 지형과 실루엣이 어긋난다. 지형에 주입되는 배열과 **같은 함수**를 지나게 해서
+        /// 회전 규칙이 한 곳에만 존재하도록 한다.
         /// </summary>
-        private float[] GetMaldivesRadialMask(int islandId)
+        public float[] GetMaldivesRadialMask(int islandId)
         {
             if (!IsMaldivesLayoutActive())
                 return null;

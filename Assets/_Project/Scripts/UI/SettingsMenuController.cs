@@ -472,8 +472,8 @@ namespace MakeGame.UI
                 .Append(fishing.ToString()).Append("])\n");
             controlsBuilder.Append('[').Append(inventory.ToString()).Append("] 인벤토리 (열린 상태에서 [")
                 .Append(filter.ToString()).Append("] 분류 전환)\n");
-            controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 세계 지도 / 이동\n");
-            // [B24] 퀘스트 창. 지도 설명도 함께 고쳤다 - 배치 21에서 섬 목록 패널이 세계 지도로 흡수돼
+            controlsBuilder.Append('[').Append(craft.ToString()).Append("] 제작    [").Append(map.ToString()).Append("] 전체 지도 / 이동 (드래그 이동 · 휠 또는 [+]/[-] 줌)\n");
+            // [B24] 퀘스트 창. 지도 설명도 함께 고쳤다 - 배치 21에서 섬 목록 패널이 전체 지도로 흡수돼
             // "섬 목록 / 이동"은 더 이상 존재하지 않는 창을 가리키고 있었다.
             controlsBuilder.Append('[').Append(quest.ToString()).Append("] 퀘스트 (할 일)    [")
                 .Append(build.ToString()).Append("] 건축\n");

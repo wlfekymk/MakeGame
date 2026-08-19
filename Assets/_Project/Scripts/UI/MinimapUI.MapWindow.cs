@@ -18,20 +18,34 @@ namespace MakeGame.UI
     /// </summary>
     public partial class MinimapUI : MonoBehaviour
     {
-        // 전체 지도 창 치수. 제목줄 높이·좌우 여백은 공용 골격이 정하므로 여기 값은 전부
-        // **본문 안쪽** 좌표다 - 본문의 (0,0)이 곧 지도 그림의 왼쪽 위다.
-        private const float MapViewSize = 470f;
+        // 전체 지도 창은 화면을 꽉 채운다. 그래서 고정 치수로 남는 것은 **오른쪽 목록 단의 폭**과
+        // **아래 두 줄**뿐이고, 지도 그림은 남는 자리를 전부 가져간다.
         private const float ListColumnWidth = 328f;
         private const float ListColumnGap = 14f;
         private const float ListHeaderHeight = 20f;
         private const float ChecklistHeight = 34f;
         private const float StatusHeight = 22f;
 
-        private const float MapBodyWidth = MapViewSize + ListColumnGap + ListColumnWidth;
-        private const float MapBodyHeight = MapViewSize + 8f + ChecklistHeight + 4f + StatusHeight;
+        /// <summary>본문 아래에 비워 두는 두 줄(체크리스트 + 이동 결과)의 높이.</summary>
+        private const float MapFooterHeight = ChecklistHeight + 4f + StatusHeight;
 
-        /// <summary>기본 자리 계산에 쓰는 창 전체 높이(골격이 더하는 위·아래 여백 포함).</summary>
-        private const float MapWindowHeight = MapBodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;
+        // 공용 골격(CreateSkinnedWindow)은 본문 크기를 받아야 하지만, 만들자마자 캔버스에
+        // stretch시키므로 이 값은 첫 프레임의 씨앗일 뿐이다(기준 해상도 1920×1080).
+        private const float SeedBodyWidth = 1920f - UITheme.ChromeWidth;
+        private const float SeedBodyHeight = 1080f - UITheme.ChromeTop - UITheme.ChromeBottom;
+
+        // ── 줌 사다리: 아래 7단계는 실루엣(원 마커), 위 7단계는 상세(실제 해안선). 합쳐서 14단계다.
+        private const int SilhouetteZoomSteps = 7;
+        private const int DetailZoomSteps = 7;
+        private const int MapZoomStepCount = SilhouetteZoomSteps + DetailZoomSteps;
+
+        /// <summary>
+        /// 최대 줌(13단계)에서 **소형 섬(지형 반지름 50m)**의 반지름이 지도 뷰 짧은 변의 몇 배가 되는가.
+        /// 화면 크기에서 유도하는 이유: px를 못 박으면 4K에서는 섬이 손톱만 해지고 720p에서는 화면을
+        /// 넘는다. 0.125면 1920×1080에서 뷰 높이 약 946px → 반지름 약 118px로, 64각형 해안선의
+        /// 굴곡이 눈으로 읽히는 크기다(요구 범위 100~140px의 한가운데).
+        /// </summary>
+        private const float DetailSmallIslandFraction = 0.125f;
 
         /// <summary>
         /// 전체 지도에서 "탐사해서 밝아지는" 원의 반경(미터).
@@ -69,18 +83,32 @@ namespace MakeGame.UI
         private RectTransform mapWindowRt;
         private RectTransform mapBodyRt;
         private Text mapSummaryLabel;
-        private UIDragHandle mapDragHandle;
         private RectTransform mapMarkerLayer;
         private RectTransform mapFogLayer;
         private RectTransform playerPinRt;
         private RectTransform scaleBarRt;
         private Text scaleLabel;
+        private RectTransform mapViewRt;
         private readonly List<IslandMarker> mapMarkers = new List<IslandMarker>();
         private readonly List<Image> exploredHalos = new List<Image>();
         private float mapPixelsPerMeter = 0.02f;
 
-        /// <summary>지도 한가운데에 오는 월드 좌표(섬 경계 상자의 중심). 원점이 아니다.</summary>
+        /// <summary>지도 한가운데에 오는 월드 좌표. 팬(드래그)으로 움직인다.</summary>
         private Vector2 mapCenter = Vector2.zero;
+
+        // ── 줌/팬 상태. 사다리는 창 크기에 따라 달라지므로 **쓰는 자리에서** 다시 잡는다
+        // (Start에서 한 번만 채워 두면 아직 레이아웃이 안 돈 크기가 그대로 굳는다).
+        private int mapZoomLevel = 0;
+        private float mapFitPixelsPerMeter = 0.02f;   // 레벨 0 = 전부 보이는 배율
+        private float mapZoomStepRatio = 1.4f;        // 단계당 배율(등비수열)
+        private Vector2 mapFitCenter = Vector2.zero;  // 섬 경계 상자의 중심
+        private Vector2 mapBoundsMin = Vector2.zero;  // 팬 한계(섬 경계 상자 + 여유)
+        private Vector2 mapBoundsMax = Vector2.zero;
+        private Vector2 lastMapViewSize = Vector2.zero;
+        private bool mapViewDirty = true;
+
+        /// <summary>섬별 해안선 배열 캐시. 인스턴스 필드라 씬을 다시 로드하면 저절로 사라진다.</summary>
+        private readonly Dictionary<int, float[]> islandRadialMasks = new Dictionary<int, float[]>();
 
         // ── 섬 목록(전체 지도 창 오른쪽 열로 흡수됨)
         private RectTransform listContainer;
@@ -109,24 +137,31 @@ namespace MakeGame.UI
 
             // 창 6개가 공유하는 골격. 호출자는 **본문 크기만** 말하고 제목줄·여백은 골격이 정한다.
             var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "WorldMapWindow",
-                MapBodyWidth, MapBodyHeight, $"세계 지도 ({toggleKey})", canvasRect, () => SetMapOpen(false));
+                SeedBodyWidth, SeedBodyHeight, $"전체 지도 ({toggleKey})", canvasRect, () => SetMapOpen(false));
 
             mapWindowRt = frame.window;
             mapBodyRt = frame.body;
             mapWindowRoot = mapWindowRt.gameObject;
 
+            // 게임 화면 전체 크기. 골격이 준 고정 크기를 버리고 캔버스에 stretch시킨다 - 본문(frame.body)이
+            // 앵커 기반이라 창을 늘리면 본문도 그대로 따라 늘어나고, 해상도가 바뀌어도 다시 맞출 것이 없다.
+            mapWindowRt.anchorMin = Vector2.zero;
+            mapWindowRt.anchorMax = Vector2.one;
+            mapWindowRt.pivot = new Vector2(0.5f, 0.5f);
+            mapWindowRt.offsetMin = Vector2.zero;
+            mapWindowRt.offsetMax = Vector2.zero;
+
             // 탐사율 한 줄은 제목 **옆**이다. 이동 결과 문구와 체크리스트는 본문에 그대로 둔다.
             mapSummaryLabel = frame.status;
 
-            mapDragHandle = frame.drag;
-            if (mapDragHandle != null)
-            {
-                mapDragHandle.onMoved = position =>
-                {
-                    savedMapPosition = position;
-                    hasSavedMapPosition = true;
-                };
-            }
+            // 전체 화면 창은 옮길 이유가 없고, 제목줄 드래그가 살아 있으면 stretch 앵커에
+            // anchoredPosition을 써 넣어 창이 화면 밖으로 밀려난다. 그래서 **헤더의 클릭 판정을 끈다**
+            // (자식인 닫기 버튼은 자기 판정을 따로 가지므로 그대로 눌린다).
+            // 손잡이 컴포넌트 자체는 남긴다 - CursorLockController가 "활성 UIDragHandle이 있는가"로
+            // 창 열림을 판정하므로, 떼어내면 지도를 열어도 커서가 잠긴 채라 아무것도 누를 수 없다.
+            var headerImage = frame.header != null ? frame.header.GetComponent<Image>() : null;
+            if (headerImage != null)
+                headerImage.raycastTarget = false;
 
             BuildMapView();
             BuildIslandListColumn();
@@ -136,16 +171,26 @@ namespace MakeGame.UI
         /// <summary>지도 그림 영역(왼쪽 열): 검은 바다 → 탐사 원반 → 섬 표식 → 플레이어 → 축척자.</summary>
         private void BuildMapView()
         {
+            // 왼쪽 = 지도(남는 자리 전부), 오른쪽 = 목록 단(폭 고정), 아래 두 줄 = 체크리스트/상태.
+            // 네 변을 모두 앵커로 묶었으므로 해상도가 바뀌면 지도만 알아서 넓어진다.
             var view = UIBuilder.CreatePanel(
                 mapBodyRt, "MapView",
-                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
-                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                offsetMin: new Vector2(0f, MapFooterHeight),
+                offsetMax: new Vector2(-(ListColumnWidth + ListColumnGap), 0f),
                 color: UnexploredSea);
 
-            view.pivot = new Vector2(0f, 1f);
-            view.anchoredPosition = Vector2.zero;
-            view.sizeDelta = new Vector2(MapViewSize, MapViewSize);
+            view.pivot = new Vector2(0.5f, 0.5f);
+            view.offsetMin = new Vector2(0f, MapFooterHeight);
+            view.offsetMax = new Vector2(-(ListColumnWidth + ListColumnGap), 0f);
+            mapViewRt = view;
             view.gameObject.AddComponent<RectMask2D>();
+
+            // 드래그(팬)와 휠(줌)은 **이 사각형 안에서만** 받는다. Input.GetAxis로 휠을 읽으면 지도
+            // 밖 어디서 굴려도 줌이 되고, 오른쪽 목록의 세로 스크롤과 같은 입력을 놓고 싸운다.
+            var panZoom = view.gameObject.AddComponent<MapPanZoomInput>();
+            panZoom.onPan = OnMapPan;
+            panZoom.onZoom = OnMapZoom;
 
             // 탐사로 밝아진 구역. 섬 표식보다 아래에 깔려야 하므로 먼저 만든다.
             var fogGo = new GameObject("ExploredLayer", typeof(RectTransform));
@@ -204,6 +249,17 @@ namespace MakeGame.UI
             barImage.color = new Color(1f, 1f, 1f, 0.7f);
             barImage.raycastTarget = false;
 
+            // 조작 안내. 드래그/휠은 눌러 보기 전에는 알 수 없는 조작이라 지도 위에 상시로 적어 둔다.
+            var hint = UIBuilder.CreateText(view, "MapHint", "드래그: 지도 이동 · 휠 또는 [+]/[-]: 줌",
+                UITheme.FontBody, new Color(1f, 1f, 1f, 0.55f), TextAnchor.LowerLeft);
+            hint.raycastTarget = false;
+            hint.horizontalOverflow = HorizontalWrapMode.Overflow;
+            hint.rectTransform.anchorMin = new Vector2(0f, 0f);
+            hint.rectTransform.anchorMax = new Vector2(0f, 0f);
+            hint.rectTransform.pivot = new Vector2(0f, 0f);
+            hint.rectTransform.anchoredPosition = new Vector2(10f, 32f);
+            hint.rectTransform.sizeDelta = new Vector2(320f, 14f);
+
             scaleLabel = UIBuilder.CreateText(view, "ScaleLabel", "", UITheme.FontBody, new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerLeft);
             scaleLabel.raycastTarget = false;
             scaleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
@@ -217,15 +273,15 @@ namespace MakeGame.UI
         /// <summary>섬 목록 열(오른쪽). 예전의 독립 "섬 목록" 패널이 이 열로 흡수됐다.</summary>
         private void BuildIslandListColumn()
         {
-            float columnX = MapViewSize + ListColumnGap;
-
+            // 목록 단은 창의 **오른쪽 끝**에 붙인다(폭 328 유지). 왼쪽 기준 오프셋으로 두면 창이
+            // 화면 크기를 따라가는 순간 해상도마다 지도 위로 겹치거나 화면 밖으로 나간다.
             var header = UIBuilder.CreateText(mapBodyRt, "ListHeader", "섬 목록 · [표식]으로 고갈/자원/위험 표시 (지도에선 Shift+클릭)", UITheme.FontBody, NeutralGray, TextAnchor.MiddleLeft);
             header.raycastTarget = false;
             header.horizontalOverflow = HorizontalWrapMode.Overflow;
-            header.rectTransform.anchorMin = new Vector2(0f, 1f);
-            header.rectTransform.anchorMax = new Vector2(0f, 1f);
-            header.rectTransform.pivot = new Vector2(0f, 1f);
-            header.rectTransform.anchoredPosition = new Vector2(columnX, 0f);
+            header.rectTransform.anchorMin = new Vector2(1f, 1f);
+            header.rectTransform.anchorMax = new Vector2(1f, 1f);
+            header.rectTransform.pivot = new Vector2(1f, 1f);
+            header.rectTransform.anchoredPosition = Vector2.zero;
             header.rectTransform.sizeDelta = new Vector2(ListColumnWidth, ListHeaderHeight);
 
             // [B52] 50섬 대응: 행이 50개면 목록 전체 높이가 약 1,500px(행 26 + 간격 4)로 열 높이
@@ -235,11 +291,11 @@ namespace MakeGame.UI
             var scrollGo = new GameObject("IslandListScroll", typeof(RectTransform), typeof(ScrollRect));
             scrollGo.transform.SetParent(mapBodyRt, false);
             var scrollRt = scrollGo.GetComponent<RectTransform>();
-            scrollRt.anchorMin = new Vector2(0f, 1f);
-            scrollRt.anchorMax = new Vector2(0f, 1f);
-            scrollRt.pivot = new Vector2(0f, 1f);
-            scrollRt.anchoredPosition = new Vector2(columnX, -(ListHeaderHeight + 4f));
-            scrollRt.sizeDelta = new Vector2(ListColumnWidth, MapViewSize - ListHeaderHeight - 4f);
+            scrollRt.anchorMin = new Vector2(1f, 0f);
+            scrollRt.anchorMax = new Vector2(1f, 1f);
+            scrollRt.pivot = new Vector2(1f, 1f);
+            scrollRt.offsetMin = new Vector2(-ListColumnWidth, MapFooterHeight);
+            scrollRt.offsetMax = new Vector2(0f, -(ListHeaderHeight + 4f));
 
             // 뷰포트. 아주 옅은 배경을 까는 이유는 InventorySlotView와 같다 - (1) 목록 영역 경계가
             // 보이고, (2) raycastTarget이 켜져 있어야 행 사이 빈 자리에서 끌어 스크롤하는 조작이 먹는다.
@@ -302,8 +358,9 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 전체 지도 창을 열거나 닫는다. 옮겨둔 자리를 복원하고, 해상도가 바뀌었을 경우를 대비해
-        /// 화면 안으로 다시 맞춘다(인벤토리 SetOpen과 같은 순서).
+        /// 전체 지도 창을 열거나 닫는다. 창이 캔버스에 stretch돼 있어 자리를 기억하거나 화면 안으로
+        /// 밀어 넣을 것이 없다. 대신 축척 사다리는 **열 때마다** 다시 잡는다 - 창 크기가 해상도를
+        /// 따라가므로 지난번에 잡아둔 값이 지금 창에 맞는다는 보장이 없다.
         /// </summary>
         private void SetMapOpen(bool open)
         {
@@ -315,23 +372,11 @@ namespace MakeGame.UI
             if (!open)
                 return;
 
-            if (hasSavedMapPosition)
-                mapWindowRt.anchoredPosition = savedMapPosition;
-            else
-                mapWindowRt.anchoredPosition = DefaultMapWindowPosition();
-
-            if (mapDragHandle != null)
-                mapDragHandle.ClampNow();
-
-            RecalculateMapScale();
+            // 열 때는 항상 레벨 0(= 전부 보이는 배율)에서 시작한다. 지난번에 확대해 둔 자리에서
+            // 열리면 "지도를 열었는데 바다만 보인다"가 된다.
+            RecalculateMapScale(true);
             mapRefreshTimer = 0f;
             RefreshMapWindow();
-        }
-
-        /// <summary>처음 열 때의 기본 자리: 화면 한가운데(창이 커서 어느 쪽에 붙여도 HUD를 가린다).</summary>
-        private Vector2 DefaultMapWindowPosition()
-        {
-            return new Vector2(0f, MapWindowHeight * 0.5f);
         }
 
         /// <summary>
@@ -339,8 +384,12 @@ namespace MakeGame.UI
         /// 섬은 baseDistanceStep(1200) × 섬 번호 + jitter 규칙으로 배치되므로 가장 먼 섬도 원점에서
         /// 약 10km 안쪽이다. 40km 기준으로 그리면 지도의 94%가 빈 바다가 되고 섬 9개가 가운데
         /// 한 줌으로 뭉친다(픽셀을 4배 낭비한다).
+        ///
+        /// 여기서 정하는 것은 **사다리의 두 끝**이다: 레벨 0 = 경계 상자가 통째로 들어오는 배율,
+        /// 레벨 13 = 소형 섬이 상세하게 읽히는 배율. 그 사이는 등비수열로 채운다.
+        /// resetView가 true면 보던 자리와 줌 단계도 처음으로 되돌린다(창을 새로 열 때).
         /// </summary>
-        private void RecalculateMapScale()
+        private void RecalculateMapScale(bool resetView)
         {
             // **원점 기준 반지름이 아니라 섬 전체의 경계 상자에 맞춘다.**
             // 예전 방식(원점에서 가장 먼 섬까지의 거리를 반지름으로)은 배치가 원점을 중심으로
@@ -378,34 +427,197 @@ namespace MakeGame.UI
                 any = true;
             }
 
+            Vector2 viewSize = GetMapViewSize();
+            float viewMin = Mathf.Min(viewSize.x, viewSize.y);
+
             if (!any)
             {
-                mapCenter = Vector2.zero;
-                mapPixelsPerMeter = (MapViewSize * 0.5f - 12f) / 1000f;
-                UpdateScaleBar();
-                return;
+                mapFitCenter = Vector2.zero;
+                mapBoundsMin = new Vector2(-1000f, -1000f);
+                mapBoundsMax = new Vector2(1000f, 1000f);
+                mapFitPixelsPerMeter = (viewMin * 0.5f - 12f) / 1000f;
+            }
+            else
+            {
+                mapFitCenter = new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f);
+
+                // 팬 한계는 경계 상자에 탐사 원반 반경의 절반을 덧댄 사각형이다 - 가장자리 섬의 밝은
+                // 구역까지는 따라갈 수 있어야 하고, 그 밖의 빈 바다로는 못 나가야 한다.
+                float pad = ExploredRadiusMeters * 0.5f;
+                mapBoundsMin = new Vector2(minX - pad, minZ - pad);
+                mapBoundsMax = new Vector2(maxX + pad, maxZ + pad);
+
+                // 레벨 0은 뷰의 **짧은 변**에 가로·세로 중 큰 쪽을 맞춘다(한쪽이 잘리면 섬이 사라진다).
+                float halfSpan = Mathf.Max(maxX - minX, maxZ - minZ) * 0.5f + pad;
+                halfSpan = Mathf.Max(halfSpan, 1000f);
+                mapFitPixelsPerMeter = (viewMin * 0.5f - 12f) / halfSpan;
             }
 
-            mapCenter = new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f);
+            mapFitPixelsPerMeter = Mathf.Max(mapFitPixelsPerMeter, 0.000001f);
 
-            // 정사각 지도라 가로·세로 중 큰 쪽에 맞춘다(한쪽이 잘리면 섬이 사라진다).
-            // 탐사 원반이 가장자리에서 잘리지 않게 여유를 더한다.
-            float halfSpan = Mathf.Max(maxX - minX, maxZ - minZ) * 0.5f + ExploredRadiusMeters * 0.5f;
-            halfSpan = Mathf.Max(halfSpan, 1000f);
+            // 레벨 13의 배율은 "소형 섬 반지름이 뷰 짧은 변의 1/8"에서 거꾸로 푼다. 최소한 레벨 0의
+            // 2배는 되게 눌러 둔다 - 섬이 한 개뿐인 이상한 월드에서 사다리가 뒤집히지 않게 하는 바닥이다.
+            float smallRadius = Mathf.Max(1f, IslandSizeMetrics.GetTerrainRadius(IslandSize.Small));
+            float detailPixelsPerMeter = Mathf.Max(
+                viewMin * DetailSmallIslandFraction / smallRadius,
+                mapFitPixelsPerMeter * 2f);
 
-            mapPixelsPerMeter = (MapViewSize * 0.5f - 12f) / halfSpan;
+            // 단계당 배율이 일정해야 휠 한 칸의 체감이 어디서나 같다(등비수열).
+            mapZoomStepRatio = Mathf.Pow(detailPixelsPerMeter / mapFitPixelsPerMeter, 1f / (MapZoomStepCount - 1));
 
-            UpdateScaleBar();
+            if (resetView)
+            {
+                mapZoomLevel = 0;
+                mapCenter = mapFitCenter;
+            }
+
+            lastMapViewSize = viewSize;
+            ApplyMapZoom();
         }
 
-        /// <summary>축척자 길이를 60~170px에 들어오는 "깔끔한" 거리로 맞춘다.</summary>
+        /// <summary>
+        /// 지도 뷰의 지금 크기(px). 아직 레이아웃이 한 번도 돌지 않았으면 기준 해상도에서 어림한다 -
+        /// 0으로 나눈 축척이 한 프레임이라도 생기면 표식 50개가 전부 원점에 뭉친다.
+        /// </summary>
+        private Vector2 GetMapViewSize()
+        {
+            if (mapViewRt != null)
+            {
+                Vector2 size = mapViewRt.rect.size;
+                if (size.x > 1f && size.y > 1f)
+                    return size;
+            }
+
+            return new Vector2(
+                Mathf.Max(320f, 1920f - UITheme.ChromeWidth - ListColumnWidth - ListColumnGap),
+                Mathf.Max(240f, 1080f - UITheme.ChromeTop - UITheme.ChromeBottom - MapFooterHeight));
+        }
+
+        /// <summary>지금 줌 단계의 배율을 실제 값에 반영하고, 팬 위치를 다시 가둔다.</summary>
+        private void ApplyMapZoom()
+        {
+            mapZoomLevel = Mathf.Clamp(mapZoomLevel, 0, MapZoomStepCount - 1);
+            mapPixelsPerMeter = mapFitPixelsPerMeter * Mathf.Pow(mapZoomStepRatio, mapZoomLevel);
+            ClampMapCenter();
+            UpdateScaleBar();
+            mapViewDirty = true;
+        }
+
+        /// <summary>위 7단계에서만 실제 해안선을 그린다(아래 7단계는 지금까지처럼 단순한 원 마커).</summary>
+        private bool IsDetailZoom => mapZoomLevel >= SilhouetteZoomSteps;
+
+        /// <summary>
+        /// 줌 단계를 바꾼다. focusLocal(뷰 중심 기준 px)에 있던 월드 좌표가 **그 자리에 그대로
+        /// 남도록** 중심을 다시 잡는다 - 이게 없으면 확대할수록 보던 곳이 화면 밖으로 달아난다.
+        /// </summary>
+        private void SetMapZoomLevel(int level, Vector2 focusLocal)
+        {
+            int clamped = Mathf.Clamp(level, 0, MapZoomStepCount - 1);
+            if (clamped == mapZoomLevel)
+                return;
+
+            Vector2 anchorWorld = mapCenter + focusLocal / Mathf.Max(0.000001f, mapPixelsPerMeter);
+
+            mapZoomLevel = clamped;
+            mapPixelsPerMeter = mapFitPixelsPerMeter * Mathf.Pow(mapZoomStepRatio, mapZoomLevel);
+            mapCenter = anchorWorld - focusLocal / Mathf.Max(0.000001f, mapPixelsPerMeter);
+
+            ClampMapCenter();
+            UpdateScaleBar();
+            mapViewDirty = true;
+            mapRefreshTimer = 0f;   // 실루엣↔상세 전환과 이름표를 다음 프레임에 바로 반영한다
+        }
+
+        /// <summary>키보드 줌의 기준점. 커서가 지도 위에 있으면 커서, 아니면 뷰 한가운데다.</summary>
+        private Vector2 MapZoomFocusLocal()
+        {
+            if (mapViewRt != null
+                && RectTransformUtility.ScreenPointToLocalPointInRectangle(mapViewRt, Input.mousePosition, null, out var local)
+                && mapViewRt.rect.Contains(local))
+                return local;
+
+            return Vector2.zero;
+        }
+
+        /// <summary>드래그한 픽셀만큼 지도를 민다(끈 만큼 월드가 따라온다).</summary>
+        private void OnMapPan(Vector2 deltaPixels)
+        {
+            if (mapPixelsPerMeter <= 0.000001f)
+                return;
+
+            mapCenter -= deltaPixels / mapPixelsPerMeter;
+            ClampMapCenter();
+            mapViewDirty = true;
+        }
+
+        /// <summary>휠 한 칸 = 줌 한 단계. 커서 아래 지점을 기준으로 확대·축소한다.</summary>
+        private void OnMapZoom(float scroll, Vector2 focusLocal)
+        {
+            if (Mathf.Abs(scroll) < 0.01f)
+                return;
+
+            SetMapZoomLevel(mapZoomLevel + (scroll > 0f ? 1 : -1), focusLocal);
+        }
+
+        /// <summary>
+        /// 지도를 아무 데나 끌고 가지 못하게 막는다. 보이는 사각형이 섬 경계 상자 **안에** 머물도록
+        /// 가두고, 뷰가 상자보다 넓은 축에서는 가운데에 고정한다. 레벨 0은 두 축 모두 그 경우라
+        /// 팬이 저절로 잠긴다(다 보이는데 끌 수 있게 두면 화면이 빈 바다로 미끄러진다).
+        /// </summary>
+        private void ClampMapCenter()
+        {
+            Vector2 viewSize = GetMapViewSize();
+            float ppm = Mathf.Max(0.000001f, mapPixelsPerMeter);
+
+            mapCenter.x = ClampMapAxis(mapCenter.x, mapBoundsMin.x, mapBoundsMax.x, viewSize.x * 0.5f / ppm);
+            mapCenter.y = ClampMapAxis(mapCenter.y, mapBoundsMin.y, mapBoundsMax.y, viewSize.y * 0.5f / ppm);
+        }
+
+        private static float ClampMapAxis(float center, float min, float max, float halfExtent)
+        {
+            if (halfExtent * 2f >= max - min)
+                return (min + max) * 0.5f;
+
+            return Mathf.Clamp(center, min + halfExtent, max - halfExtent);
+        }
+
+        /// <summary>월드 좌표가 지금 보이는 사각형(여유 포함) 안에 걸리는지. 화면 밖 물체를 끄는 데 쓴다.</summary>
+        private bool IsWithinMapView(Vector3 worldPosition, float marginX, float marginZ)
+        {
+            return Mathf.Abs(worldPosition.x - mapCenter.x) <= marginX
+                && Mathf.Abs(worldPosition.z - mapCenter.y) <= marginZ;
+        }
+
+        /// <summary>
+        /// 상세 단계에서 쓸 섬 윤곽. **지형에 주입되는 것과 같은 배열**을 얻으려고
+        /// WorldMapManager.GetMaldivesRadialMask를 그대로 부른다 - MaldivesLayout.Islands[i].mask를
+        /// 직접 읽으면 회전된 사본을 쓰는 시작 섬(0번)만 모양이 돌아간다.
+        /// 섬마다 한 번만 받아 들고 있는 이유: 0번은 부를 때마다 새 배열을 만드는데,
+        /// MapIslandShape.Configure는 **배열 참조가 같을 때만** 메시 재굽기를 건너뛴다.
+        /// </summary>
+        private float[] GetIslandRadialMask(int islandId)
+        {
+            if (islandRadialMasks.TryGetValue(islandId, out float[] cached))
+                return cached;
+
+            float[] mask = worldMapManager != null ? worldMapManager.GetMaldivesRadialMask(islandId) : null;
+            islandRadialMasks[islandId] = mask;   // null도 담는다(실측 배치가 꺼진 월드에서 매번 되묻지 않게)
+            return mask;
+        }
+
+        /// <summary>
+        /// 축척자 길이를 60~170px에 들어오는 "깔끔한" 거리로 맞춘다.
+        /// 후보를 10m까지 내린 이유: 14단계 사다리는 양 끝의 배율이 80배 가까이 차이 나서, 예전
+        /// 후보(100m~)만 두면 최대 줌에서 어느 것도 띠에 못 들어와 막대가 화면을 몇 배 넘어갔다.
+        /// </summary>
         private void UpdateScaleBar()
         {
             if (scaleBarRt == null || scaleLabel == null)
                 return;
 
-            float[] candidates = { 100f, 200f, 500f, 1000f, 2000f, 5000f, 10000f };
-            float chosen = candidates[candidates.Length - 1];
+            float[] candidates = { 10f, 25f, 50f, 100f, 200f, 500f, 1000f, 2000f, 5000f, 10000f };
+            float chosen = candidates[0];
+            float bestGap = float.MaxValue;
 
             for (int i = 0; i < candidates.Length; i++)
             {
@@ -413,12 +625,22 @@ namespace MakeGame.UI
                 if (pixels >= 60f && pixels <= 170f)
                 {
                     chosen = candidates[i];
+                    bestGap = 0f;
                     break;
+                }
+
+                // 어느 후보도 띠에 못 들어오면 115px에 가장 가까운 것을 쓴다(막대가 사라지거나
+                // 화면을 넘는 쪽이 눈금이 어중간한 쪽보다 훨씬 나쁘다).
+                float gap = Mathf.Abs(pixels - 115f);
+                if (gap < bestGap)
+                {
+                    bestGap = gap;
+                    chosen = candidates[i];
                 }
             }
 
-            scaleBarRt.sizeDelta = new Vector2(Mathf.Max(20f, chosen * mapPixelsPerMeter), 2f);
-            scaleLabel.text = $"{chosen:F0}m";
+            scaleBarRt.sizeDelta = new Vector2(Mathf.Clamp(chosen * mapPixelsPerMeter, 20f, 400f), 2f);
+            scaleLabel.text = $"{chosen:F0}m · 줌 {mapZoomLevel + 1}/{MapZoomStepCount} ({(IsDetailZoom ? "상세" : "실루엣")})";
         }
 
         /// <summary>월드 좌표(X,Z)를 지도 위 픽셀 좌표로 바꾼다. 지도 중심은 섬 경계 상자의 중심(mapCenter)이다.</summary>
@@ -436,6 +658,13 @@ namespace MakeGame.UI
             if (worldMapManager == null || worldMapManager.islands == null)
                 return;
 
+            // 해상도(창 크기)가 바뀌면 뷰가 넓어진 만큼 사다리를 다시 잡는다. 보던 자리와 줌 단계는
+            // 그대로 둔다. **여기서 보장하는 이유**: 축척을 Start나 창 조립 시점에만 잡아 두면 아직
+            // 레이아웃이 돌지 않은 크기가 그대로 굳는다.
+            Vector2 viewSize = GetMapViewSize();
+            if (Mathf.Abs(viewSize.x - lastMapViewSize.x) > 1f || Mathf.Abs(viewSize.y - lastMapViewSize.y) > 1f)
+                RecalculateMapScale(false);
+
             if (player != null && playerPinRt != null)
             {
                 playerPinRt.anchoredPosition = WorldToMap(player.position);
@@ -444,12 +673,24 @@ namespace MakeGame.UI
 
             mapRefreshTimer -= Time.unscaledDeltaTime;
             if (mapRefreshTimer > 0f)
+            {
+                // 끄는 동안에는 **자리만** 옮긴다. 이름표까지 매 프레임 다시 만들면 50개 문자열이
+                // 프레임마다 새로 할당돼 드래그 내내 GC가 달아오른다.
+                if (mapViewDirty)
+                {
+                    mapViewDirty = false;
+                    RefreshExploredArea();
+                    RefreshMapMarkers(false);
+                }
+
                 return;
+            }
 
             mapRefreshTimer = MapRefreshInterval;
+            mapViewDirty = false;
 
             RefreshExploredArea();
-            RefreshMapMarkers();
+            RefreshMapMarkers(true);
             RefreshList();
         }
 
@@ -478,10 +719,20 @@ namespace MakeGame.UI
             Color haloColor = DeepOcean;
             haloColor.a = 0.5f;
 
+            // 최대 줌에서는 원반 하나가 1만 px을 넘는다. 화면에 걸리지도 않는 원반까지 켜 두면
+            // 50장이 통째로 그려지며 오버드로가 화면을 몇 겹씩 덮는다.
+            Vector2 viewSize = GetMapViewSize();
+            float ppm = Mathf.Max(0.000001f, mapPixelsPerMeter);
+            float haloMarginX = viewSize.x * 0.5f / ppm + ExploredRadiusMeters;
+            float haloMarginZ = viewSize.y * 0.5f / ppm + ExploredRadiusMeters;
+
             int used = 0;
             for (int i = 0; i < islands.Count; i++)
             {
                 if (!IsRevealed(islands[i]))
+                    continue;
+
+                if (!IsWithinMapView(islands[i].mapPosition, haloMarginX, haloMarginZ))
                     continue;
 
                 var halo = exploredHalos[used++];
@@ -504,11 +755,19 @@ namespace MakeGame.UI
                 exploredHalos[i].gameObject.SetActive(false);
         }
 
-        /// <summary>전체 지도의 섬 표식을 갱신한다. 크기는 실제 지형 반지름 비례, 이름표는 탐사한 섬만.</summary>
-        private void RefreshMapMarkers()
+        /// <summary>
+        /// 전체 지도의 섬 표식을 갱신한다. 크기는 실제 지형 반지름 비례, 이름표는 탐사한 섬만.
+        /// rebuildLabels가 false면 자리·크기·모양만 손대고 이름표 문자열은 그대로 둔다(팬 중).
+        /// </summary>
+        private void RefreshMapMarkers(bool rebuildLabels)
         {
             var islands = worldMapManager.islands;
             EnsureMarkerCount(mapMarkers, mapMarkerLayer, islands.Count, true);
+
+            Vector2 viewSize = GetMapViewSize();
+            float viewMin = Mathf.Min(viewSize.x, viewSize.y);
+            float ppm = Mathf.Max(0.000001f, mapPixelsPerMeter);
+            bool detail = IsDetailZoom;
 
             for (int i = 0; i < islands.Count; i++)
             {
@@ -516,14 +775,53 @@ namespace MakeGame.UI
                 var marker = mapMarkers[i];
                 bool revealed = IsRevealed(island);
 
+                // 화면 밖 섬은 통째로 끈다. 여유는 섬 반지름 + 이름표가 삐져나오는 폭만큼이다.
+                float margin = IslandSizeMetrics.GetTerrainRadius(island.size) + 120f / ppm;
+                if (!IsWithinMapView(island.mapPosition,
+                        viewSize.x * 0.5f / ppm + margin,
+                        viewSize.y * 0.5f / ppm + margin))
+                {
+                    marker.root.gameObject.SetActive(false);
+                    continue;
+                }
+
                 marker.islandId = island.islandId;
                 marker.root.gameObject.SetActive(true);
                 marker.root.anchoredPosition = WorldToMap(island.mapPosition);
 
-                float diameter = MarkerDiameter(island, revealed, mapPixelsPerMeter, MapViewSize);
+                float diameter = MarkerDiameter(island, revealed, mapPixelsPerMeter, viewMin);
                 ApplyMarkerVisual(marker, island, revealed, diameter, false);
 
-                if (marker.label != null)
+                // 실루엣 ↔ 상세 전환. **탐사한 섬만** 실제 해안선으로 바꾼다 - 미탐사 섬은 지금까지처럼
+                // 크기를 숨긴 고정 크기 점이어야 한다(모양까지 보여주면 가보지 않고도 규모를 알아낸다).
+                float[] shapeMask = detail && revealed ? GetIslandRadialMask(island.islandId) : null;
+                bool useShape = shapeMask != null;
+                if (marker.shape != null)
+                {
+                    if (useShape)
+                    {
+                        marker.shapeRt.sizeDelta = new Vector2(diameter, diameter);
+                        marker.shape.color = marker.fill.color;
+                        marker.shape.Configure(shapeMask, diameter * 0.5f);
+                    }
+
+                    if (marker.shape.gameObject.activeSelf != useShape)
+                        marker.shape.gameObject.SetActive(useShape);
+                }
+
+                // 둘 다 켜 두면 원과 폴리곤이 겹쳐 보인다.
+                if (marker.fill.enabled == useShape)
+                    marker.fill.enabled = !useShape;
+
+                // 클릭 판정도 표식 크기를 따라간다. 상세 단계에서 섬이 화면의 1/4을 차지하는데
+                // 판정만 24px에 머물면 **눈에 보이는 섬을 눌러도 아무 일이 없다**.
+                if (marker.hitButton != null && marker.hitButton.transform is RectTransform hitRt)
+                {
+                    float hit = Mathf.Max(24f, diameter);
+                    hitRt.sizeDelta = new Vector2(hit, hit);
+                }
+
+                if (rebuildLabels && marker.label != null)
                 {
                     bool isCurrent = islandTravel != null && island.islandId == islandTravel.currentIslandId;
                     // [B52] 미탐사 이름표는 그리지 않는다(예전에는 "?"). 50섬 실측 배치는 환초라 섬이
@@ -540,6 +838,55 @@ namespace MakeGame.UI
 
             for (int i = islands.Count; i < mapMarkers.Count; i++)
                 mapMarkers[i].root.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// 지도 뷰가 직접 받는 마우스 조작(드래그 = 팬, 휠 = 줌).
+        /// **컴포넌트로 받는 이유**: Input.GetAxis("Mouse ScrollWheel")로 읽으면 지도 밖 어디서
+        /// 굴려도 줌이 되고, 오른쪽 섬 목록의 세로 스크롤과 같은 입력을 놓고 싸운다.
+        /// 델타를 화면 px이 아니라 이 사각형의 지역 좌표로 환산하는 이유는 CanvasScaler다 -
+        /// 해상도가 기준(1920×1080)과 다르면 화면 px과 캔버스 px의 배율이 다르다.
+        /// </summary>
+        private sealed class MapPanZoomInput : MonoBehaviour, IPointerDownHandler, IDragHandler, IScrollHandler
+        {
+            public System.Action<Vector2> onPan;
+            public System.Action<float, Vector2> onZoom;
+
+            private RectTransform rt;
+
+            private RectTransform SelfRect => rt != null ? rt : (rt = transform as RectTransform);
+
+            public void OnPointerDown(PointerEventData eventData)
+            {
+                // 받아만 둔다. EventSystem은 **누른 대상**에서 위로 올라가며 드래그 처리기를 찾으므로,
+                // 이 인터페이스가 없으면 빈 바다를 눌러 끌기 시작할 수 없다.
+            }
+
+            public void OnDrag(PointerEventData eventData)
+            {
+                if (onPan == null || SelfRect == null)
+                    return;
+
+                if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                        SelfRect, eventData.position, eventData.pressEventCamera, out Vector2 now))
+                    return;
+
+                if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                        SelfRect, eventData.position - eventData.delta, eventData.pressEventCamera, out Vector2 before))
+                    return;
+
+                onPan(now - before);
+            }
+
+            public void OnScroll(PointerEventData eventData)
+            {
+                if (onZoom == null || SelfRect == null)
+                    return;
+
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    SelfRect, eventData.position, eventData.pressEventCamera, out Vector2 local);
+                onZoom(eventData.scrollDelta.y, local);
+            }
         }
 
         // ────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ namespace MakeGame.Systems
     ///   3. 드래그 가능한 창이 하나라도 열려 있다(아래 참고).
     ///   4. <see cref="releaseCursorKey"/>(기본 LeftShift)를 누르고 있다.
     ///
-    /// **창 열림 판정을 UIDragHandle로 하는 이유.** 인벤토리(Tab)·제작(V)·퀘스트(J)·세계지도(M)·
+    /// **창 열림 판정을 UIDragHandle로 하는 이유.** 인벤토리(Tab)·제작(V)·퀘스트(J)·전체 지도(M)·
     /// 건축(B) 다섯 창은 전부 제목 표시줄에 <see cref="UIDragHandle"/>을 붙이고, 닫을 때 창 루트를
     /// <c>SetActive(false)</c>한다(InventoryUI.SetOpen / CraftingUI.SetOpen / QuestUI.SetOpen /
     /// MinimapUI.SetMapOpen / BuildMenuUI.SetOpen). 즉 "활성 상태인 UIDragHandle이 있는가"가 곧
@@ -181,7 +181,7 @@ namespace MakeGame.Systems
                 && Input.GetKey(KeyCode.RightShift);
         }
 
-        /// <summary>드래그 가능한 창(인벤토리·제작·퀘스트·세계지도)이 하나라도 열려 있는지.</summary>
+        /// <summary>창(인벤토리·제작·퀘스트·전체 지도)이 하나라도 열려 있는지.</summary>
         private bool IsAnyWindowOpen()
         {
             for (int i = 0; i < windowHandles.Count; i++)
