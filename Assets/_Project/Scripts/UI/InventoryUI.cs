@@ -167,6 +167,7 @@ namespace MakeGame.UI
         private Text detailName;
         private Text detailCategory;
         private RectTransform detailSeparator;
+        private RectTransform detailBlock;
         private Text detailDescription;
         private Text detailStats;
         private Text detailUsage;
@@ -500,10 +501,27 @@ namespace MakeGame.UI
             filterRt.sizeDelta = new Vector2(FilterChipWidth, InfoRowHeight);
             filterRt.anchoredPosition = new Vector2(WindowPadding, -BodyTop);
 
+            // 기본 버튼색(초록)을 그대로 두면 같은 창의 '버리기'와 같은 무게로 보인다. 필터는 아무 때나
+            // 눌러도 되는 조회 조작이고 버리기는 되돌릴 수 없는 조작이라, 둘의 시각적 무게가 같으면 안 된다.
+            // 색을 새로 만들지 않고 흰색 알파만 낮춰 '칸과 같은 재질의 칩'으로 보이게 한다.
+            var chipImage = filterButton.GetComponent<Image>();
+            if (chipImage != null)
+            {
+                chipImage.color = new Color(1f, 1f, 1f, 0.35f);
+                var chipColors = filterButton.colors;
+                chipColors.normalColor = new Color(1f, 1f, 1f, 0.30f);      // 실효 알파 0.105
+                chipColors.highlightedColor = new Color(1f, 1f, 1f, 0.55f); // 0.19
+                chipColors.pressedColor = new Color(1f, 1f, 1f, 0.75f);     // 0.26
+                chipColors.selectedColor = chipColors.normalColor;
+                chipColors.disabledColor = new Color(1f, 1f, 1f, 0.15f);
+                filterButton.colors = chipColors;
+            }
+
             filterLabel = filterButton.GetComponentInChildren<Text>();
             if (filterLabel != null)
             {
                 filterLabel.fontSize = UITheme.FontBody;
+                filterLabel.color = UITheme.TextPrimary;
                 filterLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             }
         }
@@ -543,9 +561,32 @@ namespace MakeGame.UI
             // 아이템의 "정체"와 "설명"을 선으로 가른다 - 창 헤더가 하는 일과 같은 규칙을 패널 안에서 반복한다.
             detailSeparator = UIBuilder.CreateSeparator(detailPane, "DetailSeparator", 164f, DetailPadding);
 
-            detailDescription = CreateDetailText("DetailDescription", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperLeft, 172f, 120f);
-            detailStats = CreateDetailText("DetailStats", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.UpperLeft, 298f, 36f);
-            detailUsage = CreateDetailText("DetailUsage", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperLeft, 338f, 60f);
+            // 설명·수치·사용법은 자리를 고정하지 않고 **위에서부터 붙여 쌓는다**. 고정 높이를 주면
+            // 설명이 세 줄인 아이템에서 다음 줄까지 70px 넘는 구멍이 생겨 패널이 비어 보였다.
+            // (버리기 버튼만은 계속 패널 바닥 고정이다 - 되돌릴 수 없는 조작의 자리는 움직이면 안 된다.)
+            var block = new GameObject("DetailBlock", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            block.transform.SetParent(detailPane, false);
+            detailBlock = block.GetComponent<RectTransform>();
+            detailBlock.anchorMin = new Vector2(0f, 1f);
+            detailBlock.anchorMax = new Vector2(1f, 1f);
+            detailBlock.pivot = new Vector2(0.5f, 1f);
+            // 폭은 패널 폭에서 좌우 여백만 뺀 값, 높이는 ContentSizeFitter가 내용에 맞춰 덮어쓴다.
+            detailBlock.sizeDelta = new Vector2(-DetailPadding * 2f, 0f);
+            detailBlock.anchoredPosition = new Vector2(0f, -172f);
+
+            var blockLayout = block.GetComponent<VerticalLayoutGroup>();
+            blockLayout.spacing = 10f;
+            blockLayout.childControlHeight = true;
+            blockLayout.childControlWidth = true;
+            blockLayout.childForceExpandHeight = false;
+            blockLayout.childForceExpandWidth = true;
+
+            var blockFitter = block.GetComponent<ContentSizeFitter>();
+            blockFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            detailDescription = CreateBlockText("DetailDescription", UITheme.TextDim);
+            detailStats = CreateBlockText("DetailStats", UITheme.TextPrimary);
+            detailUsage = CreateBlockText("DetailUsage", UITheme.TextDim);
 
             // 빈 상태 문구는 패널 한가운데다. 위쪽(아이콘 자리)에 두면 아이템이 있을 때와 없을 때
             // 시선이 같은 곳에 머물러, 패널이 비었다는 사실이 늦게 읽힌다.
@@ -586,6 +627,19 @@ namespace MakeGame.UI
             hintRt.offsetMax = new Vector2(-DetailPadding, DetailPadding + HintHeight * 0.5f);
 
             ShowDetailEmpty();
+        }
+
+        /// <summary>
+        /// 세로 레이아웃 블록에 들어가는 글줄. 높이를 지정하지 않는다 - VerticalLayoutGroup이
+        /// Text의 preferredHeight(=실제 줄 수)를 읽어 스스로 잡는다.
+        /// </summary>
+        private Text CreateBlockText(string name, Color color)
+        {
+            var text = UIBuilder.CreateText(detailBlock, name, "", UITheme.FontBody, color, TextAnchor.UpperLeft);
+            text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            return text;
         }
 
         /// <summary>
@@ -832,7 +886,7 @@ namespace MakeGame.UI
 
             capacityLabel.text = $"{used} / {capacity}" + (used >= capacity ? "  (가득 참)" : "");
             capacityLabel.color = used >= capacity ? DangerRed
-                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : UITheme.TextDim);
+                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : UITheme.TextPrimary);
 
             lastDisplayedUsedSlots = used;
             lastDisplayedSlotCapacity = capacity;
@@ -1197,6 +1251,12 @@ namespace MakeGame.UI
             // "쓰는 법"이고 어디부터가 "버리는 법"인지 구분되지 않는다.
             string usage = GetUsageHint(data);
             detailUsage.text = string.IsNullOrEmpty(usage) ? GetDropHint(data) : usage + "\n" + GetDropHint(data);
+
+            // 내용이 빈 줄은 아예 접는다. 세로 레이아웃은 글자가 없는 칸에도 간격 10px를 넣기 때문에,
+            // 설명이 비어 있는 아이템에서 이유 없는 틈이 생긴다.
+            detailDescription.gameObject.SetActive(!string.IsNullOrEmpty(detailDescription.text));
+            detailStats.gameObject.SetActive(!string.IsNullOrEmpty(detailStats.text));
+            detailUsage.gameObject.SetActive(!string.IsNullOrEmpty(detailUsage.text));
         }
 
         /// <summary>
