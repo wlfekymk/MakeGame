@@ -717,7 +717,23 @@ namespace MakeGame.UI
 
             float diameter = ExploredRadiusMeters * 2f * mapPixelsPerMeter;
             Color haloColor = DeepOcean;
-            haloColor.a = 0.5f;
+
+            // 탐사 안개는 "어디를 가 봤나"를 한눈에 보는 **개요용** 정보다. 확대할수록 원반 하나가
+            // 화면보다 커져서 지도가 통째로 파란 벽이 된다(실기에서 상세 단계가 그렇게 됐다).
+            // 실루엣 끝에서부터 서서히 지우고 상세 두 단계 위에서 완전히 사라지게 한다.
+            float haloAlpha = 0.5f * Mathf.Clamp01(Mathf.InverseLerp(
+                SilhouetteZoomSteps + 2, SilhouetteZoomSteps - 1, mapZoomLevel));
+            haloColor.a = haloAlpha;
+
+            if (haloAlpha <= 0.001f)
+            {
+                for (int i = 0; i < exploredHalos.Count; i++)
+                {
+                    if (exploredHalos[i].gameObject.activeSelf)
+                        exploredHalos[i].gameObject.SetActive(false);
+                }
+                return;
+            }
 
             // 최대 줌에서는 원반 하나가 1만 px을 넘는다. 화면에 걸리지도 않는 원반까지 켜 두면
             // 50장이 통째로 그려지며 오버드로가 화면을 몇 겹씩 덮는다.
@@ -812,6 +828,13 @@ namespace MakeGame.UI
                 // 둘 다 켜 두면 원과 폴리곤이 겹쳐 보인다.
                 if (marker.fill.enabled == useShape)
                     marker.fill.enabled = !useShape;
+
+                // 링도 같이 끈다. 링은 채움 원보다 4px 큰 **꽉 찬 원**이라 평소에는 2px 테두리로만
+                // 보이는데, 채움을 끄면 그 원이 통째로 드러나 폴리곤 뒤에 커다란 회색 원반이 깔린다
+                // (실기에서 최대 줌의 섬이 접시 위에 얹힌 것처럼 보였다).
+                // 표식 정보는 이름표 꼬리표(GetMarkTag)가 이미 같이 알리므로 잃는 것이 없다.
+                if (marker.ring != null && marker.ring.enabled == useShape)
+                    marker.ring.enabled = !useShape;
 
                 // 클릭 판정도 표식 크기를 따라간다. 상세 단계에서 섬이 화면의 1/4을 차지하는데
                 // 판정만 24px에 머물면 **눈에 보이는 섬을 눌러도 아무 일이 없다**.
