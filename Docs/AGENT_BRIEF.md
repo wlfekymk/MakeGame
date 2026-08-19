@@ -438,14 +438,18 @@ health/maxHealth 100 · hunger/thirst 시작 100
 **총 50개**(소 36 / 중 10 / 대 3 / 특대 1)다.
 
 **월드 배치** (2026-08-19 재생성 · `Tools/mapgen/gen_layout.py` SEED=20260819 · **둘 다 자동 생성물이니 손대지 마라**):
-span **27.0 × 27.7 km** · 최근접 **786 m** · 이웃 섬까지 중앙값 **1,143 m** ·
-시작 섬 = **남서쪽 구석 (-12300, -12300)** · **시작 섬 반경 4 km 안은 소형 3개뿐** ·
-시작 → 대형 3개 **11.8 / 21.4 / 30.7 km** · 시작 → **특대 19.0 km** · 좌표 절댓값 최대 14.0 km(< 반폭 20 km).
+span **24.1 × 27.9 km** · 최근접 **830 m** · 이웃 섬까지 중앙값 **1,233 m** ·
+시작 섬 = **남서쪽 구석 (-12300, -12300)** · **시작 섬 반경 4 km 안은 소형 4개뿐** ·
+시작 → 대형 3개 **10.0 / 19.9 / 28.1 km** · 시작 → **특대 18.4 km** · 좌표 절댓값 최대 14.0 km(< 반폭 20 km).
+시작 섬 쪽은 난수에 맡기면 6.6 km가 통째로 비어 초반이 막힌다 — 생성기가 3.2~4.8 km와
+5.6~7.6 km 고리에 군집을 **강제로** 심는다(`STEPPING_STONE_RINGS`). 최대 거리 공백 3.1 km.
 → **특대 섬 이동 조건** = `RaftStructure.IsOceanReady` + `HasPart(RaftPart.Motor)`
-(`IslandTravel.CurrentBypass.OceanReadyWithMotor`). 19 km를 노 1.2 / 돛 4.0 / 모터 6.0 m/s로 나누면
-4시간 24분 / 1시간 19분 / 53분이라, 모터가 유일하게 현실적인 수단이다.
+(`IslandTravel.CurrentBypass.OceanReadyWithMotor`). 18.4 km를 노 1.2 / 돛 4.0 / 모터 6.0 m/s로 나누면
+4시간 15분 / 1시간 17분 / 51분이라, 모터가 유일하게 현실적인 수단이다.
 → 상어는 분포 폭에 비례해 자동 증가(`SharkSpawner.ResolveSharkCount`, 기준 10.4 km / 상한 24) — **현재 16마리**.
-→ 전체 지도 탐사 반경 `MinimapUI.ExploredRadiusMeters` = **4,000 m**(옛 1,500 m).
+→ 전체 지도 탐사 반경 `MinimapUI.ExploredRadiusMeters` = **2,600 m**(옛 1,500 m).
+→ 전체 지도는 **섬 경계 상자**에 맞춘다(`RecalculateMapScale`). 예전의 원점 기준 반지름 방식은
+   구석 시작 배치에서 화면의 절반을 빈 바다로 낭비했다(실기 확인).
 플레이어 시작 위치 `(0, 14, 0)`(씬) — terrainMaxHeight 8보다 높아야 한다. **5로 두면 지형 안에서 스폰된다.**
 CharacterController(씬): 높이 2 · 반지름 0.5 · `stepOffset 0.3` · `skinWidth 0.08` · center (0,1,0).
 → 계단·턱 관련 수치를 손대기 전에 이 네 값을 먼저 봐라(`BuildingSystem.cs:145` 주석이 이걸 전제한다).

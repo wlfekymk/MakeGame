@@ -33,6 +33,10 @@ CLUSTER_COUNT       = 13       # 군집 수
 CLUSTER_MIN_GAP     = 4200.0   # 군집 중심끼리 최소 거리
 CLUSTER_RADIUS      = (700.0, 2100.0)   # 군집 반경 범위
 
+# 시작 섬에서 이 거리 구간마다 군집을 하나씩 **보장**한다(징검다리).
+# 구석에서 시작하면 시작 섬 쪽 사분면이 비기 쉬워서, 여기만 난수에 맡기지 않는다.
+STEPPING_STONE_RINGS = [(3200.0, 4800.0), (5600.0, 7600.0)]
+
 # ★ oceanSize(씬 값 40000 = ±20 km)를 넘으면 섬이 바다 밖에 놓인다.
 #   HALF_EXTENT는 반드시 그보다 넉넉히 작아야 한다.
 OCEAN_HALF    = 20000.0
@@ -60,6 +64,24 @@ def generate_positions(rng, count):
     """
     # 1) 군집 중심 — 서로 CLUSTER_MIN_GAP 이상 떨어뜨린다. 첫 번째는 시작 섬 자리.
     centers = [START_POS]
+
+    # ★ 시작 섬 주변 징검다리를 **강제로** 심는다. 난수에만 맡겼더니 시작 군집 다음 섬이
+    #   8.2 km 밖에 있어(그 사이 6.6 km가 완전 공백) 초반이 통째로 막혔다.
+    #   구석에서 시작하는 배치에서는 시작 섬 쪽이 원래 비기 쉬우므로 여기만 손으로 보장한다.
+    sx0, sz0 = START_POS
+    for lo, hi in STEPPING_STONE_RINGS:
+        for _ in range(4000):
+            ang = rng.uniform(0, math.tau)
+            r = rng.uniform(lo, hi)
+            x, z = sx0 + math.cos(ang) * r, sz0 + math.sin(ang) * r
+            if abs(x) > HALF_EXTENT or abs(z) > HALF_EXTENT:
+                continue
+            if all((x - cx) ** 2 + (z - cz) ** 2 >= CLUSTER_MIN_GAP ** 2 for cx, cz in centers):
+                centers.append((x, z))
+                break
+        else:
+            raise SystemExit(f"징검다리 군집 배치 실패: {lo}~{hi}m")
+
     tries = 0
     while len(centers) < CLUSTER_COUNT and tries < 200000:
         tries += 1

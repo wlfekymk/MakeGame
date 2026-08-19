@@ -39,7 +39,7 @@ namespace MakeGame.UI
         /// 읽히려면 그보다 넉넉히 커야 한다. 4,000m면 이웃 무리를 통째로 덮고, 27km짜리 바다에서도
         /// 밝은 구역이 점이 아니라 띠로 보인다.
         /// </summary>
-        private const float ExploredRadiusMeters = 4000f;
+        private const float ExploredRadiusMeters = 2600f;
 
         /// <summary>목록·라벨 문자열을 다시 만드는 간격(초). 매 프레임 문자열을 새로 만들지 않기 위함.</summary>
         private const float MapRefreshInterval = 0.2f;
@@ -78,6 +78,9 @@ namespace MakeGame.UI
         private readonly List<IslandMarker> mapMarkers = new List<IslandMarker>();
         private readonly List<Image> exploredHalos = new List<Image>();
         private float mapPixelsPerMeter = 0.02f;
+
+        /// <summary>지도 한가운데에 오는 월드 좌표(섬 경계 상자의 중심). 원점이 아니다.</summary>
+        private Vector2 mapCenter = Vector2.zero;
 
         // ── 섬 목록(전체 지도 창 오른쪽 열로 흡수됨)
         private RectTransform listContainer;
@@ -339,7 +342,14 @@ namespace MakeGame.UI
         /// </summary>
         private void RecalculateMapScale()
         {
-            float extent = 0f;
+            // **원점 기준 반지름이 아니라 섬 전체의 경계 상자에 맞춘다.**
+            // 예전 방식(원점에서 가장 먼 섬까지의 거리를 반지름으로)은 배치가 원점을 중심으로
+            // 고르게 퍼져 있을 때만 맞는다. 2026-08-19 배치처럼 시작 섬이 구석에 있고 월드가
+            // 사각형이면, 모서리까지의 거리(반폭 × 1.41)가 반지름이 되어 지도의 절반이 빈 바다로
+            // 낭비된다(실기에서 섬 뭉치가 화면의 40%만 차지했다).
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            bool any = false;
 
             if (worldMapManager != null && worldMapManager.islands != null)
             {
@@ -349,18 +359,41 @@ namespace MakeGame.UI
                     if (island == null)
                         continue;
 
-                    float distance = new Vector2(island.mapPosition.x, island.mapPosition.z).magnitude;
-                    extent = Mathf.Max(extent, distance + IslandSizeMetrics.GetTerrainRadius(island.size));
+                    float pad = IslandSizeMetrics.GetTerrainRadius(island.size);
+                    minX = Mathf.Min(minX, island.mapPosition.x - pad);
+                    maxX = Mathf.Max(maxX, island.mapPosition.x + pad);
+                    minZ = Mathf.Min(minZ, island.mapPosition.z - pad);
+                    maxZ = Mathf.Max(maxZ, island.mapPosition.z + pad);
+                    any = true;
                 }
             }
 
+            // 플레이어가 섬 밖(항해 중)에 있어도 화면에 남아야 한다.
             if (player != null)
-                extent = Mathf.Max(extent, new Vector2(player.position.x, player.position.z).magnitude);
+            {
+                minX = any ? Mathf.Min(minX, player.position.x) : player.position.x;
+                maxX = any ? Mathf.Max(maxX, player.position.x) : player.position.x;
+                minZ = any ? Mathf.Min(minZ, player.position.z) : player.position.z;
+                maxZ = any ? Mathf.Max(maxZ, player.position.z) : player.position.z;
+                any = true;
+            }
 
-            // 탐사 원반이 지도 밖으로 잘리지 않게 여유를 준다.
-            extent = Mathf.Max(extent + ExploredRadiusMeters * 0.5f, 1000f);
+            if (!any)
+            {
+                mapCenter = Vector2.zero;
+                mapPixelsPerMeter = (MapViewSize * 0.5f - 12f) / 1000f;
+                UpdateScaleBar();
+                return;
+            }
 
-            mapPixelsPerMeter = (MapViewSize * 0.5f - 12f) / extent;
+            mapCenter = new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f);
+
+            // 정사각 지도라 가로·세로 중 큰 쪽에 맞춘다(한쪽이 잘리면 섬이 사라진다).
+            // 탐사 원반이 가장자리에서 잘리지 않게 여유를 더한다.
+            float halfSpan = Mathf.Max(maxX - minX, maxZ - minZ) * 0.5f + ExploredRadiusMeters * 0.5f;
+            halfSpan = Mathf.Max(halfSpan, 1000f);
+
+            mapPixelsPerMeter = (MapViewSize * 0.5f - 12f) / halfSpan;
 
             UpdateScaleBar();
         }
@@ -388,10 +421,10 @@ namespace MakeGame.UI
             scaleLabel.text = $"{chosen:F0}m";
         }
 
-        /// <summary>월드 좌표(X,Z)를 지도 위 픽셀 좌표로 바꾼다. 지도 중심은 월드 원점이다.</summary>
+        /// <summary>월드 좌표(X,Z)를 지도 위 픽셀 좌표로 바꾼다. 지도 중심은 섬 경계 상자의 중심(mapCenter)이다.</summary>
         private Vector2 WorldToMap(Vector3 worldPosition)
         {
-            return new Vector2(worldPosition.x, worldPosition.z) * mapPixelsPerMeter;
+            return (new Vector2(worldPosition.x, worldPosition.z) - mapCenter) * mapPixelsPerMeter;
         }
 
         /// <summary>

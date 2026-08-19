@@ -476,6 +476,12 @@ namespace MakeGame.UI
                 degree += 360;
             if (degree != lastShownDegree && headingLabel != null)
             {
+                // 쓰기 직전에 한 번 더 확인한다. static 표는 SubsystemRegistration 훅이 비우는데,
+                // Start()보다 이 경로가 먼저 도는 순서가 실기에서 실제로 나왔다
+                // (씬을 다시 불러온 뒤 NullReferenceException이 매 프레임 쏟아졌다).
+                // null 검사 하나가 프레임당 비용의 전부라 캐시를 쓰는 이득은 그대로다.
+                EnsureDegreeStrings();
+
                 lastShownDegree = degree;
                 headingLabel.text = degreeStrings[degree];
             }
