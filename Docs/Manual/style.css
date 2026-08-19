@@ -1,0 +1,82 @@
+@page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font-family: "Noto Sans CJK KR", "Noto Sans KR", sans-serif;
+  font-size: 9.6pt; line-height: 1.62; color: #22262a;
+}
+/* ── 표지 ── */
+.cover {
+  page-break-after: always; height: 259mm; position: relative; overflow: hidden; border-radius: 2mm;
+  background: linear-gradient(175deg,#0d2438 0%,#12405f 34%,#1a598c 56%,#2d6b7a 76%,#3f6b4a 100%);
+  color: #fff; padding: 40mm 18mm 18mm;
+}
+.cover::after {
+  content:""; position:absolute; left:0; right:0; bottom:0; height:64mm;
+  background: linear-gradient(180deg,rgba(194,178,128,0) 0%,rgba(194,178,128,.16) 45%,rgba(138,168,79,.34) 100%);
+}
+.cover .kicker { font-size:10pt; letter-spacing:.42em; color:#e6bf33; margin-bottom:9mm; }
+.cover h1 { font-size:40pt; font-weight:900; line-height:1.1; letter-spacing:-.01em; }
+.cover .sub { font-size:17pt; font-weight:300; margin-top:3mm; color:#cfe2ee; }
+.cover .rule { width:34mm; height:3px; background:#e6bf33; margin:9mm 0 7mm; }
+.cover .blurb { font-size:11pt; line-height:1.85; color:#dbe8f0; max-width:118mm; font-weight:300; }
+.cover .meta {
+  position:absolute; left:18mm; bottom:18mm; z-index:2;
+  font-size:9pt; color:#a9c4d6; line-height:1.9;
+}
+.cover .meta b { color:#fff; font-weight:600; }
+
+/* ── 본문 구조 ── */
+h2 {
+  font-size:16pt; font-weight:800; color:#12405f; margin:0 0 4mm;
+  padding-bottom:2.4mm; border-bottom:2.5px solid #1a598c;
+  page-break-after:avoid; page-break-before:always;
+}
+h2 .num { color:#e6bf33; margin-right:3mm; }
+h2.cont { page-break-before:auto; }
+h3 { font-size:11.4pt; font-weight:700; color:#1a598c; margin:6mm 0 2.4mm; page-break-after:avoid; }
+h4 { font-size:9.8pt; font-weight:700; color:#3a4a56; margin:4mm 0 1.6mm; page-break-after:avoid; }
+p  { margin:0 0 2.4mm; }
+ul,ol { margin:0 0 2.8mm 5mm; }
+li { margin-bottom:1.1mm; }
+b, strong { font-weight:700; color:#101418; }
+.lead { font-size:10.4pt; color:#4a5560; margin-bottom:5mm; }
+
+table { width:100%; border-collapse:collapse; margin:2.5mm 0 4.5mm; font-size:8.6pt; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+thead th {
+  background:#12405f; color:#fff; font-weight:600; text-align:left;
+  padding:1.7mm 2.2mm; font-size:8.3pt; letter-spacing:.02em;
+}
+td { padding:1.5mm 2.2mm; border-bottom:1px solid #dfe4e8; vertical-align:top; }
+tbody tr:nth-child(even) td { background:#f5f7f9; }
+td.n, th.n { text-align:right; white-space:nowrap; }
+td.c, th.c { text-align:center; white-space:nowrap; }
+table.tight { font-size:8.2pt; }
+table.tight td, table.tight th { padding:1.2mm 1.8mm; }
+
+.key { display:inline-block; font-family:"Noto Sans Mono CJK KR",monospace; font-size:8pt; font-weight:700;
+  background:#22262a; color:#fff; border-radius:3px; padding:.5mm 1.6mm; margin:0 .3mm; }
+.tag { display:inline-block; font-size:7.6pt; font-weight:700; padding:.4mm 1.6mm; border-radius:3px; color:#fff; }
+.t-red{background:#cc3333} .t-grn{background:#4fa87a} .t-gld{background:#b8951f} .t-blu{background:#1a598c} .t-gry{background:#7a848c}
+
+.box { border-left:4px solid #1a598c; background:#eef3f7; padding:3mm 4mm; margin:3.5mm 0; page-break-inside:avoid; }
+.box.warn { border-left-color:#cc3333; background:#fbeeee; }
+.box.tip  { border-left-color:#4fa87a; background:#eef7f2; }
+.box.gold { border-left-color:#e6bf33; background:#fcf7e6; }
+.box .h { font-weight:800; font-size:9.4pt; margin-bottom:1.4mm; color:#12405f; }
+.box.warn .h { color:#a52626; }
+.box.tip .h  { color:#2f7a56; }
+.box.gold .h { color:#8a6f10; }
+.box p:last-child { margin-bottom:0; }
+
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 7mm; }
+.nb { page-break-inside:avoid; }
+
+/* 목차 */
+.toc { column-count:2; column-gap:10mm; font-size:9.4pt; }
+.toc div { break-inside:avoid; margin-bottom:1.5mm; }
+.toc .n { display:inline-block; width:7mm; color:#e6bf33; font-weight:800; }
+.toc .s { color:#7a848c; font-size:8.4pt; display:block; margin-left:7mm; }
