@@ -222,7 +222,7 @@ namespace MakeGame.Systems
         /// <summary>
         /// 위협(곰/상어 등)이 주는 피해 배율.
         ///
-        /// **[미배선] 지금은 아무도 읽지 않는다.** 실제로 곱하려면 피해 진입점인
+        /// **0.2.51에서 배선됨 — SurvivalStats.TakeDamage가 전투 원인(Predator/SharkAttack)에만 곱한다.** 원래 계획했던 피해 진입점인
         /// SurvivalStats.TakeDamage(또는 CombatSystem/HazardSource의 피해 계산)를 고쳐야 하는데
         /// 그 파일들은 이 작업의 락 밖이다. 값만 여기 두고 배선은 그 파일의 소유자에게 넘긴다 -
         /// <c>survivalStats.TakeDamage(amount * GameSettings.ThreatDamageMultiplier, cause)</c> 한 줄이면 끝난다.

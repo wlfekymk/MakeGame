@@ -26,7 +26,9 @@ namespace MakeGame.UI
     ///   나머지는 스크롤이며, 실제로 만들어지는 칸 뷰는 54개가 상한이다.
     /// · 슬롯 안 = 아이콘(꽉 차게) + 우하단 개수 + (도구면) 하단 내구도 막대 + 좌측 카테고리 색 띠.
     /// · 개수 1은 숫자를 찍지 않는다 - "x1"은 정보가 없고 아이콘만 가린다.
-    /// · 제목 표시줄 드래그로 창 이동(UIDragHandle), 우상단 X로 닫기, 아이콘 hover로 툴팁(ItemTooltipUI).
+    /// · 헤더 드래그로 창 이동(UIDragHandle), 우상단 X로 닫기.
+    /// · 창은 **헤더 / 구분선 / 좌우 2단 본문**이다(왼쪽 = 필터 + 격자, 오른쪽 = 아이템 상세).
+    ///   떠다니는 툴팁을 쓰지 않는 이유는 RefreshDetail 주석에 적어 뒀다.
     /// · 카테고리 필터(F키 + 마우스 칩)·정렬·용량 표시·버리기 2단계 확인은 목록형에서 그대로 계승했다.
     /// </summary>
     public class InventoryUI : MonoBehaviour
@@ -68,40 +70,54 @@ namespace MakeGame.UI
         /// <summary>주울 수 없었다는 경고를 띄워두는 시간(초).</summary>
         private const float RejectWarningDuration = 3f;
 
-        // 격자 치수. 1920x1080 기준 폭 430 - 6열이면 창을 옮겨도 시야를 크게 가리지 않는다.
+        // 격자 치수는 목록형에서 그대로 이어받았다(6열 62px). 이 값을 건드리면 저장된 창 위치와
+        // 스크롤 감각이 한꺼번에 달라지므로, 창 구조를 바꾸는 이번 작업에서는 손대지 않았다.
         private const int Columns = 6;
         private const float SlotSize = 62f;
         private const float SlotSpacing = 6f;
         private const float WindowPadding = 14f;
-        private const float TitleBarHeight = 34f;
         private const float InfoRowHeight = 26f;
         private const float FooterButtonHeight = 28f;
         private const float HintHeight = 16f;
         private const float FilterChipWidth = 180f;
-        private const float DropButtonWidth = 100f;
+
+        /// <summary>상세 패널 안쪽 여백. 패널 폭이 232px이라 이보다 키우면 아이템 이름이 세 줄로 깨진다.</summary>
+        private const float DetailPadding = 12f;
+
+        /// <summary>버리기 버튼은 상세 패널 폭을 꽉 채운다 - 이 창에서 유일하게 되돌릴 수 없는 조작이라 숨기지 않는다.</summary>
+        private const float DropButtonWidth = UITheme.DetailPaneWidth - DetailPadding * 2f;
 
         /// <summary>
-        /// 한 화면에 보이는 줄 수. **창 높이는 이제 용량과 무관한 고정값**이고, 남는 칸은 스크롤로 본다.
-        /// 7줄 = 42칸이 한눈에 들어오고 창 높이는 618px이라 1080 화면에 여유 있게 들어간다
+        /// 한 화면에 보이는 줄 수. 창 높이는 용량과 무관한 고정값이고, 남는 칸은 스크롤로 본다
         /// (용량에 비례해 늘리던 예전 방식은 100칸에서 1200px을 넘어 화면 밖으로 나간다).
         /// </summary>
         private const int VisibleRows = 7;
 
-        /// <summary>격자(뷰포트) 높이. 보이는 줄 수로만 정해진다.</summary>
+        private const float GridWidth = Columns * SlotSize + (Columns - 1) * SlotSpacing;
         private const float GridHeight = VisibleRows * SlotSize + (VisibleRows - 1) * SlotSpacing;
 
-        /// <summary>격자 위쪽(제목 표시줄 + 용량/필터 줄)이 차지하는 높이.</summary>
-        private const float GridTopOffset = TitleBarHeight + 6f + InfoRowHeight + 10f;
+        /// <summary>
+        /// 본문이 시작되는 y(헤더 + 구분선 + 본문 여백). 왼쪽 격자 단과 오른쪽 상세 패널이 **같은 선**에서
+        /// 출발해야 두 단이 하나의 본문으로 읽힌다 - 이번 재구성의 핵심이라 상수로 못박는다.
+        /// </summary>
+        private const float BodyTop = UITheme.HeaderHeight + UITheme.SeparatorThickness + UITheme.BodyPadding;
 
-        /// <summary>격자 아래쪽(선택 줄 + 버리기 버튼 + 조작 안내)이 차지하는 높이.</summary>
-        private const float GridBottomOffset = 10f + FooterButtonHeight + 6f + HintHeight + 12f;
+        /// <summary>격자 위쪽(헤더 + 필터 줄)이 차지하는 높이.</summary>
+        private const float GridTopOffset = BodyTop + InfoRowHeight + 8f;
 
-        /// <summary>창 전체 높이(76 + 470 + 72 = 618px 고정).</summary>
-        private const float WindowHeight = GridTopOffset + GridHeight + GridBottomOffset;
+        /// <summary>창 높이(44 + 1 + 12 + 26 + 8 + 470 + 14 = 575px 고정).</summary>
+        private const float WindowHeight = GridTopOffset + GridHeight + WindowPadding;
+
+        /// <summary>창 폭(14 + 402 + 12 + 232 + 14 = 674px). 격자와 상세가 한 창 안에 있어야 시선이 창 밖으로 나가지 않는다.</summary>
+        private const float WindowWidth = WindowPadding + GridWidth + UITheme.PaneGap + UITheme.DetailPaneWidth + WindowPadding;
+
+        /// <summary>상세 패널의 왼쪽 x와 높이(본문 시작선부터 창 아래 여백까지).</summary>
+        private const float DetailPaneX = WindowPadding + GridWidth + UITheme.PaneGap;
+        private const float DetailPaneHeight = WindowHeight - BodyTop - WindowPadding;
 
         // 색: ArtDirection.md 팔레트 안에서만 쓴다(새 색을 만들지 않는다).
-        private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);        // #CCCCCC
-        private static readonly Color DimGray = new Color(0.55f, 0.55f, 0.55f, 1f);
+        // 본문 글자색(#CCCCCC)과 보조 글자색은 UITheme.TextPrimary / TextDim으로 옮겼다 - 같은 값이
+        // 파일마다 복사돼 있으면 창 스킨을 한 번에 손볼 수가 없다.
         private static readonly Color SunstrokeGold = new Color(0.902f, 0.749f, 0.2f, 1f);  // #E6BF33
         private static readonly Color DangerRed = new Color(0.8f, 0.2f, 0.2f, 1f);          // #CC3333
         private static readonly Color MedicGreen = new Color(0.31f, 0.659f, 0.478f, 1f);    // #4FA87A
@@ -140,11 +156,25 @@ namespace MakeGame.UI
         private UIDragHandle dragHandle;
         private Text capacityLabel;
         private Text filterLabel;
-        private Text selectionLabel;
         private Text hintLabel;
         private Button dropButton;
         private Text dropButtonLabel;
         private ItemTooltipUI tooltip;
+
+        // 오른쪽 상세 패널. 떠다니는 툴팁이 하던 일을 고정된 자리에서 대신한다.
+        private RectTransform detailPane;
+        private Image detailIcon;
+        private Text detailName;
+        private Text detailCategory;
+        private RectTransform detailSeparator;
+        private Text detailDescription;
+        private Text detailStats;
+        private Text detailUsage;
+        private Text detailEmptyLabel;
+        private Text confirmLabel;
+
+        /// <summary>상세 패널이 지금 "빈 상태"인가. 내용 캐시만으로는 빈 상태를 구분할 수 없어 따로 든다.</summary>
+        private bool detailEmpty;
 
         /// <summary>
         /// 스크롤 + 칸 뷰 재사용 격자. 표시 목록(필터/정렬을 거친 스택들)은 이 격자의 Buffer가 그대로
@@ -178,15 +208,15 @@ namespace MakeGame.UI
         private int lastHintState = -1; // 0 = 조작 안내, 1 = 가득 참 경고
         private string lastHintRejectedName;
 
-        // 툴팁이 마지막으로 채워진 내용. 커서가 같은 칸에 머무는 동안 0.2초마다 다시 만들지 않는다.
-        private ItemData lastTooltipData;
-        private int lastTooltipCount = -1;
-        private int lastTooltipRemaining = int.MinValue;
+        // 상세 패널이 마지막으로 채운 내용. 커서/선택이 같은 칸에 머무는 동안 0.2초마다 문자열을
+        // 다시 만들지 않는다.
+        private ItemData lastDetailData;
+        private int lastDetailCount = -1;
+        private int lastDetailRemaining = int.MinValue;
 
-        // [식량 루프] 사용법 줄에 신선도가 붙으므로 **신선도 문구도 캐시 키에 넣는다.** 넣지 않으면
-        // 칸의 내용(종류·개수·내구도)이 그대로인 채 신선도만 "신선 → 상하기 시작"으로 넘어갔을 때
-        // 아래 조기 반환에 걸려 툴팁이 영영 갱신되지 않는다(커서를 뺐다 넣어야 바뀐다).
-        private string lastTooltipFreshness;
+        // [식량 루프] 신선도도 캐시 키에 넣는다. 넣지 않으면 칸의 내용(종류·개수·내구도)이 그대로인 채
+        // 신선도만 "신선 → 상하기 시작"으로 넘어갔을 때 조기 반환에 걸려 표시가 영영 굳는다.
+        private string lastDetailFreshness;
 
         // 캡처가 없는 정적 람다는 컴파일러가 한 번만 만들어 캐시하므로 정렬마다 델리게이트가 새로 생기지 않는다.
         private static readonly Comparison<InventoryStack> StackOrder = (a, b) =>
@@ -228,6 +258,9 @@ namespace MakeGame.UI
                 inventory.AddRejected += OnAddRejected;
             }
 
+            // 인벤토리는 이제 툴팁을 **띄우지 않는다**(상세 패널이 그 일을 한다). 그래도 인스턴스를
+            // 잡아두는 이유는 이것이 창과 무관한 단일 인스턴스라 상자/제작 창이 같은 것을 재사용하고,
+            // 창을 닫을 때 남아 있는 툴팁을 걷어낼 손잡이가 필요하기 때문이다.
             tooltip = ItemTooltipUI.GetOrCreate();
 
             BuildUI();
@@ -357,8 +390,6 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("InventoryCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            float windowWidth = Columns * SlotSize + (Columns - 1) * SlotSpacing + WindowPadding * 2f;
-
             // 창은 화면 한쪽에 못 박지 않고 **한 점 앵커 + 고정 크기**로 만든다. 그래야 드래그가
             // anchoredPosition 하나만 움직이면 되고, 클램프 계산도 한 가지 좌표계로 끝난다.
             windowRt = UIBuilder.CreatePanel(
@@ -372,18 +403,20 @@ namespace MakeGame.UI
                 addTopBorder: true);
 
             windowRt.pivot = new Vector2(0.5f, 1f);
-            // 창 높이는 **용량과 무관한 고정값**이다. 예전에는 칸 수에 비례해 늘렸는데(30칸=5줄), 그
-            // 방식은 100칸에서 17줄 = 1200px이 넘어 화면 밖으로 나간다. 지금은 7줄만 보이고 나머지는
-            // 격자 안에서 스크롤한다.
-            windowRt.sizeDelta = new Vector2(windowWidth, WindowHeight);
+            windowRt.sizeDelta = new Vector2(WindowWidth, WindowHeight);
             panelRoot = windowRt.gameObject;
 
-            BuildTitleBar();
-            BuildInfoRow(windowWidth);
+            BuildHeader();
+
+            // 헤더와 본문을 가르는 1px 선. 창 안에서 "여기부터 내용"이라는 신호를 배경색 차이 대신
+            // 선 하나로 준다(배경을 한 단계 더 밝히면 뒤의 월드가 다시 비친다).
+            UIBuilder.CreateSeparator(windowRt, "HeaderSeparator", UITheme.HeaderHeight);
+
+            BuildFilterRow();
 
             // 격자: 스크롤 + 칸 뷰 재사용은 공용 VirtualSlotGrid가 담당한다(보관 상자 창과 같은 구현).
             grid.Build(windowRt, "SlotGrid",
-                Columns * SlotSize + (Columns - 1) * SlotSpacing, GridHeight,
+                GridWidth, GridHeight,
                 Columns, SlotSize, SlotSpacing, durabilityBars: true);
             grid.Root.anchoredPosition = new Vector2(WindowPadding, -GridTopOffset);
             grid.onEnter = OnSlotEnter;
@@ -393,35 +426,48 @@ namespace MakeGame.UI
             grid.onStyle = ApplyCellStyle;
             grid.onRowsChanged = OnGridScrolled;
 
-            BuildFooter(windowWidth);
+            BuildDetailPane();
         }
 
-        /// <summary>제목 표시줄(드래그 손잡이 + 닫기 버튼).</summary>
-        private void BuildTitleBar()
+        /// <summary>헤더(제목 · 용량 · 닫기). 창을 끄는 손잡이도 여기 붙는다.</summary>
+        private void BuildHeader()
         {
-            var titleBar = UIBuilder.CreatePanel(
-                windowRt, "TitleBar",
+            var header = UIBuilder.CreatePanel(
+                windowRt, "Header",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
-                offsetMin: new Vector2(0f, -TitleBarHeight), offsetMax: Vector2.zero,
-                color: new Color(1f, 1f, 1f, 0.07f));
+                offsetMin: new Vector2(0f, -UITheme.HeaderHeight), offsetMax: Vector2.zero,
+                color: UITheme.HeaderBackground);
 
-            var title = UIBuilder.CreateText(titleBar, "Title", $"인벤토리 ({toggleKey})", 20, Color.white, TextAnchor.MiddleLeft);
-            title.raycastTarget = false; // 제목 글자가 드래그 입력을 가로채지 않게(입력은 제목 표시줄이 받는다)
+            var title = UIBuilder.CreateText(header, "Title", "인벤토리", UITheme.FontTitle, UITheme.TextPrimary, TextAnchor.MiddleLeft);
+            title.raycastTarget = false; // 제목 글자가 드래그 입력을 가로채지 않게(입력은 헤더가 받는다)
+            title.horizontalOverflow = HorizontalWrapMode.Overflow;
             title.rectTransform.anchorMin = Vector2.zero;
             title.rectTransform.anchorMax = Vector2.one;
-            title.rectTransform.offsetMin = new Vector2(12f, 0f);
-            title.rectTransform.offsetMax = new Vector2(-40f, 0f);
+            title.rectTransform.offsetMin = new Vector2(WindowPadding, 0f);
+            title.rectTransform.offsetMax = new Vector2(-180f, 0f);
+
+            // 용량은 격자 위가 아니라 **창 이름 옆**에 둔다. 그래야 "이 창이 얼마나 찼는가"로 읽히고,
+            // 본문 첫 줄은 필터 하나만 남아 왼쪽 단이 조용해진다.
+            capacityLabel = UIBuilder.CreateText(header, "Capacity", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleRight);
+            capacityLabel.raycastTarget = false;
+            capacityLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var capacityRt = capacityLabel.rectTransform;
+            capacityRt.anchorMin = new Vector2(1f, 0f);
+            capacityRt.anchorMax = new Vector2(1f, 1f);
+            capacityRt.pivot = new Vector2(1f, 0.5f);
+            capacityRt.sizeDelta = new Vector2(200f, 0f);
+            capacityRt.anchoredPosition = new Vector2(-46f, 0f);
 
             // 닫기(X): 마우스만으로 창을 닫는 유일한 확실한 수단이라 항상 같은 자리(우상단)에 둔다.
             // Danger Red는 "되돌릴 수 없는 행동"이 아니라 창 닫기라는 관습적 의미로 쓴다 - 팔레트 안이고,
             // 이 화면에서 빨강을 쓰는 다른 요소(가득 참 경고/확인 대기 테두리)와 형태·위치가 완전히 다르다.
-            var close = UIBuilder.CreateButton(titleBar, "Close", "X", () => SetOpen(false));
+            var close = UIBuilder.CreateButton(header, "Close", "X", () => SetOpen(false));
             var closeRt = close.GetComponent<RectTransform>();
             closeRt.anchorMin = new Vector2(1f, 1f);
             closeRt.anchorMax = new Vector2(1f, 1f);
             closeRt.pivot = new Vector2(1f, 1f);
             closeRt.sizeDelta = new Vector2(30f, 24f);
-            closeRt.anchoredPosition = new Vector2(-5f, -5f);
+            closeRt.anchoredPosition = new Vector2(-8f, -10f);
 
             var closeImage = close.GetComponent<Image>();
             if (closeImage != null)
@@ -431,12 +477,9 @@ namespace MakeGame.UI
                 closeImage.color = closeColor;
             }
 
-            // 제목 표시줄 자체가 드래그 손잡이다. 창 전체를 잡게 만들지 않은 이유: 격자 칸을 클릭·우클릭
+            // 헤더 자체가 드래그 손잡이다. 창 전체를 잡게 만들지 않은 이유: 격자 칸을 클릭·우클릭
             // 하는 조작과 드래그가 같은 영역에서 겹치면, 버리려고 우클릭하다 창이 딸려 움직인다.
-            dragHandle = titleBar.gameObject.AddComponent<UIDragHandle>();
-            dragHandle.target = windowRt;
-            dragHandle.bounds = canvasRect;
-            dragHandle.handleHeight = TitleBarHeight;
+            dragHandle = UIBuilder.AttachDragHandle(header, windowRt, canvasRect, UITheme.HeaderHeight);
             dragHandle.onMoved = position =>
             {
                 savedWindowPosition = position;
@@ -444,77 +487,135 @@ namespace MakeGame.UI
             };
         }
 
-        /// <summary>용량 표시 + 카테고리 필터 칩.</summary>
-        private void BuildInfoRow(float windowWidth)
+        /// <summary>본문 왼쪽 단의 첫 줄: 카테고리 필터 칩.</summary>
+        private void BuildFilterRow()
         {
-            capacityLabel = UIBuilder.CreateText(windowRt, "Capacity", "", 12, NeutralGray, TextAnchor.MiddleLeft);
-            capacityLabel.raycastTarget = false;
-            capacityLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var capacityRt = capacityLabel.rectTransform;
-            capacityRt.anchorMin = new Vector2(0f, 1f);
-            capacityRt.anchorMax = new Vector2(0f, 1f);
-            capacityRt.pivot = new Vector2(0f, 1f);
-            capacityRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f - FilterChipWidth - 8f, InfoRowHeight);
-            capacityRt.anchoredPosition = new Vector2(WindowPadding, -(TitleBarHeight + 6f));
-
             // 필터를 F키로만 돌릴 수 있으면 마우스만 쓰는 사람에게는 없는 기능이나 마찬가지다.
             // 칩을 누르면 같은 순환이 돌고, 라벨에 키를 함께 적어 키 조작도 계속 노출한다.
             var filterButton = UIBuilder.CreateButton(windowRt, "FilterChip", "", CycleFilter);
             var filterRt = filterButton.GetComponent<RectTransform>();
-            filterRt.anchorMin = new Vector2(1f, 1f);
-            filterRt.anchorMax = new Vector2(1f, 1f);
-            filterRt.pivot = new Vector2(1f, 1f);
+            filterRt.anchorMin = new Vector2(0f, 1f);
+            filterRt.anchorMax = new Vector2(0f, 1f);
+            filterRt.pivot = new Vector2(0f, 1f);
             filterRt.sizeDelta = new Vector2(FilterChipWidth, InfoRowHeight);
-            filterRt.anchoredPosition = new Vector2(-WindowPadding, -(TitleBarHeight + 6f));
+            filterRt.anchoredPosition = new Vector2(WindowPadding, -BodyTop);
 
             filterLabel = filterButton.GetComponentInChildren<Text>();
             if (filterLabel != null)
+            {
+                filterLabel.fontSize = UITheme.FontBody;
                 filterLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-        }
-
-        /// <summary>선택 표시 + 버리기 버튼 + 조작 안내.</summary>
-        private void BuildFooter(float windowWidth)
-        {
-            selectionLabel = UIBuilder.CreateText(windowRt, "Selection", "", 12, NeutralGray, TextAnchor.MiddleLeft);
-            selectionLabel.raycastTarget = false;
-            selectionLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var selectionRt = selectionLabel.rectTransform;
-            selectionRt.anchorMin = Vector2.zero;
-            selectionRt.anchorMax = Vector2.zero;
-            selectionRt.pivot = Vector2.zero;
-            selectionRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f - DropButtonWidth - 8f, FooterButtonHeight);
-            selectionRt.anchoredPosition = new Vector2(WindowPadding, HintHeight + 12f + 6f);
-
-            dropButton = UIBuilder.CreateButton(windowRt, "Drop", "버리기", OnDropButtonClicked);
-            var dropRt = dropButton.GetComponent<RectTransform>();
-            dropRt.anchorMin = new Vector2(1f, 0f);
-            dropRt.anchorMax = new Vector2(1f, 0f);
-            dropRt.pivot = new Vector2(1f, 0f);
-            dropRt.sizeDelta = new Vector2(DropButtonWidth, FooterButtonHeight);
-            dropRt.anchoredPosition = new Vector2(-WindowPadding, HintHeight + 12f + 6f);
-            dropButtonLabel = dropButton.GetComponentInChildren<Text>();
-
-            hintLabel = UIBuilder.CreateText(windowRt, "Hint", "", 11, DimGray, TextAnchor.MiddleLeft);
-            hintLabel.raycastTarget = false;
-            hintLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var hintRt = hintLabel.rectTransform;
-            hintRt.anchorMin = Vector2.zero;
-            hintRt.anchorMax = Vector2.zero;
-            hintRt.pivot = Vector2.zero;
-            hintRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f, HintHeight);
-            hintRt.anchoredPosition = new Vector2(WindowPadding, 12f);
+            }
         }
 
         /// <summary>
-        /// 스크롤로 보이는 줄이 갈리면 hover 강조와 툴팁을 정리한다. 커서는 그대로인데 칸이 미끄러져
-        /// 나갔으므로, 안 그러면 엉뚱한 칸이 밝게 남고 툴팁이 옛 물건을 계속 설명한다.
+        /// 본문 오른쪽 단: 아이템 상세. 위에서 아래로 아이콘 → 이름 → 분류 → 설명 → 수치 → 사용법이고,
+        /// **버리기 버튼과 조작 안내는 패널 맨 아래에 고정**한다. 설명 길이에 따라 버튼이 오르내리면
+        /// 되돌릴 수 없는 조작의 위치가 아이템마다 달라져 오폭을 부른다.
+        /// </summary>
+        private void BuildDetailPane()
+        {
+            detailPane = UIBuilder.CreatePanel(
+                windowRt, "DetailPane",
+                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: UITheme.PaneBackground);
+            detailPane.pivot = new Vector2(0f, 1f);
+            detailPane.sizeDelta = new Vector2(UITheme.DetailPaneWidth, DetailPaneHeight);
+            detailPane.anchoredPosition = new Vector2(DetailPaneX, -BodyTop);
+
+            // 아이콘은 격자 칸(62px)보다 커야 "확대해서 보는 자리"로 읽힌다.
+            var iconGo = new GameObject("DetailIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            iconGo.transform.SetParent(detailPane, false);
+            var iconRt = iconGo.GetComponent<RectTransform>();
+            iconRt.anchorMin = new Vector2(0.5f, 1f);
+            iconRt.anchorMax = new Vector2(0.5f, 1f);
+            iconRt.pivot = new Vector2(0.5f, 1f);
+            iconRt.sizeDelta = new Vector2(72f, 72f);
+            iconRt.anchoredPosition = new Vector2(0f, -DetailPadding);
+            detailIcon = iconGo.GetComponent<Image>();
+            detailIcon.raycastTarget = false;
+            detailIcon.preserveAspect = true;
+
+            detailName = CreateDetailText("DetailName", UITheme.FontHeading, UITheme.TextPrimary, TextAnchor.UpperCenter, 92f, 44f);
+            detailCategory = CreateDetailText("DetailCategory", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperCenter, 140f, 18f);
+
+            // 아이템의 "정체"와 "설명"을 선으로 가른다 - 창 헤더가 하는 일과 같은 규칙을 패널 안에서 반복한다.
+            detailSeparator = UIBuilder.CreateSeparator(detailPane, "DetailSeparator", 164f, DetailPadding);
+
+            detailDescription = CreateDetailText("DetailDescription", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperLeft, 172f, 120f);
+            detailStats = CreateDetailText("DetailStats", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.UpperLeft, 298f, 36f);
+            detailUsage = CreateDetailText("DetailUsage", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperLeft, 338f, 60f);
+
+            // 빈 상태 문구는 패널 한가운데다. 위쪽(아이콘 자리)에 두면 아이템이 있을 때와 없을 때
+            // 시선이 같은 곳에 머물러, 패널이 비었다는 사실이 늦게 읽힌다.
+            detailEmptyLabel = UIBuilder.CreateText(detailPane, "DetailEmpty", "아이템을 선택하세요", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleCenter);
+            detailEmptyLabel.raycastTarget = false;
+            var emptyRt = detailEmptyLabel.rectTransform;
+            emptyRt.anchorMin = Vector2.zero;
+            emptyRt.anchorMax = Vector2.one;
+            emptyRt.offsetMin = new Vector2(DetailPadding, 0f);
+            emptyRt.offsetMax = new Vector2(-DetailPadding, 0f);
+
+            // 확인 대기 문구는 버튼 **바로 위**다. 버튼 라벨("확실?")만으로는 무엇을 몇 개 버리는지 알 수 없다.
+            confirmLabel = UIBuilder.CreateText(detailPane, "Confirm", "", UITheme.FontBody, SunstrokeGold, TextAnchor.LowerLeft);
+            confirmLabel.raycastTarget = false;
+            var confirmRt = confirmLabel.rectTransform;
+            confirmRt.anchorMin = new Vector2(0f, 0f);
+            confirmRt.anchorMax = new Vector2(1f, 0f);
+            confirmRt.pivot = new Vector2(0.5f, 0f);
+            confirmRt.offsetMin = new Vector2(DetailPadding, HintHeight + FooterButtonHeight + 22f);
+            confirmRt.offsetMax = new Vector2(-DetailPadding, HintHeight + FooterButtonHeight + 22f + 34f);
+
+            dropButton = UIBuilder.CreateButton(detailPane, "Drop", "버리기", OnDropButtonClicked);
+            var dropRt = dropButton.GetComponent<RectTransform>();
+            dropRt.anchorMin = new Vector2(0.5f, 0f);
+            dropRt.anchorMax = new Vector2(0.5f, 0f);
+            dropRt.pivot = new Vector2(0.5f, 0f);
+            dropRt.sizeDelta = new Vector2(DropButtonWidth, FooterButtonHeight);
+            dropRt.anchoredPosition = new Vector2(0f, HintHeight + 6f);
+            dropButtonLabel = dropButton.GetComponentInChildren<Text>();
+
+            hintLabel = UIBuilder.CreateText(detailPane, "Hint", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleCenter);
+            hintLabel.raycastTarget = false;
+            var hintRt = hintLabel.rectTransform;
+            hintRt.anchorMin = new Vector2(0f, 0f);
+            hintRt.anchorMax = new Vector2(1f, 0f);
+            hintRt.pivot = new Vector2(0.5f, 0f);
+            hintRt.offsetMin = new Vector2(DetailPadding, DetailPadding - HintHeight * 0.5f);
+            hintRt.offsetMax = new Vector2(-DetailPadding, DetailPadding + HintHeight * 0.5f);
+
+            ShowDetailEmpty();
+        }
+
+        /// <summary>
+        /// 상세 패널 안의 글줄 하나. 위(top)에서부터의 거리로 자리를 정한다 - 세로 레이아웃 그룹을 쓰면
+        /// 글자 길이에 따라 아래 요소가 밀려, 아이템마다 버튼 위치가 달라진다.
+        /// </summary>
+        private Text CreateDetailText(string name, int fontSize, Color color, TextAnchor alignment, float top, float height)
+        {
+            var text = UIBuilder.CreateText(detailPane, name, "", fontSize, color, alignment);
+            text.raycastTarget = false;
+
+            var rt = text.rectTransform;
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.offsetMin = new Vector2(DetailPadding, -top - height);
+            rt.offsetMax = new Vector2(-DetailPadding, -top);
+            return text;
+        }
+
+        /// <summary>
+        /// 스크롤로 보이는 줄이 갈리면 hover 강조를 정리한다. 커서는 그대로인데 칸이 미끄러져
+        /// 나갔으므로, 안 그러면 엉뚱한 칸이 밝게 남고 상세 패널이 옛 물건을 계속 설명한다.
         /// **선택은 건드리지 않는다** - 선택은 칸 위치가 아니라 물건(대표 인스턴스)에 걸려 있어서,
         /// 화면 밖으로 스크롤해도 살아 있어야 버리기 버튼이 그대로 동작한다.
         /// </summary>
         private void OnGridScrolled()
         {
             hoverIndex = -1;
-            HideTooltip();
+            RefreshDetail();
         }
 
         /// <summary>
@@ -527,12 +628,21 @@ namespace MakeGame.UI
             bool selected = cell.index >= 0 && cell.index == selectedIndex;
             bool armed = selected && IsDropArmed();
 
+            bool hovered = cell.index >= 0 && cell.index == hoverIndex;
+
             if (armed)
                 cell.visual.background.color = SlotArmedColor;
-            else if (cell.index >= 0 && cell.index == hoverIndex)
+            else if (hovered)
                 cell.visual.background.color = SlotHoverColor;
             else
                 cell.visual.background.color = cell.data != null ? SlotFilledColor : SlotEmptyColor;
+
+            // 테두리는 배경과 **다른 축**을 쓴다: 배경은 밝기로 상태를, 테두리는 색상으로 분류를 말한다.
+            // 그래서 한 칸만 봐도 "무슨 종류인가 / 지금 무슨 상태인가"가 동시에 읽힌다(칸의 기본값은
+            // VirtualSlotGrid.Apply가 넣고, 이 창에만 있는 hover·선택을 여기서 덮어쓴다).
+            cell.visual.frame.color = UITheme.SlotFrame(
+                cell.data != null ? UIBuilder.GetItemCategoryColor(cell.data) : Color.white,
+                cell.data != null, hovered, selected);
 
             cell.visual.outline.enabled = selected;
             if (selected)
@@ -565,7 +675,11 @@ namespace MakeGame.UI
                 // "확실?"이 그대로 눌리는 상황을 만들지 않는다.
                 ClearPendingDrop();
                 hoverIndex = -1;
-                HideTooltip();
+                RefreshDetail();
+
+                // 인벤토리는 툴팁을 띄우지 않지만, 다른 창이 띄워 둔 것이 남아 있으면 여기서 걷어낸다.
+                if (tooltip != null)
+                    tooltip.Hide();
                 return;
             }
 
@@ -600,6 +714,8 @@ namespace MakeGame.UI
             // HUD 아래로 내리고 살짝 오른쪽으로 민다. 사용자가 드래그로 옮기면 그 위치가 이긴다.
             // [B24] 316 → 284. HUD에서 배/경비행기 두 줄을 퀘스트 창으로 옮기면서 패널 높이가
             // 296 → 264로 줄었다. 값을 안 고치면 겹치지는 않지만 여백만 52px 벌어진다.
+            // [상세 패널] 창이 674x575로 넓어졌지만 자리 계산은 rect.width/height에서 나오므로 값은
+            // 그대로 둔다. 왼쪽 붙임을 유지해도 674 + 24는 1920 화면 안이고, HUD 아래 여백도 그대로다.
             const float hudBottomMargin = 284f;   // HUD 패널 높이 264 + 여백 20
             return new Vector2(-halfCanvasWidth + 24f + windowRt.rect.width * 0.5f,
                 halfCanvasHeight - hudBottomMargin);
@@ -651,7 +767,7 @@ namespace MakeGame.UI
             UpdateFilterLabel();
             UpdateFooter();
             UpdateHint();
-            UpdateHoveredTooltip();
+            RefreshDetail();
         }
 
         /// <summary>
@@ -714,9 +830,9 @@ namespace MakeGame.UI
             if (used == lastDisplayedUsedSlots && capacity == lastDisplayedSlotCapacity)
                 return;
 
-            capacityLabel.text = $"칸 {used}/{capacity}" + (used >= capacity ? "  (가득 참)" : "");
+            capacityLabel.text = $"{used} / {capacity}" + (used >= capacity ? "  (가득 참)" : "");
             capacityLabel.color = used >= capacity ? DangerRed
-                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : NeutralGray);
+                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : UITheme.TextDim);
 
             lastDisplayedUsedSlots = used;
             lastDisplayedSlotCapacity = capacity;
@@ -762,24 +878,19 @@ namespace MakeGame.UI
             if (unchanged)
                 return;
 
-            if (selectionLabel != null)
+            // 무엇을 선택했는지는 상세 패널이 이미 크게 보여주므로, 이 줄은 **확인 대기일 때만** 쓴다.
+            // 평상시에도 글자가 차 있으면 정작 위험한 순간의 문구가 눈에 띄지 않는다.
+            if (confirmLabel != null)
             {
-                if (data == null)
+                if (armed && data != null)
                 {
-                    selectionLabel.text = "칸을 클릭해 선택";
-                    selectionLabel.color = DimGray;
-                }
-                else if (armed)
-                {
-                    selectionLabel.text = pendingWhole
-                        ? $"{data.itemName} {count}개를 전부 버린다 - 한 번 더 누르면 되돌릴 수 없다"
-                        : $"{data.itemName}을(를) 버린다 - 한 번 더 누르면 되돌릴 수 없다";
-                    selectionLabel.color = SunstrokeGold;
+                    confirmLabel.text = pendingWhole
+                        ? $"{data.itemName} {count}개를 전부 버린다\n한 번 더 누르면 되돌릴 수 없다"
+                        : $"{data.itemName}을(를) 버린다\n한 번 더 누르면 되돌릴 수 없다";
                 }
                 else
                 {
-                    selectionLabel.text = $"선택: {data.itemName}" + (count > 1 ? $" x{count}" : "");
-                    selectionLabel.color = NeutralGray;
+                    confirmLabel.text = "";
                 }
             }
 
@@ -817,11 +928,13 @@ namespace MakeGame.UI
             lastHintState = state;
             lastHintRejectedName = rejectedName;
 
+            // 문구가 짧아진 이유: 이 줄은 이제 폭 208px 패널 안에 있다. 버리기 조작의 자세한 설명
+            // (Shift=한 칸 전부, 확인 절차 유무)은 상세 패널의 사용법 줄이 아이템마다 이미 적어 준다.
             if (warning)
             {
                 hintLabel.text = string.IsNullOrEmpty(rejectedName)
-                    ? "칸이 가득 차 줍지 못했다 - 무언가를 버려야 한다"
-                    : $"칸이 가득 차 {rejectedName}을(를) 줍지 못했다";
+                    ? "칸이 가득 차 줍지 못했다"
+                    : $"가득 참: {rejectedName} 못 주움";
                 hintLabel.color = DangerRed;
                 return;
             }
@@ -829,9 +942,9 @@ namespace MakeGame.UI
             // 칸이 한 화면을 넘으면(100칸 = 17줄) 스크롤이 있다는 사실을 적어 준다 - 스크롤 막대가
             // 따로 없는 격자라 안내가 없으면 아래쪽 칸의 존재를 모른 채로 "가득 찼다"고 오해한다.
             hintLabel.text = grid.IsScrollable
-                ? $"휠로 스크롤 · 클릭 선택 · 우클릭 버리기({dropWholeStackModifier}=한 칸 전부) · 제목 표시줄을 끌어 창 이동"
-                : $"제목 표시줄을 끌어 창 이동 · 클릭 선택 · 우클릭 버리기({dropWholeStackModifier}=한 칸 전부)";
-            hintLabel.color = DimGray;
+                ? $"휠 스크롤 · [{toggleKey}] 닫기"
+                : $"클릭 선택 · [{toggleKey}] 닫기";
+            hintLabel.color = UITheme.TextDim;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -842,7 +955,7 @@ namespace MakeGame.UI
         {
             hoverIndex = index;
             RefreshSlotStates();
-            ShowTooltipFor(index);
+            RefreshDetail();
         }
 
         private void OnSlotExit(int index)
@@ -852,7 +965,7 @@ namespace MakeGame.UI
 
             hoverIndex = -1;
             RefreshSlotStates();
-            HideTooltip();
+            RefreshDetail();
         }
 
         private void OnSlotLeftClick(int index)
@@ -878,6 +991,9 @@ namespace MakeGame.UI
 
             RefreshSlotStates();
             UpdateFooter();
+
+            // 선택이 바뀌면 상세 패널이 가리키는 대상도 바뀐다(선택 > 호버).
+            RefreshDetail();
         }
 
         /// <summary>
@@ -1017,56 +1133,123 @@ namespace MakeGame.UI
         }
 
         // ────────────────────────────────────────────────────────────────────────
-        // 툴팁
+        // 상세 패널
         // ────────────────────────────────────────────────────────────────────────
 
-        /// <summary>커서가 얹혀 있는 칸의 내용이 바뀌었을 수 있으므로(내구도 감소·소모) 다시 채운다.</summary>
-        private void UpdateHoveredTooltip()
-        {
-            if (hoverIndex >= 0)
-                ShowTooltipFor(hoverIndex);
-        }
+        /// <summary>
+        /// 상세 패널이 보여줄 칸. **선택이 호버를 이긴다** - 선택은 사용자가 의도적으로 고정한 대상이라,
+        /// 커서가 지나가는 칸마다 내용이 갈리면 버리기 버튼과 설명이 서로 다른 물건을 가리키게 된다.
+        /// </summary>
+        private int DetailIndex => selectedIndex >= 0 ? selectedIndex : hoverIndex;
 
-        private void ShowTooltipFor(int index)
+        /// <summary>
+        /// 상세 패널을 채운다. 예전에는 이 정보를 커서를 따라다니는 툴팁이 보여줬는데, 툴팁은
+        /// (1) 커서 아래 칸을 가려 격자 판독을 방해하고 (2) 창 밖으로 삐져나가며 (3) 선택한 물건을
+        /// 계속 보고 있을 수단이 못 된다. 자리를 고정하면 세 문제가 한 번에 사라진다.
+        /// </summary>
+        private void RefreshDetail()
         {
-            if (tooltip == null)
+            if (detailPane == null)
                 return;
 
-            InventoryStack stack = grid.GetStack(index);
-            if (stack == null || stack.data == null)
+            InventoryStack stack = grid.GetStack(DetailIndex);
+            ItemData data = stack != null ? stack.data : null;
+
+            if (data == null)
             {
-                HideTooltip();
+                if (!detailEmpty)
+                    ShowDetailEmpty();
                 return;
             }
 
-            int remaining = stack.RemainingUses;
+            // 대표 인스턴스가 없으면 내구도를 "모름"으로 둔다. 0으로 믿으면 넣어둔 손도끼가 전부
+            // 다 닳은 것으로 보인다(격자 칸의 막대와 같은 규칙).
+            int remaining = stack.representative != null ? stack.RemainingUses : int.MinValue;
             string freshness = BuildFreshnessText(stack);
 
-            // 커서가 같은 칸에 머무는 동안(0.2초 폴링) 같은 내용을 다시 만들지 않는다. 위치 추적은
-            // 툴팁 쪽 LateUpdate가 알아서 하므로 내용이 그대로면 아무것도 할 일이 없다.
-            if (stack.data == lastTooltipData && stack.count == lastTooltipCount && remaining == lastTooltipRemaining
-                && freshness == lastTooltipFreshness)
+            if (!detailEmpty && data == lastDetailData && stack.count == lastDetailCount
+                && remaining == lastDetailRemaining && freshness == lastDetailFreshness)
                 return;
 
-            lastTooltipData = stack.data;
-            lastTooltipCount = stack.count;
-            lastTooltipRemaining = remaining;
-            lastTooltipFreshness = freshness;
+            detailEmpty = false;
+            lastDetailData = data;
+            lastDetailCount = stack.count;
+            lastDetailRemaining = remaining;
+            lastDetailFreshness = freshness;
 
-            tooltip.Show(stack.data, stack.count, remaining,
-                CombineUsageLine(GetUsageHint(stack.data), freshness), GetDropHint(stack.data));
+            SetDetailContentActive(true);
+            if (detailEmptyLabel != null)
+                detailEmptyLabel.gameObject.SetActive(false);
+
+            Color categoryColor = UIBuilder.GetItemCategoryColor(data);
+
+            // 아이콘 없이 추가되는 아이템이 있을 수 있으므로 격자 칸과 같은 폴백(카테고리색 면)을 쓴다.
+            detailIcon.sprite = data.icon;
+            detailIcon.color = data.icon != null ? Color.white : categoryColor;
+
+            detailName.text = data.itemName;
+            detailCategory.text = GetCategoryDisplayName(GetCategory(data));
+            detailCategory.color = categoryColor;
+            detailDescription.text = data.description;
+            detailStats.text = CombineUsageLine(BuildAmountText(data, stack.count, remaining), freshness);
+
+            // 사용법과 버리기 안내는 두 줄로 나눈다 - 한 줄로 이으면 폭 208px 안에서 어디까지가
+            // "쓰는 법"이고 어디부터가 "버리는 법"인지 구분되지 않는다.
+            string usage = GetUsageHint(data);
+            detailUsage.text = string.IsNullOrEmpty(usage) ? GetDropHint(data) : usage + "\n" + GetDropHint(data);
         }
 
-        /// <summary>툴팁을 숨기고 "마지막으로 보여준 내용" 캐시를 비운다(같은 칸에 다시 들어와도 다시 뜨게).</summary>
-        private void HideTooltip()
+        /// <summary>
+        /// 선택도 호버도 없는 상태. 옛 내용을 남겨두면 지금 버리기 버튼이 무엇을 겨누고 있는지
+        /// 착각하게 된다 - 그래서 문구 하나만 남기고 전부 끈다.
+        /// </summary>
+        private void ShowDetailEmpty()
         {
-            lastTooltipData = null;
-            lastTooltipCount = -1;
-            lastTooltipRemaining = int.MinValue;
-            lastTooltipFreshness = null;
+            detailEmpty = true;
+            lastDetailData = null;
+            lastDetailCount = -1;
+            lastDetailRemaining = int.MinValue;
+            lastDetailFreshness = null;
 
-            if (tooltip != null)
-                tooltip.Hide();
+            SetDetailContentActive(false);
+            if (detailEmptyLabel != null)
+                detailEmptyLabel.gameObject.SetActive(true);
+        }
+
+        /// <summary>상세 내용 부품을 한꺼번에 켜고 끈다(버리기 버튼·조작 안내는 항상 켜져 있다).</summary>
+        private void SetDetailContentActive(bool active)
+        {
+            if (detailIcon != null)
+                detailIcon.gameObject.SetActive(active);
+            if (detailName != null)
+                detailName.gameObject.SetActive(active);
+            if (detailCategory != null)
+                detailCategory.gameObject.SetActive(active);
+            if (detailSeparator != null)
+                detailSeparator.gameObject.SetActive(active);
+            if (detailDescription != null)
+                detailDescription.gameObject.SetActive(active);
+            if (detailStats != null)
+                detailStats.gameObject.SetActive(active);
+            if (detailUsage != null)
+                detailUsage.gameObject.SetActive(active);
+        }
+
+        /// <summary>
+        /// 수치 줄(개수 · 내구도). 개수 1은 적지 않는다 - "x1"은 정보가 없고 줄만 차지한다.
+        /// 내구도는 유한한 도구에만 뜬다(무제한 칼·물통은 남은 횟수라는 개념이 없다).
+        /// </summary>
+        private static string BuildAmountText(ItemData data, int count, int remaining)
+        {
+            string amount = count > 1 ? "개수 " + count : "";
+
+            if (data != null && !data.IsUnlimited && data.maxUses > 1 && remaining != int.MinValue)
+            {
+                string durability = "내구도 " + remaining + "/" + data.maxUses;
+                return string.IsNullOrEmpty(amount) ? durability : amount + " · " + durability;
+            }
+
+            return amount;
         }
 
         /// <summary>
@@ -1117,8 +1300,8 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 툴팁의 사용법 줄을 만든다. 사용법 힌트와 신선도 문구 중 있는 것만 " · "로 잇는다
-        /// (둘 다 없으면 빈 문자열 - ItemTooltipUI가 그 줄을 통째로 생략한다).
+        /// 두 조각을 " · "로 잇되 비어 있는 쪽은 건너뛴다(둘 다 없으면 빈 문자열).
+        /// 상세 패널의 수치 줄(개수·내구도 + 신선도)이 이 규칙을 그대로 쓴다.
         /// </summary>
         private static string CombineUsageLine(string usageHint, string freshness)
         {

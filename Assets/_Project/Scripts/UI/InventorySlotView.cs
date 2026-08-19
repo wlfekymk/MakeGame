@@ -393,6 +393,7 @@ namespace MakeGame.UI
                 visual.icon.enabled = false;
                 visual.icon.sprite = null;
                 visual.categoryStrip.color = Color.clear;
+                visual.frame.color = UITheme.SlotFrame(Color.white, filled: false, hovered: false, selected: false);
                 visual.letterLabel.gameObject.SetActive(false);
                 visual.countLabel.gameObject.SetActive(false);
                 if (visual.durabilityBarGo != null)
@@ -402,7 +403,12 @@ namespace MakeGame.UI
                 return;
             }
 
-            visual.categoryStrip.color = UIBuilder.GetItemCategoryColor(data);
+            Color categoryColor = UIBuilder.GetItemCategoryColor(data);
+            visual.categoryStrip.color = categoryColor;
+
+            // 칸 테두리도 같은 카테고리색을 쓴다. 여기서 칠하는 것은 "내용이 있다"까지고, hover·선택은
+            // 소유자의 onStyle이 덮어쓴다 - 창마다 선택 규칙이 달라(상자 창엔 선택이 없다) 여기서 정할 수 없다.
+            visual.frame.color = UITheme.SlotFrame(categoryColor, filled: true, hovered: false, selected: false);
 
             // 아이콘 31종이 전부 배선돼 있지만(ItemData.icon) 새 아이템이 아이콘 없이 추가될 수 있으므로
             // 이름 첫 글자 폴백을 남겨둔다. 폴백일 때는 카테고리 색을 배경으로 깔아 최소한의 구분을 준다.
@@ -416,7 +422,7 @@ namespace MakeGame.UI
             else
             {
                 visual.icon.sprite = null;
-                visual.icon.color = UIBuilder.GetItemCategoryColor(data);
+                visual.icon.color = categoryColor;
                 visual.letterLabel.gameObject.SetActive(true);
                 visual.letterLabel.text = string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1);
             }

@@ -33,7 +33,7 @@ namespace MakeGame.Systems
     ///  · 투척 피해는 에셋에 적는 값이 아니다 — 이 파일의 <see cref="ThrowDamageRatio"/>(0.78)로
     ///    weaponDamage에서 파생된다. 18 → 14, 25 → 20. 즉 **정제 창의 weaponDamage만 25로 정하면
     ///    투척 20은 자동으로 따라온다.**
-    ///  · 채집 배율 2.0은 아직 **코드에 배선되지 않았다.** 수확량 계산의 단일 소스는
+    ///  · 채집 배율 2.0은 **0.2.51에서 ResourceNode.GetEffectiveYield에 배선됐다.** 수확량 계산의 단일 소스는
     ///    ResourceNode.GetEffectiveYield이고 그 파일은 이 작업의 락 밖이다. 지금 상태로도
     ///    ResourceNode에 이미 있는 (bonusTool, bonusYieldPerHarvest) 두 필드만으로 배선할 수 있다:
     ///    노드마다 bonusTool = 정제 칼, bonusYieldPerHarvest = yieldPerHarvest(= 기본 수확량)으로
@@ -79,7 +79,7 @@ namespace MakeGame.Systems
 
         /// <summary>
         /// 정제 도구의 채집 수확 배율(Stranded Deep의 "정제 칼은 수확 2배" 대응).
-        /// **아직 코드에 배선되어 있지 않다** — 클래스 주석의 배선 방법 참고.
+        /// **0.2.51에서 ResourceNode에 배선됨** — 정제 칼/손도끼 소지 시 수확이 정확히 2배가 된다.
         /// </summary>
         public const float RefinedHarvestYieldMultiplier = 2f;
 
@@ -127,8 +127,8 @@ namespace MakeGame.Systems
         /// 정제 도구를 들었을 때 ResourceNode.bonusYieldPerHarvest에 넣어야 할 **가산량**을 계산한다.
         /// ResourceNode의 보너스는 곱이 아니라 합(GetEffectiveYield = yieldPerHarvest + bonus)이므로,
         /// 2배를 만들려면 가산량이 기본 수확량과 같아야 한다(2 → +2 = 4).
-        /// 이 값은 게임 규칙이 아니라 **에셋 설정을 계산해 주는 표**다. 지금은 아무도 부르지 않는다
-        /// (배선 담당 파일 ResourceNode.cs가 이 작업의 락 밖이다 - 보고서의 [막힘] 항목 참고).
+        /// 이 값은 게임 규칙이 아니라 **에셋 설정을 계산해 주는 표**다.
+        /// 0.2.51부터 ResourceNode.GetEffectiveYield가 이 표를 실제로 부른다.
         /// </summary>
         public static int GetRefinedBonusYield(int baseYieldPerHarvest)
         {

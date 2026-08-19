@@ -60,12 +60,7 @@
 ## C. 미해결 — 다음에 손볼 때 같이 정리할 것
 
 ### C1. 주석이 거짓말하고 있는 곳 (배선은 끝났는데 문구가 옛날 것)
-- `Player/PlayerSkills.cs` 127·146·162행 — "아직 배선되어 있지 않다"
-- `Systems/GameSettings.cs` 225행 — `ThreatDamageMultiplier`의 `[미배선]` 표기
-- `Player/PlayerController.cs` 264행 — 락 인계 사항
-- `Systems/CraftStation.cs` 9~10·34·36~38행 — "저장 안 됨 / 프롬프트 안 뜸"
-- `Systems/CombatSystem.cs` 39·82~84·133행 — "채집 배율 미배선"
-- `Utils/ItemDataRegistry.cs`·`Utils/ItemData.cs` — 아이템 수 31/32/51 (실제 **57**)
+✅ **0.2.52에서 6곳 전부 정정됨.** (정정 목록은 git 이력 참고)
 
 ### C2. 기능은 됐는데 발견 경로가 약한 것
 - `BossCreature`에 `public int Kind`가 없어 `InteractionPromptUI`가 **오브젝트 이름 문자열**로

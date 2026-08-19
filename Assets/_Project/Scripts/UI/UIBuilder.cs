@@ -565,7 +565,8 @@ namespace MakeGame.UI
         {
             public GameObject go;
             public RectTransform rect;
-            public Image background;
+            public Image frame;              // 바깥 1px 테두리(칸 전체를 두르는 링)
+            public Image background;         // 테두리 안쪽 면
             public Outline outline;          // 선택 테두리(꺼둔 상태로 시작)
             public Image categoryStrip;      // 왼쪽 세로 색 띠
             public Image icon;
@@ -574,6 +575,7 @@ namespace MakeGame.UI
             public GameObject durabilityBarGo;
             public Image durabilityFill;
             public InventorySlotView input;  // 들어옴/나감/좌클릭/우클릭 어댑터
+            public UISlotHover hover;        // 호버 확대 연출(스케일만 담당, 색은 소유자 몫)
         }
 
         /// <summary>
@@ -589,13 +591,31 @@ namespace MakeGame.UI
         {
             var slot = new SlotVisual();
 
-            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline), typeof(InventorySlotView));
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image),
+                typeof(Outline), typeof(InventorySlotView), typeof(UISlotHover));
             go.transform.SetParent(parent, false);
             slot.go = go;
             slot.rect = go.GetComponent<RectTransform>();
 
-            slot.background = go.GetComponent<Image>();
+            // 뿌리 Image는 이제 **테두리**다. 안쪽 면을 1px 작은 자식으로 덮어 링만 남긴다.
+            // (스프라이트 9-slice가 없는 프로젝트라 이게 테두리를 만드는 가장 싼 방법이다.
+            //  Outline 컴포넌트는 '선택' 표시 전용으로 계속 남겨 둔다 — 용도가 다르다.)
+            // 뿌리가 클릭 판정을 계속 맡으므로 raycastTarget은 여기만 켜져 있다.
+            slot.frame = go.GetComponent<Image>();
+            slot.frame.color = UITheme.SlotFrameIdle;
+
+            var bodyGo = new GameObject("Body", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            bodyGo.transform.SetParent(go.transform, false);
+            var bodyRt = bodyGo.GetComponent<RectTransform>();
+            bodyRt.anchorMin = Vector2.zero;
+            bodyRt.anchorMax = Vector2.one;
+            bodyRt.offsetMin = new Vector2(UITheme.SlotFrameThickness, UITheme.SlotFrameThickness);
+            bodyRt.offsetMax = new Vector2(-UITheme.SlotFrameThickness, -UITheme.SlotFrameThickness);
+            slot.background = bodyGo.GetComponent<Image>();
+            slot.background.raycastTarget = false;   // 클릭은 뿌리(frame)가 받는다
             slot.background.color = SlotEmptyColor;
+
+            slot.hover = go.GetComponent<UISlotHover>();
 
             // 스프라이트 9-slice 없이 테두리를 만들려면 Outline이 가장 싸다(사각 이미지 복사본 4장을
             // 바깥으로 민다). useGraphicAlpha를 끄지 않으면 배경 알파 0.04가 곱해져 사실상 안 보인다.
@@ -670,6 +690,21 @@ namespace MakeGame.UI
             slot.input = go.GetComponent<InventorySlotView>();
 
             return slot;
+        }
+
+        /// <summary>
+        /// 창을 가로지르는 1px 구분선. ArtDirection 4.3의 "패널 테두리는 흰색 알파 0.12" 규칙을
+        /// 창 안쪽 구획에도 그대로 쓴다. topOffset은 창 위에서부터의 거리(px).
+        /// </summary>
+        public static RectTransform CreateSeparator(RectTransform window, string name, float topOffset, float sideInset = 0f)
+        {
+            var rt = CreatePanel(window, name,
+                new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(sideInset, -topOffset - UITheme.SeparatorThickness),
+                new Vector2(-sideInset, -topOffset),
+                UITheme.Separator);
+            rt.GetComponent<Image>().raycastTarget = false;
+            return rt;
         }
 
         /// <summary>

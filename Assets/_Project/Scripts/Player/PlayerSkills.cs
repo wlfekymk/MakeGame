@@ -124,7 +124,7 @@ namespace MakeGame.Player
         /// <summary>
         /// [요리 스킬 효과] 조리된 음식이 회복시키는 양의 배율(레벨 1 = 1.0).
         ///
-        /// **아직 배선되어 있지 않다.** 회복량을 실제로 적용하는 두 지점이 모두 이 작업의 락 밖이다:
+        /// **0.2.51에서 배선됨** — ConsumptionSystem.Consume이 익힌 음식(isRawFood=false)에만 곱한다. 참고로 원래 후보였던 두 지점:
         ///  · Campfire.CookItem - 조리 결과를 ItemData.cookedResult 에셋 그대로 넣기만 한다. 회복량은
         ///    에셋에 박힌 값이라 조리 시점에 배율을 곱할 대상 자체가 없다(개당 회복량을 저장할 필드가
         ///    InventoryItem에 없다).
@@ -143,7 +143,7 @@ namespace MakeGame.Player
         /// <summary>
         /// [신체 스킬 효과] 지상 이동 속도 배율(레벨 1 = 1.0).
         ///
-        /// **아직 배선되어 있지 않다.** 적용 지점 PlayerController.HandleMove의 `float speed = moveSpeed;`
+        /// **0.2.51에서 배선됨** — PlayerController.HandleMove의 `float speed = moveSpeed;`
         /// 가 이 작업의 락 밖이다. 배선은 그 한 줄을
         /// `moveSpeed * (playerSkills != null ? playerSkills.GetPhysicalMoveSpeedMultiplier() : 1f)`
         /// 로 바꾸면 끝난다(PlayerController는 playerSkills 참조를 이미 갖고 있다).
@@ -159,7 +159,7 @@ namespace MakeGame.Player
         /// [신체 스킬 효과] 잠수 중 산소 소모 배율(레벨 1 = 1.0, 낮을수록 오래 버틴다).
         /// 0.5 미만으로는 내려가지 않게 잠갔다 - 산소 압박이 사라지면 수중 동굴 콘텐츠의 긴장이 통째로 죽는다.
         ///
-        /// **아직 배선되어 있지 않다.** SurvivalStats.oxygenDrainMultiplier가 적용 지점이지만 그 필드의
+        /// **0.2.51에서 배선됨** — PlayerController.PushOxygenDrainMultiplier가 산소통 배율에 곱해 민다. SurvivalStats.oxygenDrainMultiplier가 적용 지점이지만 그 필드의
         /// 단일 소스는 PlayerController.oxygenTankDrainMultiplier라고 SurvivalStats 주석이 못박고 있고,
         /// 두 파일 모두 이 작업의 락 밖이다. 배선한다면 산소통 배율에 이 값을 **곱해서** 넣어야 한다
         /// (덮어쓰면 산소통 효과가 사라진다).

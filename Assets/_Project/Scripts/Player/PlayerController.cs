@@ -261,7 +261,7 @@ namespace MakeGame.Player
         /// 때마다 배율이 누적돼 며칠 만에 굶어 죽는다(이 프로젝트의 쉼터 roofHeight 누적 버그와 같은 유형).
         ///
         /// 위협 피해 배율(GameSettings.ThreatDamageMultiplier)은 여기서 걸지 않는다 - 피해 진입점인
-        /// SurvivalStats.TakeDamage / CombatSystem이 이 작업의 락 밖이다(GameSettings 쪽 주석에 인계 사항).
+        /// (0.2.51에서 해소) SurvivalStats.TakeDamage가 전투 원인에만 난이도 배율을 곱한다.
         /// </summary>
         private void ApplyDifficultyToSurvival()
         {

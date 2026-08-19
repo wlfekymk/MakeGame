@@ -16,7 +16,7 @@ namespace MakeGame.Data
     /// 올라와 찾을 수 있게 된다.
     ///
     /// 이번 배치 범위: 이 클래스와 SaveLoadController의 로딩 경로만 만든다. 실제 `.asset` 인스턴스
-    /// 생성 및 31개 ItemData 등록은 하지 않았다(에셋 배치는 game-designer 담당 - 코디네이터 보고서의
+    /// 생성 및 ItemData 등록은 처음엔 하지 않았다(현재는 Resources/ItemDataRegistry.asset에 57종 등록됨 - 낡으면 개수보다 에셋을 믿어라. 코디네이터 보고서의
     /// [요청] 항목 참고). 에셋이 아직 없을 때는 LoadFromResources()가 null을 반환하고,
     /// SaveLoadController는 기존 FindObjectsOfTypeAll 방식으로 안전하게 폴백한다(정상 동작, 근본
     /// 한계만 남아 있음).

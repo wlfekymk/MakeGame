@@ -6,7 +6,7 @@ namespace MakeGame.Systems
 {
     /// <summary>
     /// 설치형 제작 시설의 종류. 값을 바꾸거나 중간에 끼워 넣지 말 것 - 세이브에 들어가지는 않지만
-    /// (SaveData/StructureType은 이 작업의 락 밖이라 제작대는 아직 저장되지 않는다) 씬에 직렬화된
+    /// (0.2.51에서 저장 배선 완료 — StructureType.Workbench/Furnace/Loom + SaveLoadController) 씬에 직렬화된
     /// CraftStation.kind가 정수로 저장되므로 순서가 바뀌면 이미 놓인 제작대의 종류가 뒤바뀐다.
     /// </summary>
     public enum CraftStationKind
@@ -31,9 +31,9 @@ namespace MakeGame.Systems
     /// 분기 순서 규약을 가진 InteractionController.cs가 이 작업의 락 밖이라 새 E 분기를 넣을 수 없다.
     /// 대신 제작 창(V)이 열릴 때 CraftingSystem이 <see cref="IsNear"/>로 반경 안에 해당 시설이 있는지만
     /// 본다 - 시설 앞에 서서 V를 누르면 그 시설의 고급 제작법이 풀린다. 새 키도, 새 입력 분기도 없다.
-    /// 조준했을 때의 프롬프트 문구는 InteractionPromptUI(락 밖)가 담당하므로 지금은 뜨지 않는다.
+    /// 조준 프롬프트는 0.2.51에서 InteractionPromptUI에 배선됐다(이름 + [V] 제작 안내).
     ///
-    /// [세이브] 이 구조물은 아직 저장되지 않는다. 저장 대상 구조물의 종류 목록(Data.StructureType)과
+    /// [세이브] (0.2.51 완료) StructureType 3/4/5로 저장된다. 종류 목록(Data.StructureType)과
     /// 저장/복원 경로(SaveLoadController)가 둘 다 이 작업의 락 밖이다. 불러오기를 하면 놓아둔 제작대가
     /// 사라지므로, 저장 배선은 다음 담당에게 넘긴다(보고서의 [요청] 항목 참고).
     /// </summary>

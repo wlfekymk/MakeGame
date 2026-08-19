@@ -26,7 +26,7 @@ namespace MakeGame.Data
 
         /// <summary>
         /// maxStackSize가 설정되지 않은(0 이하) 아이템이 쓰는 코드 기본 스택 상한.
-        /// 32개 .asset 중 어느 것도 아직 이 키를 갖고 있지 않으므로, 당분간 모든 아이템이 이 값을 쓴다.
+        /// (현재 57종) 대부분의 .asset이 이 키를 생략하므로 이 코드 기본값이 실질 값이다.
         /// </summary>
         public const int DefaultMaxStackSize = 20;
 
@@ -68,7 +68,7 @@ namespace MakeGame.Data
         public bool isCoconutWaterSource = false;
 
         // ── 부패 / 훈연 (식량 루프) ────────────────────────────────────────────────────────
-        // **추가만 했다.** 기존 필드는 하나도 지우거나 이름을 바꾸지 않았다. 32개 .asset 중 어느 것도
+        // **추가만 했다.** 기존 필드는 하나도 지우거나 이름을 바꾸지 않았다. 기존 .asset 중 어느 것도
         // 아직 이 두 키를 갖고 있지 않으므로 전부 역직렬화 시 0 / null로 읽히고, 그 두 값이 정확히
         // "규칙으로 알아서 정해라"를 뜻하도록 기본값을 골랐다(materialFamily가 None을 기본으로 둔 것과
         // 같은 판단). 즉 game-designer가 값을 채우기 전까지 동작이 전혀 바뀌지 않는다.
