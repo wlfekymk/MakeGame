@@ -509,10 +509,17 @@ namespace MakeGame.Systems
                 ? Mathf.RoundToInt(Mathf.Clamp01(aircraftRepair.GetOverallProgress()) * 100f)
                 : 0;
             bool aircraftDone = aircraftRepair != null && aircraftRepair.isRepairComplete;
+
+            // 특대 섬 항로가 이 줄의 진짜 선행 조건이다. 재료를 100% 모아도 배가 못 가면 아무것도
+            // 못 하므로, "재료 %"만 보여 주면 플레이어를 특대 섬 앞에서 헤매게 만든다.
+            // 판정은 IslandTravel.CurrentBypass.OceanReadyWithMotor와 같은 값을 본다.
+            bool oceanRoute = raft != null && raft.IsOceanReady && raft.HasPart(RaftPart.Motor);
             Write(QuestCategory.Voyage, "quest.aircraft", "특대 섬의 경비행기를 수리한다 (선택)",
-                aircraftDone ? "수리 완료" : $"재료 {aircraftPercent}%",
+                aircraftDone ? "수리 완료"
+                    : oceanRoute ? $"재료 {aircraftPercent}%"
+                    : "먼저 특대 섬 항로를 연다 - 대양 규격 뗏목 + 모터",
                 aircraftPercent / 100f,
-                completed: aircraftDone, locked: aircraftRepair == null, latch: true);
+                completed: aircraftDone, locked: aircraftRepair == null || !oceanRoute, latch: true);
 
             BuildBossQuests();
         }
@@ -640,8 +647,14 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // 모터 문구를 여기 붙이는 이유: 대양 규격은 귀환 엔딩 자격일 뿐이고, 특대 섬 해류는
+            // 거기에 모터까지 달려야 뚫린다(IslandTravel). 두 조건이 다르다는 것을 이 줄에서 알린다.
+            string doneDetail = raft.HasPart(RaftPart.Motor)
+                ? "출항 준비 완료 — 비축 물자를 채워라"
+                : "출항 준비 완료 — 비축 물자를 채워라 (특대 섬으로 가려면 모터가 더 필요하다)";
+
             Write(QuestCategory.Voyage, Id, title,
-                done ? "출항 준비 완료 — 비축 물자를 채워라" : $"바닥판 {tiles}/{target}칸 · {raft.DescribeState()}",
+                done ? doneDetail : $"바닥판 {tiles}/{target}칸 · {raft.DescribeState()}",
                 target > 0 ? Mathf.Clamp01((float)tiles / target) : 0f,
                 completed: done, locked: false, latch: true);
         }

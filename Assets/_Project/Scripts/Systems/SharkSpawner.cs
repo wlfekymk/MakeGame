@@ -18,8 +18,17 @@ namespace MakeGame.Systems
         [Tooltip("실제 위험 요소 생성 로직을 재사용할 HazardSpawner (같은 Managers 오브젝트의 것을 연결)")]
         public HazardSpawner hazardSpawner;
 
-        [Tooltip("생성할 상어 개체 수")]
+        [Tooltip("생성할 상어 개체 수. **예전 배치(10.2 x 10.5 km) 기준**이고, 섬이 더 넓게 퍼진 배치에서는\n" +
+            "아래 ReferenceIslandSpan 기준으로 자동으로 늘어난다.")]
         public int sharkCount = 6;
+
+        /// <summary>
+        /// sharkCount를 정할 때 기준으로 삼았던 섬 분포 폭(m). 2026-08-19 맵 확장 이전 배치가 10.4 km였다.
+        /// </summary>
+        private const float ReferenceIslandSpan = 10400f;
+
+        /// <summary>자동 증가 상한. 이 이상은 성능·피로도 양쪽에서 이득이 없다.</summary>
+        private const int MaxScaledSharkCount = 24;
 
         // 퀄리티 개선: 섬 반지름이 10배로 커진 것(WorldMapManager.GetSizeScale, 최대 200)에 맞춰
         // 함께 10배로 키우지 않으면 큰 섬 지형 안에서 상어가 튀어나오는 문제가 생긴다.
@@ -80,7 +89,12 @@ namespace MakeGame.Systems
 
             float halfRange = oceanSize * 0.5f * placementRangeRatio;
 
-            for (int i = 0; i < sharkCount; i++)
+            // 섬이 넓게 퍼질수록 항로가 길어지므로, **면적이 아니라 폭(선형)에 비례해** 늘린다.
+            // 면적 비례로 늘리면 7배 배치에서 42마리가 되어 바다가 상어밭이 된다. 폭 비례면
+            // "한 번의 항해에서 마주치는 빈도"가 예전과 비슷하게 유지된다.
+            int effectiveSharkCount = ResolveSharkCount(islands);
+
+            for (int i = 0; i < effectiveSharkCount; i++)
             {
                 Vector3? position = FindValidOceanPosition(islands, halfRange, seaLevel, rng);
                 if (position.HasValue)
@@ -92,6 +106,36 @@ namespace MakeGame.Systems
             }
 
             return spawned;
+        }
+
+        /// <summary>
+        /// 섬 분포 폭에 맞춰 상어 마릿수를 정한다. 섬이 예전만큼만 퍼져 있으면 sharkCount 그대로다.
+        /// </summary>
+        private int ResolveSharkCount(List<IslandInstance> islands)
+        {
+            if (islands == null || islands.Count < 2)
+                return sharkCount;
+
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            for (int i = 0; i < islands.Count; i++)
+            {
+                var island = islands[i];
+                if (island == null)
+                    continue;
+                Vector3 p = island.mapPosition;
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.z < minZ) minZ = p.z;
+                if (p.z > maxZ) maxZ = p.z;
+            }
+
+            float span = Mathf.Max(maxX - minX, maxZ - minZ);
+            if (span <= ReferenceIslandSpan)
+                return sharkCount;
+
+            int scaled = Mathf.RoundToInt(sharkCount * (span / ReferenceIslandSpan));
+            return Mathf.Min(scaled, MaxScaledSharkCount);
         }
 
         /// <summary>

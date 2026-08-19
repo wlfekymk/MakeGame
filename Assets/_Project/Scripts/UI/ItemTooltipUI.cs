@@ -188,7 +188,7 @@ namespace MakeGame.UI
                 AddLine("과음하면 설사로 갈증이 더 나빠진다", 12, SunstrokeGold);
 
             if (data.blockedFromLargeIslandsByCurrent)
-                AddLine("해류가 강한 큰 섬에는 들고 갈 수 없다", 12, SunstrokeGold);
+                AddLine("특대 섬 해류는 모터 단 대양 규격 뗏목이라야 뚫는다", 12, SunstrokeGold);
 
             if (!string.IsNullOrEmpty(usageLine))
                 AddLine(usageLine, 12, MedicGreen);

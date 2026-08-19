@@ -38,8 +38,9 @@ namespace MakeGame.Data
         public int maxStackSize = DefaultMaxStackSize;
 
         [Tooltip("특대 섬은 해류가 너무 강해 이 아이템을 들고 갈 수 없는지 여부 (고무보트 전용 제약).\n" +
-            "대형(대) 섬은 배 도면(1~2단계)을 구할 수 있는 유일한 장소라 처음부터 갈 수 있어야 하므로 제약에서 " +
-            "제외했다 (자세한 내용은 PlayerInventory.CanCarryToIsland 참고).")]
+            "대형(대) 섬은 희귀 재료를 구할 수 있는 유일한 장소라 처음부터 갈 수 있어야 하므로 제약에서 " +
+            "제외했다. 특대 섬 해류를 뚫는 조건은 뗏목 대양 규격 + 모터다 " +
+            "(자세한 내용은 PlayerInventory.CanCarryToIsland · IslandTravel 참고).")]
         public bool blockedFromLargeIslandsByCurrent = false;
 
         [Header("재질 계열 (B3-9)")]

@@ -35,10 +35,11 @@ namespace MakeGame.UI
 
         /// <summary>
         /// 전체 지도에서 "탐사해서 밝아지는" 원의 반경(미터).
-        /// 근거: 섬 간격 1200m보다 크게 잡아야 이웃한 두 탐사 섬의 밝은 구역이 서로 이어져 항로처럼
-        /// 읽힌다. 1500m면 1200m 간격을 덮고도 300m 여유가 남는다.
+        /// 근거: 이웃 섬까지 중앙값이 1,143m인 배치에서 두 탐사 섬의 밝은 구역이 서로 이어져 항로처럼
+        /// 읽히려면 그보다 넉넉히 커야 한다. 4,000m면 이웃 무리를 통째로 덮고, 27km짜리 바다에서도
+        /// 밝은 구역이 점이 아니라 띠로 보인다.
         /// </summary>
-        private const float ExploredRadiusMeters = 1500f;
+        private const float ExploredRadiusMeters = 4000f;
 
         /// <summary>목록·라벨 문자열을 다시 만드는 간격(초). 매 프레임 문자열을 새로 만들지 않기 위함.</summary>
         private const float MapRefreshInterval = 0.2f;
@@ -421,7 +422,7 @@ namespace MakeGame.UI
 
         /// <summary>
         /// "가본 곳만 밝다"를 그린다. 바탕이 검은 바다이고, 탐사한 섬(+ 지금 서 있는 자리) 주변에만
-        /// 반경 1500m짜리 밝은 원반을 깐다. 원반은 풀링하며 갱신마다 새로 만들지 않는다.
+        /// 반경 ExploredRadiusMeters(4,000m)짜리 밝은 원반을 깐다. 원반은 풀링하며 갱신마다 새로 만들지 않는다.
         /// </summary>
         private void RefreshExploredArea()
         {
@@ -493,9 +494,9 @@ namespace MakeGame.UI
                 {
                     bool isCurrent = islandTravel != null && island.islandId == islandTravel.currentIslandId;
                     // [B52] 미탐사 이름표는 그리지 않는다(예전에는 "?"). 50섬 실측 배치는 환초라 섬이
-                    // 340m 간격 무리를 이루는데, 지도 축척(약 0.02px/m)에서 표식이 7px 간격이 되므로
-                    // 무리마다 "?" 수십 장이 같은 자리에 겹쳐 잉크 얼룩이 된다. 미탐사 섬의 존재는
-                    // 검은 원 표식이 이미 알리고 있어 정보 손실이 없다.
+                    // 최근접 786m·중앙값 1.1km 간격 무리를 이루는데, 27km를 한 화면에 담는 축척에서는
+                    // 표식이 몇 px 간격이 되므로 무리마다 "?" 수십 장이 같은 자리에 겹쳐 잉크 얼룩이
+                    // 된다. 미탐사 섬의 존재는 검은 원 표식이 이미 알리고 있어 정보 손실이 없다.
                     // [카토그래피] 표식이 있으면 이름표에도 꼬리표를 붙인다(링 색과 이중으로 알린다 -
                     // 색만으로는 야간·색맹 조건에서 세 표식이 갈리지 않는다).
                     marker.label.text = revealed
@@ -717,10 +718,35 @@ namespace MakeGame.UI
             bool success = islandTravel.TryTravelTo(islandId, inventory);
             lastTravelStatus = success
                 ? $"섬 {islandId}(으)로 이동했습니다."
-                : "이동 실패: 고무보트가 필요하거나, 해류가 강해 이 섬까지는 아직 갈 수 없습니다.";
+                : DescribeTravelFailure(islandId);
 
             // 이동에 성공하면 새 섬이 탐사 구역으로 밝아진다. 다음 프레임을 기다리지 않고 바로 반영한다.
             mapRefreshTimer = 0f;
+        }
+
+        /// <summary>
+        /// 이동이 왜 막혔는지 이름을 붙여 준다. "해류가 강하다"만으로는 무엇을 더 만들어야 하는지 알 수
+        /// 없어, 뗏목을 4칸에서 멈춰 세운 채 특대 섬 앞에서 헤매게 된다. 판정 순서는 TryTravelTo와 같다
+        /// (고무보트 → 규모별 해류). 요구 등급은 IslandTravel이 들고 있으므로 여기서 다시 정하지 않는다.
+        /// </summary>
+        private string DescribeTravelFailure(int islandId)
+        {
+            var boat = islandTravel.rubberBoatItem;
+            if (boat != null && inventory.GetItemCount(boat) <= 0)
+                return "이동 실패: 고무보트가 없습니다.";
+
+            var island = worldMapManager != null ? worldMapManager.GetIsland(islandId) : null;
+            if (island == null)
+                return "이동 실패: 그런 섬이 없습니다.";
+
+            if (island.size != IslandSize.ExtraLarge)
+                return "이동 실패: 이 섬까지는 아직 갈 수 없습니다.";
+
+            var raft = RaftStructure.Active;
+            string state = raft == null ? "해안에 뗏목이 아직 없습니다" : raft.DescribeState();
+            return "이동 실패: 특대 섬 해류는 모터를 단 대양 규격 뗏목"
+                + $"(바닥판 {RaftStructure.OceanReadyTileCount}칸 + 돛·키 또는 모터, 거기에 모터까지)이라야 뚫습니다."
+                + $" 현재 뗏목: {state}.";
         }
 
         // ────────────────────────────────────────────────────────────────────────

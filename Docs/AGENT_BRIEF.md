@@ -434,7 +434,18 @@ health/maxHealth 100 · hunger/thirst 시작 100
 새 게임은 `DayNightCycle.newGameStartTimeOfDay 0.3`(아침)에 시작한다 — **씬 아님**(`DayNightCycle.cs:95`).
 **0(자정)이면 게임 시작 2분 30초가 새까맣다** — 예전 "검은 하늘 버그"가 이것이다.
 `WorldMapManager`(씬): `baseDistanceStep 1200` · `oceanSize 40000` · `terrainMaxHeight 8` · `worldSeed 0`
-`initialIslandCount 8` (+ 시작 섬 1 = **총 9개**)
+`initialIslandCount 8` 은 **랜덤 폴백 전용**이다 — 실제 월드는 `MaldivesLayout.Islands` 길이가 곧 섬 수라
+**총 50개**(소 36 / 중 10 / 대 3 / 특대 1)다.
+
+**월드 배치** (2026-08-19 재생성 · `Tools/mapgen/gen_layout.py` SEED=20260819 · **둘 다 자동 생성물이니 손대지 마라**):
+span **27.0 × 27.7 km** · 최근접 **786 m** · 이웃 섬까지 중앙값 **1,143 m** ·
+시작 섬 = **남서쪽 구석 (-12300, -12300)** · **시작 섬 반경 4 km 안은 소형 3개뿐** ·
+시작 → 대형 3개 **11.8 / 21.4 / 30.7 km** · 시작 → **특대 19.0 km** · 좌표 절댓값 최대 14.0 km(< 반폭 20 km).
+→ **특대 섬 이동 조건** = `RaftStructure.IsOceanReady` + `HasPart(RaftPart.Motor)`
+(`IslandTravel.CurrentBypass.OceanReadyWithMotor`). 19 km를 노 1.2 / 돛 4.0 / 모터 6.0 m/s로 나누면
+4시간 24분 / 1시간 19분 / 53분이라, 모터가 유일하게 현실적인 수단이다.
+→ 상어는 분포 폭에 비례해 자동 증가(`SharkSpawner.ResolveSharkCount`, 기준 10.4 km / 상한 24) — **현재 16마리**.
+→ 전체 지도 탐사 반경 `MinimapUI.ExploredRadiusMeters` = **4,000 m**(옛 1,500 m).
 플레이어 시작 위치 `(0, 14, 0)`(씬) — terrainMaxHeight 8보다 높아야 한다. **5로 두면 지형 안에서 스폰된다.**
 CharacterController(씬): 높이 2 · 반지름 0.5 · `stepOffset 0.3` · `skinWidth 0.08` · center (0,1,0).
 → 계단·턱 관련 수치를 손대기 전에 이 네 값을 먼저 봐라(`BuildingSystem.cs:145` 주석이 이걸 전제한다).
@@ -502,7 +513,8 @@ Trap 5 / Cannibal 6 / Dehydration 7 / Shark 8 / **GiantCrab 9**.
 #### 자원 노드 (씬 `resourceEntries`, 13종 · 순서가 곧 세이브 키다)
 나뭇가지 4 · 돌조각 3 · 야자잎 3 · 코코넛 2 · 대나무 2 · 천조각 1 · 부싯돌 1 ·
 금속조각 2(**대형+ & 손도끼 필요**) · 부력통 2(대형+) · 비상식량 1 · 연료 1 ·
-엔진부품 2(**특대 전용**) · 생수 1(중형+)
+엔진부품 2(**자원 노드는 특대 전용** — 다만 시작 섬 여객기 2개 · 모든 섬의 난파선 · 대형+ 침몰 화물에서도
+나온다. **특대 섬이 모터를 요구하므로 이 밖의 공급원이 없으면 순환 잠금이다**) · 생수 1(중형+)
 야자잎에 `bonusTool: 칼` / `bonusYieldPerHarvest: 1` (요구가 아니라 가산 — 칼이 없어도 채집된다)
 
 > ⚠️ **`resourceEntries` 순서를 바꾸거나 중간에 끼워 넣지 마라.** `spawnOrder` 는 엔트리 인덱스가

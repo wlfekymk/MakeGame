@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="960" viewBox="0 0 900 960">
+<rect width="900" height="960" fill="#0d2438"/>
+<rect x="40" y="40" width="820" height="820" fill="#12405f" stroke="#1a598c"/>
+<circle cx="89.3" cy="810.7" r="148.0" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+<text x="192.9" y="707.1" fill="#ffffff" fill-opacity="0.3" font-size="10" font-family="sans-serif">5km</text>
+<circle cx="89.3" cy="810.7" r="295.9" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+<text x="296.4" y="603.6" fill="#ffffff" fill-opacity="0.3" font-size="10" font-family="sans-serif">10km</text>
+<circle cx="89.3" cy="810.7" r="443.9" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+<text x="400.0" y="500.0" fill="#ffffff" fill-opacity="0.3" font-size="10" font-family="sans-serif">15km</text>
+<circle cx="89.3" cy="810.7" r="591.8" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+<text x="503.6" y="396.4" fill="#ffffff" fill-opacity="0.3" font-size="10" font-family="sans-serif">20km</text>
+<circle cx="89.3" cy="810.7" r="739.8" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+<text x="607.1" y="292.9" fill="#ffffff" fill-opacity="0.3" font-size="10" font-family="sans-serif">25km</text>
+<circle cx="89.3" cy="810.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<text x="96.7" y="813.7" fill="#fff" font-size="11" font-family="sans-serif">시작</text>
+<circle cx="46.2" cy="832.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="78.1" cy="856.8" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="128.0" cy="782.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="435.8" cy="436.1" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="430.0" cy="458.6" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="468.6" cy="443.8" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="407.8" cy="402.9" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="606.7" cy="591.6" r="17.8" fill="#E6BF33" stroke="#0d2438" stroke-width="0.7"/>
+<text x="627.4" y="594.6" fill="#fff" font-size="11" font-family="sans-serif">특대</text>
+<circle cx="543.7" cy="646.3" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="574.8" cy="570.5" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="565.7" cy="653.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="364.7" cy="264.9" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="345.2" cy="290.8" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="376.0" cy="295.2" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="355.7" cy="239.7" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="375.8" cy="853.6" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="347.9" cy="814.5" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="328.0" cy="860.0" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="96.2" cy="187.0" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="89.9" cy="212.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="138.9" cy="195.0" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="150.2" cy="247.2" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="720.7" cy="843.3" r="12.4" fill="#C2B280" stroke="#0d2438" stroke-width="0.7"/>
+<text x="736.1" y="846.3" fill="#fff" font-size="11" font-family="sans-serif">대형</text>
+<circle cx="685.6" cy="798.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="674.3" cy="826.8" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="712.5" cy="813.2" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="823.6" cy="150.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="791.4" cy="160.7" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="845.0" cy="80.1" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="773.5" cy="116.6" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="235.0" cy="510.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="270.8" cy="511.0" r="12.4" fill="#C2B280" stroke="#0d2438" stroke-width="0.7"/>
+<text x="286.2" y="514.0" fill="#fff" font-size="11" font-family="sans-serif">대형</text>
+<circle cx="267.3" cy="541.4" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="307.2" cy="511.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="656.1" cy="579.1" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="720.1" cy="586.7" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="682.3" cy="662.0" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="583.1" cy="82.0" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="570.8" cy="40.0" r="12.4" fill="#C2B280" stroke="#0d2438" stroke-width="0.7"/>
+<text x="586.2" y="43.0" fill="#fff" font-size="11" font-family="sans-serif">대형</text>
+<circle cx="546.4" cy="52.3" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="615.7" cy="98.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="134.5" cy="541.9" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="188.4" cy="545.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="145.8" cy="565.6" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="150.7" cy="484.7" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="467.9" cy="767.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="512.6" cy="794.8" r="8.0" fill="#6BA83F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="498.7" cy="824.8" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<circle cx="473.5" cy="800.4" r="4.4" fill="#8AA84F" stroke="#0d2438" stroke-width="0.7"/>
+<text x="40" y="922" fill="#cfe2ee" font-size="13" font-family="sans-serif">span 27.7 km · 섬 50개 · 소형 36 / 중형 10 / 대형 3 / 특대 1</text>
+<text x="40" y="942" fill="#8aa8bc" font-size="11" font-family="sans-serif">원은 시작 섬 기준 거리. 섬 표시는 실제 크기의 3배로 그렸다.</text>
+</svg>

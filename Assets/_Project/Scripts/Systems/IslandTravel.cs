@@ -7,8 +7,8 @@ namespace MakeGame.Systems
     /// <summary>
     /// 섬과 섬 사이를 뗏목/보트로 이동하는 시스템.
     /// 고무보트(무제한 사용, 단 특대 섬은 해류 제약으로 못 감)를 이용해 섬으로 이동한다.
-    /// 대형 섬까지는 고무보트만으로 처음부터 갈 수 있고, 특대 섬만 **해안에 지은 뗏목이 항해 가능
-    /// 상태(RaftStructure.IsSeaworthy)** 여야 해류를 뚫고 갈 수 있다
+    /// 대형 섬까지는 고무보트만으로 처음부터 갈 수 있고, 특대 섬만 **해안에 지은 뗏목이 대양 규격이고
+    /// 모터까지 달려 있어야**(RaftStructure.IsOceanReady + HasPart(RaftPart.Motor)) 해류를 뚫고 갈 수 있다
     /// (PlayerInventory.CanCarryToIsland 참고 - 예전에는 대형 섬까지 막아서 배 엔딩이 영원히
     /// 잠겨 있는 순환 잠금 버그가 있었다).
     ///
@@ -17,6 +17,10 @@ namespace MakeGame.Systems
     /// 엔딩의 재료가 특대 섬에만 있으므로 그쪽까지 함께 죽는다).
     /// **뗏목이 아예 없어도 고무보트만으로 일반 섬(소/중/대) 이동은 종전과 똑같이 가능하다** -
     /// 아래 판정은 CanCarryToIsland가 막는 경우를 뚫어 주는 우회 조건일 뿐이다.
+    ///
+    /// [순환 잠금이 아닌 이유] 모터에 드는 엔진부품은 특대 섬 자원 노드 말고도 시작 섬 여객기 잔해
+    /// 2개(불러오기로 다시 채워진다)와 모든 섬의 난파선(수거 지점 3·4번째)·대형+ 침몰 화물에서 나온다.
+    /// 특대 섬에 한 번도 못 가도 모터는 만들 수 있어야 한다는 것이 이 조건의 전제다.
     /// </summary>
     public class IslandTravel : MonoBehaviour
     {
@@ -29,14 +33,21 @@ namespace MakeGame.Systems
         [Tooltip("현재 플레이어가 위치한 섬 번호 (0번은 항상 불시착한 시작 섬)")]
         public int currentIslandId = 0;
 
-        [Tooltip("해류 제약(특대 섬 접근 불가)을 무시하려면 뗏목이 이 조건을 넘어야 한다.\n" +
-            "켜면 뗏목이 '항해 가능(IsSeaworthy = 바닥판 4칸 이상 + 노/돛+키/모터 중 하나)' 상태일 때만" +
-            " 우회가 열린다. 끄면 바닥판 칸 수만 본다(아래 baseTilesRequiredToBypassCurrent).")]
-        public bool requireSeaworthyRaftToBypassCurrent = true;
+        /// <summary>특대 섬의 해류를 뚫는 데 요구할 뗏목 등급.</summary>
+        public enum CurrentBypass
+        {
+            /// <summary>바닥판 4칸 + 추진 하나(노만 있어도 된다). 예전 기준.</summary>
+            Seaworthy = 0,
+            /// <summary>바닥판 6칸 + 돛·키 또는 모터. 노만으로는 안 된다.</summary>
+            OceanReady = 1,
+            /// <summary>대양 규격 + **모터**까지. 가장 엄격.</summary>
+            OceanReadyWithMotor = 2,
+        }
 
-        [Tooltip("해류를 뚫는 데 필요한 최소 바닥판 칸 수. requireSeaworthyRaftToBypassCurrent가 꺼져 있을 때만" +
-            " 단독 기준으로 쓰인다(켜져 있으면 IsSeaworthy가 이미 같은 칸 수를 요구한다).")]
-        public int baseTilesRequiredToBypassCurrent = RaftStructure.SeaworthyTileCount;
+        [Tooltip("특대 섬 해류를 뚫는 데 필요한 뗏목 등급.\n" +
+            "Seaworthy = 바닥판 4칸 + 추진 하나 / OceanReady = 바닥판 6칸 + 돛·키(또는 모터) /\n" +
+            "OceanReadyWithMotor = 거기에 모터까지(엔진부품 1 + 금속조각 4 + 노끈 1)")]
+        public CurrentBypass currentBypassRequirement = CurrentBypass.OceanReadyWithMotor;
 
         // ── 디버그 전체 지도 / 자유 이동 ─────────────────────────────────────────────────
         // 감독 요청: "디버그 모드에서는 전체 지도가 다 보이고, 세계지도에서 모두 갈 수 있게".
@@ -73,7 +84,7 @@ namespace MakeGame.Systems
         /// <summary>
         /// 지정한 섬으로 이동을 시도한다.
         /// 목적지가 존재하고, 플레이어가 고무보트를 보유하고 있어야 한다.
-        /// 해안의 뗏목이 아직 항해 가능(IsSeaworthy) 상태가 아니라면,
+        /// 해안의 뗏목이 currentBypassRequirement 등급(기본: 대양 규격 + 모터)에 못 미치면,
         /// 고무보트만으로는 특대 섬까지 해류를 뚫고 갈 수 없다 (대형 섬은 처음부터 갈 수 있다).
         /// 성공 시 목적지 섬을 발견 상태로 표시하고 현재 위치를 갱신한다.
         /// </summary>
@@ -137,10 +148,21 @@ namespace MakeGame.Systems
             if (raft == null)
                 return false;
 
-            if (requireSeaworthyRaftToBypassCurrent)
-                return raft.IsSeaworthy;
+            switch (currentBypassRequirement)
+            {
+                // 모터까지 요구하는 이유(디렉터 결정 2026-08-19, 맵 확장과 한 묶음):
+                // 새 배치에서 특대 섬은 시작 섬에서 19 km다. 노(1.2 m/s)로 가면 4시간 반이고
+                // 돛(4.0)으로도 80분이다. 모터(6.0)라야 53분 — 실제로 몰고 갈 수 있는 유일한 수단이다.
+                // 잠금이 아니라 "그 거리를 갈 배를 만들어라"는 요구다.
+                case CurrentBypass.OceanReadyWithMotor:
+                    return raft.IsOceanReady && raft.HasPart(RaftPart.Motor);
 
-            return raft.BaseTileCount >= baseTilesRequiredToBypassCurrent;
+                case CurrentBypass.OceanReady:
+                    return raft.IsOceanReady;
+
+                default:
+                    return raft.IsSeaworthy;
+            }
         }
 
         /// <summary>
