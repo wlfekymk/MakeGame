@@ -214,8 +214,6 @@ namespace MakeGame.UI
         private CraftingRecipe lastIngredientRecipe;
         private int lastIngredientSignature = int.MinValue;
 
-        private CraftingRecipe lastTooltipRecipe;
-        private int lastTooltipSignature = int.MinValue;
 
         /// <summary>
         /// 정렬 순서: 제작 가능 → 재료 부족 → 기술 부족, 그 안에서는 카테고리 → 이름순.
@@ -911,23 +909,36 @@ namespace MakeGame.UI
         /// </summary>
         private void UpdateFooter()
         {
-            var entry = selectedIndex >= 0 && selectedIndex < slots.Count ? slots[selectedIndex].entry : null;
+            // 상세 단은 **선택 > 호버** 순으로 채운다(인벤토리와 같은 규칙). 오른쪽 단이 생긴 뒤로
+            // 떠다니는 툴팁은 같은 내용을 두 번 띄우면서 다른 제작법 칸을 가리기만 해서 뺐다.
+            bool showingSelection = selectedIndex >= 0 && selectedIndex < slots.Count;
+            int detailIndex = showingSelection ? selectedIndex : hoverIndex;
+            var entry = detailIndex >= 0 && detailIndex < slots.Count ? slots[detailIndex].entry : null;
             int state = entry == null
                 ? 0
                 : (entry.canCraft ? 1 : (entry.stationMissing ? 4 : (entry.skillLocked ? 2 : 3)));
 
+            // 버튼만은 **선택**에만 반응한다. 커서를 스치는 것만으로 살아나면, 다른 칸을 훑어보다
+            // 누른 것이 엉뚱한 물건을 만든다.
+            var chosen = showingSelection ? slots[selectedIndex].entry : null;
             if (craftButton != null)
-                craftButton.interactable = entry != null && entry.canCraft;
+                craftButton.interactable = chosen != null && chosen.canCraft;
 
             // 재료 줄은 아래 캐시 검사보다 **먼저** 갱신한다. 보유량이 1/3 → 2/3으로 늘어도 선택 상태
             // (재료 부족)는 그대로라, 여기서 걸러지면 숫자가 굳은 채로 남는다.
             UpdateIngredients(entry);
 
-            if (entry?.recipe == lastFooterRecipe && state == lastFooterState)
+            // 캐시 키에 "선택인가 미리보기인가"를 섞는다. 같은 제작법을 훑어보다 클릭해 선택으로
+            // 바뀌면 앞머리 문구가 달라져야 하는데, recipe와 state만 보면 같은 값이라 통째로 걸러진다.
+            int keyedState = state | (showingSelection ? 0x100 : 0);
+            if (entry?.recipe == lastFooterRecipe && keyedState == lastFooterState)
                 return;
 
             lastFooterRecipe = entry != null ? entry.recipe : null;
-            lastFooterState = state;
+            lastFooterState = keyedState;
+
+            // 커서만 얹은 상태를 "선택"이라고 부르면 거짓말이 된다.
+            string lead = showingSelection ? "선택" : "미리보기";
 
             if (selectionLabel == null)
                 return;
@@ -935,17 +946,17 @@ namespace MakeGame.UI
             switch (state)
             {
                 case 1:
-                    selectionLabel.text = $"선택: {entry.displayName} - 만들 수 있다";
+                    selectionLabel.text = $"{lead}: {entry.displayName} - 만들 수 있다";
                     selectionLabel.color = SatisfiedColor;
                     break;
 
                 case 2:
-                    selectionLabel.text = $"선택: {entry.displayName} - 제작 기술 Lv{entry.recipe.requiredSkillLevel} 필요";
+                    selectionLabel.text = $"{lead}: {entry.displayName} - 제작 기술 Lv{entry.recipe.requiredSkillLevel} 필요";
                     selectionLabel.color = SunstrokeGold;
                     break;
 
                 case 3:
-                    selectionLabel.text = $"선택: {entry.displayName} - 재료가 부족하다";
+                    selectionLabel.text = $"{lead}: {entry.displayName} - 재료가 부족하다";
                     selectionLabel.color = UIBuilder.DangerRed;
                     break;
 
@@ -953,7 +964,7 @@ namespace MakeGame.UI
                 // 조건을 채우면 풀린다. 그래서 색도 같은 SunstrokeGold를 쓴다(재료 부족의 붉은색은
                 // "더 모아라"라는 다른 지시다). 문구 형식은 기존 세 줄과 완전히 같다.
                 case 4:
-                    selectionLabel.text = $"선택: {entry.displayName} - {CraftStation.GetDisplayName(entry.requiredStation)} 필요";
+                    selectionLabel.text = $"{lead}: {entry.displayName} - {CraftStation.GetDisplayName(entry.requiredStation)} 필요";
                     selectionLabel.color = SunstrokeGold;
                     break;
 
@@ -1021,7 +1032,7 @@ namespace MakeGame.UI
         {
             hoverIndex = index;
             RefreshSlotStates();
-            ShowTooltipFor(index);
+            UpdateFooter();
         }
 
         private void OnSlotExit(int index)
@@ -1031,7 +1042,7 @@ namespace MakeGame.UI
 
             hoverIndex = -1;
             RefreshSlotStates();
-            HideTooltip();
+            UpdateFooter();
         }
 
         private void OnSlotLeftClick(int index)
@@ -1106,33 +1117,7 @@ namespace MakeGame.UI
         private void UpdateHoveredTooltip()
         {
             if (hoverIndex >= 0)
-                ShowTooltipFor(hoverIndex);
-        }
-
-        private void ShowTooltipFor(int index)
-        {
-            if (tooltip == null)
-                return;
-
-            var entry = index >= 0 && index < slots.Count ? slots[index].entry : null;
-            if (entry == null)
-            {
-                HideTooltip();
-                return;
-            }
-
-            var inventory = craftingSystem != null ? craftingSystem.inventory : null;
-
-            // 커서가 같은 칸에 머무는 동안(0.2초 폴링) 같은 내용을 다시 만들지 않는다. 위치 추적은
-            // 툴팁 쪽 LateUpdate가 알아서 한다.
-            int signature = ComputeRecipeTooltipSignature(entry, inventory);
-            if (entry.recipe == lastTooltipRecipe && signature == lastTooltipSignature)
-                return;
-
-            lastTooltipRecipe = entry.recipe;
-            lastTooltipSignature = signature;
-
-            tooltip.ShowRecipe(entry.recipe, inventory, entry.skillLevel, GetActionHint(entry));
+                UpdateFooter();
         }
 
         /// <summary>툴팁에 그려질 값(재료 보유량·스킬 레벨)을 정수 하나로 접는다.</summary>
@@ -1175,12 +1160,13 @@ namespace MakeGame.UI
             return "재료를 더 모아야 한다";
         }
 
-        /// <summary>툴팁을 숨기고 "마지막으로 보여준 내용" 캐시를 비운다(같은 칸에 다시 들어와도 다시 뜨게).</summary>
+        /// <summary>
+        /// 이 창은 더 이상 떠다니는 툴팁을 띄우지 않는다(오른쪽 상세 단이 대신한다). 그래도 창을
+        /// 닫을 때 한 번은 숨겨 준다 - 툴팁은 상자/인벤토리와 공유하는 단일 인스턴스라, 예전 세션에서
+        /// 떠 있던 것이 남아 있을 수 있다.
+        /// </summary>
         private void HideTooltip()
         {
-            lastTooltipRecipe = null;
-            lastTooltipSignature = int.MinValue;
-
             if (tooltip != null)
                 tooltip.Hide();
         }
