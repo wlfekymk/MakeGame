@@ -31,25 +31,19 @@ namespace MakeGame.UI
         /// <summary>이 씬의 퀘스트 창(씬 리로드마다 새 인스턴스로 교체된다).</summary>
         public static QuestUI Instance { get; private set; }
 
-        // ── 치수 (인벤토리/지도 창과 같은 값) ────────────────────────────────────
-        private const float WindowWidth = 440f;
-        private const float TitleBarHeight = 34f;
-        private const float WindowPadding = 14f;
+        // ── 치수 (제목줄·좌우 여백은 공용 골격이 정한다. 여기 값은 전부 **본문 안쪽** 좌표다) ──
+        private const float BodyWidth = 412f;
         private const float HintHeight = 16f;
         private const float HeaderHeight = 24f;
         private const float RowHeight = 46f;
         private const float RowSpacing = 4f;
         private const float GroupSpacing = 10f;
-        private const float ContentTop = TitleBarHeight + 8f;
-        private const float ContentBottom = 12f + HintHeight + 8f;
+
+        /// <summary>본문 아래쪽에 힌트 줄이 쓰는 자리(힌트 높이 + 목록과의 간격).</summary>
+        private const float ContentBottom = HintHeight + 8f;
 
         // ── 색 (새로 만들지 않는다 - 이미 프로젝트에서 쓰는 값 그대로) ───────────
-        private static readonly Color WindowBackground = new Color(0.04f, 0.05f, 0.06f, 0.93f);
-        private static readonly Color TitleBarColor = new Color(1f, 1f, 1f, 0.07f);
-        private static readonly Color DangerRed = new Color(0.8f, 0.2f, 0.2f, 1f);        // #CC3333
         private static readonly Color MedicGreen = new Color(0.31f, 0.659f, 0.478f, 1f);  // #4FA87A
-        private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);      // #CCCCCC
-        private static readonly Color DimGray = new Color(0.55f, 0.55f, 0.55f, 1f);
         private static readonly Color LockedGray = new Color(0.4f, 0.4f, 0.4f, 1f);
         private static readonly Color ObjectiveGold = new Color(1f, 0.9f, 0.4f, 1f);      // 목표 문구와 같은 옅은 금색
 
@@ -72,12 +66,13 @@ namespace MakeGame.UI
         private RectTransform canvasRect;
         private RectTransform windowRt;
         private GameObject panelRoot;
+        private RectTransform bodyRt;
         private RectTransform contentRt;
         private UIDragHandle dragHandle;
-        private Text titleLabel;
+        private Text statusLabel;
         private Text hintLabel;
 
-        private string lastDisplayedTitle;
+        private string lastDisplayedStatus;
         private bool subscribed;
 
         /// <summary>퀘스트 한 줄의 화면 부품 묶음. 갱신마다 오브젝트를 새로 만들지 않는다.</summary>
@@ -219,81 +214,46 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("QuestCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            windowRt = UIBuilder.CreatePanel(
-                canvas.transform, "QuestWindow",
-                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                color: WindowBackground,
-                addTopBorder: true);
+            // 창 6개가 공유하는 골격. 높이는 Layout()이 항목 수에 맞춰 다시 정한다.
+            var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "QuestWindow",
+                BodyWidth, 400f, $"퀘스트 ({toggleKey})", canvasRect, () => SetOpen(false));
 
-            windowRt.pivot = new Vector2(0.5f, 1f);
-            windowRt.sizeDelta = new Vector2(WindowWidth, 400f); // 실제 높이는 Layout()이 항목 수에 맞춰 정한다
+            windowRt = frame.window;
+            bodyRt = frame.body;
             panelRoot = windowRt.gameObject;
 
-            BuildTitleBar();
+            // 달성 요약("진행 3 / 12")은 제목 **옆**이다. 제목 문자열에 이어 붙이면 창마다
+            // 요약이 다른 자리·다른 크기로 놓인다.
+            statusLabel = frame.status;
+
+            dragHandle = frame.drag;
+            if (dragHandle != null)
+            {
+                dragHandle.onMoved = position =>
+                {
+                    savedWindowPosition = position;
+                    hasSavedWindowPosition = true;
+                };
+            }
 
             var contentGo = new GameObject("Content", typeof(RectTransform));
-            contentGo.transform.SetParent(windowRt, false);
+            contentGo.transform.SetParent(bodyRt, false);
             contentRt = contentGo.GetComponent<RectTransform>();
             contentRt.anchorMin = new Vector2(0f, 1f);
             contentRt.anchorMax = new Vector2(0f, 1f);
             contentRt.pivot = new Vector2(0f, 1f);
-            contentRt.anchoredPosition = new Vector2(WindowPadding, -ContentTop);
-            contentRt.sizeDelta = new Vector2(WindowWidth - WindowPadding * 2f, 0f);
+            contentRt.anchoredPosition = Vector2.zero;
+            contentRt.sizeDelta = new Vector2(BodyWidth, 0f);
 
             BuildHint();
-        }
-
-        /// <summary>제목 표시줄(드래그 손잡이 + 빨간 X). 인벤토리/지도와 완전히 같은 조립이다.</summary>
-        private void BuildTitleBar()
-        {
-            var titleBar = UIBuilder.CreatePanel(
-                windowRt, "TitleBar",
-                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
-                offsetMin: new Vector2(0f, -TitleBarHeight), offsetMax: Vector2.zero,
-                color: TitleBarColor);
-
-            titleLabel = UIBuilder.CreateText(titleBar, "Title", $"퀘스트 ({toggleKey})", 20, Color.white, TextAnchor.MiddleLeft);
-            titleLabel.raycastTarget = false; // 제목 글자가 드래그 입력을 가로채지 않게 한다
-            titleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            titleLabel.rectTransform.anchorMin = Vector2.zero;
-            titleLabel.rectTransform.anchorMax = Vector2.one;
-            titleLabel.rectTransform.offsetMin = new Vector2(12f, 0f);
-            titleLabel.rectTransform.offsetMax = new Vector2(-40f, 0f);
-
-            var close = UIBuilder.CreateButton(titleBar, "Close", "X", () => SetOpen(false));
-            var closeRt = close.GetComponent<RectTransform>();
-            closeRt.anchorMin = new Vector2(1f, 1f);
-            closeRt.anchorMax = new Vector2(1f, 1f);
-            closeRt.pivot = new Vector2(1f, 1f);
-            closeRt.sizeDelta = new Vector2(30f, 24f);
-            closeRt.anchoredPosition = new Vector2(-5f, -5f);
-
-            var closeImage = close.GetComponent<Image>();
-            if (closeImage != null)
-            {
-                Color closeColor = DangerRed;
-                closeColor.a = 0.75f;
-                closeImage.color = closeColor;
-            }
-
-            dragHandle = titleBar.gameObject.AddComponent<UIDragHandle>();
-            dragHandle.target = windowRt;
-            dragHandle.bounds = canvasRect;
-            dragHandle.handleHeight = TitleBarHeight;
-            dragHandle.onMoved = position =>
-            {
-                savedWindowPosition = position;
-                hasSavedWindowPosition = true;
-            };
         }
 
         /// <summary>하단 단축키 힌트 줄(미니맵의 "[M] 지도 · [+/-] 줌"과 같은 형식).</summary>
         private void BuildHint()
         {
-            hintLabel = UIBuilder.CreateText(windowRt, "Hint",
-                $"[{toggleKey}] 퀘스트 · 제목 표시줄을 끌어 창 이동 · [X] 닫기", 11,
-                new Color(1f, 1f, 1f, 0.62f), TextAnchor.MiddleLeft);
+            hintLabel = UIBuilder.CreateText(bodyRt, "Hint",
+                $"[{toggleKey}] 퀘스트 · 제목 표시줄을 끌어 창 이동 · [X] 닫기", UITheme.FontBody,
+                UITheme.TextDim, TextAnchor.MiddleLeft);
             hintLabel.raycastTarget = false;
             hintLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
 
@@ -301,14 +261,14 @@ namespace MakeGame.UI
             hintRt.anchorMin = Vector2.zero;
             hintRt.anchorMax = Vector2.zero;
             hintRt.pivot = Vector2.zero;
-            hintRt.sizeDelta = new Vector2(WindowWidth - WindowPadding * 2f, HintHeight);
-            hintRt.anchoredPosition = new Vector2(WindowPadding, 12f);
+            hintRt.sizeDelta = new Vector2(BodyWidth, HintHeight);
+            hintRt.anchoredPosition = Vector2.zero;
         }
 
         /// <summary>묶음 제목 줄 하나를 만든다(생존 / 정착 / 항해).</summary>
         private Text CreateHeader()
         {
-            var header = UIBuilder.CreateText(contentRt, "GroupHeader", "", 13, ObjectiveGold, TextAnchor.LowerLeft);
+            var header = UIBuilder.CreateText(contentRt, "GroupHeader", "", UITheme.FontHeading, ObjectiveGold, TextAnchor.LowerLeft);
             header.raycastTarget = false;
             header.horizontalOverflow = HorizontalWrapMode.Overflow;
 
@@ -349,17 +309,17 @@ namespace MakeGame.UI
             boxRt.anchoredPosition = new Vector2(2f, -8f);
             row.checkBox = boxRt.GetComponent<Image>();
 
-            row.title = UIBuilder.CreateText(bg, "Title", "", 14, Color.white, TextAnchor.UpperLeft);
+            row.title = UIBuilder.CreateText(bg, "Title", "", UITheme.FontHeading, Color.white, TextAnchor.UpperLeft);
             row.title.raycastTarget = false;
             row.title.horizontalOverflow = HorizontalWrapMode.Overflow;
             var titleRt = row.title.rectTransform;
             titleRt.anchorMin = new Vector2(0f, 1f);
             titleRt.anchorMax = new Vector2(0f, 1f);
             titleRt.pivot = new Vector2(0f, 1f);
-            titleRt.sizeDelta = new Vector2(contentWidth - 24f - 74f, 18f);
-            titleRt.anchoredPosition = new Vector2(24f, -5f);
+            titleRt.sizeDelta = new Vector2(contentWidth - 24f - 74f, 20f);
+            titleRt.anchoredPosition = new Vector2(24f, -3f);
 
-            row.status = UIBuilder.CreateText(bg, "Status", "", 11, DimGray, TextAnchor.UpperRight);
+            row.status = UIBuilder.CreateText(bg, "Status", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperRight);
             row.status.raycastTarget = false;
             row.status.horizontalOverflow = HorizontalWrapMode.Overflow;
             var statusRt = row.status.rectTransform;
@@ -369,7 +329,7 @@ namespace MakeGame.UI
             statusRt.sizeDelta = new Vector2(70f, 16f);
             statusRt.anchoredPosition = new Vector2(-6f, -6f);
 
-            row.progress = UIBuilder.CreateText(bg, "Progress", "", 11, NeutralGray, TextAnchor.UpperLeft);
+            row.progress = UIBuilder.CreateText(bg, "Progress", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.UpperLeft);
             row.progress.raycastTarget = false;
             row.progress.horizontalOverflow = HorizontalWrapMode.Overflow;
             var progressRt = row.progress.rectTransform;
@@ -407,11 +367,11 @@ namespace MakeGame.UI
             for (int i = 0; i < quests.Count; i++)
                 ApplyRow(rows[i], quests[i]);
 
-            string windowTitle = $"퀘스트 ({toggleKey})   {questSystem.CompletedCount}/{quests.Count}";
-            if (titleLabel != null && windowTitle != lastDisplayedTitle)
+            string summary = $"진행 {questSystem.CompletedCount} / {quests.Count}";
+            if (statusLabel != null && summary != lastDisplayedStatus)
             {
-                titleLabel.text = windowTitle;
-                lastDisplayedTitle = windowTitle;
+                statusLabel.text = summary;
+                lastDisplayedStatus = summary;
             }
         }
 
@@ -501,8 +461,10 @@ namespace MakeGame.UI
             }
 
             float contentHeight = -y;
-            contentRt.sizeDelta = new Vector2(WindowWidth - WindowPadding * 2f, contentHeight);
-            windowRt.sizeDelta = new Vector2(WindowWidth, ContentTop + contentHeight + ContentBottom);
+            contentRt.sizeDelta = new Vector2(BodyWidth, contentHeight);
+            windowRt.sizeDelta = new Vector2(
+                BodyWidth + UITheme.ChromeWidth,
+                contentHeight + ContentBottom + UITheme.ChromeTop + UITheme.ChromeBottom);
 
             // 높이가 바뀌면 화면 아래로 삐져나올 수 있으므로 다시 클램프한다.
             if (dragHandle != null)
@@ -553,8 +515,8 @@ namespace MakeGame.UI
                 case 0: // 완료 - 체크(꽉 찬 초록) + 전체를 흐리게
                     row.background.color = RowDoneBackground;
                     row.checkBox.color = MedicGreen;
-                    row.title.color = DimGray;
-                    row.progress.color = DimGray;
+                    row.title.color = UITheme.TextDim;
+                    row.progress.color = UITheme.TextDim;
                     row.status.color = MedicGreen;
                     row.barFill.color = MedicGreen;
                     break;

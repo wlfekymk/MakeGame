@@ -493,6 +493,116 @@ namespace MakeGame.UI
         }
 
         /// <summary>
+        /// 모든 열고 닫는 창이 공유하는 골격. 창마다 제목줄 높이·여백·닫기 버튼 자리를 따로 박아 두면
+        /// 두 창을 같이 띄웠을 때 서로 다른 게임의 UI처럼 보인다(실기에서 확인된 문제). 여기 하나로 모은다.
+        ///
+        /// 구성(위→아래): 헤더 44 → 구분선 1 → 본문(좌우·아래 여백 14, 위 여백 12).
+        /// 호출자는 **본문 크기만** 말한다 - 창 전체 크기는 여기서 여백을 더해 정한다.
+        /// 본문 좌표계의 (0,0)은 본문 왼쪽 위이므로, 호출자는 더 이상 제목줄 높이를 계산에 넣지 않는다.
+        /// </summary>
+        public class WindowFrame
+        {
+            public RectTransform window;
+            public RectTransform header;
+            public RectTransform separator;
+            public Text title;
+            public Text status;      // 헤더 오른쪽 보조 정보(용량·개수·날짜 등). 기본은 빈 문자열.
+            public Button close;
+            public UIDragHandle drag;
+            public RectTransform body;   // 자식은 전부 여기에 붙인다
+        }
+
+        /// <summary>
+        /// 공용 골격 창을 만든다. bodyWidth/bodyHeight는 **본문 안쪽 크기**다.
+        /// canvasRect가 null이면 드래그 손잡이를 달지 않는다(화면에 고정된 창).
+        /// </summary>
+        public static WindowFrame CreateSkinnedWindow(Transform parent, string name,
+            float bodyWidth, float bodyHeight, string title,
+            RectTransform canvasRect, UnityEngine.Events.UnityAction onClose)
+        {
+            var frame = new WindowFrame();
+
+            frame.window = CreateWindow(parent, name,
+                bodyWidth + UITheme.ChromeWidth,
+                bodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom);
+
+            frame.header = CreatePanel(frame.window, "Header",
+                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
+                offsetMin: new Vector2(0f, -UITheme.HeaderHeight), offsetMax: Vector2.zero,
+                color: UITheme.HeaderBackground);
+
+            // 제목 글자는 raycastTarget을 끈다 - 드래그 입력은 헤더 자체가 받아야 한다.
+            frame.title = CreateText(frame.header, "Title", title, UITheme.FontTitle, UITheme.TextPrimary, TextAnchor.MiddleLeft);
+            frame.title.raycastTarget = false;
+            frame.title.horizontalOverflow = HorizontalWrapMode.Overflow;
+            frame.title.rectTransform.anchorMin = Vector2.zero;
+            frame.title.rectTransform.anchorMax = Vector2.one;
+            frame.title.rectTransform.offsetMin = new Vector2(UITheme.WindowPadding, 0f);
+            frame.title.rectTransform.offsetMax = new Vector2(-180f, 0f);
+
+            // 보조 정보는 제목 **옆**이다. 본문 첫 줄에 두면 창마다 다른 자리에 놓이게 된다.
+            frame.status = CreateText(frame.header, "Status", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.MiddleRight);
+            frame.status.raycastTarget = false;
+            frame.status.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var statusRt = frame.status.rectTransform;
+            statusRt.anchorMin = new Vector2(1f, 0f);
+            statusRt.anchorMax = new Vector2(1f, 1f);
+            statusRt.pivot = new Vector2(1f, 0.5f);
+            statusRt.sizeDelta = new Vector2(260f, 0f);
+            statusRt.anchoredPosition = new Vector2(-46f, 0f);
+
+            frame.close = CreateButton(frame.header, "Close", "X", onClose);
+            var closeRt = frame.close.GetComponent<RectTransform>();
+            closeRt.anchorMin = new Vector2(1f, 1f);
+            closeRt.anchorMax = new Vector2(1f, 1f);
+            closeRt.pivot = new Vector2(1f, 1f);
+            closeRt.sizeDelta = new Vector2(30f, 24f);
+            closeRt.anchoredPosition = new Vector2(-8f, -10f);
+            var closeImage = frame.close.GetComponent<Image>();
+            if (closeImage != null)
+            {
+                Color closeColor = DangerRed;
+                closeColor.a = 0.75f;
+                closeImage.color = closeColor;
+            }
+
+            frame.separator = CreateSeparator(frame.window, "HeaderSeparator", UITheme.HeaderHeight);
+
+            var bodyGo = new GameObject("Body", typeof(RectTransform));
+            bodyGo.transform.SetParent(frame.window, false);
+            frame.body = bodyGo.GetComponent<RectTransform>();
+            frame.body.anchorMin = Vector2.zero;
+            frame.body.anchorMax = Vector2.one;
+            frame.body.pivot = new Vector2(0.5f, 1f);
+            frame.body.offsetMin = new Vector2(UITheme.WindowPadding, UITheme.ChromeBottom);
+            frame.body.offsetMax = new Vector2(-UITheme.WindowPadding, -UITheme.ChromeTop);
+
+            // 창 전체가 아니라 헤더만 손잡이인 이유: 격자 칸을 클릭·우클릭하는 조작과 드래그가
+            // 같은 영역에서 겹치면, 버리려고 우클릭하다 창이 딸려 움직인다.
+            if (canvasRect != null)
+                frame.drag = AttachDragHandle(frame.header, frame.window, canvasRect, UITheme.HeaderHeight);
+
+            return frame;
+        }
+
+        /// <summary>
+        /// 본문 오른쪽(또는 왼쪽)에 붙는 보조 단. 인벤토리의 상세 패널과 같은 재질·같은 폭 규칙을
+        /// 다른 창도 쓰게 한다. 반환값의 좌표계 (0,0)은 이 단의 왼쪽 위다.
+        /// </summary>
+        public static RectTransform CreateSidePane(RectTransform body, string name, float width, bool onRight = true)
+        {
+            var pane = CreatePanel(body, name,
+                anchorMin: new Vector2(onRight ? 1f : 0f, 0f),
+                anchorMax: new Vector2(onRight ? 1f : 0f, 1f),
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: UITheme.PaneBackground);
+            pane.pivot = new Vector2(onRight ? 1f : 0f, 1f);
+            pane.sizeDelta = new Vector2(width, 0f);
+            pane.anchoredPosition = Vector2.zero;
+            return pane;
+        }
+
+        /// <summary>
         /// 창 위쪽에 제목 표시줄을 붙이고 그 RectTransform을 돌려준다. 제목 글자는 raycastTarget을
         /// 꺼서 드래그 입력을 가로채지 않게 한다(입력은 표시줄 자체가 받는다). 오른쪽 40px은
         /// 닫기(X) 버튼 자리로 비워 둔다.

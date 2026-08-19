@@ -36,6 +36,21 @@ namespace MakeGame.UI
         /// <summary>격자와 상세 패널 사이 간격.</summary>
         public const float PaneGap = 12f;
 
+        /// <summary>창 테두리와 본문 사이 여백. 창 6개가 각자 14f를 박아 두던 것을 여기로 모았다.</summary>
+        public const float WindowPadding = 14f;
+
+        /// <summary>
+        /// 창 위쪽이 본문에 앞서 잡아먹는 높이(헤더 + 구분선 + 본문 윗여백) = 57.
+        /// 창 크기를 `const`로 계산하는 곳이 많아 메서드가 아니라 상수로 둔다.
+        /// </summary>
+        public const float ChromeTop = HeaderHeight + SeparatorThickness + BodyPadding;
+
+        /// <summary>창 아래쪽 여백.</summary>
+        public const float ChromeBottom = WindowPadding;
+
+        /// <summary>창 좌우 여백 합.</summary>
+        public const float ChromeWidth = WindowPadding * 2f;
+
         // ── 슬롯 ───────────────────────────────────────────────
         /// <summary>칸 테두리 두께. 본문 이미지를 이만큼 안쪽으로 밀어 테두리를 만든다.</summary>
         public const float SlotFrameThickness = 1f;

@@ -38,36 +38,32 @@ namespace MakeGame.UI
         public static RaftBuildUI Instance { get; private set; }
 
         // ── 치수 ────────────────────────────────────────────────────────────────
-        private const float WindowPadding = 14f;
-        private const float TitleBarHeight = 34f;
-        private const float HeaderHeight = 20f;
+        // 제목줄 높이·좌우 여백은 공용 골격(UIBuilder.CreateSkinnedWindow)이 정한다.
+        // 여기 값은 전부 **본문 안쪽** 좌표다 - 본문의 (0,0)이 곧 목록 첫 줄의 왼쪽 위다.
         private const float RowHeight = 38f;
         private const float RowSpacing = 4f;
         private const float MessageHeight = 18f;
         private const float HintHeight = 16f;
 
-        private const float WindowWidth = 560f;
-        private const float ContentWidth = WindowWidth - WindowPadding * 2f;   // 532
+        private const float BodyWidth = 532f;
 
         private const float NameWidth = 190f;
         private const float CostWidth = 250f;
         private const float ButtonWidth = 76f;
         private const float ButtonHeight = 26f;
 
-        private const float HeaderTop = TitleBarHeight + 6f;                    // 40
-        private const float RowsTop = HeaderTop + HeaderHeight + 6f;            // 66
-
         /// <summary>줄 수는 제작표가 정한다(카탈로그에 항목을 추가하면 창이 저절로 길어진다).</summary>
         private static readonly int RowCount = RaftBuildCatalog.Order.Length;
 
         private static readonly float RowsHeight = RowCount * RowHeight + (RowCount - 1) * RowSpacing;
-        private static readonly float MessageTop = RowsTop + RowsHeight + 8f;
+        private static readonly float MessageTop = RowsHeight + 8f;
         private static readonly float HintTop = MessageTop + MessageHeight + 4f;
-        private static readonly float WindowHeight = HintTop + HintHeight + 12f;
+        private static readonly float BodyHeight = HintTop + HintHeight;
+
+        /// <summary>바깥에서 쓰는 창 전체 높이(기본 자리 계산용). 골격이 더하는 여백을 포함한다.</summary>
+        private static readonly float WindowHeight = BodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;
 
         // ── 색 (ArtDirection 팔레트 안에서만 - 새 색을 만들지 않는다) ────────────
-        private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);
-        private static readonly Color DimGray = new Color(0.55f, 0.55f, 0.55f, 1f);
         private static readonly Color SunstrokeGold = new Color(0.902f, 0.749f, 0.2f, 1f);
         private static readonly Color RowBackground = new Color(1f, 1f, 1f, 0.05f);
         private static readonly Color RowBackgroundBlocked = new Color(1f, 1f, 1f, 0.02f);
@@ -127,6 +123,7 @@ namespace MakeGame.UI
         // ── 화면 부품 ───────────────────────────────────────────────────────────
         private RectTransform canvasRect;
         private RectTransform windowRt;
+        private RectTransform bodyRt;
         private GameObject panelRoot;
         private UIDragHandle dragHandle;
         private Text headerLabel;
@@ -472,35 +469,41 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("RaftBuildCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            windowRt = UIBuilder.CreateWindow(canvas.transform, "RaftBuildWindow", WindowWidth, WindowHeight);
+            // 창 6개가 공유하는 골격. 호출자는 **본문 크기만** 말하고 제목줄·여백은 골격이 정한다.
+            var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "RaftBuildWindow",
+                BodyWidth, BodyHeight, "뗏목 제작", canvasRect, () => SetOpen(false));
+
+            windowRt = frame.window;
+            bodyRt = frame.body;
             panelRoot = windowRt.gameObject;
 
-            var titleBar = UIBuilder.CreateTitleBar(windowRt, "뗏목 제작", TitleBarHeight);
-            UIBuilder.CreateCloseButton(titleBar, () => SetOpen(false));
-
             // 제목 표시줄이 곧 드래그 손잡이이자, CursorLockController가 "창이 열렸다"를 판정하는 근거다.
-            dragHandle = UIBuilder.AttachDragHandle(titleBar, windowRt, canvasRect, TitleBarHeight);
-            dragHandle.onMoved = position =>
+            dragHandle = frame.drag;
+            if (dragHandle != null)
             {
-                savedWindowPosition = position;
-                hasSavedWindowPosition = true;
-            };
+                dragHandle.onMoved = position =>
+                {
+                    savedWindowPosition = position;
+                    hasSavedWindowPosition = true;
+                };
+            }
 
-            headerLabel = CreateLine("Header", HeaderTop, HeaderHeight, 14, NeutralGray);
+            // 단계 요약은 제목 **옆**이다. 본문 첫 줄에 두면 창마다 요약이 다른 자리에 놓인다.
+            headerLabel = frame.status;
 
             for (int i = 0; i < rows.Length; i++)
                 rows[i] = CreateRow(i);
 
-            messageLabel = CreateLine("Message", MessageTop, MessageHeight, 12, SunstrokeGold);
+            messageLabel = CreateLine("Message", MessageTop, MessageHeight, UITheme.FontBody, SunstrokeGold);
 
-            var hint = CreateLine("Hint", HintTop, HintHeight, 11, DimGray);
+            var hint = CreateLine("Hint", HintTop, HintHeight, UITheme.FontBody, UITheme.TextDim);
             hint.text = "숫자키 1~9 또는 [만들기] 클릭 · 제목 표시줄 드래그로 창 이동 · E 또는 X로 닫기";
         }
 
-        /// <summary>창 폭을 가득 채우는 한 줄짜리 글자(요약/문구/안내). ChestUI.CreateRow와 같은 배치다.</summary>
+        /// <summary>본문 폭을 가득 채우는 한 줄짜리 글자(문구/안내). ChestUI.CreateRow와 같은 배치다.</summary>
         private Text CreateLine(string name, float top, float height, int fontSize, Color color)
         {
-            var text = UIBuilder.CreateText(windowRt, name, "", fontSize, color, TextAnchor.MiddleLeft);
+            var text = UIBuilder.CreateText(bodyRt, name, "", fontSize, color, TextAnchor.MiddleLeft);
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
 
@@ -508,8 +511,8 @@ namespace MakeGame.UI
             rt.anchorMin = new Vector2(0f, 1f);
             rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot = new Vector2(0f, 1f);
-            rt.sizeDelta = new Vector2(ContentWidth, height);
-            rt.anchoredPosition = new Vector2(WindowPadding, -top);
+            rt.sizeDelta = new Vector2(BodyWidth, height);
+            rt.anchoredPosition = new Vector2(0f, -top);
             return text;
         }
 
@@ -523,25 +526,25 @@ namespace MakeGame.UI
 
             var row = new BuildRow { entry = entry };
 
-            var panel = UIBuilder.CreatePanel(windowRt, $"Row{index}_{entry}",
+            var panel = UIBuilder.CreatePanel(bodyRt, $"Row{index}_{entry}",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
                 offsetMin: Vector2.zero, offsetMax: Vector2.zero,
                 color: RowBackground);
             panel.pivot = new Vector2(0f, 1f);
-            panel.sizeDelta = new Vector2(ContentWidth, RowHeight);
-            panel.anchoredPosition = new Vector2(WindowPadding, -(RowsTop + index * (RowHeight + RowSpacing)));
+            panel.sizeDelta = new Vector2(BodyWidth, RowHeight);
+            panel.anchoredPosition = new Vector2(0f, -(index * (RowHeight + RowSpacing)));
 
             row.background = panel.GetComponent<Image>();
 
             // 이름(숫자키 번호를 앞에 붙여 둔다 - 목록과 단축키가 같은 순서임을 화면에서 바로 읽게).
             row.nameLabel = CreateCell(panel, "Name", $"{index + 1}. {RaftBuildCatalog.GetDisplayName(entry)}",
-                14, NeutralGray, new Vector2(8f, -4f), new Vector2(NameWidth, 18f));
+                UITheme.FontHeading, UITheme.TextPrimary, new Vector2(8f, -2f), new Vector2(NameWidth, 20f));
 
             row.descLabel = CreateCell(panel, "Desc", RaftBuildCatalog.GetDescription(entry),
-                11, DimGray, new Vector2(8f, -22f), new Vector2(NameWidth, 14f));
+                UITheme.FontBody, UITheme.TextDim, new Vector2(8f, -21f), new Vector2(NameWidth, 16f));
 
             row.costLabel = CreateCell(panel, "Cost", "",
-                12, NeutralGray, new Vector2(8f + NameWidth + 8f, -11f), new Vector2(CostWidth, 18f));
+                UITheme.FontBody, UITheme.TextPrimary, new Vector2(8f + NameWidth + 8f, -11f), new Vector2(CostWidth, 18f));
 
             row.button = UIBuilder.CreateButton(panel, "Build", "만들기", () => TryBuild(entry));
             var buttonRt = row.button.GetComponent<RectTransform>();
@@ -553,7 +556,7 @@ namespace MakeGame.UI
 
             row.buttonLabel = row.button.GetComponentInChildren<Text>();
             if (row.buttonLabel != null)
-                row.buttonLabel.fontSize = 13;
+                row.buttonLabel.fontSize = UITheme.FontButton;
 
             return row;
         }
@@ -636,7 +639,7 @@ namespace MakeGame.UI
             {
                 row.shownDesc = desc;
                 row.descLabel.text = desc;
-                row.descLabel.color = available ? DimGray : SunstrokeGold;
+                row.descLabel.color = available ? UITheme.TextDim : SunstrokeGold;
             }
 
             if (row.shownInteractable != canBuild)
@@ -652,7 +655,7 @@ namespace MakeGame.UI
             {
                 row.shownBlocked = blocked;
                 row.background.color = blocked ? RowBackgroundBlocked : RowBackground;
-                row.nameLabel.color = blocked ? DimGray : NeutralGray;
+                row.nameLabel.color = blocked ? UITheme.TextDim : UITheme.TextPrimary;
             }
         }
 

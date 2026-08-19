@@ -18,17 +18,20 @@ namespace MakeGame.UI
     /// </summary>
     public partial class MinimapUI : MonoBehaviour
     {
-        // 전체 지도 창 치수. 인벤토리 창과 같은 조립 규칙(한 점 앵커 + 고정 크기 + 피벗 (0.5,1))을 쓴다.
-        private const float TitleBarHeight = 34f;
-        private const float WindowPadding = 14f;
+        // 전체 지도 창 치수. 제목줄 높이·좌우 여백은 공용 골격이 정하므로 여기 값은 전부
+        // **본문 안쪽** 좌표다 - 본문의 (0,0)이 곧 지도 그림의 왼쪽 위다.
         private const float MapViewSize = 470f;
         private const float ListColumnWidth = 328f;
+        private const float ListColumnGap = 14f;
         private const float ListHeaderHeight = 20f;
         private const float ChecklistHeight = 34f;
         private const float StatusHeight = 22f;
-        private const float MapViewTop = TitleBarHeight + 6f;
-        private const float MapWindowWidth = WindowPadding + MapViewSize + 14f + ListColumnWidth + WindowPadding;
-        private const float MapWindowHeight = MapViewTop + MapViewSize + 8f + ChecklistHeight + 4f + StatusHeight + 8f;
+
+        private const float MapBodyWidth = MapViewSize + ListColumnGap + ListColumnWidth;
+        private const float MapBodyHeight = MapViewSize + 8f + ChecklistHeight + 4f + StatusHeight;
+
+        /// <summary>기본 자리 계산에 쓰는 창 전체 높이(골격이 더하는 위·아래 여백 포함).</summary>
+        private const float MapWindowHeight = MapBodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;
 
         /// <summary>
         /// 전체 지도에서 "탐사해서 밝아지는" 원의 반경(미터).
@@ -42,9 +45,6 @@ namespace MakeGame.UI
 
         /// <summary>전체 지도의 기본 바닥 = 아직 아무것도 모르는 바다.</summary>
         private static readonly Color UnexploredSea = new Color(0.018f, 0.024f, 0.030f, 1f);
-
-        /// <summary>전체 지도 창 바탕. 인벤토리와 같은 알파 0.93(0.75는 뒤가 비쳐 못 읽는다).</summary>
-        private static readonly Color WindowBackground = new Color(0.04f, 0.05f, 0.06f, 0.93f);
 
         // 체크리스트 O/X 색. ✓/✗ 글리프는 LegacyRuntime.ttf에서 보장되지 않아 ASCII O/X를 쓴다.
         private static readonly Color ReadyColor = MedicGreen;
@@ -66,6 +66,8 @@ namespace MakeGame.UI
         private RectTransform canvasRect;
         private GameObject mapWindowRoot;
         private RectTransform mapWindowRt;
+        private RectTransform mapBodyRt;
+        private Text mapSummaryLabel;
         private UIDragHandle mapDragHandle;
         private RectTransform mapMarkerLayer;
         private RectTransform mapFogLayer;
@@ -84,6 +86,7 @@ namespace MakeGame.UI
 
         private string lastTravelStatus = "";
         private string lastDisplayedChecklist = null;
+        private string lastDisplayedMapSummary = null;
 
         private bool IsMapOpen => mapWindowRoot != null && mapWindowRoot.activeSelf;
         // ────────────────────────────────────────────────────────────────────────
@@ -91,8 +94,8 @@ namespace MakeGame.UI
         // ────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 전체 지도 창을 만든다. 인벤토리 창과 같은 규격이다: 제목 표시줄 + 우상단 X, 제목 표시줄을
-        /// 끌어 이동, 화면 밖으로 못 나가게 클램프(UIDragHandle 재사용), 알파 0.93.
+        /// 전체 지도 창을 만든다. 제목 표시줄·닫기 버튼·드래그·여백은 공용 골격
+        /// (UIBuilder.CreateSkinnedWindow)이 맡는다 - 창마다 다른 규격이 생기지 않게 하기 위함이다.
         /// 왼쪽이 지도, 오른쪽이 섬 목록이다 - 예전에 따로 뜨던 목록 패널은 여기로 흡수됐다.
         /// </summary>
         private void BuildMapWindow()
@@ -100,76 +103,43 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("WorldMapCanvas", sortOrder: 11);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            mapWindowRt = UIBuilder.CreatePanel(
-                canvas.transform, "WorldMapWindow",
-                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                color: WindowBackground, addTopBorder: true);
+            // 창 6개가 공유하는 골격. 호출자는 **본문 크기만** 말하고 제목줄·여백은 골격이 정한다.
+            var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "WorldMapWindow",
+                MapBodyWidth, MapBodyHeight, $"세계 지도 ({toggleKey})", canvasRect, () => SetMapOpen(false));
 
-            mapWindowRt.pivot = new Vector2(0.5f, 1f);
-            mapWindowRt.sizeDelta = new Vector2(MapWindowWidth, MapWindowHeight);
+            mapWindowRt = frame.window;
+            mapBodyRt = frame.body;
             mapWindowRoot = mapWindowRt.gameObject;
 
-            BuildMapTitleBar();
+            // 탐사율 한 줄은 제목 **옆**이다. 이동 결과 문구와 체크리스트는 본문에 그대로 둔다.
+            mapSummaryLabel = frame.status;
+
+            mapDragHandle = frame.drag;
+            if (mapDragHandle != null)
+            {
+                mapDragHandle.onMoved = position =>
+                {
+                    savedMapPosition = position;
+                    hasSavedMapPosition = true;
+                };
+            }
+
             BuildMapView();
             BuildIslandListColumn();
             BuildMapFooter();
-        }
-
-        /// <summary>제목 표시줄(드래그 손잡이 + 닫기 버튼). 인벤토리와 완전히 같은 조립이다.</summary>
-        private void BuildMapTitleBar()
-        {
-            var titleBar = UIBuilder.CreatePanel(
-                mapWindowRt, "TitleBar",
-                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
-                offsetMin: new Vector2(0f, -TitleBarHeight), offsetMax: Vector2.zero,
-                color: new Color(1f, 1f, 1f, 0.07f));
-
-            var title = UIBuilder.CreateText(titleBar, "Title", $"세계 지도 ({toggleKey})", 20, Color.white, TextAnchor.MiddleLeft);
-            title.raycastTarget = false; // 제목 글자가 드래그 입력을 가로채지 않게 한다
-            title.rectTransform.anchorMin = Vector2.zero;
-            title.rectTransform.anchorMax = Vector2.one;
-            title.rectTransform.offsetMin = new Vector2(12f, 0f);
-            title.rectTransform.offsetMax = new Vector2(-40f, 0f);
-
-            var close = UIBuilder.CreateButton(titleBar, "Close", "X", () => SetMapOpen(false));
-            var closeRt = close.GetComponent<RectTransform>();
-            closeRt.anchorMin = new Vector2(1f, 1f);
-            closeRt.anchorMax = new Vector2(1f, 1f);
-            closeRt.pivot = new Vector2(1f, 1f);
-            closeRt.sizeDelta = new Vector2(30f, 24f);
-            closeRt.anchoredPosition = new Vector2(-5f, -5f);
-
-            var closeImage = close.GetComponent<Image>();
-            if (closeImage != null)
-            {
-                Color closeColor = DangerRed;
-                closeColor.a = 0.75f;
-                closeImage.color = closeColor;
-            }
-
-            mapDragHandle = titleBar.gameObject.AddComponent<UIDragHandle>();
-            mapDragHandle.target = mapWindowRt;
-            mapDragHandle.bounds = canvasRect;
-            mapDragHandle.handleHeight = TitleBarHeight;
-            mapDragHandle.onMoved = position =>
-            {
-                savedMapPosition = position;
-                hasSavedMapPosition = true;
-            };
         }
 
         /// <summary>지도 그림 영역(왼쪽 열): 검은 바다 → 탐사 원반 → 섬 표식 → 플레이어 → 축척자.</summary>
         private void BuildMapView()
         {
             var view = UIBuilder.CreatePanel(
-                mapWindowRt, "MapView",
+                mapBodyRt, "MapView",
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
                 offsetMin: Vector2.zero, offsetMax: Vector2.zero,
                 color: UnexploredSea);
 
             view.pivot = new Vector2(0f, 1f);
-            view.anchoredPosition = new Vector2(WindowPadding, -MapViewTop);
+            view.anchoredPosition = Vector2.zero;
             view.sizeDelta = new Vector2(MapViewSize, MapViewSize);
             view.gameObject.AddComponent<RectMask2D>();
 
@@ -208,13 +178,13 @@ namespace MakeGame.UI
             }
 
             // 방위 표시(북쪽 고정).
-            var north = UIBuilder.CreateText(view, "North", "N", 14, new Color(1f, 1f, 1f, 0.8f), TextAnchor.UpperCenter);
+            var north = UIBuilder.CreateText(view, "North", "N", UITheme.FontHeading, new Color(1f, 1f, 1f, 0.8f), TextAnchor.UpperCenter);
             north.raycastTarget = false;
             north.rectTransform.anchorMin = new Vector2(0.5f, 1f);
             north.rectTransform.anchorMax = new Vector2(0.5f, 1f);
             north.rectTransform.pivot = new Vector2(0.5f, 1f);
             north.rectTransform.anchoredPosition = new Vector2(0f, -4f);
-            north.rectTransform.sizeDelta = new Vector2(28f, 18f);
+            north.rectTransform.sizeDelta = new Vector2(28f, 20f);
 
             // 축척자: 길이가 곧 거리다. 지도 축척이 섬 배치에 맞춰 자동으로 정해지므로, 숫자만 적고
             // 막대를 안 그리면 "이 지도에서 1200m가 얼마나 되는지"를 눈으로 잴 방법이 없어진다.
@@ -230,7 +200,7 @@ namespace MakeGame.UI
             barImage.color = new Color(1f, 1f, 1f, 0.7f);
             barImage.raycastTarget = false;
 
-            scaleLabel = UIBuilder.CreateText(view, "ScaleLabel", "", 11, new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerLeft);
+            scaleLabel = UIBuilder.CreateText(view, "ScaleLabel", "", UITheme.FontBody, new Color(1f, 1f, 1f, 0.7f), TextAnchor.LowerLeft);
             scaleLabel.raycastTarget = false;
             scaleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             scaleLabel.rectTransform.anchorMin = new Vector2(0f, 0f);
@@ -243,15 +213,15 @@ namespace MakeGame.UI
         /// <summary>섬 목록 열(오른쪽). 예전의 독립 "섬 목록" 패널이 이 열로 흡수됐다.</summary>
         private void BuildIslandListColumn()
         {
-            float columnX = WindowPadding + MapViewSize + 14f;
+            float columnX = MapViewSize + ListColumnGap;
 
-            var header = UIBuilder.CreateText(mapWindowRt, "ListHeader", "섬 목록 · [표식]으로 고갈/자원/위험 표시 (지도에선 Shift+클릭)", 12, NeutralGray, TextAnchor.MiddleLeft);
+            var header = UIBuilder.CreateText(mapBodyRt, "ListHeader", "섬 목록 · [표식]으로 고갈/자원/위험 표시 (지도에선 Shift+클릭)", UITheme.FontBody, NeutralGray, TextAnchor.MiddleLeft);
             header.raycastTarget = false;
             header.horizontalOverflow = HorizontalWrapMode.Overflow;
             header.rectTransform.anchorMin = new Vector2(0f, 1f);
             header.rectTransform.anchorMax = new Vector2(0f, 1f);
             header.rectTransform.pivot = new Vector2(0f, 1f);
-            header.rectTransform.anchoredPosition = new Vector2(columnX, -MapViewTop);
+            header.rectTransform.anchoredPosition = new Vector2(columnX, 0f);
             header.rectTransform.sizeDelta = new Vector2(ListColumnWidth, ListHeaderHeight);
 
             // [B52] 50섬 대응: 행이 50개면 목록 전체 높이가 약 1,500px(행 26 + 간격 4)로 열 높이
@@ -259,12 +229,12 @@ namespace MakeGame.UI
             // 창 아래 체크리스트/상태 줄을 덮고 화면 밖까지 그대로 그려진다. InventorySlotView와 같은
             // 조립(ScrollRect + RectMask2D 뷰포트 + ContentSizeFitter 콘텐츠)으로 세로 스크롤을 붙인다.
             var scrollGo = new GameObject("IslandListScroll", typeof(RectTransform), typeof(ScrollRect));
-            scrollGo.transform.SetParent(mapWindowRt, false);
+            scrollGo.transform.SetParent(mapBodyRt, false);
             var scrollRt = scrollGo.GetComponent<RectTransform>();
             scrollRt.anchorMin = new Vector2(0f, 1f);
             scrollRt.anchorMax = new Vector2(0f, 1f);
             scrollRt.pivot = new Vector2(0f, 1f);
-            scrollRt.anchoredPosition = new Vector2(columnX, -(MapViewTop + ListHeaderHeight + 4f));
+            scrollRt.anchoredPosition = new Vector2(columnX, -(ListHeaderHeight + 4f));
             scrollRt.sizeDelta = new Vector2(ListColumnWidth, MapViewSize - ListHeaderHeight - 4f);
 
             // 뷰포트. 아주 옅은 배경을 까는 이유는 InventorySlotView와 같다 - (1) 목록 영역 경계가
@@ -307,24 +277,24 @@ namespace MakeGame.UI
         {
             // 출발 전 준비 체크리스트(Design_Progression.md 3장 단계 3 (b)).
             // **이동을 막지 않는다** - 이 줄은 어떤 버튼의 interactable도 건드리지 않는다.
-            checklistLabel = UIBuilder.CreateText(mapWindowRt, "Checklist", "", 12, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.LowerLeft);
+            checklistLabel = UIBuilder.CreateText(mapBodyRt, "Checklist", "", UITheme.FontBody, new Color(0.85f, 0.85f, 0.85f, 1f), TextAnchor.LowerLeft);
             checklistLabel.raycastTarget = false;
             checklistLabel.rectTransform.anchorMin = new Vector2(0f, 0f);
             checklistLabel.rectTransform.anchorMax = new Vector2(1f, 0f);
             checklistLabel.rectTransform.pivot = new Vector2(0.5f, 0f);
-            checklistLabel.rectTransform.anchoredPosition = new Vector2(0f, StatusHeight + 8f + 4f);
+            checklistLabel.rectTransform.anchoredPosition = new Vector2(0f, StatusHeight + 4f);
             // 두 줄 자리를 유지한다. 한 줄로 두면 문구가 폭을 넘는 순간 둘째 줄이 Truncate로 통째로
             // 사라지고, 정작 중요한 도구 안내만 조용히 잘려나간다(힌트가 반만 보이면 함정이 된다).
-            checklistLabel.rectTransform.sizeDelta = new Vector2(-WindowPadding * 2f, ChecklistHeight);
+            checklistLabel.rectTransform.sizeDelta = new Vector2(0f, ChecklistHeight);
 
-            statusLabel = UIBuilder.CreateText(mapWindowRt, "Status", "", 13, new Color(1f, 0.9f, 0.4f, 1f), TextAnchor.LowerLeft);
+            statusLabel = UIBuilder.CreateText(mapBodyRt, "Status", "", UITheme.FontBody, new Color(1f, 0.9f, 0.4f, 1f), TextAnchor.LowerLeft);
             statusLabel.raycastTarget = false;
             statusLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             statusLabel.rectTransform.anchorMin = new Vector2(0f, 0f);
             statusLabel.rectTransform.anchorMax = new Vector2(1f, 0f);
             statusLabel.rectTransform.pivot = new Vector2(0.5f, 0f);
-            statusLabel.rectTransform.anchoredPosition = new Vector2(0f, 8f);
-            statusLabel.rectTransform.sizeDelta = new Vector2(-WindowPadding * 2f, StatusHeight);
+            statusLabel.rectTransform.anchoredPosition = Vector2.zero;
+            statusLabel.rectTransform.sizeDelta = new Vector2(0f, StatusHeight);
         }
 
         /// <summary>
@@ -551,11 +521,15 @@ namespace MakeGame.UI
             var islands = worldMapManager.islands;
             EnsureRowCount(islands.Count);
 
+            int revealedCount = 0;
+
             for (int i = 0; i < islands.Count; i++)
             {
                 var island = islands[i];
                 var row = islandRows[i];
                 bool revealed = IsRevealed(island);
+                if (revealed)
+                    revealedCount++;
 
                 row.rowGo.SetActive(true);
                 row.infoLabel.text = BuildIslandInfo(island);
@@ -591,6 +565,17 @@ namespace MakeGame.UI
 
             if (statusLabel != null)
                 statusLabel.text = lastTravelStatus;
+
+            // 탐사율은 실제로 달라졌을 때만 문자열을 다시 만든다(0.2초 주기로 도는 자리다).
+            if (mapSummaryLabel != null)
+            {
+                string summary = $"탐사 {revealedCount} / {islands.Count}";
+                if (lastDisplayedMapSummary != summary)
+                {
+                    lastDisplayedMapSummary = summary;
+                    mapSummaryLabel.text = summary;
+                }
+            }
 
             RefreshChecklist();
         }
@@ -634,7 +619,7 @@ namespace MakeGame.UI
             hlg.spacing = 8f;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
-            var infoLabel = UIBuilder.CreateText(rowGo.transform, "Info", "", 13, Color.white, TextAnchor.MiddleLeft);
+            var infoLabel = UIBuilder.CreateText(rowGo.transform, "Info", "", UITheme.FontBody, Color.white, TextAnchor.MiddleLeft);
             infoLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             infoLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
@@ -644,7 +629,7 @@ namespace MakeGame.UI
             markButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
             Text markLabel = markButton.GetComponentInChildren<Text>();
             if (markLabel != null)
-                markLabel.fontSize = 12;
+                markLabel.fontSize = UITheme.FontBody;
 
             var travelButton = UIBuilder.CreateButton(rowGo.transform, "TravelButton", "이동", null);
             travelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 70f;

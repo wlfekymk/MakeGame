@@ -75,7 +75,6 @@ namespace MakeGame.UI
         private const int Columns = 6;
         private const float SlotSize = 62f;
         private const float SlotSpacing = 6f;
-        private const float WindowPadding = 14f;
         private const float InfoRowHeight = 26f;
         private const float FooterButtonHeight = 28f;
         private const float HintHeight = 16f;
@@ -97,23 +96,16 @@ namespace MakeGame.UI
         private const float GridHeight = VisibleRows * SlotSize + (VisibleRows - 1) * SlotSpacing;
 
         /// <summary>
-        /// 본문이 시작되는 y(헤더 + 구분선 + 본문 여백). 왼쪽 격자 단과 오른쪽 상세 패널이 **같은 선**에서
-        /// 출발해야 두 단이 하나의 본문으로 읽힌다 - 이번 재구성의 핵심이라 상수로 못박는다.
+        /// 격자 위쪽(필터 줄)이 차지하는 높이. **본문 좌표계**라 제목줄 높이도 창 여백도 들어가지 않는다 -
+        /// 그 둘은 공용 골격(UIBuilder.CreateSkinnedWindow)이 이미 빼고 본문을 넘겨준다.
         /// </summary>
-        private const float BodyTop = UITheme.HeaderHeight + UITheme.SeparatorThickness + UITheme.BodyPadding;
+        private const float GridTopOffset = InfoRowHeight + 8f;
 
-        /// <summary>격자 위쪽(헤더 + 필터 줄)이 차지하는 높이.</summary>
-        private const float GridTopOffset = BodyTop + InfoRowHeight + 8f;
+        /// <summary>본문 폭(402 + 12 + 232 = 646). 창 전체 폭은 골격이 좌우 여백을 더해 674로 만든다.</summary>
+        private const float BodyWidth = GridWidth + UITheme.PaneGap + UITheme.DetailPaneWidth;
 
-        /// <summary>창 높이(44 + 1 + 12 + 26 + 8 + 470 + 14 = 575px 고정).</summary>
-        private const float WindowHeight = GridTopOffset + GridHeight + WindowPadding;
-
-        /// <summary>창 폭(14 + 402 + 12 + 232 + 14 = 674px). 격자와 상세가 한 창 안에 있어야 시선이 창 밖으로 나가지 않는다.</summary>
-        private const float WindowWidth = WindowPadding + GridWidth + UITheme.PaneGap + UITheme.DetailPaneWidth + WindowPadding;
-
-        /// <summary>상세 패널의 왼쪽 x와 높이(본문 시작선부터 창 아래 여백까지).</summary>
-        private const float DetailPaneX = WindowPadding + GridWidth + UITheme.PaneGap;
-        private const float DetailPaneHeight = WindowHeight - BodyTop - WindowPadding;
+        /// <summary>본문 높이(26 + 8 + 470 = 504). 창 전체 높이는 골격이 헤더·여백을 더해 575로 만든다.</summary>
+        private const float BodyHeight = GridTopOffset + GridHeight;
 
         // 색: ArtDirection.md 팔레트 안에서만 쓴다(새 색을 만들지 않는다).
         // 본문 글자색(#CCCCCC)과 보조 글자색은 UITheme.TextPrimary / TextDim으로 옮겼다 - 같은 값이
@@ -385,41 +377,42 @@ namespace MakeGame.UI
         // 생성
         // ────────────────────────────────────────────────────────────────────────
 
-        /// <summary>캔버스 · 창(제목 표시줄/닫기/용량/필터) · 격자 · 하단 조작줄을 만든다.</summary>
+        /// <summary>캔버스 · 공용 골격 창 · 필터 줄 · 격자 · 상세 단을 만든다.</summary>
         private void BuildUI()
         {
             var canvas = UIBuilder.CreateCanvas("InventoryCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            // 창은 화면 한쪽에 못 박지 않고 **한 점 앵커 + 고정 크기**로 만든다. 그래야 드래그가
-            // anchoredPosition 하나만 움직이면 되고, 클램프 계산도 한 가지 좌표계로 끝난다.
-            windowRt = UIBuilder.CreatePanel(
-                canvas.transform, "InventoryWindow",
-                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                // [B19 디렉터] 알파 0.75 → 0.93. 실기에서 뒤의 HUD 막대·글자가 격자 사이로 그대로
-                // 읽혀 아이콘 판독을 방해했다. 인벤토리는 정보 밀도가 높은 창이라 배경이 비치면 안 된다
-                // (ArtDirection 4.3의 0.75는 짧게 뜨는 알림·확인 패널 기준이다).
-                color: new Color(0.04f, 0.05f, 0.06f, 0.93f),
-                addTopBorder: true);
+            // 제목줄 높이·여백·닫기 버튼 자리·드래그 손잡이는 전부 공용 골격이 정한다. 창마다 따로
+            // 박아 두면 인벤토리와 제작 창을 나란히 띄웠을 때 서로 다른 게임의 UI처럼 보인다.
+            // 넘기는 값은 **본문 안쪽 크기**다(창 전체 크기는 골격이 여백을 더해 정한다).
+            var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "InventoryWindow",
+                BodyWidth, BodyHeight, "인벤토리", canvasRect, () => SetOpen(false));
 
-            windowRt.pivot = new Vector2(0.5f, 1f);
-            windowRt.sizeDelta = new Vector2(WindowWidth, WindowHeight);
+            windowRt = frame.window;
+            dragHandle = frame.drag;
             panelRoot = windowRt.gameObject;
 
-            BuildHeader();
+            // 용량은 격자 위가 아니라 **창 이름 옆**(골격의 보조 정보 자리)이다. 그래야 "이 창이 얼마나
+            // 찼는가"로 읽히고, 본문 첫 줄은 필터 하나만 남아 왼쪽 단이 조용해진다.
+            capacityLabel = frame.status;
 
-            // 헤더와 본문을 가르는 1px 선. 창 안에서 "여기부터 내용"이라는 신호를 배경색 차이 대신
-            // 선 하나로 준다(배경을 한 단계 더 밝히면 뒤의 월드가 다시 비친다).
-            UIBuilder.CreateSeparator(windowRt, "HeaderSeparator", UITheme.HeaderHeight);
+            if (dragHandle != null)
+            {
+                dragHandle.onMoved = position =>
+                {
+                    savedWindowPosition = position;
+                    hasSavedWindowPosition = true;
+                };
+            }
 
-            BuildFilterRow();
+            BuildFilterRow(frame.body);
 
             // 격자: 스크롤 + 칸 뷰 재사용은 공용 VirtualSlotGrid가 담당한다(보관 상자 창과 같은 구현).
-            grid.Build(windowRt, "SlotGrid",
+            grid.Build(frame.body, "SlotGrid",
                 GridWidth, GridHeight,
                 Columns, SlotSize, SlotSpacing, durabilityBars: true);
-            grid.Root.anchoredPosition = new Vector2(WindowPadding, -GridTopOffset);
+            grid.Root.anchoredPosition = new Vector2(0f, -GridTopOffset);
             grid.onEnter = OnSlotEnter;
             grid.onExit = OnSlotExit;
             grid.onLeftClick = OnSlotLeftClick;
@@ -427,79 +420,21 @@ namespace MakeGame.UI
             grid.onStyle = ApplyCellStyle;
             grid.onRowsChanged = OnGridScrolled;
 
-            BuildDetailPane();
-        }
-
-        /// <summary>헤더(제목 · 용량 · 닫기). 창을 끄는 손잡이도 여기 붙는다.</summary>
-        private void BuildHeader()
-        {
-            var header = UIBuilder.CreatePanel(
-                windowRt, "Header",
-                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
-                offsetMin: new Vector2(0f, -UITheme.HeaderHeight), offsetMax: Vector2.zero,
-                color: UITheme.HeaderBackground);
-
-            var title = UIBuilder.CreateText(header, "Title", "인벤토리", UITheme.FontTitle, UITheme.TextPrimary, TextAnchor.MiddleLeft);
-            title.raycastTarget = false; // 제목 글자가 드래그 입력을 가로채지 않게(입력은 헤더가 받는다)
-            title.horizontalOverflow = HorizontalWrapMode.Overflow;
-            title.rectTransform.anchorMin = Vector2.zero;
-            title.rectTransform.anchorMax = Vector2.one;
-            title.rectTransform.offsetMin = new Vector2(WindowPadding, 0f);
-            title.rectTransform.offsetMax = new Vector2(-180f, 0f);
-
-            // 용량은 격자 위가 아니라 **창 이름 옆**에 둔다. 그래야 "이 창이 얼마나 찼는가"로 읽히고,
-            // 본문 첫 줄은 필터 하나만 남아 왼쪽 단이 조용해진다.
-            capacityLabel = UIBuilder.CreateText(header, "Capacity", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleRight);
-            capacityLabel.raycastTarget = false;
-            capacityLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var capacityRt = capacityLabel.rectTransform;
-            capacityRt.anchorMin = new Vector2(1f, 0f);
-            capacityRt.anchorMax = new Vector2(1f, 1f);
-            capacityRt.pivot = new Vector2(1f, 0.5f);
-            capacityRt.sizeDelta = new Vector2(200f, 0f);
-            capacityRt.anchoredPosition = new Vector2(-46f, 0f);
-
-            // 닫기(X): 마우스만으로 창을 닫는 유일한 확실한 수단이라 항상 같은 자리(우상단)에 둔다.
-            // Danger Red는 "되돌릴 수 없는 행동"이 아니라 창 닫기라는 관습적 의미로 쓴다 - 팔레트 안이고,
-            // 이 화면에서 빨강을 쓰는 다른 요소(가득 참 경고/확인 대기 테두리)와 형태·위치가 완전히 다르다.
-            var close = UIBuilder.CreateButton(header, "Close", "X", () => SetOpen(false));
-            var closeRt = close.GetComponent<RectTransform>();
-            closeRt.anchorMin = new Vector2(1f, 1f);
-            closeRt.anchorMax = new Vector2(1f, 1f);
-            closeRt.pivot = new Vector2(1f, 1f);
-            closeRt.sizeDelta = new Vector2(30f, 24f);
-            closeRt.anchoredPosition = new Vector2(-8f, -10f);
-
-            var closeImage = close.GetComponent<Image>();
-            if (closeImage != null)
-            {
-                Color closeColor = DangerRed;
-                closeColor.a = 0.75f;
-                closeImage.color = closeColor;
-            }
-
-            // 헤더 자체가 드래그 손잡이다. 창 전체를 잡게 만들지 않은 이유: 격자 칸을 클릭·우클릭
-            // 하는 조작과 드래그가 같은 영역에서 겹치면, 버리려고 우클릭하다 창이 딸려 움직인다.
-            dragHandle = UIBuilder.AttachDragHandle(header, windowRt, canvasRect, UITheme.HeaderHeight);
-            dragHandle.onMoved = position =>
-            {
-                savedWindowPosition = position;
-                hasSavedWindowPosition = true;
-            };
+            BuildDetailPane(frame.body);
         }
 
         /// <summary>본문 왼쪽 단의 첫 줄: 카테고리 필터 칩.</summary>
-        private void BuildFilterRow()
+        private void BuildFilterRow(RectTransform body)
         {
             // 필터를 F키로만 돌릴 수 있으면 마우스만 쓰는 사람에게는 없는 기능이나 마찬가지다.
             // 칩을 누르면 같은 순환이 돌고, 라벨에 키를 함께 적어 키 조작도 계속 노출한다.
-            var filterButton = UIBuilder.CreateButton(windowRt, "FilterChip", "", CycleFilter);
+            var filterButton = UIBuilder.CreateButton(body, "FilterChip", "", CycleFilter);
             var filterRt = filterButton.GetComponent<RectTransform>();
             filterRt.anchorMin = new Vector2(0f, 1f);
             filterRt.anchorMax = new Vector2(0f, 1f);
             filterRt.pivot = new Vector2(0f, 1f);
             filterRt.sizeDelta = new Vector2(FilterChipWidth, InfoRowHeight);
-            filterRt.anchoredPosition = new Vector2(WindowPadding, -BodyTop);
+            filterRt.anchoredPosition = Vector2.zero;   // 본문 좌표계의 (0,0)이 곧 본문 왼쪽 위다
 
             // 기본 버튼색(초록)을 그대로 두면 같은 창의 '버리기'와 같은 무게로 보인다. 필터는 아무 때나
             // 눌러도 되는 조회 조작이고 버리기는 되돌릴 수 없는 조작이라, 둘의 시각적 무게가 같으면 안 된다.
@@ -531,16 +466,10 @@ namespace MakeGame.UI
         /// **버리기 버튼과 조작 안내는 패널 맨 아래에 고정**한다. 설명 길이에 따라 버튼이 오르내리면
         /// 되돌릴 수 없는 조작의 위치가 아이템마다 달라져 오폭을 부른다.
         /// </summary>
-        private void BuildDetailPane()
+        private void BuildDetailPane(RectTransform body)
         {
-            detailPane = UIBuilder.CreatePanel(
-                windowRt, "DetailPane",
-                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
-                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                color: UITheme.PaneBackground);
-            detailPane.pivot = new Vector2(0f, 1f);
-            detailPane.sizeDelta = new Vector2(UITheme.DetailPaneWidth, DetailPaneHeight);
-            detailPane.anchoredPosition = new Vector2(DetailPaneX, -BodyTop);
+            // 오른쪽 단도 골격이 만든다 - 폭·재질·시작선을 창마다 따로 정하면 제작 창과 어긋난다.
+            detailPane = UIBuilder.CreateSidePane(body, "DetailPane", UITheme.DetailPaneWidth);
 
             // 아이콘은 격자 칸(62px)보다 커야 "확대해서 보는 자리"로 읽힌다.
             var iconGo = new GameObject("DetailIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));

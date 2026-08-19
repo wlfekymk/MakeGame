@@ -59,22 +59,49 @@ namespace MakeGame.UI
         private const int Columns = 6;
         private const float SlotSize = 62f;
         private const float SlotSpacing = 6f;
-        private const float WindowPadding = 14f;
-        private const float TitleBarHeight = 34f;
         private const float InfoRowHeight = 26f;
         private const float FooterButtonHeight = 28f;
         private const float HintHeight = 16f;
-        private const float CraftButtonWidth = 100f;
         private const float SkillChipWidth = 150f;
 
-        /// <summary>격자 위쪽(제목 표시줄 + 정보 줄)이 차지하는 높이.</summary>
-        private const float GridTopOffset = TitleBarHeight + 6f + InfoRowHeight + 10f;
+        /// <summary>왼쪽 격자 단의 폭(402). 인벤토리와 같은 6열 62px이라 두 창의 칸이 같은 크기로 보인다.</summary>
+        private const float GridWidth = Columns * SlotSize + (Columns - 1) * SlotSpacing;
+
+        /// <summary>본문 폭(402 + 12 + 232 = 646). 창 전체 폭은 골격이 좌우 여백을 더해 674 - 인벤토리와 같다.</summary>
+        private const float BodyWidth = GridWidth + UITheme.PaneGap + UITheme.DetailPaneWidth;
+
+        /// <summary>
+        /// 격자 위쪽(정보 줄)이 차지하는 높이. **본문 좌표계**라 제목줄 높이도 창 여백도 들어가지 않는다 -
+        /// 그 둘은 공용 골격(UIBuilder.CreateSkinnedWindow)이 이미 빼고 본문을 넘겨준다.
+        /// </summary>
+        private const float GridTopOffset = InfoRowHeight + 10f;
+
+        /// <summary>상세 단 안쪽 여백. 인벤토리 상세 패널과 같은 값이어야 두 창이 같은 창으로 읽힌다.</summary>
+        private const float DetailPadding = 12f;
+
+        /// <summary>상세 단 맨 위 선택 문구가 쓰는 높이(232px 폭에서 세 줄까지 접힌다).</summary>
+        private const float SelectionHeight = 54f;
+
+        /// <summary>재료 한 줄의 높이와, 그 줄 오른쪽 "보유 / 필요" 칸의 폭.</summary>
+        private const float IngredientRowHeight = 18f;
+        private const float IngredientCountWidth = 72f;
+
+        /// <summary>필요 재료 제목줄의 위치(선택 문구 아래 구분선 바로 밑).</summary>
+        private const float IngredientHeadingTop = DetailPadding + SelectionHeight + 6f + UITheme.SeparatorThickness + 8f;
+
+        /// <summary>제작 버튼은 상세 단 폭을 꽉 채운다 - 이 창에서 유일하게 무언가를 소비하는 조작이라 숨기지 않는다.</summary>
+        private const float CraftButtonWidth = UITheme.DetailPaneWidth - DetailPadding * 2f;
+
+        /// <summary>
+        /// 본문 최소 높이. 창 높이는 제작법 수(격자 줄 수)가 정하는데, 목록이 짧으면 오른쪽 상세 단의
+        /// 재료 줄과 제작 버튼이 잘린다. 상세 단이 항상 다 보이는 높이를 바닥으로 깐다.
+        /// </summary>
+        private const float MinBodyHeight = 300f;
 
         // 색: ArtDirection.md 팔레트 안에서만 쓴다(새 색을 만들지 않는다).
-        private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);        // #CCCCCC
-        private static readonly Color DimGray = new Color(0.55f, 0.55f, 0.55f, 1f);
+        // 본문 글자색(#CCCCCC)·보조 글자색·Danger Red는 UITheme/UIBuilder에 같은 값이 이미 있다.
+        // 같은 색이 파일마다 복사돼 있으면 창 스킨을 한 번에 손볼 수가 없어 여기서는 지웠다.
         private static readonly Color SunstrokeGold = new Color(0.902f, 0.749f, 0.2f, 1f);  // #E6BF33
-        private static readonly Color ShortageColor = new Color(0.8f, 0.2f, 0.2f, 1f);      // Danger Red #CC3333
         private static readonly Color SatisfiedColor = new Color(0.55f, 0.85f, 0.7f, 1f);   // Medic Green 계열
 
         /// <summary>제작 가능한 칸의 아이콘 색(그대로 밝게).</summary>
@@ -141,7 +168,20 @@ namespace MakeGame.UI
         private Text hintLabel;
         private Text questHintLabel;
         private Button craftButton;
+        private RectTransform detailPane;
+        private RectTransform ingredientList;
+        private Text ingredientHeading;
         private ItemTooltipUI tooltip;
+
+        /// <summary>재료 한 줄(이름 왼쪽 · 보유/필요 오른쪽). 제작법마다 줄 수가 달라 만들어 두고 재사용한다.</summary>
+        private class IngredientRow
+        {
+            public GameObject go;
+            public Text label;
+            public Text count;
+        }
+
+        private readonly List<IngredientRow> ingredientRows = new List<IngredientRow>();
 
         private readonly List<RecipeEntry> entries = new List<RecipeEntry>();
         private readonly List<RecipeEntry> displayOrder = new List<RecipeEntry>();
@@ -170,6 +210,9 @@ namespace MakeGame.UI
         private int lastSkillLevel = int.MinValue;
         private CraftingRecipe lastFooterRecipe;
         private int lastFooterState = -1;
+
+        private CraftingRecipe lastIngredientRecipe;
+        private int lastIngredientSignature = int.MinValue;
 
         private CraftingRecipe lastTooltipRecipe;
         private int lastTooltipSignature = int.MinValue;
@@ -338,24 +381,36 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("CraftingCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            float windowWidth = Columns * SlotSize + (Columns - 1) * SlotSpacing + WindowPadding * 2f;
+            // 제목줄 높이·여백·닫기 버튼 자리·드래그 손잡이는 전부 공용 골격이 정한다. 창마다 따로
+            // 박아 두면 제작 창과 인벤토리를 나란히 띄웠을 때 서로 다른 게임의 UI처럼 보인다.
+            // 넘기는 값은 **본문 안쪽 크기**다(창 전체 크기는 골격이 여백을 더해 정한다).
+            var frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "CraftingWindow",
+                BodyWidth, ComputeBodyHeight(), $"제작 ({toggleKey})", canvasRect, () => SetOpen(false));
 
-            windowRt = UIBuilder.CreateWindow(canvas.transform, "CraftingWindow", windowWidth, 480f);
+            windowRt = frame.window;
+            dragHandle = frame.drag;
             panelRoot = windowRt.gameObject;
 
-            var titleBar = UIBuilder.CreateTitleBar(windowRt, $"제작 ({toggleKey})", TitleBarHeight);
-            UIBuilder.CreateCloseButton(titleBar, () => SetOpen(false));
+            // "지금 만들 수 있는 것 N"은 제목 옆 보조 정보 자리다 - 인벤토리의 용량 표시와 같은 자리라야
+            // 두 창을 같이 띄웠을 때 눈이 같은 곳에서 요약을 찾는다.
+            readyLabel = frame.status;
 
-            dragHandle = UIBuilder.AttachDragHandle(titleBar, windowRt, canvasRect, TitleBarHeight);
+            BuildInfoRow(frame.body);
 
-            BuildInfoRow(windowWidth);
+            gridContainer = UIBuilder.CreateSlotGrid(frame.body, "RecipeGrid", Columns, SlotSize, SlotSpacing, GridTopOffset);
 
-            gridContainer = UIBuilder.CreateSlotGrid(windowRt, "RecipeGrid", Columns, SlotSize, SlotSpacing, GridTopOffset);
+            // CreateSlotGrid는 부모 한가운데를 기준으로 붙는다. 본문이 좌우 2단이 되었으므로 격자는
+            // **왼쪽 단 기준**으로 다시 앵커한다(가운데에 두면 상세 단 밑으로 절반이 들어간다).
+            gridContainer.anchorMin = new Vector2(0f, 1f);
+            gridContainer.anchorMax = new Vector2(0f, 1f);
+            gridContainer.pivot = new Vector2(0f, 1f);
+            gridContainer.anchoredPosition = new Vector2(0f, -GridTopOffset);
 
             for (int i = 0; i < entries.Count; i++)
                 slots.Add(CreateSlot(i));
 
-            BuildFooter(windowWidth);
+            BuildDetailPane(frame.body);
+            BuildFooter(frame.body);
             ApplyWindowLayout();
 
             // 위치 기억은 **레이아웃을 다 잡은 뒤에** 연결한다. ApplyWindowLayout이 부르는 ClampNow도
@@ -368,75 +423,150 @@ namespace MakeGame.UI
             };
         }
 
-        /// <summary>제작 가능 개수 + 제작 기술 레벨.</summary>
-        private void BuildInfoRow(float windowWidth)
+        /// <summary>왼쪽 단 첫 줄: 제작 기술 레벨(제작 가능 개수는 제목 옆 보조 정보로 옮겼다).</summary>
+        private void BuildInfoRow(RectTransform body)
         {
-            readyLabel = UIBuilder.CreateText(windowRt, "ReadyCount", "", 12, NeutralGray, TextAnchor.MiddleLeft);
-            readyLabel.raycastTarget = false;
-            readyLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            var readyRt = readyLabel.rectTransform;
-            readyRt.anchorMin = new Vector2(0f, 1f);
-            readyRt.anchorMax = new Vector2(0f, 1f);
-            readyRt.pivot = new Vector2(0f, 1f);
-            readyRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f - SkillChipWidth - 8f, InfoRowHeight);
-            readyRt.anchoredPosition = new Vector2(WindowPadding, -(TitleBarHeight + 6f));
-
             // 제작 기술 레벨을 상시 노출하는 이유: 재료를 다 모았는데도 잠긴 제작법(물 증류기 키트는
             // Lv2가 필요하다)을 만났을 때, 왜 안 되는지가 툴팁을 열기 전에도 화면에 있어야 한다.
-            skillLabel = UIBuilder.CreateText(windowRt, "SkillLevel", "", 12, DimGray, TextAnchor.MiddleRight);
+            skillLabel = UIBuilder.CreateText(body, "SkillLevel", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleRight);
             skillLabel.raycastTarget = false;
             skillLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             var skillRt = skillLabel.rectTransform;
-            skillRt.anchorMin = new Vector2(1f, 1f);
-            skillRt.anchorMax = new Vector2(1f, 1f);
+            skillRt.anchorMin = new Vector2(0f, 1f);
+            skillRt.anchorMax = new Vector2(0f, 1f);
             skillRt.pivot = new Vector2(1f, 1f);
             skillRt.sizeDelta = new Vector2(SkillChipWidth, InfoRowHeight);
-            skillRt.anchoredPosition = new Vector2(-WindowPadding, -(TitleBarHeight + 6f));
+            // 격자 단의 오른쪽 끝에 맞춘다 - 창 오른쪽 끝은 이제 상세 단이 쓰고 있다.
+            skillRt.anchoredPosition = new Vector2(GridWidth, 0f);
         }
 
-        /// <summary>선택 표시 + 제작 버튼 + 조작 안내. 실제 y 위치는 ApplyWindowLayout이 정한다.</summary>
-        private void BuildFooter(float windowWidth)
+        /// <summary>
+        /// 본문 오른쪽 단: 선택한 제작법. 위에서 아래로 이름·상태 → 필요 재료 목록이고,
+        /// **제작 버튼은 단 맨 아래에 고정**한다. 재료 줄 수에 따라 버튼이 오르내리면 제작법마다
+        /// 버튼 자리가 달라져 오폭을 부른다(인벤토리의 버리기 버튼과 같은 규칙).
+        /// </summary>
+        private void BuildDetailPane(RectTransform body)
         {
-            selectionLabel = UIBuilder.CreateText(windowRt, "Selection", "", 12, NeutralGray, TextAnchor.MiddleLeft);
+            // 오른쪽 단도 골격이 만든다 - 폭·재질·시작선을 창마다 따로 정하면 인벤토리와 어긋난다.
+            detailPane = UIBuilder.CreateSidePane(body, "DetailPane", UITheme.DetailPaneWidth);
+
+            selectionLabel = UIBuilder.CreateText(detailPane, "Selection", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.UpperLeft);
             selectionLabel.raycastTarget = false;
-            selectionLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            selectionLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+            selectionLabel.verticalOverflow = VerticalWrapMode.Overflow;
             var selectionRt = selectionLabel.rectTransform;
             selectionRt.anchorMin = new Vector2(0f, 1f);
-            selectionRt.anchorMax = new Vector2(0f, 1f);
-            selectionRt.pivot = new Vector2(0f, 1f);
-            selectionRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f - CraftButtonWidth - 8f, FooterButtonHeight);
+            selectionRt.anchorMax = new Vector2(1f, 1f);
+            selectionRt.pivot = new Vector2(0.5f, 1f);
+            selectionRt.offsetMin = new Vector2(DetailPadding, -DetailPadding - SelectionHeight);
+            selectionRt.offsetMax = new Vector2(-DetailPadding, -DetailPadding);
 
-            craftButton = UIBuilder.CreateButton(windowRt, "Craft", "제작", CraftSelected);
+            // 제작법의 "정체"와 "필요 재료"를 선으로 가른다 - 창 헤더가 하는 일을 단 안에서 반복한다.
+            UIBuilder.CreateSeparator(detailPane, "DetailSeparator", DetailPadding + SelectionHeight + 6f, DetailPadding);
+
+            ingredientHeading = UIBuilder.CreateText(detailPane, "IngredientHeading", "필요 재료", UITheme.FontBody, UITheme.TextDim, TextAnchor.UpperLeft);
+            ingredientHeading.raycastTarget = false;
+            var headingRt = ingredientHeading.rectTransform;
+            headingRt.anchorMin = new Vector2(0f, 1f);
+            headingRt.anchorMax = new Vector2(1f, 1f);
+            headingRt.pivot = new Vector2(0.5f, 1f);
+            headingRt.offsetMin = new Vector2(DetailPadding, -IngredientHeadingTop - HintHeight);
+            headingRt.offsetMax = new Vector2(-DetailPadding, -IngredientHeadingTop);
+
+            // 재료 줄은 개수가 제작법마다 달라 위에서부터 쌓는다(고정 자리를 주면 줄이 적은 제작법에서
+            // 목록 아래에 구멍이 생긴다). 버튼만은 계속 단 바닥 고정이다.
+            var listGo = new GameObject("Ingredients", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            listGo.transform.SetParent(detailPane, false);
+            ingredientList = listGo.GetComponent<RectTransform>();
+            ingredientList.anchorMin = new Vector2(0f, 1f);
+            ingredientList.anchorMax = new Vector2(1f, 1f);
+            ingredientList.pivot = new Vector2(0.5f, 1f);
+            ingredientList.sizeDelta = new Vector2(-DetailPadding * 2f, 0f);
+            ingredientList.anchoredPosition = new Vector2(0f, -(IngredientHeadingTop + HintHeight + 4f));
+
+            var listLayout = listGo.GetComponent<VerticalLayoutGroup>();
+            listLayout.spacing = 4f;
+            listLayout.childControlHeight = true;
+            listLayout.childControlWidth = true;
+            listLayout.childForceExpandHeight = false;
+            listLayout.childForceExpandWidth = true;
+
+            listGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            craftButton = UIBuilder.CreateButton(detailPane, "Craft", "제작", CraftSelected);
             var craftRt = craftButton.GetComponent<RectTransform>();
-            craftRt.anchorMin = new Vector2(1f, 1f);
-            craftRt.anchorMax = new Vector2(1f, 1f);
-            craftRt.pivot = new Vector2(1f, 1f);
+            craftRt.anchorMin = new Vector2(0.5f, 0f);
+            craftRt.anchorMax = new Vector2(0.5f, 0f);
+            craftRt.pivot = new Vector2(0.5f, 0f);
             craftRt.sizeDelta = new Vector2(CraftButtonWidth, FooterButtonHeight);
+            craftRt.anchoredPosition = new Vector2(0f, DetailPadding);
+        }
 
-            hintLabel = UIBuilder.CreateText(windowRt, "Hint", "", 11, DimGray, TextAnchor.MiddleLeft);
+        /// <summary>
+        /// 재료 줄 하나를 얻는다(모자라면 만들어 목록에 넣는다). 제작법을 바꿀 때마다 오브젝트를 새로
+        /// 만들지 않는다 - 창을 열어둔 채 목록을 훑으면 그때마다 계층이 늘어난다.
+        /// </summary>
+        private IngredientRow GetIngredientRow(int index)
+        {
+            while (ingredientRows.Count <= index)
+            {
+                var rowGo = new GameObject($"Ingredient{ingredientRows.Count}", typeof(RectTransform), typeof(LayoutElement));
+                rowGo.transform.SetParent(ingredientList, false);
+                rowGo.GetComponent<LayoutElement>().preferredHeight = IngredientRowHeight;
+
+                var label = UIBuilder.CreateText(rowGo.transform, "Name", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.MiddleLeft);
+                label.raycastTarget = false;
+                label.horizontalOverflow = HorizontalWrapMode.Overflow;
+                var labelRt = label.rectTransform;
+                labelRt.anchorMin = Vector2.zero;
+                labelRt.anchorMax = Vector2.one;
+                labelRt.offsetMin = Vector2.zero;
+                labelRt.offsetMax = new Vector2(-IngredientCountWidth, 0f);
+
+                // 보유/필요는 오른쪽 끝에 맞춘다 - 줄마다 같은 x에 있어야 "몇 개 모자란가"를 세로로 훑는다.
+                var count = UIBuilder.CreateText(rowGo.transform, "Count", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.MiddleRight);
+                count.raycastTarget = false;
+                count.horizontalOverflow = HorizontalWrapMode.Overflow;
+                var countRt = count.rectTransform;
+                countRt.anchorMin = new Vector2(1f, 0f);
+                countRt.anchorMax = new Vector2(1f, 1f);
+                countRt.pivot = new Vector2(1f, 0.5f);
+                countRt.sizeDelta = new Vector2(IngredientCountWidth, 0f);
+                countRt.anchoredPosition = Vector2.zero;
+
+                ingredientRows.Add(new IngredientRow { go = rowGo, label = label, count = count });
+            }
+
+            return ingredientRows[index];
+        }
+
+        /// <summary>격자 아래 안내 두 줄. 실제 y 위치는 ApplyWindowLayout이 정한다.</summary>
+        private void BuildFooter(RectTransform body)
+        {
+            hintLabel = UIBuilder.CreateText(body, "Hint", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleLeft);
             hintLabel.raycastTarget = false;
             hintLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             var hintRt = hintLabel.rectTransform;
             hintRt.anchorMin = new Vector2(0f, 1f);
             hintRt.anchorMax = new Vector2(0f, 1f);
             hintRt.pivot = new Vector2(0f, 1f);
-            hintRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f, HintHeight);
+            hintRt.sizeDelta = new Vector2(GridWidth, HintHeight);
 
-            // 조작 안내는 조건에 따라 바뀌지 않으므로 한 번만 만든다. 한 줄에 다 넣으면 창 폭(402px)을
-            // 넘어 오른쪽으로 삐져나가므로 "창 조작"과 "다른 창 안내"를 두 줄로 나눈다.
+            // 조작 안내는 조건에 따라 바뀌지 않으므로 한 번만 만든다. 한 줄에 다 넣으면 왼쪽 격자
+            // 단 폭(402px)을 넘어 상세 단을 덮으므로 "창 조작"과 "다른 창 안내"를 두 줄로 나눈다.
             hintLabel.text = "제목 표시줄 드래그로 창 이동 · 클릭 선택 · 우클릭 즉시 제작";
 
             // 두 번째 줄: 예전에 이 창 아래에 있던 "탈출 목표"가 어디로 갔는지 알려주는 자리다.
             // 그 정보는 이제 퀘스트 창이 진행도 막대와 함께 관리한다(제작 창은 제작만 한다).
             // 실제 문구는 QuestUI 단축키를 읽어야 해서 창을 처음 열 때 만든다(UpdateQuestHint).
-            questHintLabel = UIBuilder.CreateText(windowRt, "QuestHint", "", 11, DimGray, TextAnchor.MiddleLeft);
+            questHintLabel = UIBuilder.CreateText(body, "QuestHint", "", UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleLeft);
             questHintLabel.raycastTarget = false;
             questHintLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             var questHintRt = questHintLabel.rectTransform;
             questHintRt.anchorMin = new Vector2(0f, 1f);
             questHintRt.anchorMax = new Vector2(0f, 1f);
             questHintRt.pivot = new Vector2(0f, 1f);
-            questHintRt.sizeDelta = new Vector2(windowWidth - WindowPadding * 2f, HintHeight);
+            questHintRt.sizeDelta = new Vector2(GridWidth, HintHeight);
         }
 
         /// <summary>
@@ -464,32 +594,42 @@ namespace MakeGame.UI
             if (windowRt == null)
                 return;
 
-            int rows = Mathf.CeilToInt(entries.Count / (float)Columns);
-            float gridHeight = rows > 0 ? rows * SlotSize + (rows - 1) * SlotSpacing : 0f;
+            float gridHeight = ComputeGridHeight();
 
             if (gridContainer != null)
                 gridContainer.sizeDelta = new Vector2(gridContainer.sizeDelta.x, gridHeight);
 
-            float footerTop = GridTopOffset + gridHeight + 10f;
-            float hintTop = footerTop + FooterButtonHeight + 6f;
+            // 안내 두 줄은 왼쪽 격자 단 아래다(선택 줄과 제작 버튼은 오른쪽 상세 단으로 갔다).
+            float hintTop = GridTopOffset + gridHeight + 10f;
             float questHintTop = hintTop + HintHeight + 2f;
 
-            if (selectionLabel != null)
-                selectionLabel.rectTransform.anchoredPosition = new Vector2(WindowPadding, -footerTop);
-
-            if (craftButton != null)
-                craftButton.GetComponent<RectTransform>().anchoredPosition = new Vector2(-WindowPadding, -footerTop);
-
             if (hintLabel != null)
-                hintLabel.rectTransform.anchoredPosition = new Vector2(WindowPadding, -hintTop);
+                hintLabel.rectTransform.anchoredPosition = new Vector2(0f, -hintTop);
 
             if (questHintLabel != null)
-                questHintLabel.rectTransform.anchoredPosition = new Vector2(WindowPadding, -questHintTop);
+                questHintLabel.rectTransform.anchoredPosition = new Vector2(0f, -questHintTop);
 
-            windowRt.sizeDelta = new Vector2(windowRt.sizeDelta.x, questHintTop + HintHeight + 12f);
+            // 창 높이는 **본문 높이 + 골격이 쓰는 위아래 여백**이다. 본문은 창에 스트레치로 붙어 있어
+            // 여기서 창만 키우면 격자·상세 단이 함께 따라온다.
+            windowRt.sizeDelta = new Vector2(windowRt.sizeDelta.x,
+                ComputeBodyHeight() + UITheme.ChromeTop + UITheme.ChromeBottom);
 
             if (dragHandle != null)
                 dragHandle.ClampNow();
+        }
+
+        /// <summary>제작법 수가 정하는 격자 높이.</summary>
+        private float ComputeGridHeight()
+        {
+            int rows = Mathf.CeilToInt(entries.Count / (float)Columns);
+            return rows > 0 ? rows * SlotSize + (rows - 1) * SlotSpacing : 0f;
+        }
+
+        /// <summary>본문 높이(격자 + 안내 두 줄). 상세 단이 잘리지 않게 최소 높이를 바닥으로 깐다.</summary>
+        private float ComputeBodyHeight()
+        {
+            float used = GridTopOffset + ComputeGridHeight() + 10f + HintHeight + 2f + HintHeight;
+            return Mathf.Max(used, MinBodyHeight);
         }
 
         /// <summary>
@@ -560,6 +700,8 @@ namespace MakeGame.UI
             float halfCanvasWidth = canvasRect.rect.width * 0.5f;
             float halfCanvasHeight = canvasRect.rect.height * 0.5f;
 
+            // [골격] 창 폭이 430 → 674(인벤토리와 같은 폭)로 늘었지만 자리 계산은 rect.width에서
+            // 나오므로 값은 그대로 둔다. 오른쪽 붙임을 유지해도 왼쪽에 열리는 인벤토리와 겹치지 않는다.
             const float minimapBottomMargin = 200f; // MinimapUI.radarPanelSize 160 + 위아래 여백 40
             return new Vector2(halfCanvasWidth - 24f - windowRt.rect.width * 0.5f,
                 halfCanvasHeight - minimapBottomMargin);
@@ -721,8 +863,8 @@ namespace MakeGame.UI
                 Color dimStrip = categoryColor;
                 dimStrip.a = 0.3f;
                 visual.categoryStrip.color = dimStrip;
-                visual.countLabel.color = DimGray;
-                visual.letterLabel.color = DimGray;
+                visual.countLabel.color = UITheme.TextDim;
+                visual.letterLabel.color = UITheme.TextDim;
             }
         }
 
@@ -741,7 +883,7 @@ namespace MakeGame.UI
                 lastEntryCount = entries.Count;
 
                 readyLabel.text = $"지금 만들 수 있는 것 {readyCount}/{entries.Count}";
-                readyLabel.color = readyCount > 0 ? SatisfiedColor : DimGray;
+                readyLabel.color = readyCount > 0 ? SatisfiedColor : UITheme.TextDim;
             }
 
             if (skillLabel == null)
@@ -777,6 +919,10 @@ namespace MakeGame.UI
             if (craftButton != null)
                 craftButton.interactable = entry != null && entry.canCraft;
 
+            // 재료 줄은 아래 캐시 검사보다 **먼저** 갱신한다. 보유량이 1/3 → 2/3으로 늘어도 선택 상태
+            // (재료 부족)는 그대로라, 여기서 걸러지면 숫자가 굳은 채로 남는다.
+            UpdateIngredients(entry);
+
             if (entry?.recipe == lastFooterRecipe && state == lastFooterState)
                 return;
 
@@ -800,7 +946,7 @@ namespace MakeGame.UI
 
                 case 3:
                     selectionLabel.text = $"선택: {entry.displayName} - 재료가 부족하다";
-                    selectionLabel.color = ShortageColor;
+                    selectionLabel.color = UIBuilder.DangerRed;
                     break;
 
                 // 제작대 부족은 기술 레벨 부족과 같은 성격이다: 재료를 다 모아도 지금은 못 만들지만
@@ -813,9 +959,58 @@ namespace MakeGame.UI
 
                 default:
                     selectionLabel.text = "칸을 클릭해 제작법 선택";
-                    selectionLabel.color = DimGray;
+                    selectionLabel.color = UITheme.TextDim;
                     break;
             }
+        }
+
+        /// <summary>
+        /// 선택한 제작법의 재료 줄(이름 · 보유 / 필요)을 채운다. 부족한 줄만 붉게 칠해 "무엇이 몇 개
+        /// 모자란가"를 툴팁을 열지 않고도 읽게 한다. 보유량이 그대로면 문자열을 다시 만들지 않는다.
+        /// </summary>
+        private void UpdateIngredients(RecipeEntry entry)
+        {
+            if (ingredientList == null)
+                return;
+
+            var inventory = craftingSystem != null ? craftingSystem.inventory : null;
+
+            // 툴팁과 같은 서명을 쓴다 - 재료 보유량·스킬·제작대가 그대로면 다시 그릴 것이 없다.
+            int signature = entry != null ? ComputeRecipeTooltipSignature(entry, inventory) : 0;
+            if ((entry != null ? entry.recipe : null) == lastIngredientRecipe && signature == lastIngredientSignature)
+                return;
+
+            lastIngredientRecipe = entry != null ? entry.recipe : null;
+            lastIngredientSignature = signature;
+
+            if (ingredientHeading != null)
+                ingredientHeading.gameObject.SetActive(entry != null);
+
+            var materials = entry != null && entry.recipe != null ? entry.recipe.requiredMaterials : null;
+
+            int used = 0;
+            for (int i = 0; materials != null && i < materials.Count; i++)
+            {
+                var requirement = materials[i];
+                if (requirement == null || requirement.item == null)
+                    continue;
+
+                int have = inventory != null ? inventory.GetItemCount(requirement.item) : 0;
+                bool enough = have >= requirement.quantity;
+
+                var row = GetIngredientRow(used++);
+                row.go.SetActive(true);
+                row.label.text = requirement.item.itemName;
+                row.count.text = $"{have} / {requirement.quantity}";
+
+                // 이름과 숫자를 같은 색으로 칠한다 - 한 줄이 통째로 "모자란 줄"로 읽혀야 훑기 쉽다.
+                Color rowColor = enough ? UITheme.TextPrimary : UIBuilder.DangerRed;
+                row.label.color = rowColor;
+                row.count.color = rowColor;
+            }
+
+            for (int i = used; i < ingredientRows.Count; i++)
+                ingredientRows[i].go.SetActive(false);
         }
 
         // ────────────────────────────────────────────────────────────────────────

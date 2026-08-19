@@ -12,10 +12,9 @@ namespace MakeGame.UI
     /// 건축 모드일 때만 화면 아래에 뜨는 부품 핫바. **판정은 하지 않는다** -
     /// <see cref="BuildingSystem"/>이 정한 선택/유효성/사유를 그대로 그리고, 클릭·숫자키 입력만 넘긴다.
     ///
-    /// 창 규격은 인벤토리(Tab)·제작(V)·퀘스트(J)와 같다. 다만 그 셋은 UIBuilder에 공용 팩토리가
-    /// 생기기 전에 만들어져 조립 코드를 각자 갖고 있는데, 이 창은 처음부터 공용 팩토리만 쓴다
-    /// (CreateWindow / CreateTitleBar / CreateCloseButton / AttachDragHandle / CreateSlotGrid /
-    /// CreateItemSlot + 표준 색 상수). UIBuilder는 읽기만 하고 고치지 않았다.
+    /// 창 껍데기(제목줄·닫기 버튼·드래그 손잡이·여백)는 <see cref="UIBuilder.CreateSkinnedWindow"/>
+    /// 하나에서 받는다 - 이 파일은 **본문 안쪽만** 배치하므로 제목줄 높이나 창 여백을 스스로 알지 못한다.
+    /// 칸만은 88px로 인벤토리(62)보다 크게 두는데, 부품은 형태로 구별해야 해서 아이콘이 작으면 못 고른다.
     ///
     /// 씬에 인스턴스가 없다(씬 파일을 편집할 수 없다). QuestUI와 같은 RuntimeInitializeOnLoadMethod +
     /// sceneLoaded 패턴으로 씬 로드마다 스스로 생성되므로 **코드 기본값이 유일한 진실**이다.
@@ -56,17 +55,24 @@ namespace MakeGame.UI
         // ── 치수 ────────────────────────────────────────────────────────────────
         private const float SlotSize = 88f;
         private const float SlotSpacing = 8f;
-        private const float WindowPadding = 14f;
-        private const float TitleBarHeight = 34f;
-        private const float GridTop = TitleBarHeight + 8f;
+        private const float HintHeight = 16f;
+
+        // 세로 배치의 기준점은 창 위가 아니라 **본문 왼쪽 위(0,0)**다 - 제목줄·구분선·여백은
+        // 골격(UITheme.ChromeTop/ChromeBottom)이 이미 빼 두었다.
+        private const float GridTop = 0f;
+        private const float HintTop = GridTop + SlotSize + 10f;
+        private const float BodyHeight = HintTop + HintHeight;                                       // 114
+
         /// <summary>
-        /// 창 폭은 **칸 수에서 계산한다**(예전에는 5칸을 상수로 박아 뒀다). 부품이 늘 때 배열만 고치면
+        /// 본문 폭은 **칸 수에서 계산한다**(예전에는 5칸을 상수로 박아 뒀다). 부품이 늘 때 배열만 고치면
         /// 창이 따라 넓어지고, 칸이 창 밖으로 삐져나오는 일이 없다. SlotTypes가 위에 먼저 선언돼 있어
         /// 정적 초기화 순서(선언 순서)상 안전하다.
         /// </summary>
-        private static readonly float WindowWidth =
-            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing + WindowPadding * 2f; // 7칸 = 692
-        private const float WindowHeight = GridTop + SlotSize + 62f;                                 // 192
+        private static readonly float BodyWidth =
+            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing;                      // 7칸 = 664
+
+        /// <summary>기본 자리 계산에만 쓰는 창 전체 높이(본문 + 골격이 더하는 위아래 여백).</summary>
+        private const float WindowHeight = BodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;    // 185
 
         // ── 색 (UIBuilder 표준 상수를 그대로 쓴다 - 새로 만들지 않는다) ─────────
         private static readonly Color DimGray = new Color(0.5f, 0.5f, 0.5f, 1f);
@@ -98,6 +104,7 @@ namespace MakeGame.UI
 
         private RectTransform canvasRect;
         private RectTransform windowRt;
+        private RectTransform body;
         private GameObject panelRoot;
         private UIDragHandle dragHandle;
         private Text statusLabel;
@@ -286,27 +293,31 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("BuildMenuCanvas", sortOrder: 8);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            windowRt = UIBuilder.CreateWindow(canvas.transform, "BuildMenuWindow", WindowWidth, WindowHeight);
-            panelRoot = windowRt.gameObject;
-
             // 제목에 단축키를 함께 적는 것은 인벤토리/퀘스트 창과 같은 규칙이다("퀘스트 (J)").
             KeyCode titleKey = BuildingSystem.Instance != null ? BuildingSystem.Instance.toggleKey : KeyCode.B;
-            RectTransform titleBar = UIBuilder.CreateTitleBar(windowRt, $"건축 ({titleKey})", TitleBarHeight);
-            UIBuilder.CreateCloseButton(titleBar, CloseBuildMode);
 
-            dragHandle = UIBuilder.AttachDragHandle(titleBar, windowRt, canvasRect, TitleBarHeight);
+            UIBuilder.WindowFrame frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "BuildMenuWindow",
+                BodyWidth, BodyHeight, $"건축 ({titleKey})", canvasRect, CloseBuildMode);
+
+            windowRt = frame.window;
+            panelRoot = windowRt.gameObject;
+            body = frame.body;
+
+            // 고른 부품과 못 놓는 사유는 본문 아래가 아니라 제목 옆이다 - 창마다 다른 자리에 두지 않는다.
+            statusLabel = frame.status;
+
+            dragHandle = frame.drag;
             dragHandle.onMoved = position =>
             {
                 savedWindowPosition = position;
                 hasSavedWindowPosition = true;
             };
 
-            RectTransform grid = UIBuilder.CreateSlotGrid(windowRt, "PieceGrid", SlotTypes.Length, SlotSize, SlotSpacing, GridTop);
+            RectTransform grid = UIBuilder.CreateSlotGrid(body, "PieceGrid", SlotTypes.Length, SlotSize, SlotSpacing, GridTop);
 
             for (int i = 0; i < SlotTypes.Length; i++)
                 slots.Add(CreateSlot(grid, i, SlotTypes[i]));
 
-            BuildStatusLine();
             BuildHint();
         }
 
@@ -324,7 +335,7 @@ namespace MakeGame.UI
             visual.letterLabel.text = slot.locked
                 ? $"{BuildPieceCatalog.GetDisplayName(type)} (잠김)"
                 : BuildPieceCatalog.GetDisplayName(type);
-            visual.letterLabel.fontSize = 13;
+            visual.letterLabel.fontSize = UITheme.FontBody;
             visual.letterLabel.alignment = TextAnchor.UpperCenter;
             visual.letterLabel.color = slot.locked ? DimGray : Color.white;
             RectTransform nameRt = visual.letterLabel.rectTransform;
@@ -348,7 +359,8 @@ namespace MakeGame.UI
             countRt.pivot = new Vector2(1f, 1f);
             countRt.anchoredPosition = new Vector2(-5f, -4f);
 
-            // 재료: 칸 아래쪽. "이름 보유/필요" 한 줄씩.
+            // 재료: 칸 아래쪽. "이름 보유/필요" 한 줄씩. 여기만 4단계 밖의 10pt인 이유는 계단이
+            // 재료 두 줄 + "참 바닥" 줄까지 세 줄이라, 12pt로 키우면 마지막 줄이 칸 밖으로 잘려 나가서다.
             slot.costLabel = UIBuilder.CreateText(visual.go.transform, "Cost", "", 10, NeutralGray, TextAnchor.LowerCenter);
             slot.costLabel.raycastTarget = false;
             RectTransform costRt = slot.costLabel.rectTransform;
@@ -432,40 +444,24 @@ namespace MakeGame.UI
             return null;
         }
 
-        /// <summary>선택한 부품과 지금 설치할 수 없는 사유를 알려 주는 한 줄.</summary>
-        private void BuildStatusLine()
-        {
-            statusLabel = UIBuilder.CreateText(windowRt, "Status", "", 13, NeutralGray, TextAnchor.MiddleCenter);
-            statusLabel.raycastTarget = false;
-            statusLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-
-            // 좌우로 늘어나고 높이는 고정인 rect: sizeDelta.x는 부모 폭 대비 여백(음수), y는 높이다.
-            RectTransform rt = statusLabel.rectTransform;
-            rt.anchorMin = Vector2.zero;
-            rt.anchorMax = new Vector2(1f, 0f);
-            rt.pivot = new Vector2(0.5f, 0f);
-            rt.sizeDelta = new Vector2(-WindowPadding * 2f, 18f);
-            rt.anchoredPosition = new Vector2(0f, 32f);
-        }
-
         /// <summary>하단 조작 안내 한 줄(다른 창의 단축키 힌트 줄과 같은 형식).</summary>
         private void BuildHint()
         {
             KeyCode exitKey = BuildingSystem.Instance != null ? BuildingSystem.Instance.toggleKey : KeyCode.B;
             KeyCode rotate = BuildingSystem.Instance != null ? BuildingSystem.Instance.rotateKey : KeyCode.Q;
 
-            var hint = UIBuilder.CreateText(windowRt, "Hint",
+            var hint = UIBuilder.CreateText(body, "Hint",
                 $"[좌클릭] 설치 · [우클릭] 철거(재료 절반 반환) · [휠/{rotate}] 90도 회전 · [1~{SlotTypes.Length}] 부품 · [{exitKey}] 나가기",
-                11, HintGray, TextAnchor.MiddleCenter);
+                UITheme.FontBody, HintGray, TextAnchor.MiddleCenter);
             hint.raycastTarget = false;
             hint.horizontalOverflow = HorizontalWrapMode.Overflow;
 
             RectTransform rt = hint.rectTransform;
-            rt.anchorMin = Vector2.zero;
-            rt.anchorMax = new Vector2(1f, 0f);
-            rt.pivot = new Vector2(0.5f, 0f);
-            rt.sizeDelta = new Vector2(-WindowPadding * 2f, 16f);
-            rt.anchoredPosition = new Vector2(0f, 12f);
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.sizeDelta = new Vector2(0f, HintHeight);
+            rt.anchoredPosition = new Vector2(0f, -HintTop);
         }
 
         // ────────────────────────────────────────────────────────────────────────

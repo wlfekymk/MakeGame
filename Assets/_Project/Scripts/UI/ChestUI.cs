@@ -28,7 +28,8 @@ namespace MakeGame.UI
     /// (콘텐츠 높이만 바뀐다).
     ///
     /// 이 프로젝트의 창 규칙을 그대로 따른다:
-    /// · 프리팹 없이 100% 코드 생성. 창/제목 표시줄/닫기 버튼/격자 칸은 전부 <see cref="UIBuilder"/> 팩토리.
+    /// · 프리팹 없이 100% 코드 생성. 창 껍데기(제목줄·닫기·여백)는 <see cref="UIBuilder.CreateSkinnedWindow"/>
+    ///   하나로 받고, 이 파일은 **본문 안쪽만** 배치한다(창마다 다른 제목줄 높이를 없앤 이유).
     /// · <see cref="Time.timeScale"/>을 건드리지 않는다. 인벤토리·제작·퀘스트와 같은 "플레이 중 창"이고,
     ///   timeScale 0은 타이틀/설정/엔딩/사망 화면만 쓴다. 그래도 이 파일의 모든 타이머는 unscaled로 센다.
     /// · <see cref="Cursor"/>를 직접 만지지 않는다. 커서 잠금은 <see cref="CursorLockController"/>가 단독으로
@@ -60,26 +61,29 @@ namespace MakeGame.UI
 
         private const float ViewportHeight = VisibleRows * SlotSize + (VisibleRows - 1) * SlotSpacing;
 
-        private const float WindowPadding = 14f;
-        private const float PanelGap = 16f;
-        private const float TitleBarHeight = 34f;
-        private const float HeaderHeight = 22f;
+        /// <summary>두 격자 사이 간격. 창마다 제각각이던 값을 공용 규칙(UITheme)으로 맞췄다.</summary>
+        private const float PanelGap = UITheme.PaneGap;
+
         private const float CaptionHeight = 18f;
         private const float UpgradeRowHeight = 30f;
         private const float MessageHeight = 18f;
         private const float HintHeight = 16f;
         private const float UpgradeButtonWidth = 150f;
 
-        private const float WindowWidth = WindowPadding * 2f + PanelWidth * 2f + PanelGap;
+        /// <summary>본문 안쪽 가로 폭. 창 전체 폭은 골격이 좌우 여백을 더해 정한다.</summary>
+        private const float BodyWidth = PanelWidth * 2f + PanelGap;
 
-        // 세로 배치(위에서부터 쌓아 내려간 값). 창 높이는 이 합으로 결정된다.
-        private const float HeaderTop = TitleBarHeight + 6f;
-        private const float CaptionTop = HeaderTop + HeaderHeight + 4f;
+        // 세로 배치: 기준점이 창 위가 아니라 **본문 왼쪽 위(0,0)**다 - 제목줄·구분선·윗여백은
+        // 골격(UITheme.ChromeTop)이 이미 빼 두었으므로 여기서 다시 더하지 않는다.
+        private const float CaptionTop = 0f;
         private const float GridTop = CaptionTop + CaptionHeight + 4f;
         private const float UpgradeTop = GridTop + ViewportHeight + 10f;
         private const float MessageTop = UpgradeTop + UpgradeRowHeight + 4f;
         private const float HintTop = MessageTop + MessageHeight + 4f;
-        private const float WindowHeight = HintTop + HintHeight + 12f;
+        private const float BodyHeight = HintTop + HintHeight;
+
+        /// <summary>기본 자리 계산에만 쓰는 창 전체 높이(본문 + 골격이 더하는 위아래 여백).</summary>
+        private const float WindowHeight = BodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;
 
         /// <summary>
         /// 플레이어 소지품 쪽 저주파 갱신 주기(초). 인벤토리 창과 같은 이유다 - 내구도(remainingUses)가
@@ -96,11 +100,7 @@ namespace MakeGame.UI
         private const float AutoCloseSlack = 2.5f;
 
         // 색: ArtDirection.md 팔레트 안에서만 쓴다(새 색을 만들지 않는다).
-        private static readonly Color NeutralGray = new Color(0.8f, 0.8f, 0.8f, 1f);        // #CCCCCC
-        private static readonly Color DimGray = new Color(0.55f, 0.55f, 0.55f, 1f);
         private static readonly Color SunstrokeGold = new Color(0.902f, 0.749f, 0.2f, 1f);  // #E6BF33
-        private static readonly Color DangerRed = new Color(0.8f, 0.2f, 0.2f, 1f);          // #CC3333
-        private static readonly Color MedicGreen = new Color(0.31f, 0.659f, 0.478f, 1f);    // #4FA87A
 
         // 재료표 rich text에 쓰는 색 문자열(Text.supportRichText). 위 Color 값과 같은 색이다.
         private const string HexOk = "CCCCCC";
@@ -127,9 +127,10 @@ namespace MakeGame.UI
         private RectTransform canvasRect;
         private GameObject panelRoot;
         private RectTransform windowRt;
+        private RectTransform body;
         private UIDragHandle dragHandle;
         private Text titleLabel;
-        private Text headerLabel;
+        private Text statusLabel;
         private Text chestCaption;
         private Text playerCaption;
         private Button upgradeButton;
@@ -334,7 +335,7 @@ namespace MakeGame.UI
         }
 
         /// <summary>
-        /// 처음 열 때의 기본 자리: 화면 한가운데(창이 848px로 넓어 좌우 어느 쪽에도 붙일 수 없다).
+        /// 처음 열 때의 기본 자리: 화면 한가운데(창이 844px로 넓어 좌우 어느 쪽에도 붙일 수 없다).
         /// 피벗이 (0.5, 1)이라 y는 창의 위쪽 모서리다 - 높이의 절반만큼 올리면 세로 중앙에 온다.
         /// </summary>
         private static Vector2 DefaultWindowPosition()
@@ -482,32 +483,39 @@ namespace MakeGame.UI
             var canvas = UIBuilder.CreateCanvas("ChestCanvas", sortOrder: 10);
             canvasRect = canvas.GetComponent<RectTransform>();
 
-            windowRt = UIBuilder.CreateWindow(canvas.transform, "ChestWindow", WindowWidth, WindowHeight);
-            panelRoot = windowRt.gameObject;
+            // 제목줄·닫기 버튼·드래그 손잡이·여백은 공용 골격이 만든다(창 6개가 각자 박아 두던 수치를 없앴다).
+            UIBuilder.WindowFrame frame = UIBuilder.CreateSkinnedWindow(canvas.transform, "ChestWindow",
+                BodyWidth, BodyHeight, "보관 상자", canvasRect, () => SetOpen(false));
 
-            var titleBar = UIBuilder.CreateTitleBar(windowRt, "보관 상자", TitleBarHeight);
-            titleLabel = titleBar.GetComponentInChildren<Text>();
-            UIBuilder.CreateCloseButton(titleBar, () => SetOpen(false));
+            windowRt = frame.window;
+            panelRoot = windowRt.gameObject;
+            body = frame.body;
+            titleLabel = frame.title;
+
+            // 용량은 본문 첫 줄이 아니라 제목 옆이다 - 창마다 다른 자리에 놓이지 않게 골격이 자리를 정한다.
+            statusLabel = frame.status;
 
             // 제목 표시줄이 곧 드래그 손잡이이자, CursorLockController가 "창이 열렸다"를 판정하는 근거다.
-            dragHandle = UIBuilder.AttachDragHandle(titleBar, windowRt, canvasRect, TitleBarHeight);
+            dragHandle = frame.drag;
             dragHandle.onMoved = position =>
             {
                 savedWindowPosition = position;
                 hasSavedWindowPosition = true;
             };
 
-            headerLabel = CreateRow("Header", HeaderTop, HeaderHeight, WindowWidth - WindowPadding * 2f, 14, NeutralGray);
-            chestCaption = CreateColumnCaption("ChestCaption", WindowPadding, "상자");
-            playerCaption = CreateColumnCaption("PlayerCaption", WindowPadding + PanelWidth + PanelGap, "내 소지품");
+            chestCaption = CreateColumnCaption("ChestCaption", 0f, "상자");
+            playerCaption = CreateColumnCaption("PlayerCaption", PanelWidth + PanelGap, "내 소지품");
 
-            chestPanel = BuildGrid("ChestGrid", WindowPadding);
-            playerPanel = BuildGrid("PlayerGrid", WindowPadding + PanelWidth + PanelGap);
+            // 두 단이 어디서 갈리는지 선 하나로 보여 준다 - 헤더 아래 구분선과 같은 규칙(1px, 알파 0.12).
+            BuildColumnDivider();
+
+            chestPanel = BuildGrid("ChestGrid", 0f);
+            playerPanel = BuildGrid("PlayerGrid", PanelWidth + PanelGap);
 
             BuildUpgradeRow();
 
-            messageLabel = CreateRow("Message", MessageTop, MessageHeight, WindowWidth - WindowPadding * 2f, 12, SunstrokeGold);
-            hintLabel = CreateRow("Hint", HintTop, HintHeight, WindowWidth - WindowPadding * 2f, 11, DimGray);
+            messageLabel = CreateRow("Message", MessageTop, MessageHeight, UITheme.FontBody, SunstrokeGold);
+            hintLabel = CreateRow("Hint", HintTop, HintHeight, UITheme.FontBody, UITheme.TextDim);
 
             tooltip = ItemTooltipUI.GetOrCreate();
         }
@@ -519,7 +527,7 @@ namespace MakeGame.UI
         private VirtualSlotGrid BuildGrid(string name, float x)
         {
             var grid = new VirtualSlotGrid();
-            grid.Build(windowRt, name, PanelWidth, ViewportHeight, Columns, SlotSize, SlotSpacing, durabilityBars: true);
+            grid.Build(body, name, PanelWidth, ViewportHeight, Columns, SlotSize, SlotSpacing, durabilityBars: true);
             grid.Root.anchoredPosition = new Vector2(x, -GridTop);
 
             // 콜백은 격자마다 어느 쪽인지를 함께 넘긴다(같은 처리기가 방향만 바꿔 쓴다).
@@ -558,10 +566,10 @@ namespace MakeGame.UI
                 cell.visual.background.color = target;
         }
 
-        /// <summary>창 폭을 가득 채우는 한 줄짜리 글자를 만든다(머리글/메시지/안내줄 공통).</summary>
-        private Text CreateRow(string name, float top, float height, float width, int fontSize, Color color)
+        /// <summary>본문 폭을 가득 채우는 한 줄짜리 글자를 만든다(메시지/안내줄 공통).</summary>
+        private Text CreateRow(string name, float top, float height, int fontSize, Color color)
         {
-            var text = UIBuilder.CreateText(windowRt, name, "", fontSize, color, TextAnchor.MiddleLeft);
+            var text = UIBuilder.CreateText(body, name, "", fontSize, color, TextAnchor.MiddleLeft);
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
 
@@ -569,15 +577,15 @@ namespace MakeGame.UI
             rt.anchorMin = new Vector2(0f, 1f);
             rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot = new Vector2(0f, 1f);
-            rt.sizeDelta = new Vector2(width, height);
-            rt.anchoredPosition = new Vector2(WindowPadding, -top);
+            rt.sizeDelta = new Vector2(BodyWidth, height);
+            rt.anchoredPosition = new Vector2(0f, -top);
             return text;
         }
 
         /// <summary>격자 위에 붙는 열 제목(상자 / 내 소지품).</summary>
         private Text CreateColumnCaption(string name, float x, string label)
         {
-            var text = UIBuilder.CreateText(windowRt, name, label, 12, DimGray, TextAnchor.MiddleLeft);
+            var text = UIBuilder.CreateText(body, name, label, UITheme.FontBody, UITheme.TextDim, TextAnchor.MiddleLeft);
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
 
@@ -590,19 +598,35 @@ namespace MakeGame.UI
             return text;
         }
 
+        /// <summary>
+        /// 상자 단과 소지품 단 사이의 1px 세로선. 두 격자가 같은 규격이라 선이 없으면 어디까지가
+        /// 상자인지 눈으로 끊기지 않는다. 격자 아래(업그레이드 줄)는 두 단 공용이라 선을 내리지 않는다.
+        /// </summary>
+        private void BuildColumnDivider()
+        {
+            var rt = UIBuilder.CreatePanel(body, "ColumnDivider",
+                anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(0f, 1f),
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: UITheme.Separator);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.sizeDelta = new Vector2(UITheme.SeparatorThickness, GridTop + ViewportHeight);
+            rt.anchoredPosition = new Vector2(PanelWidth + PanelGap * 0.5f, 0f);
+            rt.GetComponent<Image>().raycastTarget = false;
+        }
+
         /// <summary>업그레이드 버튼 + 재료표 한 줄.</summary>
         private void BuildUpgradeRow()
         {
-            upgradeButton = UIBuilder.CreateButton(windowRt, "Upgrade", "등급 올리기", OnUpgradeClicked);
+            upgradeButton = UIBuilder.CreateButton(body, "Upgrade", "등급 올리기", OnUpgradeClicked);
             var rt = upgradeButton.GetComponent<RectTransform>();
             rt.anchorMin = new Vector2(0f, 1f);
             rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot = new Vector2(0f, 1f);
             rt.sizeDelta = new Vector2(UpgradeButtonWidth, UpgradeRowHeight);
-            rt.anchoredPosition = new Vector2(WindowPadding, -UpgradeTop);
+            rt.anchoredPosition = new Vector2(0f, -UpgradeTop);
             upgradeButtonLabel = upgradeButton.GetComponentInChildren<Text>();
 
-            upgradeCostLabel = UIBuilder.CreateText(windowRt, "UpgradeCost", "", 12, NeutralGray, TextAnchor.MiddleLeft);
+            upgradeCostLabel = UIBuilder.CreateText(body, "UpgradeCost", "", UITheme.FontBody, UITheme.TextPrimary, TextAnchor.MiddleLeft);
             upgradeCostLabel.raycastTarget = false;
             upgradeCostLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
             upgradeCostLabel.supportRichText = true; // 모자란 재료만 빨갛게 칠하기 위해(줄을 쪼개지 않는다)
@@ -611,8 +635,8 @@ namespace MakeGame.UI
             costRt.anchorMin = new Vector2(0f, 1f);
             costRt.anchorMax = new Vector2(0f, 1f);
             costRt.pivot = new Vector2(0f, 1f);
-            costRt.sizeDelta = new Vector2(WindowWidth - WindowPadding * 2f - UpgradeButtonWidth - 10f, UpgradeRowHeight);
-            costRt.anchoredPosition = new Vector2(WindowPadding + UpgradeButtonWidth + 10f, -UpgradeTop);
+            costRt.sizeDelta = new Vector2(BodyWidth - UpgradeButtonWidth - 10f, UpgradeRowHeight);
+            costRt.anchoredPosition = new Vector2(UpgradeButtonWidth + 10f, -UpgradeTop);
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -660,14 +684,14 @@ namespace MakeGame.UI
                 int used = playerPanel.Buffer.Count;
                 int capacity = inventory.SlotCapacity;
                 playerCaption.text = $"내 소지품 {used}/{capacity}칸";
-                playerCaption.color = used >= capacity ? DangerRed : DimGray;
+                playerCaption.color = used >= capacity ? UIBuilder.DangerRed : UITheme.TextDim;
             }
         }
 
         /// <summary>등급 이름 + 사용 칸 수. 실제로 값이 바뀐 갱신에서만 문자열을 다시 만든다.</summary>
         private void UpdateHeader()
         {
-            if (headerLabel == null || chest == null)
+            if (statusLabel == null || chest == null)
                 return;
 
             int used = chest.UsedSlots;
@@ -681,9 +705,9 @@ namespace MakeGame.UI
             lastHeaderCapacity = capacity;
             lastHeaderTier = tier;
 
-            headerLabel.text = $"{tier}   ·   칸 {used}/{capacity}" + (used >= capacity ? "  (가득 참)" : "");
-            headerLabel.color = used >= capacity ? DangerRed
-                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : NeutralGray);
+            statusLabel.text = $"{used} / {capacity}" + (used >= capacity ? "  (가득 참)" : "");
+            statusLabel.color = used >= capacity ? UIBuilder.DangerRed
+                : (capacity > 0 && (float)used / capacity >= 0.8f ? SunstrokeGold : UITheme.TextPrimary);
 
             if (titleLabel != null)
                 titleLabel.text = $"보관 상자 - {tier}";
@@ -722,7 +746,7 @@ namespace MakeGame.UI
                 // 재료표가 남아 있으면 "최고 등급"이라고 적지 않는다(거짓말이 되고, 옆의 빨간 재료줄과 어긋난다).
                 bool hasNextTier = canUpgrade || (cost != null && cost.Count > 0);
                 upgradeButtonLabel.text = hasNextTier ? "등급 올리기" : "최고 등급";
-                upgradeButtonLabel.color = canUpgrade ? Color.white : DimGray;
+                upgradeButtonLabel.color = canUpgrade ? Color.white : UITheme.TextDim;
             }
         }
 
@@ -790,7 +814,7 @@ namespace MakeGame.UI
                 return;
 
             hintLabel.text = $"좌클릭 1개 옮기기 · 우클릭/Shift+좌클릭 한 칸 전부 · 제목 표시줄을 끌어 창 이동 · [{interactKey}] 닫기";
-            hintLabel.color = DimGray;
+            hintLabel.color = UITheme.TextDim;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -827,7 +851,7 @@ namespace MakeGame.UI
 
             if (moved <= 0)
             {
-                ShowMessage($"소지품 칸이 모자라 {data.itemName}을(를) 꺼내지 못했다", DangerRed);
+                ShowMessage($"소지품 칸이 모자라 {data.itemName}을(를) 꺼내지 못했다", UIBuilder.DangerRed);
                 AudioManager.Instance?.PlayActionFail();
                 return;
             }
@@ -850,14 +874,14 @@ namespace MakeGame.UI
                 bool anyRoom = want > 1 && chest.CanAccept(data, 1);
                 ShowMessage(anyRoom
                     ? $"상자에 {data.itemName} {want}개가 다 들어가지 않는다 - 좌클릭으로 1개씩 넣어라"
-                    : $"상자가 가득 차 {data.itemName}을(를) 넣지 못했다", DangerRed);
+                    : $"상자가 가득 차 {data.itemName}을(를) 넣지 못했다", UIBuilder.DangerRed);
                 AudioManager.Instance?.PlayActionFail();
                 return;
             }
 
             if (!chest.TryDeposit(data, want))
             {
-                ShowMessage($"{data.itemName}을(를) 상자에 넣지 못했다", DangerRed);
+                ShowMessage($"{data.itemName}을(를) 상자에 넣지 못했다", UIBuilder.DangerRed);
                 AudioManager.Instance?.PlayActionFail();
                 return;
             }
@@ -874,7 +898,7 @@ namespace MakeGame.UI
 
             if (chest.TryUpgrade(out string failReason))
             {
-                ShowMessage($"{chest.TierDisplayName}(으)로 올렸다 - {chest.SlotCapacity}칸", MedicGreen);
+                ShowMessage($"{chest.TierDisplayName}(으)로 올렸다 - {chest.SlotCapacity}칸", UIBuilder.MedicGreen);
                 AudioManager.Instance?.PlayCraftSuccess();
 
                 // 칸 수가 바뀌었으니 곧바로 반영한다(Changed도 오지만 순서를 기다리지 않는다).
@@ -884,7 +908,7 @@ namespace MakeGame.UI
                 return;
             }
 
-            ShowMessage(string.IsNullOrEmpty(failReason) ? "지금은 등급을 올릴 수 없다" : failReason, DangerRed);
+            ShowMessage(string.IsNullOrEmpty(failReason) ? "지금은 등급을 올릴 수 없다" : failReason, UIBuilder.DangerRed);
             AudioManager.Instance?.PlayActionFail();
         }
 
