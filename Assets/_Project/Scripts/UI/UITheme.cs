@@ -52,8 +52,11 @@ namespace MakeGame.UI
         public const float ChromeWidth = WindowPadding * 2f;
 
         // ── 슬롯 ───────────────────────────────────────────────
-        /// <summary>칸 테두리 두께. 본문 이미지를 이만큼 안쪽으로 밀어 테두리를 만든다.</summary>
-        public const float SlotFrameThickness = 1f;
+        /// <summary>
+        /// 칸 테두리 두께. 안쪽 면(Body)을 이만큼 밀어 테두리를 드러낸다.
+        /// 링 스프라이트(ui_slot_frame)의 실제 두께가 2px이라 그보다 얇게 밀면 링이 반쯤 가려진다.
+        /// </summary>
+        public const float SlotFrameThickness = 2f;
 
         /// <summary>마우스를 올렸을 때 칸이 커지는 배율(원본 USS transition 대응).</summary>
         public const float SlotHoverScale = 1.07f;

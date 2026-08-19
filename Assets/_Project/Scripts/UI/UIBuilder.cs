@@ -41,6 +41,65 @@ namespace MakeGame.UI
         /// 화면 전체를 덮는 Screen Space Overlay 캔버스를 새로 생성한다.
         /// 씬에 EventSystem이 없으면(버튼 클릭 등 UI 입력 처리에 필요) 함께 생성한다.
         /// </summary>
+        // ── 9-slice 스킨 스프라이트 ─────────────────────────────────────────────
+        // 이 프로젝트에는 원래 스프라이트가 한 장도 없어서 UI가 전부 각진 사각형이었다.
+        // Tools 없이 파이썬(PIL)으로 구운 둥근 모서리 9-slice 5장을 Resources/UI에 넣고
+        // 여기서만 읽는다. **흰색 + 알파 모양**이라 Image.color로 어떤 색이든 입힐 수 있다.
+        private static Sprite panelSprite;
+        private static Sprite slotSprite;
+        private static Sprite slotFrameSprite;
+        private static Sprite buttonSprite;
+        private static Sprite chipSprite;
+        private static int spriteProbeFrame = -1;
+
+        /// <summary>
+        /// 스킨 스프라이트를 확보한다. 한 프레임에 한 번만 시도하고 **실패를 래치하지 않는다** —
+        /// Resources가 아직 준비되지 않은 프레임에 한 번 실패했다고 영원히 각진 UI로 굳으면 안 된다.
+        /// 스프라이트가 없으면 조용히 예전 모습(단색 사각형)으로 돌아간다.
+        /// **쓰는 자리에서 부른다** - Start()에서만 채우고 다른 경로에서 읽는 구조는
+        /// CompassUI에서 매 프레임 NullReferenceException을 쏟아낸 전례가 있다.
+        /// </summary>
+        private static void EnsureSkinSprites()
+        {
+            if (spriteProbeFrame == Time.frameCount)
+                return;
+            spriteProbeFrame = Time.frameCount;
+
+            if (panelSprite == null) panelSprite = Resources.Load<Sprite>("UI/ui_panel");
+            if (slotSprite == null) slotSprite = Resources.Load<Sprite>("UI/ui_slot");
+            if (slotFrameSprite == null) slotFrameSprite = Resources.Load<Sprite>("UI/ui_slot_frame");
+            if (buttonSprite == null) buttonSprite = Resources.Load<Sprite>("UI/ui_button");
+            if (chipSprite == null) chipSprite = Resources.Load<Sprite>("UI/ui_chip");
+        }
+
+        /// <summary>둥근 모서리를 입힌다. 스프라이트가 없으면 아무 것도 하지 않는다(= 예전 각진 모습).</summary>
+        private static void ApplySliced(Image image, Sprite sprite)
+        {
+            if (image == null || sprite == null)
+                return;
+
+            image.sprite = sprite;
+            image.type = Image.Type.Sliced;
+            // 스프라이트가 32~48px이고 모서리 여백이 10~16px이라, 배율 1이면 화면에서도
+            // 그만한 픽셀 반경이 된다(칸 62px에 반경 약 10px). 창이 커져도 모서리는 안 늘어난다.
+            image.pixelsPerUnitMultiplier = 1f;
+        }
+
+        /// <summary>
+        /// 도메인 리로드를 끈 플레이 모드에서 static 스프라이트 참조가 이전 실행의 파괴된 객체를
+        /// 들고 시작하지 않게 비운다(R1 규칙).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetSkinSprites()
+        {
+            panelSprite = null;
+            slotSprite = null;
+            slotFrameSprite = null;
+            buttonSprite = null;
+            chipSprite = null;
+            spriteProbeFrame = -1;
+        }
+
         public static Canvas CreateCanvas(string name, int sortOrder = 0)
         {
             var go = new GameObject(name, typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
@@ -367,12 +426,14 @@ namespace MakeGame.UI
         /// </summary>
         public static Button CreateButton(Transform parent, string name, string label, UnityEngine.Events.UnityAction onClick)
         {
+            EnsureSkinSprites();
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
             go.transform.SetParent(parent, false);
 
             Color baseColor = new Color(0.25f, 0.55f, 0.3f, 1f);
             var background = go.GetComponent<Image>();
             background.color = baseColor;
+            ApplySliced(background, buttonSprite);
 
             var button = go.GetComponent<Button>();
 
@@ -489,6 +550,9 @@ namespace MakeGame.UI
 
             rt.pivot = new Vector2(0.5f, 1f);
             rt.sizeDelta = new Vector2(width, height);
+
+            EnsureSkinSprites();
+            ApplySliced(rt.GetComponent<Image>(), panelSprite);
             return rt;
         }
 
@@ -530,6 +594,10 @@ namespace MakeGame.UI
                 anchorMin: new Vector2(0f, 1f), anchorMax: new Vector2(1f, 1f),
                 offsetMin: new Vector2(0f, -UITheme.HeaderHeight), offsetMax: Vector2.zero,
                 color: UITheme.HeaderBackground);
+
+            // 헤더에도 같은 스프라이트를 쓴다. 각진 사각형을 얹으면 창의 둥근 위쪽 모서리를
+            // 헤더가 덮어 네모로 잘린다(반경이 같아야 위쪽 두 모서리가 정확히 겹친다).
+            ApplySliced(frame.header.GetComponent<Image>(), panelSprite);
 
             // 제목 글자는 raycastTarget을 끈다 - 드래그 입력은 헤더 자체가 받아야 한다.
             frame.title = CreateText(frame.header, "Title", title, UITheme.FontTitle, UITheme.TextPrimary, TextAnchor.MiddleLeft);
@@ -599,6 +667,10 @@ namespace MakeGame.UI
             pane.pivot = new Vector2(onRight ? 1f : 0f, 1f);
             pane.sizeDelta = new Vector2(width, 0f);
             pane.anchoredPosition = Vector2.zero;
+
+            // 창은 둥근데 안쪽 단만 각지면 덧댄 것처럼 보인다. 칸과 같은 반경(8px)을 쓴다.
+            EnsureSkinSprites();
+            ApplySliced(pane.GetComponent<Image>(), slotSprite);
             return pane;
         }
 
@@ -711,8 +783,13 @@ namespace MakeGame.UI
             // (스프라이트 9-slice가 없는 프로젝트라 이게 테두리를 만드는 가장 싼 방법이다.
             //  Outline 컴포넌트는 '선택' 표시 전용으로 계속 남겨 둔다 — 용도가 다르다.)
             // 뿌리가 클릭 판정을 계속 맡으므로 raycastTarget은 여기만 켜져 있다.
+            EnsureSkinSprites();
             slot.frame = go.GetComponent<Image>();
             slot.frame.color = UITheme.SlotFrameIdle;
+            // 링 스프라이트는 가운데가 뚫려 있어 **테두리만** 남는다. 예전에는 뿌리 이미지를
+            // 꽉 찬 사각형으로 두고 1px 작은 자식으로 덮어 링을 흉내냈는데, 그 방식은
+            // 자식(Body)을 끄는 순간 꽉 찬 원반이 드러나는 문제가 있었다(상세 지도에서 겪었다).
+            ApplySliced(slot.frame, slotFrameSprite);
 
             var bodyGo = new GameObject("Body", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             bodyGo.transform.SetParent(go.transform, false);
@@ -724,6 +801,7 @@ namespace MakeGame.UI
             slot.background = bodyGo.GetComponent<Image>();
             slot.background.raycastTarget = false;   // 클릭은 뿌리(frame)가 받는다
             slot.background.color = SlotEmptyColor;
+            ApplySliced(slot.background, slotSprite);
 
             slot.hover = go.GetComponent<UISlotHover>();
 
