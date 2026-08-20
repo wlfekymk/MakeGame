@@ -92,6 +92,39 @@ namespace MakeGame.UI
         /// <summary>부가 설명 글자.</summary>
         public static readonly Color TextDim = new Color(0.55f, 0.55f, 0.55f, 1f);
 
+        // ── 튜토리얼 레퍼런스에서 그대로 옮긴 값 ─────────────────
+        // 출처: ui-toolkit-pt2~pt6의 ItemSlot.uss / ItemTooltip.uss (Docs/Attribution.md).
+        // 위의 값들은 우리가 ArtDirection에서 정한 것이지만, 아래는 **원본 USS에 적힌 수치**를
+        // 단위만 바꿔 옮긴 것이다. 손대면 원본과 달라진다는 것을 알고 손대라.
+
+        /// <summary>드래그로 집어 든 원본 칸의 불투명도(.drag-active opacity: 0.4).</summary>
+        public const float DragSourceAlpha = 0.4f;
+
+        /// <summary>드래그한 물건을 받을 수 있는 칸의 테두리(.drop-target border-color rgb(255,224,130)).</summary>
+        public static readonly Color DropTargetValid = new Color(1f, 0.878f, 0.510f, 1f);
+
+        /// <summary>받을 수 없는 칸의 테두리(.drop-target--invalid rgb(220,70,70)).</summary>
+        public static readonly Color DropTargetInvalid = new Color(0.863f, 0.275f, 0.275f, 1f);
+
+        /// <summary>고스트(끌고 다니는 아이콘)의 불투명도. 원본은 슬롯을 그대로 복제해 띄운다.</summary>
+        public const float DragGhostAlpha = 0.85f;
+
+        /// <summary>툴팁 배경(ItemTooltip.uss #ItemTooltip background-color: rgba(24,22,30,0.95)).</summary>
+        public static readonly Color TooltipBackground = new Color(0.094f, 0.086f, 0.118f, 0.95f);
+
+        /// <summary>툴팁 테두리 겸 툴팁 안 구분선(rgba(255,255,255,0.15)).</summary>
+        public static readonly Color TooltipBorder = new Color(1f, 1f, 1f, 0.15f);
+
+        /// <summary>툴팁 머리줄 아이콘 한 변(.tooltip-icon width/height: 48px).</summary>
+        public const float TooltipIconSize = 48f;
+
+        /// <summary>툴팁 머리줄에서 아이콘과 글자 사이 간격(.tooltip-header-text margin-left: 8px).</summary>
+        public const float TooltipHeaderGap = 8f;
+
+        /// <summary>툴팁 안쪽 여백(.padding: 8px 10px → 좌우 10, 상하 8).</summary>
+        public const int TooltipPaddingX = 10;
+        public const int TooltipPaddingY = 8;
+
         /// <summary>
         /// 칸 테두리 색을 상태로부터 정한다. 색상(hue)은 카테고리색 하나만 쓰고
         /// 상태 구분은 오직 **알파(밝기)**로 한다 — 색맹 대응과 야간 가독성을 위해

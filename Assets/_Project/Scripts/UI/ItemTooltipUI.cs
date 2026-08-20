@@ -36,6 +36,17 @@ namespace MakeGame.UI
 
         private RectTransform canvasRect;
         private RectTransform panelRt;
+
+        // 머리줄(아이콘 + 이름/분류). ui-toolkit-pt4의 ItemTooltip.uxml 구조를 uGUI로 옮긴 것이다
+        // (Docs/Attribution.md). 예전에는 이름·분류가 그냥 첫 두 줄의 글자였는데, 그러면 툴팁이
+        // "글자 목록"으로만 읽혀 무엇에 대한 설명인지가 본문과 같은 무게로 묻힌다.
+        private RectTransform headerRow;
+        private Image headerIcon;
+        private Text headerLetter;      // 아이콘 스프라이트가 없을 때의 폴백(격자 칸과 같은 규칙)
+        private Text headerName;
+        private Text headerCategory;
+        private RectTransform headerRule;   // 머리줄과 본문을 가르는 선(.tooltip-description border-top)
+
         private readonly List<Text> linePool = new List<Text>();
         private int usedLines;
         private bool visible;
@@ -72,8 +83,16 @@ namespace MakeGame.UI
                 canvas.transform, "TooltipPanel",
                 anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
                 offsetMin: Vector2.zero, offsetMax: Vector2.zero,
-                color: new Color(0.04f, 0.04f, 0.04f, 0.94f),
+                color: UITheme.TooltipBackground,
                 addTopBorder: true);
+
+            // 원본은 툴팁을 1px 흰색 알파 0.15 테두리로 두른다. Outline은 그 테두리를 만드는
+            // 가장 싼 방법이고(사각 이미지 복사본 4장), useGraphicAlpha를 꺼야 배경 알파가
+            // 곱해져 사라지지 않는다 - 격자 칸에서 쓴 것과 같은 수법이다.
+            var panelOutline = panelRt.gameObject.AddComponent<Outline>();
+            panelOutline.effectColor = UITheme.TooltipBorder;
+            panelOutline.effectDistance = new Vector2(1f, 1f);
+            panelOutline.useGraphicAlpha = false;
 
             panelRt.pivot = new Vector2(0f, 1f);
 
@@ -84,7 +103,9 @@ namespace MakeGame.UI
                 border.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
 
             var layout = panelRt.gameObject.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 10, 10);
+            layout.padding = new RectOffset(
+                UITheme.TooltipPaddingX, UITheme.TooltipPaddingX,
+                UITheme.TooltipPaddingY, UITheme.TooltipPaddingY);
             layout.spacing = 3f;
             layout.childAlignment = TextAnchor.UpperLeft;
             layout.childControlWidth = true;
@@ -100,7 +121,141 @@ namespace MakeGame.UI
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
+            BuildHeader();
+
             panelRt.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// 머리줄을 만든다: [48px 아이콘][이름 / 분류]. 원본 ItemTooltip.uss의 수치를 그대로 쓴다
+        /// (아이콘 48px · 간격 8px · 이름 14pt · 분류 11pt · 아이콘 배경 검정 알파 0.3 + 1px 테두리).
+        /// 세로 배치가 아니라 가로 배치인 것이 핵심이다 - 아이콘과 이름이 한 줄에 붙어 있어야
+        /// "이 아이템"이라는 덩어리가 아래 설명 줄들과 다른 무게로 읽힌다.
+        /// </summary>
+        private void BuildHeader()
+        {
+            var rowGo = new GameObject("Header", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            rowGo.transform.SetParent(panelRt, false);
+            headerRow = rowGo.GetComponent<RectTransform>();
+
+            var rowLayout = rowGo.GetComponent<HorizontalLayoutGroup>();
+            rowLayout.spacing = UITheme.TooltipHeaderGap;
+            rowLayout.childAlignment = TextAnchor.MiddleLeft;
+            rowLayout.childControlWidth = true;
+            rowLayout.childControlHeight = true;
+            rowLayout.childForceExpandWidth = false;
+            rowLayout.childForceExpandHeight = false;
+
+            rowGo.GetComponent<LayoutElement>().minHeight = UITheme.TooltipIconSize;
+
+            // 아이콘 칸: 배경(어두운 판) + 테두리 + 그 안에 비율을 지킨 아이콘.
+            var frameGo = new GameObject("IconFrame", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image),
+                typeof(Outline), typeof(LayoutElement));
+            frameGo.transform.SetParent(headerRow, false);
+
+            var frameImage = frameGo.GetComponent<Image>();
+            frameImage.color = new Color(0f, 0f, 0f, 0.3f);
+            frameImage.raycastTarget = false;
+
+            var frameOutline = frameGo.GetComponent<Outline>();
+            frameOutline.effectColor = UITheme.TooltipBorder;
+            frameOutline.effectDistance = new Vector2(1f, 1f);
+            frameOutline.useGraphicAlpha = false;
+
+            var frameElement = frameGo.GetComponent<LayoutElement>();
+            frameElement.preferredWidth = UITheme.TooltipIconSize;
+            frameElement.preferredHeight = UITheme.TooltipIconSize;
+            frameElement.flexibleWidth = 0f;
+
+            var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            iconGo.transform.SetParent(frameGo.transform, false);
+            var iconRt = iconGo.GetComponent<RectTransform>();
+            iconRt.anchorMin = Vector2.zero;
+            iconRt.anchorMax = Vector2.one;
+            iconRt.offsetMin = new Vector2(4f, 4f);
+            iconRt.offsetMax = new Vector2(-4f, -4f);
+            headerIcon = iconGo.GetComponent<Image>();
+            headerIcon.raycastTarget = false;
+            headerIcon.preserveAspect = true;
+            headerIcon.enabled = false;
+
+            headerLetter = UIBuilder.CreateText(frameGo.transform, "Letter", "", 22, NeutralGray, TextAnchor.MiddleCenter);
+            headerLetter.raycastTarget = false;
+            var letterRt = headerLetter.rectTransform;
+            letterRt.anchorMin = Vector2.zero;
+            letterRt.anchorMax = Vector2.one;
+            letterRt.offsetMin = Vector2.zero;
+            letterRt.offsetMax = Vector2.zero;
+            headerLetter.gameObject.SetActive(false);
+
+            // 글자 칸: 이름(굵게 큰 글씨) 위에 분류(작고 흐리게).
+            var textGo = new GameObject("HeaderText", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+            textGo.transform.SetParent(headerRow, false);
+
+            var textLayout = textGo.GetComponent<VerticalLayoutGroup>();
+            textLayout.spacing = 2f;   // .tooltip-name margin-bottom: 2px
+            textLayout.childAlignment = TextAnchor.MiddleLeft;
+            textLayout.childControlWidth = true;
+            textLayout.childControlHeight = true;
+            textLayout.childForceExpandWidth = true;
+            textLayout.childForceExpandHeight = false;
+
+            var textElement = textGo.GetComponent<LayoutElement>();
+            textElement.flexibleWidth = 1f;
+            textElement.preferredWidth = PanelWidth - UITheme.TooltipIconSize - UITheme.TooltipHeaderGap - UITheme.TooltipPaddingX * 2;
+
+            headerName = UIBuilder.CreateText(textGo.transform, "Name", "", UITheme.FontHeading, NeutralGray, TextAnchor.LowerLeft);
+            headerName.raycastTarget = false;
+            headerName.fontStyle = FontStyle.Bold;
+
+            headerCategory = UIBuilder.CreateText(textGo.transform, "Category", "", 11, DimGray, TextAnchor.UpperLeft);
+            headerCategory.raycastTarget = false;
+
+            // 머리줄과 본문을 가르는 선. 원본은 설명 문단의 border-top으로 그리지만, 우리는
+            // 설명이 없는 아이템(돌조각 등)이 있어 선을 별도 요소로 두고 그럴 때 끈다.
+            headerRule = UIBuilder.CreatePanel(panelRt, "HeaderRule",
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                offsetMin: Vector2.zero, offsetMax: Vector2.zero,
+                color: UITheme.TooltipBorder);
+
+            var ruleElement = headerRule.gameObject.AddComponent<LayoutElement>();
+            ruleElement.minHeight = 1f;
+            ruleElement.preferredHeight = 1f;
+            ruleElement.flexibleHeight = 0f;
+
+            var ruleImage = headerRule.GetComponent<Image>();
+            if (ruleImage != null)
+                ruleImage.raycastTarget = false;
+        }
+
+        /// <summary>
+        /// 머리줄을 채운다. 아이콘이 없으면 격자 칸과 같은 폴백(이름 첫 글자)을 쓴다 -
+        /// 두 곳이 다른 폴백을 쓰면 같은 아이템이 창마다 다르게 보인다.
+        /// </summary>
+        private void SetHeader(Sprite icon, string name, string category, Color nameColor)
+        {
+            headerRow.gameObject.SetActive(true);
+
+            bool hasIcon = icon != null;
+            headerIcon.enabled = hasIcon;
+            if (hasIcon)
+            {
+                headerIcon.sprite = icon;
+                headerIcon.color = Color.white;
+            }
+
+            headerLetter.gameObject.SetActive(!hasIcon);
+            if (!hasIcon)
+            {
+                headerLetter.text = string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1);
+                headerLetter.color = nameColor;
+            }
+
+            headerName.text = name;
+            headerName.color = nameColor;
+
+            headerCategory.text = category;
+            headerCategory.gameObject.SetActive(!string.IsNullOrEmpty(category));
         }
 
         /// <summary>
@@ -110,7 +265,9 @@ namespace MakeGame.UI
         /// </summary>
         public void Show(ItemData data, int count, int remaining, string usageLine, string dropLine)
         {
-            if (data == null)
+            // 무언가를 끌고 있는 동안에는 툴팁을 띄우지 않는다(원본 ItemTooltipManipulator와 같은 규칙).
+            // 고스트가 이미 커서에 붙어 있는데 툴팁까지 뜨면 정작 놓을 자리가 가려진다.
+            if (data == null || UIDragGhost.IsDragging)
             {
                 Hide();
                 return;
@@ -118,11 +275,11 @@ namespace MakeGame.UI
 
             BeginLines();
 
-            // 1) 이름 - 카테고리 색으로 칠해 격자에서 본 색 띠와 같은 정보를 반복해 준다.
-            AddLine(data.itemName, 16, UIBuilder.GetItemCategoryColor(data));
-
-            // 2) 분류 이름(작게). 필터가 어떤 묶음을 가리키는지와 같은 말이라 필터 학습에도 도움이 된다.
-            AddLine(InventoryUI.GetCategoryDisplayName(UIBuilder.GetItemCategory(data)), 11, DimGray);
+            // 머리줄: 아이콘 + 이름 + 분류. 이름은 카테고리 색으로 칠해 격자에서 본 색 띠와 같은
+            // 정보를 반복해 주고, 분류 이름은 필터가 가리키는 묶음과 같은 말이라 필터 학습에도 쓰인다.
+            SetHeader(data.icon, data.itemName,
+                InventoryUI.GetCategoryDisplayName(UIBuilder.GetItemCategory(data)),
+                UIBuilder.GetItemCategoryColor(data));
 
             if (!string.IsNullOrEmpty(data.description))
                 AddLine(data.description, 12, NeutralGray);
@@ -224,20 +381,23 @@ namespace MakeGame.UI
 
             var result = recipe.resultItem;
 
-            // 1) 제작법 이름 - 결과물 카테고리 색으로 칠해 격자에서 본 색 띠와 같은 정보를 반복해 준다.
+            // 머리줄은 아이템 툴팁과 **같은 것**을 쓴다(제작법용 머리줄을 따로 만들지 않는다).
+            // 이름은 결과물 카테고리 색, 아래 작은 줄은 결과물 분류 + 한 번에 몇 개가 나오는지다
+            // (1개면 적지 않는다 - 정보가 없다).
             string headline = !string.IsNullOrEmpty(recipe.recipeName)
                 ? recipe.recipeName
                 : (result != null ? result.itemName : "이름 없는 제작법");
-            AddLine(headline, 16, result != null ? UIBuilder.GetItemCategoryColor(result) : NeutralGray);
 
-            // 2) 결과물 분류 + 한 번에 몇 개가 나오는지(1개면 적지 않는다 - 정보가 없다).
+            string categoryLine = "";
             if (result != null)
             {
-                string categoryLine = InventoryUI.GetCategoryDisplayName(UIBuilder.GetItemCategory(result));
+                categoryLine = InventoryUI.GetCategoryDisplayName(UIBuilder.GetItemCategory(result));
                 if (recipe.resultQuantity > 1)
                     categoryLine += $" · 한 번에 {recipe.resultQuantity}개";
-                AddLine(categoryLine, 11, DimGray);
             }
+
+            SetHeader(result != null ? result.icon : null, headline, categoryLine,
+                result != null ? UIBuilder.GetItemCategoryColor(result) : NeutralGray);
 
             if (!string.IsNullOrEmpty(recipe.description))
                 AddLine(recipe.description, 12, NeutralGray);
@@ -375,6 +535,10 @@ namespace MakeGame.UI
         {
             for (int i = usedLines; i < linePool.Count; i++)
                 linePool[i].gameObject.SetActive(false);
+
+            // 본문이 한 줄도 없으면 구분선을 끈다. 아무것도 가르지 않는 선은 그냥 얼룩이다.
+            if (headerRule != null)
+                headerRule.gameObject.SetActive(usedLines > 0);
         }
     }
 }

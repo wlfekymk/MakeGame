@@ -80,6 +80,12 @@ namespace MakeGame.UI
         private const float HintHeight = 16f;
         private const float FilterChipWidth = 180f;
 
+        /// <summary>정렬 칩 폭. "정렬: 수동(드래그로 이동)"이 한 줄에 들어가는 값.</summary>
+        private const float SortChipWidth = 200f;
+
+        /// <summary>칩 사이 간격.</summary>
+        private const float ChipGap = 8f;
+
         /// <summary>상세 패널 안쪽 여백. 패널 폭이 232px이라 이보다 키우면 아이템 이름이 세 줄로 깨진다.</summary>
         private const float DetailPadding = 12f;
 
@@ -131,6 +137,33 @@ namespace MakeGame.UI
         // 필터 인덱스 0은 "전체"를 뜻하고, 1부터는 ItemCategory 값 + 1에 대응한다.
         private int currentFilterIndex = 0;
         private int lastDisplayedFilterIndex = -1;
+
+        /// <summary>
+        /// 칸 순서를 손으로 정하는 모드인가. false면 예전과 같이 매 갱신마다 카테고리+이름순으로
+        /// 다시 정렬한다(<see cref="StackOrder"/>).
+        ///
+        /// 두 모드를 다 두는 이유: 자동 정렬은 "무엇을 가졌는지 훑을 때" 이기고, 수동 정렬은
+        /// "자주 쓰는 것을 앞 몇 칸에 고정해 두고 싶을 때" 이긴다. 한쪽만 두면 다른 쪽이 불가능해진다.
+        /// 자동 정렬 상태에서 칸을 끌면 **그 순간 자동으로 수동으로 넘어간다** - 끌었는데 손을 떼자마자
+        /// 제자리로 돌아가는 것만큼 나쁜 반응이 없기 때문이다.
+        /// </summary>
+        private bool manualOrder;
+
+        /// <summary>정렬 칩 글자를 다시 만들지 판단하는 캐시(-1 = 아직 한 번도 안 씀).</summary>
+        private int lastDisplayedSortMode = -1;
+        private Text sortLabel;
+
+        // ── 드래그로 칸 옮기기 (ui-toolkit-pt4 ItemDragManipulator 이식) ────────────────
+        //
+        // 세 값이 곧 드래그 상태 전부다. dragFromIndex가 0 이상이면 "지금 끌고 있다"는 뜻이고,
+        // Esc 취소는 이 값을 -1로 되돌리는 것으로 끝난다(마우스를 떼는 순간 오는 OnEndDrag가
+        // from < 0을 보고 아무 일도 하지 않는다).
+
+        /// <summary>집어 든 칸의 데이터 인덱스. -1이면 드래그 중이 아니다.</summary>
+        private int dragFromIndex = -1;
+
+        /// <summary>지금 커서 아래에 있는 칸. -1이면 격자 밖(놓으면 취소).</summary>
+        private int dragOverIndex = -1;
         private int lastDisplayedUsedSlots = -1;
         private int lastDisplayedSlotCapacity = -1;
 
@@ -309,6 +342,14 @@ namespace MakeGame.UI
             if (!panelRoot.activeSelf)
                 return;
 
+            // 드래그 중 Esc는 취소다(원본 ItemDragManipulator.OnKeyDown과 같다). 이 검사가
+            // 필터 순환보다 앞에 있어야 취소하려다 필터가 돌아가는 일이 없다.
+            if (dragFromIndex >= 0 && Input.GetKeyDown(KeyCode.Escape))
+            {
+                CancelDrag();
+                return;
+            }
+
             // 인벤토리가 열려 있을 때만 필터 순환 키를 받는다(닫혀 있을 때 실수로 바뀌는 것을 방지).
             if (Input.GetKeyDown(cycleFilterKey))
                 CycleFilter();
@@ -332,8 +373,180 @@ namespace MakeGame.UI
             // 맨 위로 되돌린다.
             grid.ResetScroll();
 
+            // 필터를 켜면 드래그가 막히므로 정렬 칩 문구도 함께 달라진다.
+            CancelDrag();
+
             // 필터가 바뀌면 화면에서 사라질 수도 있는 대상을 선택한 채로 두지 않는다.
             ClearSelection();
+            RefreshGrid();
+        }
+
+        // ────────────────────────────────────────────────────────────────────────
+        // 정렬 모드 · 드래그로 칸 옮기기
+        //
+        // 구조는 ui-toolkit-pt4의 ItemDragManipulator를 uGUI로 옮긴 것이다(Docs/Attribution.md).
+        // 원본에서 그대로 가져온 규칙 네 가지:
+        //   1) 집어 든 순간 원본 칸을 흐리게 한다(.drag-active opacity 0.4).
+        //   2) 커서 아래 칸의 테두리를 물들여 "여기 놓인다"를 보여 준다(.drop-target).
+        //   3) Esc로 취소할 수 있다.
+        //   4) 드래그 중에는 툴팁을 띄우지 않는다(고스트만으로 충분히 시끄럽다).
+        // 원본과 다른 점 하나: 원본은 칸이 곧 저장 위치라 두 칸을 **맞바꾸지만**, 우리 격자는
+        // items에서 파생된 뷰라 맞바꿈이 아니라 **끼워 넣기**다(A를 B 자리로 옮기면 나머지가 밀린다).
+        // 목록형 인벤토리에서는 이쪽이 자연스럽다 - 맞바꿈은 빈 칸을 사이에 남기기 때문이다.
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>정렬 모드를 자동 ↔ 수동으로 넘긴다.</summary>
+        private void ToggleSortMode()
+        {
+            SetManualOrder(!manualOrder);
+        }
+
+        /// <summary>
+        /// 정렬 모드를 바꾼다. 자동 → 수동으로 넘어갈 때는 **지금 보이는 순서를 그대로 굳힌다**.
+        /// 굳히지 않으면 수동으로 넘어간 순간 격자가 items의 습득 순서로 튀어, 방금 보고 있던
+        /// 배치가 눈앞에서 흐트러진다.
+        /// </summary>
+        private void SetManualOrder(bool manual)
+        {
+            if (manualOrder == manual)
+                return;
+
+            manualOrder = manual;
+
+            if (manual)
+                CommitSortedOrder();
+
+            RefreshGrid();
+        }
+
+        /// <summary>
+        /// 자동 정렬이 만들어 내던 순서를 items에 실제로 써 넣는다. 필터와 무관하게 **전체**를
+        /// 대상으로 한다 - 필터를 켠 채 수동으로 넘어갔다고 가려져 있던 물건이 뒤로 밀리면 안 된다.
+        /// </summary>
+        private void CommitSortedOrder()
+        {
+            if (inventory == null)
+                return;
+
+            inventory.GetStacks(stackBuffer);
+            stackBuffer.Sort(StackOrder);
+            inventory.ApplyStackOrder(stackBuffer);
+        }
+
+        /// <summary>
+        /// 지금 칸을 끌 수 있는 상태인가. 필터가 켜져 있으면 허용하지 않는다 - 화면의 n번째 칸이
+        /// 전체 목록의 n번째가 아니게 되어, 놓은 자리와 실제로 들어가는 자리가 갈린다.
+        /// </summary>
+        private bool CanReorder => inventory != null && currentFilterIndex == 0;
+
+        /// <summary>칸을 집어 든다. false를 돌려주면 그 드래그는 격자 스크롤로 넘어간다.</summary>
+        private bool OnSlotDragBegin(int index)
+        {
+            if (!CanReorder)
+                return false;
+
+            InventoryStack stack = grid.GetStack(index);
+            if (stack == null || stack.data == null)
+                return false;
+
+            // 자동 정렬 중이었으면 여기서 수동으로 넘어간다. 이 시점의 화면 순서는 CommitSortedOrder가
+            // 쓰는 순서와 정확히 같으므로(둘 다 StackOrder, 필터는 위에서 막았다) index는 그대로 유효하다.
+            if (!manualOrder)
+            {
+                manualOrder = true;
+                CommitSortedOrder();
+            }
+
+            dragFromIndex = index;
+            dragOverIndex = index;
+
+            // 드래그가 시작되면 툴팁은 숨는다(원본 ItemTooltipManipulator.OnPointerDown과 같은 이유:
+            // 커서가 원본 칸 위에 머무르므로 PointerExit이 오지 않아 툴팁이 붙박이가 된다).
+            if (tooltip != null)
+                tooltip.Hide();
+
+            ItemData data = stack.data;
+            UIDragGhost.Show(
+                data.icon,
+                string.IsNullOrEmpty(data.itemName) ? "?" : data.itemName.Substring(0, 1),
+                UIBuilder.GetItemCategoryColor(data),
+                SlotSize);
+
+            grid.RefreshStyles();
+            return true;
+        }
+
+        /// <summary>끄는 동안 커서 아래 칸을 따라가며 하이라이트를 옮긴다.</summary>
+        private void OnSlotDragMove(int index)
+        {
+            if (dragFromIndex < 0)
+                return;
+
+            int over = grid.IndexAtScreenPoint(Input.mousePosition);
+            if (over == dragOverIndex)
+                return;
+
+            dragOverIndex = over;
+
+            // 격자 밖으로 나가면 놓아도 아무 일이 없다. 고스트를 붉게 물들여 그 사실을 미리 알린다
+            // (원본의 .drop-target--invalid 색을 칸이 아니라 고스트에 쓴다 - 우리 격자에는
+            //  "받을 수 없는 칸"이 없고, 있는 것은 "칸이 아닌 곳"뿐이기 때문이다).
+            UIDragGhost.SetTargetValid(over >= 0);
+
+            grid.RefreshStyles();
+        }
+
+        /// <summary>손을 떼면 옮긴다. 격자 밖이거나 제자리면 아무 일도 하지 않는다.</summary>
+        private void OnSlotDragEnd(int index)
+        {
+            int from = dragFromIndex;
+            int to = dragOverIndex;
+
+            CancelDrag();
+
+            if (from >= 0 && to >= 0 && to != from)
+                MoveStack(from, to);
+        }
+
+        /// <summary>드래그 상태를 전부 되돌린다(취소와 정상 종료가 같은 정리 경로를 쓴다).</summary>
+        private void CancelDrag()
+        {
+            if (dragFromIndex < 0)
+                return;
+
+            dragFromIndex = -1;
+            dragOverIndex = -1;
+            UIDragGhost.Hide();
+
+            if (grid != null && grid.Root != null)
+                grid.RefreshStyles();
+        }
+
+        /// <summary>
+        /// 화면의 from번째 칸을 to번째 자리로 끼워 넣는다. to가 물건이 든 마지막 칸보다 뒤(빈 칸)면
+        /// 맨 뒤로 보낸다 - 빈 칸 사이에 구멍을 남기지 않기 위해서다(우리 격자는 빈 칸을 저장하지 않는다).
+        /// </summary>
+        private void MoveStack(int from, int to)
+        {
+            if (inventory == null)
+                return;
+
+            List<InventoryStack> display = grid.Buffer;
+            if (from < 0 || from >= display.Count)
+                return;
+
+            int target = Mathf.Clamp(to, 0, display.Count - 1);
+            if (target == from)
+                return;
+
+            var order = new List<InventoryStack>(display);
+            InventoryStack moved = order[from];
+            order.RemoveAt(from);
+            order.Insert(target, moved);
+
+            inventory.ApplyStackOrder(order);
+
+            // 선택은 인스턴스로 다시 찾으므로(ResolveSelection) 옮긴 뒤에도 같은 물건을 가리킨다.
             RefreshGrid();
         }
 
@@ -419,6 +632,9 @@ namespace MakeGame.UI
             grid.onRightClick = OnSlotRightClick;
             grid.onStyle = ApplyCellStyle;
             grid.onRowsChanged = OnGridScrolled;
+            grid.onDragBegin = OnSlotDragBegin;
+            grid.onDragMove = OnSlotDragMove;
+            grid.onDragEnd = OnSlotDragEnd;
 
             BuildDetailPane(frame.body);
         }
@@ -436,29 +652,51 @@ namespace MakeGame.UI
             filterRt.sizeDelta = new Vector2(FilterChipWidth, InfoRowHeight);
             filterRt.anchoredPosition = Vector2.zero;   // 본문 좌표계의 (0,0)이 곧 본문 왼쪽 위다
 
-            // 기본 버튼색(초록)을 그대로 두면 같은 창의 '버리기'와 같은 무게로 보인다. 필터는 아무 때나
-            // 눌러도 되는 조회 조작이고 버리기는 되돌릴 수 없는 조작이라, 둘의 시각적 무게가 같으면 안 된다.
-            // 색을 새로 만들지 않고 흰색 알파만 낮춰 '칸과 같은 재질의 칩'으로 보이게 한다.
-            var chipImage = filterButton.GetComponent<Image>();
+            filterLabel = StyleChip(filterButton);
+
+            // 정렬 칩. 필터 바로 옆에 같은 재질로 둔다 - 둘 다 "지금 격자를 어떻게 보여줄지"를
+            // 정하는 조회 조작이고, 성격이 같은 것은 같은 자리에 모아 두는 편이 배우기 쉽다.
+            var sortButton = UIBuilder.CreateButton(body, "SortChip", "", ToggleSortMode);
+            var sortRt = sortButton.GetComponent<RectTransform>();
+            sortRt.anchorMin = new Vector2(0f, 1f);
+            sortRt.anchorMax = new Vector2(0f, 1f);
+            sortRt.pivot = new Vector2(0f, 1f);
+            sortRt.sizeDelta = new Vector2(SortChipWidth, InfoRowHeight);
+            sortRt.anchoredPosition = new Vector2(FilterChipWidth + ChipGap, 0f);
+
+            sortLabel = StyleChip(sortButton);
+        }
+
+        /// <summary>
+        /// 칩 버튼(필터·정렬)의 색과 글자를 맞춘다. 기본 버튼색(초록)을 그대로 두면 같은 창의
+        /// '버리기'와 같은 무게로 보인다 - 칩은 아무 때나 눌러도 되는 조회 조작이고 버리기는
+        /// 되돌릴 수 없는 조작이라, 둘의 시각적 무게가 같으면 안 된다. 색을 새로 만들지 않고
+        /// 흰색 알파만 낮춰 '칸과 같은 재질의 칩'으로 보이게 한다.
+        /// </summary>
+        private static Text StyleChip(Button button)
+        {
+            var chipImage = button.GetComponent<Image>();
             if (chipImage != null)
             {
                 chipImage.color = new Color(1f, 1f, 1f, 0.35f);
-                var chipColors = filterButton.colors;
+                var chipColors = button.colors;
                 chipColors.normalColor = new Color(1f, 1f, 1f, 0.30f);      // 실효 알파 0.105
                 chipColors.highlightedColor = new Color(1f, 1f, 1f, 0.55f); // 0.19
                 chipColors.pressedColor = new Color(1f, 1f, 1f, 0.75f);     // 0.26
                 chipColors.selectedColor = chipColors.normalColor;
                 chipColors.disabledColor = new Color(1f, 1f, 1f, 0.15f);
-                filterButton.colors = chipColors;
+                button.colors = chipColors;
             }
 
-            filterLabel = filterButton.GetComponentInChildren<Text>();
-            if (filterLabel != null)
+            var label = button.GetComponentInChildren<Text>();
+            if (label != null)
             {
-                filterLabel.fontSize = UITheme.FontBody;
-                filterLabel.color = UITheme.TextPrimary;
-                filterLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+                label.fontSize = UITheme.FontBody;
+                label.color = UITheme.TextPrimary;
+                label.horizontalOverflow = HorizontalWrapMode.Overflow;
             }
+
+            return label;
         }
 
         /// <summary>
@@ -627,9 +865,52 @@ namespace MakeGame.UI
                 cell.data != null ? UIBuilder.GetItemCategoryColor(cell.data) : Color.white,
                 cell.data != null, hovered, selected);
 
+            // ── 드래그 중 표시 (원본 USS의 .drag-active / .drop-target) ──────────────
+            bool dragging = dragFromIndex >= 0;
+            bool isDragSource = dragging && cell.index == dragFromIndex;
+            bool isDropTarget = dragging && cell.index == dragOverIndex && cell.index != dragFromIndex;
+
+            if (isDropTarget)
+                cell.visual.frame.color = UITheme.DropTargetValid;
+
+            // 집어 든 칸은 흐려진다. **매번 알파를 명시해 다시 칠하는 것이 중요하다** - 칸 뷰는
+            // 재사용되고 Apply는 내용이 그대로면 일찍 빠져나가므로, 여기서 되돌리지 않으면
+            // 드래그가 끝난 뒤에도 흐린 칸이 남는다.
+            float contentAlpha = isDragSource ? UITheme.DragSourceAlpha : 1f;
+            ApplyContentAlpha(cell.visual, contentAlpha);
+
             cell.visual.outline.enabled = selected;
             if (selected)
                 cell.visual.outline.effectColor = armed ? DangerRed : MedicGreen;
+        }
+
+        /// <summary>
+        /// 칸 안 내용물(아이콘·폴백 글자·개수)의 불투명도를 한꺼번에 정한다. CanvasGroup을 붙이지
+        /// 않는 이유: 칸 뷰가 54개고 CanvasGroup은 자식 전부의 알파를 매 프레임 다시 계산시킨다.
+        /// 색의 a만 바꾸는 쪽이 훨씬 싸고, 우리가 알파를 주는 대상은 어차피 세 개뿐이다.
+        /// </summary>
+        private static void ApplyContentAlpha(UIBuilder.SlotVisual visual, float alpha)
+        {
+            if (visual.icon != null)
+            {
+                Color c = visual.icon.color;
+                if (!Mathf.Approximately(c.a, alpha))
+                    visual.icon.color = new Color(c.r, c.g, c.b, alpha);
+            }
+
+            if (visual.letterLabel != null)
+            {
+                Color c = visual.letterLabel.color;
+                if (!Mathf.Approximately(c.a, alpha))
+                    visual.letterLabel.color = new Color(c.r, c.g, c.b, alpha);
+            }
+
+            if (visual.countLabel != null)
+            {
+                Color c = visual.countLabel.color;
+                if (!Mathf.Approximately(c.a, alpha))
+                    visual.countLabel.color = new Color(c.r, c.g, c.b, alpha);
+            }
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -654,8 +935,9 @@ namespace MakeGame.UI
 
             if (!open)
             {
-                // 닫는 순간 무장된 확인·hover·툴팁을 전부 정리한다. 다음에 열었을 때 남아 있던
-                // "확실?"이 그대로 눌리는 상황을 만들지 않는다.
+                // 닫는 순간 무장된 확인·hover·툴팁·끌던 물건을 전부 정리한다. 다음에 열었을 때
+                // 남아 있던 "확실?"이 그대로 눌리거나 고스트가 허공에 떠 있는 상황을 만들지 않는다.
+                CancelDrag();
                 ClearPendingDrop();
                 hoverIndex = -1;
                 RefreshDetail();
@@ -740,7 +1022,10 @@ namespace MakeGame.UI
             }
 
             // 카테고리별로 묶이도록 정렬하고, 같은 카테고리 안에서는 이름순으로 정렬해 찾기 쉽게 한다.
-            display.Sort(StackOrder);
+            // 수동 정렬 모드에서는 건드리지 않는다 - 그 모드의 순서는 items에 이미 써 넣은 것이고,
+            // 여기서 다시 정렬하면 방금 드래그로 옮긴 칸이 손을 떼는 즉시 제자리로 튄다.
+            if (!manualOrder)
+                display.Sort(StackOrder);
 
             grid.SetCapacity(inventory.SlotCapacity);
             ResolveSelection();
@@ -748,6 +1033,7 @@ namespace MakeGame.UI
 
             UpdateCapacity();
             UpdateFilterLabel();
+            UpdateSortLabel();
             UpdateFooter();
             UpdateHint();
             RefreshDetail();
@@ -822,6 +1108,29 @@ namespace MakeGame.UI
         }
 
         /// <summary>필터 칩 라벨. 실제로 바뀐 갱신에서만 문자열을 새로 만든다.</summary>
+        /// <summary>
+        /// 정렬 칩 글자를 갱신한다. 수동 모드에서는 **왜 지금 드래그가 되는지/안 되는지**까지 적는다 -
+        /// 필터가 켜져 있으면 드래그를 막는데, 그 이유가 화면 어디에도 없으면 고장으로 읽힌다.
+        /// </summary>
+        private void UpdateSortLabel()
+        {
+            if (sortLabel == null)
+                return;
+
+            int mode = manualOrder ? (CanReorder ? 1 : 2) : 0;
+            if (mode == lastDisplayedSortMode)
+                return;
+
+            switch (mode)
+            {
+                case 0: sortLabel.text = "정렬: 자동 (이름순)"; break;
+                case 1: sortLabel.text = "정렬: 수동 (끌어서 이동)"; break;
+                default: sortLabel.text = "정렬: 수동 (필터 중엔 이동 불가)"; break;
+            }
+
+            lastDisplayedSortMode = mode;
+        }
+
         private void UpdateFilterLabel()
         {
             if (filterLabel == null || currentFilterIndex == lastDisplayedFilterIndex)

@@ -309,6 +309,118 @@ namespace MakeGame.Player
         }
 
         /// <summary>
+        /// 칸 순서를 바꾼다. UI가 지금 보고 있는 칸 목록을 **원하는 순서로 재배열해 통째로** 넘기면,
+        /// items를 그 순서대로 다시 깐다. 인벤토리 창의 드래그 이동이 쓰는 유일한 통로다.
+        ///
+        /// 왜 "from/to 두 정수"가 아니라 목록을 통째로 받는가: 칸은 items에서 파생된 뷰라
+        /// (<see cref="GetStacks(List{InventoryStack})"/>) 칸 번호만으로는 어느 인스턴스를 옮길지
+        /// 정할 수 없다. 대표 인스턴스(representative)를 열쇠로 쓰면 그 모호함이 사라진다.
+        ///
+        /// 넘긴 목록에 없는 칸(필터로 가려진 것 등)은 **원래 순서를 지킨 채 뒤에 붙는다** - 필터를
+        /// 켠 상태로 순서를 바꿔도 보이지 않던 물건이 사라지거나 뒤섞이지 않게 하려는 것이다.
+        ///
+        /// 개수/내구도/신선도는 하나도 건드리지 않는다. 바뀌는 것은 items의 나열 순서뿐이다.
+        /// </summary>
+        /// <returns>실제로 순서가 달라졌으면 true.</returns>
+        public bool ApplyStackOrder(List<InventoryStack> orderedStacks)
+        {
+            if (orderedStacks == null || orderedStacks.Count == 0)
+                return false;
+
+            // 1) 지금 items를 GetStacks와 **같은 규칙**으로 묶는다. 규칙이 갈리면 대표 인스턴스가
+            //    가리키는 칸이 달라져 엉뚱한 뭉치가 옮겨진다.
+            var groups = new List<List<InventoryItem>>();
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                InventoryItem item = items[i];
+                if (item == null || item.data == null)
+                    continue;
+
+                int max = item.data.MaxStackSize;
+                if (max <= 1)
+                {
+                    groups.Add(new List<InventoryItem> { item });
+                    continue;
+                }
+
+                List<InventoryItem> target = null;
+                for (int g = groups.Count - 1; g >= 0; g--)
+                {
+                    if (groups[g][0].data != item.data)
+                        continue;
+                    if (groups[g].Count < max)
+                        target = groups[g];
+                    break;
+                }
+
+                if (target != null)
+                    target.Add(item);
+                else
+                    groups.Add(new List<InventoryItem> { item });
+            }
+
+            if (groups.Count == 0)
+                return false;
+
+            // 2) 넘어온 순서대로 그룹을 꺼낸다. 대표가 없거나 이미 꺼낸 그룹이면 건너뛴다.
+            var reordered = new List<List<InventoryItem>>(groups.Count);
+            var taken = new bool[groups.Count];
+
+            for (int i = 0; i < orderedStacks.Count; i++)
+            {
+                InventoryStack stack = orderedStacks[i];
+                if (stack == null || stack.representative == null)
+                    continue;
+
+                for (int g = 0; g < groups.Count; g++)
+                {
+                    if (taken[g] || groups[g][0] != stack.representative)
+                        continue;
+
+                    taken[g] = true;
+                    reordered.Add(groups[g]);
+                    break;
+                }
+            }
+
+            // 3) 목록에 없던 그룹은 원래 순서대로 뒤에 붙인다.
+            for (int g = 0; g < groups.Count; g++)
+            {
+                if (!taken[g])
+                    reordered.Add(groups[g]);
+            }
+
+            // 4) 실제로 달라졌는지 확인한다. 같으면 items를 다시 깔지 않는다
+            //    (드래그를 놓는 곳마다 UI 전체 갱신이 도는 것을 막는다).
+            bool changed = false;
+            int cursor = 0;
+            for (int g = 0; g < reordered.Count && !changed; g++)
+            {
+                var group = reordered[g];
+                for (int m = 0; m < group.Count; m++, cursor++)
+                {
+                    if (cursor >= items.Count || !ReferenceEquals(items[cursor], group[m]))
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!changed)
+                return false;
+
+            // 5) 새 순서로 items를 다시 깐다. data가 null인 유령 항목은 이 과정에서 함께 걷힌다.
+            items.Clear();
+            for (int g = 0; g < reordered.Count; g++)
+                items.AddRange(reordered[g]);
+
+            InventoryChanged?.Invoke();
+            return true;
+        }
+
+        /// <summary>
         /// items를 직접 건드린 코드(세이브 복원 등)가 UI에 변화를 알리기 위한 통로.
         /// 평소에는 AddItem/RemoveItems/UseItem이 알아서 발행하므로 부를 필요가 없다.
         /// </summary>

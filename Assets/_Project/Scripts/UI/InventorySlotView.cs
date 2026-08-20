@@ -16,7 +16,9 @@ namespace MakeGame.UI
     /// 올려 보내므로 칸 안 어디를 가리켜도 이 컴포넌트가 받는다 - 자식 위로 커서가 옮겨갔다고
     /// PointerExit이 잘못 발생하지도 않는다.
     /// </summary>
-    public class InventorySlotView : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler, IPointerClickHandler
+    public class InventorySlotView : MonoBehaviour,
+        IPointerEnterHandler, IPointerExitHandler, IPointerClickHandler,
+        IBeginDragHandler, IDragHandler, IEndDragHandler
     {
         public int index = -1;
 
@@ -24,6 +26,21 @@ namespace MakeGame.UI
         public System.Action<int> onExit;
         public System.Action<int> onLeftClick;
         public System.Action<int> onRightClick;
+
+        /// <summary>
+        /// 드래그 3종. 소유자가 "이 칸을 끌 수 있는가"를 판단하고 true를 돌려주면 이 칸이 드래그를
+        /// 가져가고, false면 **그대로 조상에게 넘긴다**(= 격자 스크롤이 계속 먹는다).
+        ///
+        /// 이 되돌림이 필요한 이유: IBeginDragHandler를 붙이는 순간 uGUI는 이 오브젝트에서
+        /// 이벤트를 멈춘다. 아무 처리도 안 하고 삼키면 빈 칸을 잡고 끌어 스크롤하던 조작이
+        /// 조용히 죽는다(100칸짜리 격자에서 그건 기능 하나가 사라지는 것과 같다).
+        /// </summary>
+        public System.Func<int, bool> onDragBegin;
+        public System.Action<int> onDragMove;
+        public System.Action<int> onDragEnd;
+
+        /// <summary>지금 이 칸이 드래그를 가져갔는가(false면 스크롤에 넘긴 상태).</summary>
+        private bool draggingSelf;
 
         public void OnPointerEnter(PointerEventData eventData)
         {
@@ -37,10 +54,46 @@ namespace MakeGame.UI
 
         public void OnPointerClick(PointerEventData eventData)
         {
+            // 끌었다 놓은 직후에는 클릭으로 치지 않는다. uGUI는 드래그가 끝난 포인터에도
+            // PointerClick을 보내므로, 이 검사가 없으면 칸을 옮길 때마다 그 칸이 선택된다.
+            if (eventData.dragging)
+                return;
+
             if (eventData.button == PointerEventData.InputButton.Right)
                 onRightClick?.Invoke(index);
             else if (eventData.button == PointerEventData.InputButton.Left)
                 onLeftClick?.Invoke(index);
+        }
+
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            draggingSelf = eventData.button == PointerEventData.InputButton.Left
+                           && onDragBegin != null
+                           && onDragBegin.Invoke(index);
+
+            if (!draggingSelf && transform.parent != null)
+                ExecuteEvents.ExecuteHierarchy(transform.parent.gameObject, eventData, ExecuteEvents.beginDragHandler);
+        }
+
+        public void OnDrag(PointerEventData eventData)
+        {
+            if (draggingSelf)
+                onDragMove?.Invoke(index);
+            else if (transform.parent != null)
+                ExecuteEvents.ExecuteHierarchy(transform.parent.gameObject, eventData, ExecuteEvents.dragHandler);
+        }
+
+        public void OnEndDrag(PointerEventData eventData)
+        {
+            if (draggingSelf)
+            {
+                draggingSelf = false;
+                onDragEnd?.Invoke(index);
+            }
+            else if (transform.parent != null)
+            {
+                ExecuteEvents.ExecuteHierarchy(transform.parent.gameObject, eventData, ExecuteEvents.endDragHandler);
+            }
         }
     }
 
@@ -95,6 +148,13 @@ namespace MakeGame.UI
         public System.Action<int> onExit;
         public System.Action<int> onLeftClick;
         public System.Action<int> onRightClick;
+
+        // 드래그(칸 옮기기). 격자는 판단하지 않고 그대로 소유자에게 넘긴다 - "이 칸을 끌 수 있는가"는
+        // 창마다 다르기 때문이다(인벤토리는 수동 정렬일 때만 허용, 상자 창은 아직 허용하지 않는다).
+        // onDragBegin이 null이거나 false를 돌려주면 그 드래그는 격자 스크롤로 넘어간다.
+        public System.Func<int, bool> onDragBegin;
+        public System.Action<int> onDragMove;
+        public System.Action<int> onDragEnd;
 
         /// <summary>칸 하나의 상태색/테두리를 소유자가 칠하는 훅(내용을 새로 그린 뒤와 RefreshStyles에서 불린다).</summary>
         public System.Action<Cell> onStyle;
@@ -260,6 +320,9 @@ namespace MakeGame.UI
                 input.onExit = RaiseExit;
                 input.onLeftClick = RaiseLeftClick;
                 input.onRightClick = RaiseRightClick;
+                input.onDragBegin = RaiseDragBegin;
+                input.onDragMove = RaiseDragMove;
+                input.onDragEnd = RaiseDragEnd;
 
                 cells.Add(cell);
             }
@@ -269,6 +332,38 @@ namespace MakeGame.UI
         private void RaiseExit(int dataIndex) => onExit?.Invoke(dataIndex);
         private void RaiseLeftClick(int dataIndex) => onLeftClick?.Invoke(dataIndex);
         private void RaiseRightClick(int dataIndex) => onRightClick?.Invoke(dataIndex);
+        private bool RaiseDragBegin(int dataIndex) => onDragBegin != null && onDragBegin.Invoke(dataIndex);
+        private void RaiseDragMove(int dataIndex) => onDragMove?.Invoke(dataIndex);
+        private void RaiseDragEnd(int dataIndex) => onDragEnd?.Invoke(dataIndex);
+
+        /// <summary>
+        /// 화면 좌표 아래에 있는 칸의 데이터 인덱스를 찾는다. 없으면 -1.
+        /// 드래그를 놓을 대상을 정할 때 쓴다(원본 ItemDragManipulator.FindSlotUnderPointer에 대응).
+        ///
+        /// 레이캐스트를 쓰지 않는 이유: 고스트·툴팁 캔버스가 위에 떠 있고, 무엇보다 칸 뷰는
+        /// 스크롤 밖으로 밀려나도 **파괴되지 않고 남아 있어** 마스크에 잘린 채로도 레이캐스트에
+        /// 걸린다. 그래서 뷰포트 안인지 먼저 보고, 그 안에서만 칸 사각형을 검사한다.
+        /// </summary>
+        public int IndexAtScreenPoint(Vector2 screenPoint)
+        {
+            if (viewport == null)
+                return -1;
+
+            if (!RectTransformUtility.RectangleContainsScreenPoint(viewport, screenPoint, null))
+                return -1;
+
+            for (int i = 0; i < cells.Count; i++)
+            {
+                Cell cell = cells[i];
+                if (!cell.shown || cell.index < 0 || cell.visual == null || cell.visual.rect == null)
+                    continue;
+
+                if (RectTransformUtility.RectangleContainsScreenPoint(cell.visual.rect, screenPoint, null))
+                    return cell.index;
+            }
+
+            return -1;
+        }
 
         /// <summary>표시 목록에서 그 칸이 담고 있는 스택을 얻는다(빈 칸이면 null).</summary>
         public InventoryStack GetStack(int dataIndex)
