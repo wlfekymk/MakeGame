@@ -30,11 +30,31 @@ namespace MakeGame.UI
         private RaftStructure raftStructure;
         private AircraftRepairSystem aircraftRepair;
 
-        private Image healthFill;
-        private Image hungerFill;
-        private Image thirstFill;
-        private Image sunstrokeFill;
-        private Image oxygenFill;
+        /// <summary>수치 막대 하나를 이루는 부품 묶음. 5칸으로 쪼개 그린다.</summary>
+        private class StatBar
+        {
+            public Image[] fills;      // 칸마다 실제 값
+            public Image[] ghosts;     // 칸마다 "방금 잃은 만큼"(뒤에서 천천히 따라온다)
+            public Text value;         // 숫자
+            public float ghostRatio = 1f;
+            public int lastShownValue = int.MinValue;
+        }
+
+        /// <summary>
+        /// 막대를 몇 칸으로 쪼갤지. 디렉터 지시 "5칸으로 분리해서 보이고".
+        /// 칸이 나뉘어 있으면 매끈한 막대보다 **줄어드는 것이 눈에 띈다** — 칸 하나가 통째로
+        /// 꺼지는 순간이 생기기 때문이다.
+        /// </summary>
+        private const int SegmentCount = 5;
+
+        /// <summary>잃은 양(고스트)이 따라붙는 속도. 초당 비율. 0.6초 정도면 눈이 쫓아온다.</summary>
+        private const float GhostCatchUpPerSecond = 0.55f;
+
+        private StatBar healthBar;
+        private StatBar hungerBar;
+        private StatBar thirstBar;
+        private StatBar sunstrokeBar;
+        private StatBar oxygenBar;
 
         // 각 막대의 평소 색상(경고 상태가 아닐 때로 되돌아갈 기준값). CreateStatBar에서 채워진다.
         private Color healthBaseColor;
@@ -229,14 +249,14 @@ namespace MakeGame.UI
             // 개선(B4-12, ArtDirection.md 4.1): 정보 위계 3단.
             // Tier 1(체력, 상시 강조): 바 높이 1.4배(14→20), 라벨 폰트 14 - 0이 되면 사망하는 유일한
             // 최종 지표라 항상 가장 크게 보여준다.
-            healthFill = CreateStatBar(panel, "체력", healthBaseColor, "stat_health", barHeight: 20f, labelFontSize: 14);
+            healthBar = CreateStatBar(panel, "체력", healthBaseColor, "stat_health", barHeight: 20f, labelFontSize: 14);
             // Tier 2(허기·갈증, 상시 표시): 기존 크기(14/12) 그대로, 항상 완전 불투명.
-            hungerFill = CreateStatBar(panel, "허기", hungerBaseColor, "stat_hunger");
-            thirstFill = CreateStatBar(panel, "갈증", thirstBaseColor, "stat_thirst");
+            hungerBar = CreateStatBar(panel, "허기", hungerBaseColor, "stat_hunger");
+            thirstBar = CreateStatBar(panel, "갈증", thirstBaseColor, "stat_thirst");
             // Tier 3(일사병·산소, 조건부 흐림): 바 자체 크기는 Tier 2와 동일하고, 대신 Update()에서
             // 안전 구간일 때 알파 0.4로 흐리게 하고 위험 구간 진입 시 1.0 + 경고 펄스로 전환한다.
-            sunstrokeFill = CreateStatBar(panel, "일사병", sunstrokeBaseColor, "stat_sunstroke");
-            oxygenFill = CreateStatBar(panel, "산소", oxygenBaseColor, "stat_oxygen");
+            sunstrokeBar = CreateStatBar(panel, "일사병", sunstrokeBaseColor, "stat_sunstroke");
+            oxygenBar = CreateStatBar(panel, "산소", oxygenBaseColor, "stat_oxygen");
 
             // 상태 이상 아이콘 줄: 평소엔 숨겨져 있다가 중독/출혈/골절 상태일 때만 나타난다.
             var statusRowGo = new GameObject("StatusRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
@@ -280,12 +300,24 @@ namespace MakeGame.UI
         /// 다르게 줄 수 있게 했다. 기본값(14/12)은 기존 Tier 2/3 크기와 동일해, 호출부를 안 바꾸면
         /// 기존과 완전히 같은 결과가 나온다(Tier 1인 체력만 호출부에서 20/14를 명시로 넘긴다).
         /// </summary>
-        private Image CreateStatBar(Transform parent, string label, Color fillColor, string iconSpriteName, float barHeight = 14f, int labelFontSize = 12)
+        /// <summary>
+        /// 수치 막대 한 줄을 만든다: [아이콘] [이름] [5칸 막대] [숫자].
+        ///
+        /// 칸을 5개로 쪼갠 이유: 매끈한 막대는 조금씩 줄 때 변화가 안 보인다. 칸이 나뉘어 있으면
+        /// 칸 하나가 통째로 꺼지는 순간이 생겨 **줄어드는 것 자체가 사건으로 읽힌다.**
+        /// 숫자를 같이 붙인 이유도 같다 - 막대만으로는 "얼마나" 줄었는지 알 수 없다.
+        /// </summary>
+        private StatBar CreateStatBar(Transform parent, string label, Color fillColor, string iconSpriteName,
+            float barHeight = 14f, int labelFontSize = 12)
         {
+            var bar = new StatBar
+            {
+                fills = new Image[SegmentCount],
+                ghosts = new Image[SegmentCount],
+            };
+
             var rowGo = new GameObject($"Row_{label}", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
             rowGo.transform.SetParent(parent, false);
-            // 바 높이가 기존 기본 행 높이(20)보다 커질 수 있으므로(Tier 1), 행 자체의 최소 높이도
-            // 바 높이에 맞춰 늘려 아이콘/라벨/바가 서로 겹치지 않게 한다.
             rowGo.GetComponent<LayoutElement>().minHeight = Mathf.Max(20f, barHeight);
             var hlg = rowGo.GetComponent<HorizontalLayoutGroup>();
             hlg.spacing = 6f;
@@ -305,14 +337,112 @@ namespace MakeGame.UI
             }
 
             var labelText = UIBuilder.CreateText(rowGo.transform, "Label", label, labelFontSize, Color.white, TextAnchor.MiddleLeft);
-            labelText.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
+            labelText.gameObject.AddComponent<LayoutElement>().preferredWidth = 44f;
 
-            var barFill = UIBuilder.CreateProgressBar(rowGo.transform, "Bar", new Color(1f, 1f, 1f, 0.15f), fillColor);
-            var barLayout = barFill.transform.parent.gameObject.AddComponent<LayoutElement>();
-            barLayout.flexibleWidth = 1f;
-            barLayout.minHeight = barHeight;
+            // 칸 5개를 담는 가로 상자. 칸 사이 간격이 곧 "분리"를 만든다.
+            var trackGo = new GameObject("Track", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            trackGo.transform.SetParent(rowGo.transform, false);
+            var trackLayout = trackGo.GetComponent<LayoutElement>();
+            trackLayout.flexibleWidth = 1f;
+            trackLayout.minHeight = barHeight;
+            var trackHlg = trackGo.GetComponent<HorizontalLayoutGroup>();
+            trackHlg.spacing = 3f;
+            trackHlg.childForceExpandWidth = true;
+            trackHlg.childForceExpandHeight = true;
 
-            return barFill;
+            // 스프라이트가 있어야 Image.Type.Filled가 동작한다. 없으면 fillAmount가 통째로 무시된다.
+            var barSprite = Resources.Load<Sprite>("Sprites/bar_rounded");
+
+            for (int i = 0; i < SegmentCount; i++)
+            {
+                var segGo = new GameObject($"Seg{i}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+                segGo.transform.SetParent(trackGo.transform, false);
+                segGo.GetComponent<LayoutElement>().flexibleWidth = 1f;
+
+                var segBg = segGo.GetComponent<Image>();
+                segBg.color = new Color(1f, 1f, 1f, 0.13f);
+                if (barSprite != null)
+                {
+                    segBg.sprite = barSprite;
+                    segBg.type = Image.Type.Sliced;
+                }
+
+                // 고스트가 먼저(뒤), 실제 값이 나중(앞). 값이 줄면 고스트만 남아 **잃은 만큼**이 보인다.
+                bar.ghosts[i] = CreateSegmentLayer(segGo.transform, "Ghost", barSprite,
+                    new Color(1f, 1f, 1f, 0.45f));
+                bar.fills[i] = CreateSegmentLayer(segGo.transform, "Fill", barSprite, fillColor);
+            }
+
+            bar.value = UIBuilder.CreateText(rowGo.transform, "Value", "100", labelFontSize, Color.white, TextAnchor.MiddleRight);
+            bar.value.gameObject.AddComponent<LayoutElement>().preferredWidth = 30f;
+
+            return bar;
+        }
+
+        /// <summary>칸 하나 안에 깔리는 채움 층(고스트 또는 실제 값). 부모 칸을 꽉 채운다.</summary>
+        private static Image CreateSegmentLayer(Transform parent, string name, Sprite sprite, Color color)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            go.transform.SetParent(parent, false);
+
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+
+            var image = go.GetComponent<Image>();
+            image.raycastTarget = false;
+            image.color = color;
+            if (sprite != null)
+                image.sprite = sprite;
+            image.type = Image.Type.Filled;
+            image.fillMethod = Image.FillMethod.Horizontal;
+            image.fillOrigin = (int)Image.OriginHorizontal.Left;
+            image.fillAmount = 1f;
+            return image;
+        }
+
+        /// <summary>
+        /// 막대 하나를 갱신한다. 실제 값은 즉시 반영하고, **잃은 양(고스트)만 천천히 따라온다** —
+        /// 그 시차가 "지금 깎였다"를 눈에 보이게 만든다. 회복은 시차 없이 바로 채운다
+        /// (회복을 굳이 느리게 보여줄 이유가 없다).
+        /// </summary>
+        private void UpdateStatBar(StatBar bar, float ratio, float rawValue, Color baseColor,
+            bool isDanger, float safeAlpha = 1f)
+        {
+            if (bar == null)
+                return;
+
+            ratio = Mathf.Clamp01(ratio);
+
+            if (ratio >= bar.ghostRatio)
+                bar.ghostRatio = ratio;
+            else
+                bar.ghostRatio = Mathf.MoveTowards(bar.ghostRatio, ratio,
+                    GhostCatchUpPerSecond * Time.unscaledDeltaTime);
+
+            Color fillColor = ResolvePulseColor(baseColor, isDanger, safeAlpha);
+            Color ghostColor = new Color(1f, 1f, 1f, 0.45f * (isDanger ? 1f : safeAlpha));
+
+            for (int i = 0; i < SegmentCount; i++)
+            {
+                // 칸 i는 전체의 [i/5, (i+1)/5] 구간을 맡는다.
+                bar.fills[i].fillAmount = Mathf.Clamp01(ratio * SegmentCount - i);
+                bar.fills[i].color = fillColor;
+
+                bar.ghosts[i].fillAmount = Mathf.Clamp01(bar.ghostRatio * SegmentCount - i);
+                bar.ghosts[i].color = ghostColor;
+            }
+
+            // 숫자는 정수가 실제로 바뀐 프레임에만 새로 만든다(매 프레임 문자열 할당 방지).
+            int shown = Mathf.RoundToInt(rawValue);
+            if (shown != bar.lastShownValue)
+            {
+                bar.lastShownValue = shown;
+                bar.value.text = shown.ToString();
+            }
+            bar.value.color = isDanger ? WarningColor : new Color(1f, 1f, 1f, safeAlpha);
         }
 
         /// <summary>
@@ -324,20 +454,21 @@ namespace MakeGame.UI
         /// Tier와 무관하게 항상 알파 1.0으로 펄스한다 - 안전 구간의 흐림과 위험 경고가 같은 임계값에서
         /// 전환되므로(Update() 참고), 흐림 때문에 위험 신호를 놓치는 프레임이 생기지 않는다.
         /// </summary>
-        private void ApplyWarningPulse(Image fill, Color baseColor, bool isDanger, float safeAlpha = 1f)
+        /// (막대가 칸 5개로 쪼개지면서 Image 하나에 직접 칠하던 것을 **색을 돌려주는** 형태로 바꿨다.
+        ///  한 값으로 칸 5개를 같이 칠해야 하기 때문이다. 계산식은 한 글자도 바뀌지 않았다.)
+        private static Color ResolvePulseColor(Color baseColor, bool isDanger, float safeAlpha = 1f)
         {
             if (!isDanger)
             {
                 Color dimmed = baseColor;
                 dimmed.a = safeAlpha;
-                fill.color = dimmed;
-                return;
+                return dimmed;
             }
 
             float pulse = Mathf.PingPong(Time.unscaledTime * 2.5f, 1f);
             Color pulsedColor = Color.Lerp(baseColor, WarningColor, pulse);
             pulsedColor.a = 1f;
-            fill.color = pulsedColor;
+            return pulsedColor;
         }
 
         /// <summary>
@@ -365,8 +496,25 @@ namespace MakeGame.UI
         /// <summary>
         /// 매 프레임 생존 수치/상태 이상/진행도를 최신 값으로 갱신한다.
         /// </summary>
+        private float referenceRetryTimer;
+
         private void Update()
         {
+            // 참조를 Start에서 한 번만 찾고 끝내면, 그 순간 대상이 아직 없거나 비활성이면
+            // **HUD가 영원히 굳는다**(값은 멀쩡한데 화면만 안 움직인다 - 이 프로젝트에서 가장
+            // 알아채기 어려운 고장 유형이다). 못 찾았을 때만 1초에 한 번 다시 찾는다.
+            // 정상 경로에서는 null 검사 한 번이라 비용이 없다.
+            if (survivalStats == null || survivalClock == null)
+            {
+                referenceRetryTimer -= Time.unscaledDeltaTime;
+                if (referenceRetryTimer <= 0f)
+                {
+                    referenceRetryTimer = 1f;
+                    if (survivalStats == null) survivalStats = FindAnyObjectByType<SurvivalStats>();
+                    if (survivalClock == null) survivalClock = FindAnyObjectByType<SurvivalClock>();
+                }
+            }
+
             if (survivalClock != null)
             {
                 int day = survivalClock.ElapsedDays + 1;
@@ -392,11 +540,7 @@ namespace MakeGame.UI
                 float sunstrokeRatio = Mathf.Clamp01(survivalStats.sunstroke / SurvivalStats.MaxStatValue);
                 float oxygenRatio = Mathf.Clamp01(survivalStats.oxygen / SurvivalStats.MaxStatValue);
 
-                healthFill.fillAmount = healthRatio;
-                hungerFill.fillAmount = hungerRatio;
-                thirstFill.fillAmount = thirstRatio;
-                sunstrokeFill.fillAmount = sunstrokeRatio;
-                oxygenFill.fillAmount = oxygenRatio;
+                // (막대 갱신은 아래 UpdateStatBar가 값·색·숫자를 한 번에 처리한다.)
 
                 // 위험 수준(체력/허기/갈증/산소는 낮을 때, 일사병은 반대로 높을 때)일 때 막대 색을
                 // 평소 색과 경고색 사이로 깜빡이게 해 raw 숫자를 보지 않아도 한눈에 위험을 알 수 있게 한다.
@@ -411,16 +555,16 @@ namespace MakeGame.UI
                 bool sunstrokeDanger = sunstrokeRatio > SurvivalStats.HighSunstrokeRatio;
                 bool oxygenDanger = oxygenRatio < SurvivalStats.LowOxygenRatio;
 
-                ApplyWarningPulse(healthFill, healthBaseColor, healthDanger);
-                ApplyWarningPulse(hungerFill, hungerBaseColor, hungerDanger);
-                ApplyWarningPulse(thirstFill, thirstBaseColor, thirstDanger);
+                UpdateStatBar(healthBar, healthRatio, survivalStats.health, healthBaseColor, healthDanger);
+                UpdateStatBar(hungerBar, hungerRatio, survivalStats.hunger, hungerBaseColor, hungerDanger);
+                UpdateStatBar(thirstBar, thirstRatio, survivalStats.thirst, thirstBaseColor, thirstDanger);
                 // Tier 3: 안전 구간(danger가 아닐 때)엔 알파 0.4로 흐리게, 위험 구간 진입 시 알파 1.0 +
                 // 경고 펄스로 전환한다. safeAlpha와 danger 판정 임계값을 SurvivalStats의 기존 위험 상수
                 // (HighSunstrokeRatio/LowOxygenRatio)로 완전히 일치시켜, "흐린 상태에서 위험해지는
                 // 순간"과 "펄스가 시작되는 순간"이 정확히 같은 프레임에 겹치게 했다 - 흐림 때문에
                 // 위험 진입을 한 프레임이라도 놓칠 여지를 원천 차단한다(코디네이터 지시 사항).
-                ApplyWarningPulse(sunstrokeFill, sunstrokeBaseColor, sunstrokeDanger, safeAlpha: 0.4f);
-                ApplyWarningPulse(oxygenFill, oxygenBaseColor, oxygenDanger, safeAlpha: 0.4f);
+                UpdateStatBar(sunstrokeBar, sunstrokeRatio, survivalStats.sunstroke, sunstrokeBaseColor, sunstrokeDanger, safeAlpha: 0.4f);
+                UpdateStatBar(oxygenBar, oxygenRatio, survivalStats.oxygen, oxygenBaseColor, oxygenDanger, safeAlpha: 0.4f);
 
                 poisonIcon.SetActive(survivalStats.isPoisoned);
                 bleedingIcon.SetActive(survivalStats.isBleeding);

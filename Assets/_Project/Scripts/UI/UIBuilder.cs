@@ -409,6 +409,13 @@ namespace MakeGame.UI
 
             var fillImage = fillGo.GetComponent<Image>();
             fillImage.color = fillColor;
+            // ★ 스프라이트가 없으면 Unity의 Image는 type과 fillAmount를 **통째로 무시하고**
+            //   사각형을 꽉 채운다(OnPopulateMesh가 sprite == null이면 곧장 기본 사각형을 그린다).
+            //   그래서 이 막대들은 값을 매 프레임 정확히 계산해 넣고도 화면에서는 한 번도
+            //   움직인 적이 없었다 - 생존 HUD 5줄과 격자 칸 내구도 막대가 전부 그랬다.
+            //   트랙과 같은 스프라이트를 물려 Filled가 실제로 동작하게 한다.
+            if (barSprite != null)
+                fillImage.sprite = barSprite;
             fillImage.type = Image.Type.Filled;
             fillImage.fillMethod = Image.FillMethod.Horizontal;
             fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
