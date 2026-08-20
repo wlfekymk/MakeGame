@@ -178,6 +178,24 @@ namespace MakeGame.Systems
         [Tooltip("새벽 안개 배수. 일출 정점에서 안개 밀도가 이만큼 배로 짙어져 아침 물안개가 깔린다.")]
         public float dawnFogDensityMultiplier = 2.3f;
 
+        // ── 고도에 따른 안개(가벼운 aerial perspective) ─────────────────────────────
+        //
+        // 실제 대기에서 수증기와 먼지는 아래쪽에 깔린다. 그래서 언덕에 올라가면 시야가 트이고,
+        // 해변에 내려오면 수평선이 다시 뿌예진다. 지금까지 우리 안개는 **거리만** 봤기 때문에
+        // 섬 꼭대기에서나 물가에서나 보이는 거리가 똑같았다 - 섬 게임에서 가장 아까운 손실이다
+        // (Docs/RealismPlan.md C2).
+        //
+        // 진짜 aerial perspective(픽셀마다 높이·태양 방향을 보는 산란 안개)는 셰이더가 필요하고,
+        // 우리 지형·야자수는 URP Lit을 쓰므로 우리가 손댈 수 없다. 대신 **카메라 높이**로 전역
+        // 밀도를 낮추면, 셰이더를 하나도 건드리지 않고 "올라가면 트인다"는 체감의 대부분을 얻는다.
+        // 값싼 근사임을 알고 쓰는 것이고, 나중에 커스텀 산란 안개를 넣으면 이 블록이 대체된다.
+
+        [Tooltip("해수면 위 이 높이(m)에 도달하면 안개 밀도가 fogDensityAtHeight 배까지 옅어진다.")]
+        public float fogClearHeight = 85f;
+
+        [Tooltip("높은 곳에서 남는 안개 밀도 비율(1 = 고도 무관, 낮을수록 정상에서 시야가 트인다).")]
+        [Range(0.2f, 1f)] public float fogDensityAtHeight = 0.45f;
+
         /// <summary>
         /// [B22] 지금 시각/날씨에서 계산된 "맑은 날 기준" 안개 색. WeatherSystem이 비 안개로 서서히
         /// 넘어갈 때 출발점으로 읽는다(둘이 매 프레임 RenderSettings를 서로 덮어쓰지 않게 하는 장치).
@@ -190,6 +208,9 @@ namespace MakeGame.Systems
         private Light sunLight;
         private SurvivalClock clock;
         private WeatherSystem weather;
+
+        /// <summary>고도 안개 계산용 카메라 캐시(Camera.main은 태그 검색이라 매 프레임 부르면 안 된다).</summary>
+        private Camera fogCamera;
 
         /// <summary>
         /// 런타임에만 색을 바꾸기 위해 원본(Default-Skybox 등 공유 에셋)을 복제한 인스턴스.
@@ -374,8 +395,15 @@ namespace MakeGame.Systems
             // 맑은 날 기준 안개. 새벽에만 밀도를 올려 아침 물안개를 깐다(황혼에는 올리지 않는다 -
             // 밤새 식은 공기에서 생기는 현상이라 저녁에 같은 안개가 끼면 오히려 어색하다).
             ClearFogColor = ResolveClearFogColor(sky, dayFactor, goldenHour, goldenLight);
+
+            // 고도 배율은 이번 프레임에 한 번만 구해 맑은 안개와 비 안개 **양쪽에** 쓴다.
+            // 맑은 쪽에만 곱하면, 비가 최고조일 때 보간 결과가 weather.rainFogDensity(고정 상수)로
+            // 완전히 수렴해 고도 효과가 정확히 가장 필요한 순간에 사라진다(검수에서 잡힌 것).
+            float heightFog = ResolveHeightFogFactor();
+
             ClearFogDensity = Mathf.Max(0f, clearFogDensity)
-                * Mathf.Lerp(1f, Mathf.Max(1f, dawnFogDensityMultiplier), isMorning ? goldenHour : 0f);
+                * Mathf.Lerp(1f, Mathf.Max(1f, dawnFogDensityMultiplier), isMorning ? goldenHour : 0f)
+                * heightFog;
 
             // 비 안개까지 반영한 "이번 프레임에 실제로 적용할" 값. 스카이박스 지평선 색과 RenderSettings가
             // 같은 값을 써야 수평선에 이음매가 생기지 않으므로 여기서 한 번만 계산한다.
@@ -384,7 +412,8 @@ namespace MakeGame.Systems
             if (weather != null && rainIntensity > 0f)
             {
                 fogColor = Color.Lerp(fogColor, weather.rainFogColor, rainIntensity);
-                fogDensity = Mathf.Lerp(fogDensity, Mathf.Max(0f, weather.rainFogDensity), rainIntensity);
+                fogDensity = Mathf.Lerp(fogDensity,
+                    Mathf.Max(0f, weather.rainFogDensity) * heightFog, rainIntensity);
             }
 
             if (skyboxInstance != null)
@@ -468,6 +497,28 @@ namespace MakeGame.Systems
             RenderSettings.ambientSkyColor = ScaleRgb(sky, ambientRainMultiplier);
             RenderSettings.ambientEquatorColor = ScaleRgb(equator, ambientRainMultiplier);
             RenderSettings.ambientGroundColor = ScaleRgb(ground, ambientRainMultiplier);
+        }
+
+        /// <summary>
+        /// 카메라 높이에 따른 안개 밀도 배율. 해수면에서 1, fogClearHeight 이상에서 fogDensityAtHeight.
+        ///
+        /// 비 안개에도 그대로 곱해진다(ClearFogDensity를 출발점으로 보간하기 때문이다). 그게 맞다 -
+        /// 비구름 위로 올라가는 게 아니라 같은 비를 높은 데서 보는 것이니 조금 트이는 편이 자연스럽다.
+        ///
+        /// 카메라는 매 프레임 찾지 않고 캐시한다. Camera.main은 태그 검색이라 공짜가 아니다.
+        /// </summary>
+        private float ResolveHeightFogFactor()
+        {
+            if (fogCamera == null)
+            {
+                fogCamera = Camera.main;
+                if (fogCamera == null)
+                    return 1f;
+            }
+
+            float height = fogCamera.transform.position.y - OceanWaves.SeaLevel;
+            float t = Mathf.Clamp01(height / Mathf.Max(1f, fogClearHeight));
+            return Mathf.Lerp(1f, Mathf.Clamp(fogDensityAtHeight, 0.2f, 1f), t);
         }
 
         /// <summary>RGB에만 배율을 곱한다. Color * float는 알파까지 곱해버리므로 알파는 1로 고정한다.</summary>

@@ -117,6 +117,12 @@ namespace MakeGame.Systems
 
         private Transform domeTransform;
         private Mesh domeMesh;
+
+        /// <summary>
+        /// 돔 추종용 카메라 캐시. Camera.main은 태그 검색이라 매 프레임 부르면 안 된다
+        /// (이 프로젝트의 다른 시스템 전부가 지키는 규약인데 여기만 빠져 있었다 - 성능 감사에서 잡혔다).
+        /// </summary>
+        private Camera domeCamera;
         private Material domeMaterial;
         private MeshRenderer domeRenderer;
 
@@ -547,7 +553,10 @@ namespace MakeGame.Systems
             if (domeTransform == null)
                 return;
 
-            Camera cam = Camera.main;
+            if (domeCamera == null)
+                domeCamera = Camera.main;
+
+            Camera cam = domeCamera;
             if (cam == null)
             {
                 if (domeRenderer != null && domeRenderer.enabled)

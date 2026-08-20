@@ -79,6 +79,8 @@ Shader "MG/Ocean"
         _FresnelPower("프레넬 지수(클수록 깊은색이 수평선에 몰린다)", Range(0.5, 8.0)) = 3.0
         _Smoothness("스페큘러 매끄러움", Range(0.0, 1.0)) = 0.85
         _SpecularStrength("스페큘러 세기", Range(0.0, 2.0)) = 0.7
+        _CrestColor("파도 마루 투과광 색(역광에서 물이 비쳐 보이는 색)", Color) = (0.35, 0.78, 0.72, 1)
+        _CrestGlow("파도 마루 투과광 세기(0이면 끈다)", Range(0.0, 3.0)) = 1.15
         _WaveAmplitude("큰 파도 노멀 세기 배율(1 = OceanWaves가 밀어준 진폭 그대로)", Range(0.0, 2.0)) = 1.0
         _RippleStrength("잔물결 노멀 퍼터베이션 세기", Range(0.0, 2.0)) = 1.0
         _MG_WaveTime("파도 시간(C#이 매 프레임 Time.time을 넣는다)", Float) = 0.0
@@ -135,6 +137,8 @@ Shader "MG/Ocean"
                 half _FresnelPower;
                 half _Smoothness;
                 half _SpecularStrength;
+                half4 _CrestColor;
+                half _CrestGlow;
                 half _WaveAmplitude;
                 half _RippleStrength;
                 float _MG_WaveTime;
@@ -396,6 +400,23 @@ Shader "MG/Ocean"
                 // 프레넬만큼 스페큘러를 키워 수평선 쪽 물비늘 반짝임을 강조한다. 거품 위에서는 죽인다.
                 color += mainLight.color * (spec * _SpecularStrength * (0.4 + 0.6 * fresnel))
                     * step(0.001, ndotl) * (1.0 - foam);
+
+                // ---- [실사감 D3] 파도 마루 투과광 ----
+                // 태양을 마주 보고 볼 때, 서 있는 물의 등이 얇아 빛을 통과시키며 밝게 타오른다.
+                // 조사에서 "진짜 물"의 4순위로 꼽힌 항목이고, 우리 쇄파 리본(MGShoreBreak)에는
+                // 이미 있는데 정작 넓은 바다에는 없었다.
+                //
+                // 진짜 subsurface scattering이 아니라 역광 근사다 - 조사한 사례들도 대부분 이 값싼
+                // 판을 쓴다(그쪽이 아티스트가 만지기도 쉽다).
+                //
+                // 기울기를 마스크로 쓰는 이유: 평평한 수면은 두꺼워 빛이 통과하지 않는다. 서 있는
+                // 면만 얇다. seaRough를 곱해 잔잔한 날에는 한 점도 안 나오게 하고, 거품 위에서는
+                // 죽인다(흰 거품이 다시 빛나면 그냥 과노출로 보인다).
+                half crestBackLit = saturate(dot(-viewDir, mainLight.direction));
+                half crestGlow = crestBackLit * crestBackLit * crestBackLit
+                    * saturate(waveSteep * 7.0) * seaRough * _CrestGlow
+                    * frontGate * (1.0 - foam);
+                color += _CrestColor.rgb * mainLight.color * crestGlow;
 
                 // ---- [v3] 알파 합성 ----
                 // 1) 프레넬: 내려다보면 ~0.5(바닥이 보인다) → 스치는 각 ~0.95(하늘 반사처럼 불투명).

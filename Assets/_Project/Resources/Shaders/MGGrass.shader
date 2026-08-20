@@ -157,6 +157,29 @@ Shader "MG/Grass"
                 return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
             }
 
+            // 매크로 변주용 저주파 값 노이즈(파장 MG_MACRO_WAVELENGTH).
+            //
+            // 왜 필요한가: 지금 있는 색 지터는 전부 **포기 단위 고주파**다. 가까이서 보면 포기마다
+            // 색이 다르지만, 30m만 떨어져도 평균으로 뭉개져 한 톤짜리 초록 카펫이 된다. 조사에서
+            // "매크로 + 마이크로 이중 스케일"을 4순위로 꼽은 것이 정확히 이 문제다.
+            // 텍스처를 쓰지 않는 이유: 정점 셰이더에서 해시 4번이면 되고, 잔디용 텍스처를 하나
+            // 더 만들면 그것대로 로드·메모리·메타 파일이 따라온다.
+            #define MG_MACRO_WAVELENGTH 26.0
+            float MGMacro(float2 p)
+            {
+                float2 g = p / MG_MACRO_WAVELENGTH;
+                float2 i = floor(g);
+                float2 f = frac(g);
+                f = f * f * (3.0 - 2.0 * f);   // smoothstep - 선형이면 격자 줄무늬가 보인다
+
+                float a = MGHash(i);
+                float b = MGHash(i + float2(1.0, 0.0));
+                float c = MGHash(i + float2(0.0, 1.0));
+                float d = MGHash(i + float2(1.0, 1.0));
+
+                return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+            }
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
@@ -289,7 +312,15 @@ Shader "MG/Grass"
                 half dry = (half)(MGHash(originWS.xz) * 0.35);
                 half bright = (half)(1.0 + (MGHash(originWS.xz + 41.7) * 2.0 - 1.0) * 0.08);
                 half hue = (half)((MGHash(originWS.xz + 23.77) * 2.0 - 1.0) * 0.06);
-                half3 jitterMul = bright * half3(1.0 + hue, 1.0, 1.0 - hue);
+
+                // ---- 매크로 변주(파장 26m) ----
+                // 위의 지터가 "포기마다"라면 이건 "구역마다"다. 명도는 ±11%, 마른 정도는 최대 +0.22를
+                // 더한다. 지터보다 폭이 큰 이유: 멀리서 보이는 것은 이쪽뿐이라 약하면 없는 것과 같다.
+                half macro = (half)MGMacro(originWS.xz);
+                half macroBright = (half)(0.89 + macro * 0.22);
+                dry = saturate(dry + macro * macro * 0.22);
+
+                half3 jitterMul = bright * macroBright * half3(1.0 + hue, 1.0, 1.0 - hue);
                 OUT.rootCol = lerp(_RootColor.rgb, _DryTint.rgb, dry) * jitterMul;
                 OUT.tipCol = lerp(_TipColor.rgb, _DryTint.rgb, dry) * jitterMul;
 
@@ -315,7 +346,18 @@ Shader "MG/Grass"
                 // _TintStrength로 흰색과 보간한 것 - 0이면 텍스처 원색(꽃 머티리얼), 1이면 풀 틴트.
                 half3 tint = lerp(half3(1.0, 1.0, 1.0),
                     lerp(IN.rootCol, IN.tipCol, saturate(IN.uvData.z)), _TintStrength);
-                half3 albedo = tex.rgb * tint;
+
+                // 밑동 AO: 지면에 가까울수록 어둡다. 색(_RootColor)으로 밑동을 어둡게 하는 것과는
+                // 다른 축이다 - 저건 "뿌리가 무슨 색인가"이고 이건 "빛이 얼마나 들어오는가"다.
+                // 조사에서 "떠 있는 잔디"가 가장 흔한 실패 신호로 꼽혔고, 그 해법이 이 한 줄이다.
+                //
+                // ★ 하한이 0.80인 이유(검수에서 잡힌 것). _RootColor는 이미 지면색의 어두운 변주라
+                //   밑동/끝 명도비가 그 자체로 0.85쯤 된다. 여기에 0.62를 더 곱하면 최종 비가 0.5까지
+                //   떨어져 밑동이 거의 검게 뭉갠다. 두 감쇠가 **곱해진다**는 것을 감안한 값이다.
+                //   uv.y 0에서 0.80배, 0.24 위로는 그대로 → 최종 비 0.68 수준.
+                half rootAO = lerp((half)0.80, (half)1.0, saturate(IN.uvData.z / 0.24));
+
+                half3 albedo = tex.rgb * tint * rootAO;
 
                 // 라이팅: 메인 라이트 램버트 + SH 앰비언트(URP Lit 간이형 - 수만 포기라
                 // 프래그먼트는 최대한 싸야 한다). 여기에 v3 음영 2종을 가산한다:

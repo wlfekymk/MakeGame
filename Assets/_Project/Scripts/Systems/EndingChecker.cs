@@ -282,10 +282,13 @@ namespace MakeGame.Systems
             if (requiredFuelCount < 0) requiredFuelCount = balanceConfig.endingRequiredFuelCount;
             if (requiredElapsedDays < 0) requiredElapsedDays = balanceConfig.endingRequiredElapsedDays;
 
-            // aircraftRequiredElapsedDays는 여기서 폴백하지 않는다. SurvivalBalanceConfig에 대응
-            // 필드(endingAircraftRequiredElapsedDays)가 아직 없기 때문이다 - 없는 필드를 읽으면
-            // 컴파일이 깨진다. 필드가 추가되면 위 네 줄과 같은 형태(<0일 때만)로 한 줄 붙이면 된다.
-            // 그때까지 음수 값은 "조건 없음"으로 동작한다(ElapsedDays >= 음수는 항상 참).
+            // [감사] 이 줄이 오래 비어 있었다. 예전 주석은 "SurvivalBalanceConfig에 대응 필드가 아직
+            // 없다"고 적혀 있었는데, 그 필드(endingAircraftRequiredElapsedDays)는 그 뒤에 추가됐고
+            // 주석만 낡은 채 남아 배선이 마저 안 됐다. 지금은 코드 기본값(8)과 config 값(8)이 우연히
+            // 같아 겉으로 티가 나지 않지만, 밸런스 파일에서 이 값만 바꾸면 아무 일도 일어나지 않는
+            // 상태였다 - "밸런스는 파일 하나만 고치면 된다"는 이 시스템의 계약이 깨져 있었다.
+            if (aircraftRequiredElapsedDays < 0)
+                aircraftRequiredElapsedDays = balanceConfig.endingAircraftRequiredElapsedDays;
         }
 
         /// <summary>

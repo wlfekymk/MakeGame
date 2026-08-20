@@ -242,6 +242,21 @@ namespace MakeGame.Systems
         /// <summary>카드 무작위 기울임 최대각(도). 축도 위치 해시 - 위에서 봐도 별모양이 안 읽힌다.</summary>
         private const float MaxTiltDegrees = 8f;
 
+        /// <summary>
+        /// 지형 노멀을 향해 카드를 얼마나 눕히는가(0 = 항상 수직, 1 = 지면에 완전히 수직).
+        ///
+        /// 1이 아닌 이유: 실제 풀은 경사면에서도 중력 때문에 어느 정도 위를 향한다. 그리고 카드를
+        /// 지면에 완전히 맞추면 급경사에서 밑동이 오히려 파묻히고 끝이 언덕을 뚫는다. 0.65면
+        /// "경사를 따르되 위를 향한다"가 된다.
+        ///
+        /// 이게 없을 때의 증상: 경사면 잔디가 전부 수직으로 서 있어 지면과 따로 노는 - 조사에서
+        /// "떠 있는 잔디"라고 부르는 실패 신호다.
+        /// </summary>
+        private const float TerrainAlignFactor = 0.65f;
+
+        /// <summary>지형 노멀을 전진차분으로 구할 때의 탐침 거리(m).</summary>
+        private const float NormalProbeDistance = 0.7f;
+
         /// <summary>섬당 인스턴스 수 상한(XL 기준 ~70개 × 1023 배치 - RenderMeshInstanced 허용 범위).</summary>
         private const int MaxInstancesPerIsland = 70000;
 
@@ -566,6 +581,18 @@ namespace MakeGame.Systems
                     bool isTuft = Hash01(ix, iz, islandSalt ^ 0x94D049BBu) < TuftFraction;
                     int cardCount = Hash01(ix, iz, islandSalt ^ 0x632BE59Bu) < 0.5f ? 2 : 3;
 
+                    // ---- 지형 노멀(전진차분 2회) ----
+                    // **앵커마다 한 번만** 구해 그 다발의 카드 2~3장이 공유한다. 반경 0.22m 안에서
+                    // 지형 기울기가 달라질 리 없고, 카드마다 구하면 높이 샘플이 배로 늘어 섬 생성이
+                    // 그만큼 느려진다(SampleHeight는 sqrt + atan2 + 폴라 조회다).
+                    float hDx = SampleHeight(verts, rings, segments, radius, x + NormalProbeDistance, z);
+                    float hDz = SampleHeight(verts, rings, segments, radius, x, z + NormalProbeDistance);
+                    var terrainNormal = new Vector3(y - hDx, NormalProbeDistance, y - hDz).normalized;
+                    var groundAlign = Quaternion.Slerp(
+                        Quaternion.identity,
+                        Quaternion.FromToRotation(Vector3.up, terrainNormal),
+                        TerrainAlignFactor);
+
                     // [B57] 마른 풀 판정은 **앵커 단위**다 - 한 다발이 통째로 마르거나 통째로
                     // 푸르러야 다발이 두 색으로 찢어지지 않는다(암반 완충대 판정과 같은 규칙).
                     // 확률은 전이대 바닥에서 0.90, 위로 갈수록 0이다(제곱으로 빨리 준다).
@@ -614,7 +641,11 @@ namespace MakeGame.Systems
                         float tiltDeg = (Hash01(ix, iz, cardSalt ^ 0xA511E9B3u) * 2f - 1f) * MaxTiltDegrees;
                         float axisAngle = Hash01(ix, iz, cardSalt ^ 0x2545F491u) * (Mathf.PI * 2f);
                         var tiltAxis = new Vector3(Mathf.Cos(axisAngle), 0f, Mathf.Sin(axisAngle));
-                        var rotation = Quaternion.AngleAxis(tiltDeg, tiltAxis)
+                        // 지형 정렬을 **바깥에** 곱한다: 먼저 카드를 세우고(yaw + 무작위 기울임)
+                        // 그다음 그 결과를 통째로 경사에 눕힌다. 순서를 뒤집으면 무작위 기울임이
+                        // 지형 기울기를 상쇄해 버려 경사면에서 정렬이 사라진다.
+                        var rotation = groundAlign
+                            * Quaternion.AngleAxis(tiltDeg, tiltAxis)
                             * Quaternion.Euler(0f, yaw, 0f);
 
                         float hY = Hash01(ix, iz, cardSalt ^ 0xC2B2AE35u);
