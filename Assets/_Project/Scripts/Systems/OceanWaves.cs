@@ -71,6 +71,13 @@ namespace MakeGame.Systems
         private static readonly float[] DirectionDegrees = { 24f, 120f, -79f, -40f };
 
         /// <summary>
+        /// 위 네 방향의 산술평균(= (24+120-79-40)/4). 전역 바람 방위를 파도에 전할 때의 **기준점**이다.
+        /// 바람이 이 방위일 때 파도는 예전과 정확히 같고, 바람이 돌면 네 성분이 서로의 각도 관계를
+        /// 유지한 채 통째로 돈다(성분끼리의 각도 차이는 파도 모양을 정하는 값이라 건드리면 안 된다).
+        /// </summary>
+        private const float BaseBearingDegrees = 6.25f;
+
+        /// <summary>
         /// 잔잔한 바다(맑음)에서의 성분별 진폭(m). 합계 0.500m = 마루~골 1.00m.
         /// 거친 바다에서는 stormAmplitudeScale이 곱해진다(합계 1.45m = 마루~골 2.90m).
         ///
@@ -101,6 +108,16 @@ namespace MakeGame.Systems
         [Tooltip("거칠기 변화를 따라가는 시간 상수(초). WeatherSystem 쪽 보간에 더해 한 겹 더 완만하게 만든다.")]
         public float roughnessFollowSeconds = 6f;
 
+        /// <summary>
+        /// 파도 방향이 바람 방위를 따라가는 속도(초당 도).
+        ///
+        /// **바람보다 느리게 따라가야 한다.** 이유가 둘이다.
+        ///  · 실제 바다가 그렇다. 바람이 방향을 바꿔도 이미 만들어진 너울은 한참 그대로 간다.
+        ///  · 뗏목 부력이 이 파도를 딛고 서 있다. 파도 방향이 홱 돌면 뗏목이 이유 없이 출렁인다.
+        /// 기본값 1.2도/초는 90도 전환에 75초가 걸리는 속도다.
+        /// </summary>
+        public float bearingFollowDegreesPerSecond = 1.2f;
+
         // ── 셰이더 전역 프로퍼티 ID ──────────────────────────────────────────────
         // MGOcean.shader는 이 여섯 개를 CBUFFER(UnityPerMaterial) **밖**에서 선언한다.
         // Properties 블록에 넣으면 머티리얼 프로퍼티가 되어 전역 설정이 무시되므로 절대 넣지 않는다.
@@ -125,6 +142,9 @@ namespace MakeGame.Systems
 
         /// <summary>현재 바다 거칠기 0~1(0 = 잔잔, 1 = 폭풍). 날씨에서 보간되어 들어온다.</summary>
         private static float roughness01;
+
+        /// <summary>지금 파도가 향하는 방위(도). 바람 방위를 느리게 따라간다.</summary>
+        private static float waveBearing = BaseBearingDegrees;
 
         /// <summary>
         /// 파도 마루가 온전히 설 수 있는 최소 수심(m) = 지금 파라미터의 진폭 합(= 최대 마루 높이).
@@ -369,6 +389,7 @@ namespace MakeGame.Systems
             Active = null;
             seaLevelY = 0f;
             roughness01 = 0f;
+            waveBearing = BaseBearingDegrees;
             depthCacheCursor = 0;
             for (int i = 0; i < DepthCacheSlots; i++)
             {
@@ -377,7 +398,7 @@ namespace MakeGame.Systems
                 depthCacheDepth[i] = DeepWaterDepth;
                 depthCacheStamp[i] = float.NegativeInfinity; // 전부 만료 상태로 시작한다
             }
-            RecomputeWaves(0f, 2.9f, 1.45f);
+            RecomputeWaves(0f, 2.9f, 1.45f, 0f);
             PushToShader();
 
             SceneManager.sceneLoaded += (scene, mode) =>
@@ -423,6 +444,15 @@ namespace MakeGame.Systems
                 ? Mathf.MoveTowards(roughness01, target, Time.unscaledDeltaTime / roughnessFollowSeconds)
                 : target;
 
+            // 파도 방향은 전역 바람(WindSystem)을 느리게 따라간다. 바람 시스템이 없으면 기준 방위에
+            // 머무르므로, 이 게임의 예전 바다와 정확히 같은 파도가 나온다.
+            float targetBearing = WindSystem.Active != null
+                ? WindSystem.BearingDegrees
+                : BaseBearingDegrees;
+
+            waveBearing = Mathf.MoveTowardsAngle(waveBearing, targetBearing,
+                Mathf.Max(0f, bearingFollowDegreesPerSecond) * Time.unscaledDeltaTime);
+
             ApplyRoughness(smoothed);
         }
 
@@ -453,15 +483,21 @@ namespace MakeGame.Systems
             roughness01 = Mathf.Clamp01(value);
             RecomputeWaves(roughness01,
                 Mathf.Max(1f, stormAmplitudeScale),
-                Mathf.Max(1f, stormSpeedScale));
+                Mathf.Max(1f, stormSpeedScale),
+                Mathf.DeltaAngle(BaseBearingDegrees, waveBearing));
             PushToShader();
         }
 
         /// <summary>
         /// 거칠기에서 성분별 (진폭 · 파수 · 각속도 · 방향)을 유도한다.
-        /// 파장/방향은 거칠기와 무관하게 고정이고, 진폭과 각속도만 잔잔↔거침 사이를 선형 보간한다.
+        /// 파장은 거칠기와 무관하게 고정이고, 진폭과 각속도만 잔잔↔거침 사이를 선형 보간한다.
+        /// 방향은 네 성분이 각도 관계를 유지한 채 bearingOffset만큼 통째로 회전한다(전역 바람).
+        ///
+        /// C#(부력)과 셰이더(그림)가 **같은 값**을 쓰는 것이 이 클래스의 전제이므로, 회전도
+        /// 여기 한 곳에서만 일어나고 PushToShader가 그 결과를 그대로 내보낸다 - 둘이 갈릴 자리가 없다.
         /// </summary>
-        private static void RecomputeWaves(float rough, float ampScaleAtStorm, float speedScaleAtStorm)
+        private static void RecomputeWaves(float rough, float ampScaleAtStorm, float speedScaleAtStorm,
+            float bearingOffsetDegrees)
         {
             float ampScale = Mathf.Lerp(1f, ampScaleAtStorm, rough);
             float speedScale = Mathf.Lerp(1f, speedScaleAtStorm, rough);
@@ -473,7 +509,7 @@ namespace MakeGame.Systems
             {
                 float k = 2f * Mathf.PI / Wavelengths[i];
                 float omega = Mathf.Sqrt(Gravity * k) * speedScale;
-                float rad = DirectionDegrees[i] * Mathf.Deg2Rad;
+                float rad = (DirectionDegrees[i] + bearingOffsetDegrees) * Mathf.Deg2Rad;
                 float amp = CalmAmplitudes[i] * ampScale;
 
                 ampSum += amp;

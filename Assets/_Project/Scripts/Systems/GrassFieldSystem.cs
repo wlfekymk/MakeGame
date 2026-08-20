@@ -37,6 +37,8 @@ namespace MakeGame.Systems
     ///
     /// ── 셰이더 계약 (같은 웨이브의 MG/Grass, Resources/Shaders/MGGrass) ──
     ///  · _MG_WindTime(Time.time) / _MG_PlayerPos(플레이어 월드 위치)를 매 프레임 주입한다
+    ///    (_MG_WindTime은 이제 **폴백 시계**다 - 평소 바람의 방향·세기·위상은 전역 WindSystem이
+    ///     넣는 _MG_Wind에서 오고, 그게 비어 있을 때만 셰이더가 이 값으로 되돌아간다)
     ///    (잔디 머티리얼 - 꽃 머티리얼에도 같이 넣는다). 바람/밟힘 애니메이션은 전부 셰이더
     ///    정점 단계 - C#은 행렬을 다시 만지지 않는다.
     ///  · 카드 메시는 계약 규격([v4] 별모양 쿼드 3장 60도 간격, 폭 0.72m·높이 0.70m·피벗 밑동·

@@ -36,11 +36,17 @@
 //    퍼 인스턴스 커스텀 데이터는 받지 않는다 - 셀/색 지터도 인스턴스 행렬의 월드 원점 해시뿐.
 //  * 정점 바람: UV.y² 가중(뿌리 고정) × 월드 XZ 기반 스크롤 사인 3겹(파장 18m + 4m + 교차
 //    플러터). 위상은 카드 원점(피벗) 기준 - 한 포기는 통째로 굽는다(MGKelpSway의 찢김 방지).
-//    진폭 끝 기준 합계 ~0.12m × _WindStrength. 콜라이더 없는 순수 장식이라 판정과 안 어긋난다.
+//    진폭 끝 기준 합계 ~0.12m × _WindStrength × 전역 세기. 콜라이더 없는 순수 장식이라
+//    판정과 안 어긋난다.
+//  * 방향·세기·위상은 **전역 _MG_Wind(WindSystem)** 에서 온다. 예전에는 셰이더 안의 상수였고,
+//    그래서 폭풍이 와도 잔디는 잔잔했다. 지금은 바다·해초·비와 같은 바람 하나를 쓴다.
+//    세기가 0.8을 넘으면 흔들림 위에 **눕는 성분(lean)** 이 얹힌다 - 사인만으로는 폭풍이
+//    "빨리 흔들리는 잔잔한 바람"으로밖에 보이지 않는다.
 //  * 밟힘: 원점과 _MG_PlayerPos의 수평 거리 < _TrampleRadius면 끝을 플레이어 반대 방향으로
 //    밀고 눕힌다(부드러운 falloff, UV.y 가중). 눌린 만큼 바람은 죽인다.
-//  * 시간은 셰이더 내장 _Time이 아니라 C#이 매 프레임 넣는 _MG_WindTime(Time.time)이다 -
-//    Time.timeScale = 0에서 잔디가 정지하는 프로젝트 관례(MGOcean _MG_WaveTime과 동일).
+//  * 시간은 셰이더 내장 _Time을 쓰지 않는다. 평소에는 _MG_Wind.w(WindSystem이 세기를 적분한
+//    누적 위상)를 쓰고, 전역이 비어 있을 때만 _MG_WindTime(GrassFieldSystem이 넣는 Time.time)으로
+//    되돌아간다. 둘 다 Time.timeScale = 0에서 멈추는 프로젝트 관례를 지킨다(MGOcean _MG_WaveTime과 동일).
 //    _MG_PlayerPos도 C#이 매 프레임 넣는다(기본값은 지하 -10000이라 주입 전엔 밟힘이 없다).
 //  * 라이팅: 메인 라이트 램버트 + SH 앰비언트 + URP 포그. Cull Off 양면 - 뒷면은
 //    SV_IsFrontFace로 노멀을 뒤집고, 잔디 노멀은 위쪽으로 절반 굽혀 카드 명암 끊김을 편다.
@@ -110,18 +116,31 @@ Shader "MG/Grass"
                 float4 _MG_PlayerPos;
             CBUFFER_END
 
+            // ── 전역 바람 ────────────────────────────────────────────────────────────
+            // WindSystem이 매 프레임 Shader.SetGlobalVector로 넣는다.
+            //   xy = 방향(정규화된 월드 XZ), z = 세기(1 = 산들바람), w = 누적 위상
+            //
+            // **CBUFFER(UnityPerMaterial) 밖에 선언한다.** 그 안은 머티리얼이 소유하는 값 자리이고,
+            // 안에 넣으면 SetGlobalVector가 머티리얼 값에 가려 먹지 않는다(SRP Batcher 규약).
+            //
+            // 위상(w)이 시간이 아니라 **세기를 적분한 값**인 이유는 WindSystem 주석에 있다:
+            // 시간×세기로 스크롤하면 세기가 바뀌는 순간 패턴이 순간이동한다.
+            float4 _MG_Wind;
+
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
-            // ---- 바람장: 월드 XZ를 지나가는 스크롤 사인 3겹. 진폭 배분 합 1 → 끝 기준
-            //      합계 진폭이 곧 MG_WIND_AMP(0.12m) × _WindStrength가 된다. ----
+            // ---- 바람장: 바람 방향을 따라 흐르는 스크롤 사인 3겹. 진폭 배분 합 1 → 끝 기준
+            //      합계 진폭이 곧 MG_WIND_AMP(0.12m) × _WindStrength × 전역 세기가 된다. ----
             // 1겹: 파장 18m의 큰 물결(k = 2π/18). 전파 속도 ~3.5m/s → ω = k·c ≈ 1.22rad/s.
             // 2겹: 파장 4m의 잔떨림(k = 2π/4). 전파 속도 ~2m/s → ω ≈ 3.14rad/s.
             // 3겹: 1겹과 직교 방향의 약한 플러터 - 한 방향 사인만의 "줄 맞춰 흔들림"을 부순다.
+            //
+            // 세 겹의 방향은 예전에는 상수였다. 지금은 전역 바람 방향에서 유도한다:
+            // 1겹 = 바람 방향, 2겹 = 거기서 20° 튼 방향, 3겹 = 직교. 방향 간의 각도 관계는
+            // 그대로 유지되므로 예전과 같은 그림이 나오고, 바람이 돌면 셋이 함께 돈다.
             #define MG_WIND_AMP  0.12
-            #define MG_WIND_DIR1 float2( 0.848,  0.530)
-            #define MG_WIND_DIR2 float2( 0.940,  0.342)
-            #define MG_WIND_DIR3 float2(-0.530,  0.848)
+            #define MG_WIND_ROT2 float2(0.940, 0.342)   // cos20°, sin20°
             #define MG_WIND_K1 0.349
             #define MG_WIND_K2 1.571
             #define MG_WIND_K3 0.897
@@ -185,14 +204,50 @@ Shader "MG/Grass"
                 float2 pushDir = dist > 0.05 ? toPlayer / dist : float2(cos(hDir), sin(hDir));
 
                 // ---- 바람: 스크롤 사인 3겹 합성(위상은 원점 기준 - 한 포기는 통째로 굽는다). ----
-                float t = _MG_WindTime;
+                //
+                // 전역 바람이 아직 안 들어왔으면(WindSystem이 없는 씬, 첫 프레임) 예전 값으로
+                // 되돌아간다. "쓰는 자리에서 보장한다"는 프로젝트 규칙 - 전역이 비었다고 잔디가
+                // 통째로 멈춰 서면 그건 고장으로 보인다.
+                float2 wDir  = _MG_Wind.xy;
+                float  wStr  = _MG_Wind.z;
+                float  wPhase = _MG_Wind.w;
+                if (wStr < 0.0001)
+                {
+                    wDir = float2(0.848, 0.530);
+                    wStr = 1.0;
+                    wPhase = _MG_WindTime;   // 폴백 시계(GrassFieldSystem이 넣는 Time.time)
+                }
+
+                float2 dir2 = float2(wDir.x * MG_WIND_ROT2.x - wDir.y * MG_WIND_ROT2.y,
+                                     wDir.x * MG_WIND_ROT2.y + wDir.y * MG_WIND_ROT2.x);
+                float2 dir3 = float2(-wDir.y, wDir.x);
+
                 float2 wind =
-                      MG_WIND_DIR1 * (MG_WIND_A1 * sin(dot(originWS.xz, MG_WIND_DIR1) * MG_WIND_K1 - t * MG_WIND_W1))
-                    + MG_WIND_DIR2 * (MG_WIND_A2 * sin(dot(originWS.xz, MG_WIND_DIR2) * MG_WIND_K2 - t * MG_WIND_W2))
-                    + MG_WIND_DIR3 * (MG_WIND_A3 * sin(dot(originWS.xz, MG_WIND_DIR3) * MG_WIND_K3 - t * MG_WIND_W3));
+                      wDir * (MG_WIND_A1 * sin(dot(originWS.xz, wDir) * MG_WIND_K1 - wPhase * MG_WIND_W1))
+                    + dir2 * (MG_WIND_A2 * sin(dot(originWS.xz, dir2) * MG_WIND_K2 - wPhase * MG_WIND_W2))
+                    + dir3 * (MG_WIND_A3 * sin(dot(originWS.xz, dir3) * MG_WIND_K3 - wPhase * MG_WIND_W3));
+
+                // 강풍에서는 흔들리기만 하는 게 아니라 **아예 눕는다.** 사인만으로는 폭풍이
+                // "빨리 흔들리는 잔잔한 바람"으로밖에 보이지 않는다. 0.8 이하에서는 0이라
+                // 평상시 그림은 예전과 완전히 같다.
+                float lean = saturate(wStr - 0.8) * 0.55;
+                wind += wDir * lean;
+
                 // 눌린 풀은 바람이 거의 안 통한다(누운 채로 또 흔들리는 부자연스러움 방지).
                 wind *= (1.0 - 0.85 * press);
-                positionWS.xz += wind * (tipW * MG_WIND_AMP * _WindStrength);
+
+                // 진폭에 쓰는 세기는 상한을 둔다. 돌풍 최대치(앰비언트 2.1 × 1.55)를 그대로 곱하면
+                // 변위가 잔디 키를 넘어 카드가 지면에 눌어붙는다.
+                float ampStr = min(wStr, 2.4);
+                float2 windOffset = wind * (tipW * MG_WIND_AMP * _WindStrength * ampStr);
+                positionWS.xz += windOffset;
+
+                // ★ 옆으로 간 만큼 끝을 낮춘다. 이걸 안 하면 바람이 셀수록 풀이 **길어진다** -
+                //   변위는 순수 수평이라 카드가 늘어나기 때문이다. 뻣뻣한 막대가 기울 때의 관계
+                //   (h → √(h² − d²))를 그대로 쓴다. d를 키의 92%로 잘라 완전히 눕지는 않게 한다.
+                float bladeH = max(positionWS.y - originWS.y, 0.0);
+                float lat = min(length(windOffset), bladeH * 0.92);
+                positionWS.y -= bladeH - sqrt(max(bladeH * bladeH - lat * lat, 0.0));
 
                 // 밟힘 변위: 끝을 바깥으로 0.45m까지 밀고, 밑동 위 높이의 최대 65%를 낮춰 눕힌다.
                 // 월드 공간 변위라 인스턴스 스케일과 무관하게 "발밑에서 갈라지는 풀"이 된다.

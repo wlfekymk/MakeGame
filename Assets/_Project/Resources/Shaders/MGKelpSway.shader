@@ -71,6 +71,16 @@ Shader "MG/KelpSway"
                 float _MG_SwayTime;
             CBUFFER_END
 
+            // 전역 바람(WindSystem). CBUFFER 밖에 둔다 - 안에 넣으면 SetGlobalVector가 먹지 않는다.
+            //   xy = 방향, z = 세기, w = 누적 위상
+            //
+            // 해초는 물속에 있으므로 바람을 **그대로** 받지 않는다. 받는 것은 두 가지다:
+            //  · 방향 - 해류는 결국 수면 바람이 만든다. 해초와 잔디가 반대로 눕는 그림이 없어진다.
+            //  · 세기 - 아주 둔하게. 물의 관성 때문에 폭풍이 와도 해초는 조금 더 흔들릴 뿐이다.
+            // 위상은 바람 위상이 아니라 자체 시계(_MG_SwayTime)를 계속 쓴다. 해초의 주기(3~5초)는
+            // 물의 점성이 정하는 값이지 바람 속도가 정하는 값이 아니다.
+            float4 _MG_Wind;
+
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
@@ -80,8 +90,10 @@ Shader "MG/KelpSway"
             #define MG_SWAY_W2 1.848        // 2*PI / 3.4s
             #define MG_SWAY_A1 0.625
             #define MG_SWAY_A2 0.375
-            #define MG_SWAY_DIR1 float2( 0.874,  0.485)
-            #define MG_SWAY_DIR2 float2(-0.443,  0.897)
+            // 두 겹의 방향은 이제 전역 바람 방향에서 유도한다(1겹 = 해류 방향, 2겹 = 거기서 약
+            // 117° 튼 방향). 아래 상수는 그 회전각(cos, sin)이고, 전역이 비었을 때 쓸 폴백 방향이다.
+            #define MG_SWAY_ROT2   float2(-0.454, 0.891)   // cos117°, sin117°
+            #define MG_SWAY_FALLBACK float2( 0.874,  0.485)
             // 위상 소금: 피벗 월드 xz에 곱해 포기마다 다른 타이밍을 만든다. 파장이 수 m 단위라
             // 같은 군락(반경 1.5~4.5m) 안에서도 이웃끼리 살짝 어긋나되, 흐름은 이어져 보인다.
             #define MG_SWAY_PHASE1 float2(0.53, 0.71)
@@ -120,10 +132,19 @@ Shader "MG/KelpSway"
                 float t = _MG_SwayTime;
                 float phase1 = dot(originWS.xz, MG_SWAY_PHASE1);
                 float phase2 = dot(originWS.xz, MG_SWAY_PHASE2);
-                float2 sway = MG_SWAY_DIR1 * (MG_SWAY_A1 * sin(t * MG_SWAY_W1 + phase1))
-                            + MG_SWAY_DIR2 * (MG_SWAY_A2 * sin(t * MG_SWAY_W2 + phase2));
+
+                // 해류 방향 = 전역 바람 방향. 전역이 비었으면 예전 상수로 되돌아간다.
+                float2 dir1 = _MG_Wind.z > 0.0001 ? _MG_Wind.xy : MG_SWAY_FALLBACK;
+                float2 dir2 = float2(dir1.x * MG_SWAY_ROT2.x - dir1.y * MG_SWAY_ROT2.y,
+                                     dir1.x * MG_SWAY_ROT2.y + dir1.y * MG_SWAY_ROT2.x);
+
+                // 세기는 크게 눌러 받는다: 바람이 3배가 돼도 해초는 1.35배까지만 흔들린다.
+                float current = lerp(0.85, 1.35, saturate((_MG_Wind.z - 0.7) * 0.7));
+
+                float2 sway = dir1 * (MG_SWAY_A1 * sin(t * MG_SWAY_W1 + phase1))
+                            + dir2 * (MG_SWAY_A2 * sin(t * MG_SWAY_W2 + phase2));
                 // 월드 공간 변위(m) - 오브젝트 스케일과 무관하게 끝 진폭이 _SwayAmplitude로 유지된다.
-                positionWS.xz += sway * (bend * _SwayAmplitude);
+                positionWS.xz += sway * (bend * _SwayAmplitude * current);
 
                 OUT.positionCS = TransformWorldToHClip(positionWS);
                 OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap);

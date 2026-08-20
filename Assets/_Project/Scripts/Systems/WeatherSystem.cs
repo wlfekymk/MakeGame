@@ -68,7 +68,9 @@ namespace MakeGame.Systems
         public float rainEmissionRate = 460f;
 
         [Tooltip("빗줄기가 비스듬히 내리게 만드는 수평 바람 속도(m/s, 월드 XZ). Stretched 빌보드가" +
-            " 속도 방향으로 늘어나므로 이 값이 곧 빗줄기의 기울기가 된다.")]
+            " 속도 방향으로 늘어나므로 이 값이 곧 빗줄기의 기울기가 된다." +
+            " WindSystem이 살아 있으면 방향은 전역 바람을 따르고 이 값의 **크기만** 기준 속도로 쓰인다" +
+            " (전역 세기 1.0에서의 속도). WindSystem이 없으면 이 값이 그대로 쓰인다.")]
         public Vector2 rainWind = new Vector2(2.6f, 1.4f);
 
         [Tooltip("빗방울이 땅/수면에 부딪히는 물튀김 파티클을 켤지 여부.")]
@@ -284,6 +286,10 @@ namespace MakeGame.Systems
         // 맞춰 직접 관리한다. 그쪽이 살아 있는데 여기서 "원래 설정"으로 되돌리면 비가 그치는 순간
         // 한 프레임 동안 안개가 툭 꺼졌다 다시 켜지므로, 그럴 때는 복원을 건너뛰고 넘겨준다.
         private DayNightCycle dayNight;
+
+        // 파티클에 마지막으로 밀어 넣은 바람. 매 프레임 MinMaxCurve를 새로 만들지 않기 위한 캐시다
+        // (값이 실제로 달라졌을 때만 갱신한다 - 바람은 초당 수 % 씩만 변한다).
+        private Vector2 appliedRainWind = new Vector2(float.NaN, float.NaN);
 
         /// <summary>
         /// 씬이 로드될 때마다(최초 시작이든 재시작이든) 새 WeatherSystem을 생성한다.
@@ -771,6 +777,58 @@ namespace MakeGame.Systems
         /// [B22] 비 연출(에미터 위치 · 방출량 · 물튀김)을 RainIntensity01에 맞춰 갱신한다.
         /// 게임플레이 수치는 전혀 건드리지 않는다.
         /// </summary>
+        /// <summary>
+        /// 지금 빗줄기가 받아야 할 수평 바람. 전역 바람(WindSystem)이 있으면 그쪽 방향·세기를 따르고,
+        /// 없으면 인스펙터의 rainWind를 그대로 쓴다.
+        ///
+        /// rainWind의 **크기만** 살려 쓰는 이유: 그 값(2.95m/s)은 빗줄기 길이·기울기가 보기 좋게
+        /// 튜닝된 결과다. 방향만 전역으로 바꾸고 크기는 기준값으로 재사용하면 그 튜닝을 버리지
+        /// 않으면서도 잔디·해초·파도와 같은 방향으로 비가 날린다.
+        /// </summary>
+        private Vector2 ResolveRainWind()
+        {
+            if (WindSystem.Active == null)
+                return rainWind;
+
+            float baseSpeed = rainWind.magnitude;
+            if (baseSpeed < 0.01f)
+                baseSpeed = 2.95f;
+
+            return WindSystem.Direction * (baseSpeed * WindSystem.Strength);
+        }
+
+        /// <summary>
+        /// 두 빗줄기 레이어의 수평 속도를 갱신한다. 값이 눈에 띄게 달라졌을 때만 손댄다.
+        ///
+        /// x/y/z를 **셋 다** 같은 커브 모드(TwoConstants)로 넣어야 한다는 제약은 BuildRainParticles의
+        /// [B25] 주석에 있다. 여기서도 y를 빼먹으면 같은 에러가 매 프레임 쏟아진다.
+        /// </summary>
+        private void ApplyRainWind()
+        {
+            Vector2 wind = ResolveRainWind();
+
+            if (!float.IsNaN(appliedRainWind.x) && (wind - appliedRainWind).sqrMagnitude < 0.0025f)
+                return;
+
+            appliedRainWind = wind;
+
+            if (rainParticles != null)
+            {
+                var velocity = rainParticles.velocityOverLifetime;
+                velocity.x = new ParticleSystem.MinMaxCurve(wind.x * 0.8f, wind.x * 1.2f);
+                velocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+                velocity.z = new ParticleSystem.MinMaxCurve(wind.y * 0.8f, wind.y * 1.2f);
+            }
+
+            if (nearRainParticles != null)
+            {
+                var nearVelocity = nearRainParticles.velocityOverLifetime;
+                nearVelocity.x = new ParticleSystem.MinMaxCurve(wind.x * 1.0f, wind.x * 1.5f);
+                nearVelocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+                nearVelocity.z = new ParticleSystem.MinMaxCurve(wind.y * 1.0f, wind.y * 1.5f);
+            }
+        }
+
         private void UpdateRainVisuals()
         {
             // [B29] 실내 계수를 곱한 "실제로 보이는 세기". RainIntensity01 자체는 손대지 않으므로
@@ -795,6 +853,10 @@ namespace MakeGame.Systems
                     followTarget.position.y + rainHeightAboveTarget,
                     followTarget.position.z);
             }
+
+            // 빗줄기 기울기를 전역 바람에 맞춘다. 비가 안 보이는 동안에는 부르지 않는다
+            // (안 보이는 파티클의 커브를 갱신할 이유가 없다).
+            ApplyRainWind();
 
             if (rainParticles != null)
             {
