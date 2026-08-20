@@ -79,6 +79,11 @@ Shader "MG/Ocean"
         _FresnelPower("프레넬 지수(클수록 깊은색이 수평선에 몰린다)", Range(0.5, 8.0)) = 3.0
         _Smoothness("스페큘러 매끄러움", Range(0.0, 1.0)) = 0.85
         _SpecularStrength("스페큘러 세기", Range(0.0, 2.0)) = 0.7
+        _RefractionStrength("굴절 세기(얕은 물이 일렁이는 정도). 0이면 끈다", Range(0.0, 1.0)) = 0.55
+        // 기본값 0.40: 스치는 각에서 물리적으로는 하늘이 거의 100% 이겨야 맞지만, 이 프로젝트의
+        // _DeepColor 블렌드가 이미 "하늘 반사 흉내"를 하고 있어 1.0으로 두면 둘이 겹쳐 수평선이
+        // 뿌옇게 뜬다. 눈으로 보고 정해야 하는 값이라 낮게 잡아 두고 노브로 남긴다.
+        _SkyReflection("하늘 반사 세기(프레넬에 곱해진다). 0이면 끈다", Range(0.0, 1.0)) = 0.40
         _CrestColor("파도 마루 투과광 색(역광에서 물이 비쳐 보이는 색)", Color) = (0.35, 0.78, 0.72, 1)
         _CrestGlow("파도 마루 투과광 세기(0이면 끈다)", Range(0.0, 3.0)) = 1.15
         _WaveAmplitude("큰 파도 노멀 세기 배율(1 = OceanWaves가 밀어준 진폭 그대로)", Range(0.0, 2.0)) = 1.0
@@ -122,6 +127,10 @@ Shader "MG/Ocean"
             // [v3] 씬 깊이(_CameraDepthTexture) 샘플러. URP 에셋에서 Depth Texture가 켜져 있음을
             // 실측으로 확인하고 도입했다(헤더의 계약 개정 주석 참고).
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+            // [실사감 D1] 굴절용 불투명 텍스처. URP 에셋의 Opaque Texture가 켜져 있어야 한다
+            // (PC_RPAsset은 켜져 있다. Mobile_RPAsset은 꺼져 있으므로 그 파이프라인에서는
+            //  굴절이 의미 없는 값을 읽는다 - 그쪽으로 빌드하게 되면 _RefractionStrength를 0으로 둘 것).
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
 
             // SRP Batcher 호환: Properties의 스칼라/색은 전부 UnityPerMaterial 안에 둔다.
             CBUFFER_START(UnityPerMaterial)
@@ -137,6 +146,8 @@ Shader "MG/Ocean"
                 half _FresnelPower;
                 half _Smoothness;
                 half _SpecularStrength;
+                half _RefractionStrength;
+                half _SkyReflection;
                 half4 _CrestColor;
                 half _CrestGlow;
                 half _WaveAmplitude;
@@ -394,6 +405,35 @@ Shader "MG/Ocean"
                 half ndotl = saturate(dot(normalWS, mainLight.direction));
                 half3 color = albedo * (SampleSH(normalWS) + mainLight.color * ndotl);
 
+                // ---- [실사감 D2] 하늘 반사 ----
+                // 지금까지 이 바다에는 하늘도 지형도 비치지 않았다. 프레넬로 _DeepColor를 섞어
+                // "하늘 반사처럼 보이는 색"을 흉내 냈을 뿐이라, 노을이 져도 수면은 그대로 파랬다.
+                // 조사에서 "흐린 반사는 즉시 게임 티가 난다"를 3순위로 꼽은 것이 이 부분이다.
+                //
+                // 리플렉션 프로브(기본값 = 스카이박스)를 거칠기에 맞는 밉으로 샘플한다. 거친 바다일수록
+                // 반사를 흐리게 하는 것이 핵심이다 - 잔물결이 이는 수면은 하늘을 또렷하게 되비치지 않는다.
+                //
+                // 뒷면(수중에서 올려다보기)에서는 끈다. 그쪽에서 필요한 것은 반사가 아니라 투과다.
+                if (_SkyReflection > 0.001 && frontGate > 0.5)
+                {
+                    half3 reflectVector = reflect(-viewDir, normalWS);
+                    half reflectRough = lerp((half)0.02, (half)0.28, seaRough);
+
+                    // ★ GlossyEnvironmentReflection 대신 큐브맵을 직접 샘플한다.
+                    //   그 함수는 URP 버전과 Forward+ 여부에 따라 인자 개수가 다른 오버로드가 있어,
+                    //   컴파일러 없이 작업하는 지금 상황에서 감수할 이유가 없는 위험이다.
+                    //   아래 네 심볼(unity_SpecCube0 / DecodeHDREnvironment /
+                    //   PerceptualRoughnessToMipmapLevel)은 오래 안정적이고, 이 코드가 하는 일은
+                    //   그 함수의 비-Forward+ 경로와 정확히 같다.
+                    half mip = PerceptualRoughnessToMipmapLevel(reflectRough);
+                    half4 encoded = SAMPLE_TEXTURECUBE_LOD(
+                        unity_SpecCube0, samplerunity_SpecCube0, reflectVector, mip);
+                    half3 skyColor = DecodeHDREnvironment(encoded, unity_SpecCube0_HDR);
+
+                    // 프레넬만큼 섞는다. 거품 위에서는 죽인다(흰 거품은 하늘을 되비치지 않는다).
+                    color = lerp(color, skyColor, saturate(fresnel * _SkyReflection) * (1.0 - foam));
+                }
+
                 float3 halfDir = normalize(mainLight.direction + viewDir);
                 half specPower = exp2(_Smoothness * 10.0 + 1.0);
                 half spec = pow(saturate(dot(normalWS, halfDir)), specPower);
@@ -428,6 +468,73 @@ Shader "MG/Ocean"
                 alpha *= _BaseColor.a; // 호환용 전체 틴트 알파(기본 1).
 
                 color = MixFog(color, IN.fogFactor);
+
+                // ---- [실사감 D1] 굴절 ----
+                // 수면 노멀만큼 화면 좌표를 밀어 불투명 텍스처를 다시 읽는다. 지금까지 수중 지형은
+                // 하드웨어 알파 블렌딩으로 **왜곡 없이** 비쳤을 뿐이라, 얕은 물 특유의 일렁임이
+                // 통째로 없었다(조사에서 "진짜 물"의 1순위로 꼽힌 항목의 절반이다).
+                //
+                // 세 가지를 지킨다.
+                //  (1) **얕은 곳에서만 일렁인다**(1-depthT). 깊은 바다는 흡수색이 이겨 굴절이 보이지
+                //      않고, 수평선 쪽에서 화면 좌표를 밀면 먼 수면이 통째로 뭉개진다.
+                //  (2) **앞면 전용**(frontGate). 수중에서 올려다볼 때 뒤에 있는 것은 하늘인데
+                //      스카이박스는 불투명 텍스처에 없다. 그쪽은 지금까지의 알파 블렌딩을 그대로 둔다.
+                //  (3) 왜곡된 지점이 수면보다 **앞**이면(= 물 밖 물체) 원래 좌표로 되돌린다.
+                //      이게 없으면 물가의 모래가 수면 위로 번지는 고전적인 아티팩트가 난다.
+                //
+                // 거리로 왜곡 폭을 줄인다 - 안 줄이면 먼 수면이 통째로 뭉개진다.
+                //
+                // ★ 이 블록이 MixFog **뒤**에 있는 이유: 불투명 텍스처의 픽셀은 그것이 그려질 때
+                //   이미 안개가 먹은 값이다. 합성한 뒤에 다시 MixFog를 걸면 배경에만 안개가 두 번
+                //   먹어 먼 얕은 여울이 필요 이상으로 하얗게 뜬다. 수면 색을 먼저 안개에 태우고,
+                //   그다음 이미 안개가 먹은 배경과 합치는 순서라야 양쪽이 한 번씩만 먹는다.
+                // ★ 앞면에서는 **언제나** 수동 합성한다. refractAmount는 "얼마나 일렁이게 할까"만
+                //   정한다. 예전에는 합성 자체를 refractAmount로 블렌딩했는데, 그러면 중간값에서
+                //   하드웨어 블렌딩 결과와 최대 6% 어긋나 수심을 따라 색 띠가 생긴다(검수 F4).
+                //   왜곡이 0이어도 lerp(behind, color, alpha)는 하드웨어 블렌딩과 **정확히** 같은
+                //   그림이므로, 항상 합성하는 쪽이 오차가 없다.
+                //
+                //   합성이 안전한 근거: URP는 스카이박스를 그린 **뒤에** 색을 복사하므로
+                //   _CameraOpaqueTexture에는 하늘도 들어 있다. 수평선 너머라고 검게 비지 않는다.
+                half refractAmount = _RefractionStrength * (1.0 - depthT) * frontGate;
+                if (frontGate > 0.5)
+                {
+                    float refractScale = 0.045 * refractAmount / max(surfaceEyeDepth * 0.12, 1.0);
+                    float2 refractUV = screenUV + normalWS.xz * refractScale;
+                    refractUV = clamp(refractUV, 0.002, 0.998);
+
+                    float refractedDepth = LinearEyeDepth(SampleSceneDepth(refractUV), _ZBufferParams);
+                    if (refractedDepth < surfaceEyeDepth)
+                        refractUV = screenUV;
+
+                    half3 behind = SampleSceneColor(refractUV);
+
+                    // 하드웨어 블렌딩이 하던 일을 그대로 손으로 한다:
+                    //   블렌딩  → color·alpha + 배경·(1-alpha)
+                    //   수동합성 → lerp(배경, color, alpha)   ← 같은 식이다
+                    color = lerp(behind, color, alpha);
+                    alpha = (half)1.0;
+                }
+                else
+                {
+                    // ---- [실사감 D4] 스넬의 창 (뒷면 = 수중에서 올려다보기) ----
+                    // 물속에서 위를 보면 바깥 세상은 지름 약 97도의 **원 안으로만** 보인다.
+                    // 그 바깥은 전반사라 수면이 거울이 되어 어두운 물속을 되비친다. 이 원의
+                    // 테두리가 "진짜 물속에 있다"는 가장 강한 신호이고, 조사에서 Sea of Thieves가
+                    // 수중 연출로 콕 집어 언급한 것도 이것이다.
+                    //
+                    // 물의 임계각은 48.75도(cos = 0.660). viewDir은 수면에서 카메라로 향하므로
+                    // abs(viewDir.y)가 곧 수직축과 이루는 각의 코사인이다.
+                    //
+                    // 완전히 덮지 않고 75%만 섞는 이유: 창 밖을 새까맣게 만들면 물속에서 위쪽
+                    // 방향 감각이 사라져 길을 잃는다. 테두리가 읽히는 정도면 충분하다.
+                    half cosTheta = saturate(abs(viewDir.y));
+                    half snell = smoothstep((half)0.60, (half)0.70, cosTheta);
+
+                    color = lerp(lerp(color, _AbyssColor.rgb, (half)0.75), color, snell);
+                    alpha = lerp((half)0.92, alpha, snell);
+                }
+
                 return half4(color, alpha);
             }
             ENDHLSL

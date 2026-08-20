@@ -59,6 +59,38 @@ namespace MakeGame.Systems
     /// </summary>
     public class CreatureMotion : MonoBehaviour
     {
+        // ── [실사감 F3] 잔디를 밟는 것들의 명부 ──────────────────────────────────────
+        //
+        // 왜 여기인가: 잔디를 밟아야 하는 것은 "월드를 돌아다니는 생물"이고, 그것들이 공통으로
+        // 붙이고 있는 컴포넌트가 이것이다. 곰 AI(HazardSource)나 사냥감(HuntableCreature)에 각각
+        // 등록 코드를 넣으면 생물이 늘 때마다 빠뜨린다.
+        //
+        // 리스트를 static으로 두는 대신 잔디 쪽이 매 프레임 FindObjectsByType을 부르는 방법도
+        // 있지만, 그건 이 프로젝트가 반복해서 피해 온 형태다(할당 + 전수 검색).
+        //
+        // ★ 씬 재로드 대비: 정적 리스트라 리셋 훅이 필요하다. OnDisable이 항상 불린다는 보장이
+        //   없기 때문이다(도메인 리로드를 끈 플레이 모드에서 옛 인스턴스가 남을 수 있다).
+        private static readonly System.Collections.Generic.List<CreatureMotion> benders =
+            new System.Collections.Generic.List<CreatureMotion>();
+
+        /// <summary>지금 월드에 살아 있는, 잔디를 밟는 생물들. 잔디 시스템이 읽는다.</summary>
+        public static System.Collections.Generic.IReadOnlyList<CreatureMotion> Benders => benders;
+
+        [Tooltip("이 생물이 잔디를 눕히는 반경(m). 0 이하면 잔디를 밟지 않는다.")]
+        public float grassBendRadius = 1.1f;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetBenders()
+        {
+            benders.Clear();
+        }
+
+        private void OnEnable()
+        {
+            if (!benders.Contains(this))
+                benders.Add(this);
+        }
+
         /// <summary>
         /// 발이 땅을 찍거나 앞발이 내려꽂힌 순간을 바깥에 알리는 훅. (강도 0~1, 지속시간 초).
         ///
@@ -718,6 +750,7 @@ namespace MakeGame.Systems
         /// </summary>
         private void OnDisable()
         {
+            benders.Remove(this);
             StopAndReset();
         }
 

@@ -181,6 +181,15 @@ namespace MakeGame.Systems
                 material.mainTexture = surfaceTexture;
                 material.mainTextureScale = new Vector2(1.5f, 1.5f);
             }
+
+            // [실사감 E1] 비에 젖는 명부에 올린다. 이 메서드가 이 게임의 모든 프리미티브 시각 파츠가
+            // 거치는 단 하나의 길목이므로, 여기 한 줄이면 오두막·바위·통나무·뗏목 갑판이 전부 젖는다.
+            //
+            // ★ 반드시 **색과 매끈함을 다 정한 뒤**에 부를 것. 등록 시점의 값이 "마른 값"으로
+            //   저장되고, 비가 그치면 정확히 그 값으로 되돌아간다. 값을 정하기 전에 부르면
+            //   덜 만들어진 상태가 마른 값으로 굳는다.
+            MakeGame.Systems.SurfaceWetness.Register(material);
+
             return material;
         }
 

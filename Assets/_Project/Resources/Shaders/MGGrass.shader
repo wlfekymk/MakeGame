@@ -127,6 +127,14 @@ Shader "MG/Grass"
             // 시간×세기로 스크롤하면 세기가 바뀌는 순간 패턴이 순간이동한다.
             float4 _MG_Wind;
 
+            // ── [실사감 F3] 크리처 밟힘 ─────────────────────────────────────────────
+            // xyz = 월드 위치, w = 반경(m). w <= 0 이면 빈 칸이다.
+            // GrassFieldSystem이 매 프레임 SetGlobalVectorArray로 **여덟 칸 전부** 채운다 -
+            // 일부만 채우면 나머지 칸이 미정의 값으로 남아 잔디가 엉뚱한 곳에서 눕는다.
+            // 전역이므로 CBUFFER(UnityPerMaterial) 밖이다(_MG_Wind와 같은 이유).
+            #define MG_BENDER_COUNT 8
+            float4 _MG_Benders[MG_BENDER_COUNT];
+
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
@@ -225,6 +233,35 @@ Shader "MG/Grass"
                 // 플레이어 반대 방향(수평). 바로 밑(dist≈0)에서도 0 나눗셈 없이 해시 방향으로 도망간다.
                 float hDir = MGHash(originWS.xz + 17.31) * 6.2832;
                 float2 pushDir = dist > 0.05 ? toPlayer / dist : float2(cos(hDir), sin(hDir));
+
+                // ---- 크리처 밟힘: 플레이어와 **같은 규약**으로 계산해 가장 센 것 하나만 채택한다. ----
+                // 합치지 않는 이유: 두 마리 사이에 낀 포기가 양쪽으로 두 배로 눕어 카드가 지면에
+                // 눌어붙는다. "가장 가까이 있는 것에 눌린다"가 물리적으로도 맞다.
+                [unroll]
+                for (int bi = 0; bi < MG_BENDER_COUNT; bi++)
+                {
+                    float bRadius = _MG_Benders[bi].w;
+                    float2 toBender = originWS.xz - _MG_Benders[bi].xz;
+                    float bDist = length(toBender);
+                    float bPress = 1.0 - smoothstep(0.0, max(bRadius, 0.001), bDist);
+
+                    // ★ 이 줄이 빈 칸을 막는 **유일한** 방어선이다. 지우면 안 된다.
+                    //   빈 칸은 위치가 (0,0,0)이라, 월드 원점에 있는 포기는 bDist = 0이 되어
+                    //   위 smoothstep이 그대로 1을 돌려준다(max(0, 0.001) 때문에 0으로 안 나눈다).
+                    //   step으로 반경이 0인 칸을 곱해 죽여야 원점 잔디가 눕지 않는다.
+                    bPress *= step(0.001, bRadius);
+
+                    // 수직 거리도 본다. 수평 거리만 보면 절벽 위의 곰이 20m 아래 풀밭을 눕힌다.
+                    // 반경의 2배까지 허용하는 이유: 발밑이 아니라 몸 전체가 기준이고, 언덕에서
+                    // 반경만큼만 허용하면 살짝 오르내리는 것만으로 밟힘이 깜빡인다.
+                    bPress *= 1.0 - smoothstep(bRadius, bRadius * 2.0 + 0.5, abs(originWS.y - _MG_Benders[bi].y));
+
+                    if (bPress > press)
+                    {
+                        press = bPress;
+                        pushDir = bDist > 0.05 ? toBender / bDist : pushDir;
+                    }
+                }
 
                 // ---- 바람: 스크롤 사인 3겹 합성(위상은 원점 기준 - 한 포기는 통째로 굽는다). ----
                 //

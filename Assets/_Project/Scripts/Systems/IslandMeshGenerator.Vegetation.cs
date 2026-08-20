@@ -2038,6 +2038,16 @@ namespace MakeGame.Systems
             // 뿌리는 yaw만. 휨은 아래 마디 누적이 만들기 때문에 밑동은 항상 지면에 수직으로 박힌다.
             palm.transform.rotation = Quaternion.Euler(0f, leanDirection, 0f);
 
+            // [실사감] 바람에 흔들린다. 뿌리가 밑동에 있고 자식이 전부 로컬 원점에서 쌓이므로,
+            // **이 트랜스폼을 기울이면 나무가 밑동에서 휘어진다** - 야자수가 실제로 흔들리는 방식이다.
+            // 컴포넌트는 명부에만 올라가고 자기 Update는 없다(WindSystem이 근처 것만 골라 흔든다).
+            //
+            // 키가 클수록 각을 줄인다: 거목이 어린 나무만큼 각도로 흔들리면 꼭대기가 몇 미터씩
+            // 움직여 고무나무처럼 보인다. 4.6m 3.2도 → 10.4m 1.8도.
+            // rng를 쓰지 않는다(위상은 위치 해시) - 새 draw를 끼우면 이후 배치가 통째로 밀린다.
+            var sway = palm.AddComponent<FoliageSway>();
+            sway.swayDegrees = Mathf.Lerp(3.2f, 1.8f, Mathf.InverseLerp(4.6f, 10.4f, height));
+
             // [줄기 차단 캡슐 — 파일 상단 [콜라이더 정책] 주석] 플레이어가 나무를 통과해 걷지 않게
             // 뿌리에 수직 캡슐 하나를 단다. 잎(크라운)은 통과 유지 — 콜라이더 없음.
             //  · 반지름 = baseRadius × TrunkBlockerRadiusScale.

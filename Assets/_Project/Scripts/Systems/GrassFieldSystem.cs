@@ -1168,6 +1168,14 @@ namespace MakeGame.Systems
             [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
             private static void Bootstrap()
             {
+                // 벤더 배열을 **반드시 한 번은** 밀어 넣는다. 셰이더가 선언한 전역 배열은 아무도
+                // 채우지 않으면 미정의 값이라, 잔디가 아무도 없는 자리에서 눕는 그림이 나온다.
+                // 잔디가 한 포기도 없는 씬(타이틀 등)에서는 LateUpdate가 일찍 빠져나가므로
+                // 여기가 유일하게 보장되는 지점이다.
+                for (int i = 0; i < MaxBenders; i++)
+                    benderBuffer[i] = Vector4.zero;
+                Shader.SetGlobalVectorArray(bendersId, benderBuffer);
+
                 SceneManager.sceneLoaded += (scene, mode) =>
                 {
                     if (FindAnyObjectByType<GrassFieldDriver>() != null)
@@ -1176,6 +1184,98 @@ namespace MakeGame.Systems
                     var go = new GameObject("GrassFieldDriver");
                     go.AddComponent<GrassFieldDriver>();
                 };
+            }
+
+            // ── [실사감 F3] 크리처 밟힘 ──────────────────────────────────────────────
+            //
+            // 잔디를 눕히는 것이 플레이어 하나뿐이라, 곰이 풀밭을 가로질러도 풀은 미동도 안 했다.
+            // 셰이더가 읽는 전역 배열 _MG_Benders를 여기서 채운다.
+            //
+            // 설계 세 가지:
+            //  · **여덟 칸 고정.** 셰이더가 배열 크기를 컴파일 타임에 알아야 하고, 화면에 동시에
+            //    보이는 생물이 여덟을 넘는 경우는 이 게임에 없다.
+            //  · **매 프레임 여덟 칸을 전부 쓴다.** 남는 칸은 w = 0으로 지운다. 일부만 채우면
+            //    지난 프레임의 값이 남아 아무도 없는 자리의 풀이 계속 눕는다.
+            //  · **가까운 것부터 여덟.** 정렬하지 않고 "지금까지 담은 것 중 가장 먼 것"을 밀어내는
+            //    선형 삽입이다. n이 여덟이라 정렬보다 싸고 할당이 없다.
+            //
+            // 버퍼는 static이라 프레임당 할당이 0이다(SetGlobalVectorArray는 내부에서 복사한다).
+            private static readonly Vector4[] benderBuffer = new Vector4[MaxBenders];
+            private static readonly float[] benderDistances = new float[MaxBenders];
+            private static readonly int bendersId = Shader.PropertyToID("_MG_Benders");
+
+            /// <summary>셰이더의 MG_BENDER_COUNT와 **반드시 같아야 한다.**</summary>
+            private const int MaxBenders = 8;
+
+            /// <summary>이 거리 밖의 생물은 담지 않는다(어차피 잔디 렌더 컷이 300m다).</summary>
+            private const float BenderMaxDistance = 90f;
+
+            private void PushBenders(Vector3 camPos)
+            {
+                int used = 0;
+                float worstDistance = 0f;
+                int worstIndex = 0;
+
+                var creatures = CreatureMotion.Benders;
+                for (int i = 0; i < creatures.Count; i++)
+                {
+                    CreatureMotion creature = creatures[i];
+                    if (creature == null || creature.grassBendRadius <= 0f)
+                        continue;
+
+                    Vector3 pos = creature.transform.position;
+                    float distance = Vector3.Distance(pos, camPos);
+                    if (distance > BenderMaxDistance)
+                        continue;
+
+                    var packed = new Vector4(pos.x, pos.y, pos.z, creature.grassBendRadius);
+
+                    if (used < MaxBenders)
+                    {
+                        benderBuffer[used] = packed;
+                        benderDistances[used] = distance;
+                        used++;
+
+                        // 새로 담을 때마다 "가장 먼 것"을 다시 찾아 둔다(다음 밀어내기에 쓴다).
+                        if (used == MaxBenders)
+                        {
+                            worstDistance = benderDistances[0];
+                            worstIndex = 0;
+                            for (int k = 1; k < MaxBenders; k++)
+                            {
+                                if (benderDistances[k] > worstDistance)
+                                {
+                                    worstDistance = benderDistances[k];
+                                    worstIndex = k;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    if (distance >= worstDistance)
+                        continue;
+
+                    benderBuffer[worstIndex] = packed;
+                    benderDistances[worstIndex] = distance;
+
+                    worstDistance = benderDistances[0];
+                    worstIndex = 0;
+                    for (int k = 1; k < MaxBenders; k++)
+                    {
+                        if (benderDistances[k] > worstDistance)
+                        {
+                            worstDistance = benderDistances[k];
+                            worstIndex = k;
+                        }
+                    }
+                }
+
+                // 남는 칸을 지운다(w = 0 → 셰이더에서 즉시 탈락).
+                for (int i = used; i < MaxBenders; i++)
+                    benderBuffer[i] = Vector4.zero;
+
+                Shader.SetGlobalVectorArray(bendersId, benderBuffer);
             }
 
             /// <summary>
@@ -1222,6 +1322,8 @@ namespace MakeGame.Systems
                 }
 
                 Vector3 camPos = targetCamera.transform.position;
+
+                PushBenders(camPos);
 
                 for (int i = registry.Count - 1; i >= 0; i--)
                 {

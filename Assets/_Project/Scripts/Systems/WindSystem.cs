@@ -101,6 +101,21 @@ namespace MakeGame.Systems
         private float gustVelocity;
         private float driftPhase;
 
+        // ── 초목 흔들기 ─────────────────────────────────────────
+        //
+        // 나무는 그루마다 Update를 돌리지 않고 여기서 **카메라 근처 것만** 골라 흔든다.
+        // 섬 50개에 야자수가 수백~수천 그루라 그루마다 Update를 두면 그 자체가 프레임 비용이고,
+        // 멀리 있는 나무는 몇 픽셀이라 흔들려도 보이지 않는다.
+        private const int MaxSwayed = 48;
+        private const float SwayRadius = 110f;
+        private const int SwayRescanFrames = 20;
+
+        private static readonly System.Collections.Generic.List<FoliageSway> swayActive =
+            new System.Collections.Generic.List<FoliageSway>();
+
+        private Camera swayCamera;
+        private int swayRescanCountdown;
+
         /// <summary>
         /// 씬이 로드될 때마다 스스로 생긴다(WeatherSystem·CompassUI와 같은 자기 완결 패턴).
         /// 씬에 미리 배치할 것이 없으니 프리팹 실수로 빠질 일도 없다.
@@ -128,6 +143,7 @@ namespace MakeGame.Systems
             gust01 = 0f;
             phase = 0f;
             bearing = 30f;
+            swayActive.Clear();
         }
 
         private void Awake()
@@ -183,6 +199,7 @@ namespace MakeGame.Systems
             phase += strength * dt;
 
             PushToShader();
+            DriveFoliage();
         }
 
         /// <summary>날씨에서 폭풍 강도(0~1)를 읽는다. 날씨 시스템이 없으면 잔잔으로 본다.</summary>
@@ -195,6 +212,62 @@ namespace MakeGame.Systems
             // 바다 거칠기와 비 세기 중 큰 쪽. 둘은 서로 다른 시간상수로 움직이는데(바다가 더 느리게
             // 일어나고 더 느리게 가라앉는다), 바람은 "지금 사나운가"를 따라야 하므로 max가 맞다.
             return Mathf.Clamp01(Mathf.Max(weather.SeaRoughness01, weather.RainIntensity01));
+        }
+
+        /// <summary>
+        /// 카메라 근처의 나무를 흔든다. 목록은 SwayRescanFrames 프레임마다 다시 고른다 -
+        /// 매 프레임 전체 명부를 훑을 이유가 없고(나무는 걸어 다니지 않는다), 20프레임이면
+        /// 플레이어가 최대 몇 미터 움직일 뿐이라 SwayRadius 안쪽에서 놓치는 나무가 없다.
+        /// </summary>
+        private void DriveFoliage()
+        {
+            if (swayCamera == null)
+            {
+                swayCamera = Camera.main;
+                if (swayCamera == null)
+                    return;
+            }
+
+            if (--swayRescanCountdown <= 0)
+            {
+                swayRescanCountdown = SwayRescanFrames;
+                RebuildSwayList(swayCamera.transform.position);
+            }
+
+            for (int i = swayActive.Count - 1; i >= 0; i--)
+            {
+                FoliageSway tree = swayActive[i];
+
+                // 섬이 꺼지거나 파괴될 수 있다(RegenerateWorld). 그러면 목록에서 빼고 넘어간다 -
+                // 꺼진 나무를 계속 흔들면 다시 켰을 때 기운 자세가 남는다.
+                if (tree == null || !tree.isActiveAndEnabled)
+                {
+                    swayActive.RemoveAt(i);
+                    continue;
+                }
+
+                tree.ApplySway(direction, strength, phase);
+            }
+        }
+
+        private static void RebuildSwayList(Vector3 cameraPosition)
+        {
+            swayActive.Clear();
+
+            var all = FoliageSway.All;
+            float radiusSqr = SwayRadius * SwayRadius;
+
+            for (int i = 0; i < all.Count && swayActive.Count < MaxSwayed; i++)
+            {
+                FoliageSway tree = all[i];
+                if (tree == null || !tree.isActiveAndEnabled)
+                    continue;
+
+                if ((tree.transform.position - cameraPosition).sqrMagnitude > radiusSqr)
+                    continue;
+
+                swayActive.Add(tree);
+            }
         }
 
         private static void ApplyBearing()

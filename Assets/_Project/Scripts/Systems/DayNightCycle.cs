@@ -212,6 +212,12 @@ namespace MakeGame.Systems
         /// <summary>고도 안개 계산용 카메라 캐시(Camera.main은 태그 검색이라 매 프레임 부르면 안 된다).</summary>
         private Camera fogCamera;
 
+        /// <summary>기본 리플렉션 큐브맵을 마지막으로 갱신했을 때의 태양각(도).</summary>
+        private float lastEnvironmentSunAngle;
+
+        /// <summary>큐브맵을 한 번이라도 구웠는가. 첫 프레임에는 각도와 무관하게 반드시 굽는다.</summary>
+        private bool environmentReflectionPrimed;
+
         /// <summary>
         /// 런타임에만 색을 바꾸기 위해 원본(Default-Skybox 등 공유 에셋)을 복제한 인스턴스.
         /// 공유 머티리얼을 직접 건드리면 다른 씬/에디터 상태에도 영향을 줄 수 있어 항상 복제본을 쓴다.
@@ -441,6 +447,8 @@ namespace MakeGame.Systems
                 // 지평선 아래 색을 지금 프레임의 안개색과 똑같이 맞추면 그 경계가 원리적으로 안 보인다.
                 if (skyboxInstance.HasProperty(GroundColorId))
                     skyboxInstance.SetColor(GroundColorId, fogColor);
+
+                RefreshEnvironmentReflection(sunAngle);
             }
 
             UpdateAmbientLight(dayFactor, goldenHour, rainMultiplier);
@@ -497,6 +505,33 @@ namespace MakeGame.Systems
             RenderSettings.ambientSkyColor = ScaleRgb(sky, ambientRainMultiplier);
             RenderSettings.ambientEquatorColor = ScaleRgb(equator, ambientRainMultiplier);
             RenderSettings.ambientGroundColor = ScaleRgb(ground, ambientRainMultiplier);
+        }
+
+        /// <summary>
+        /// 기본 리플렉션 큐브맵을 다시 굽는다.
+        ///
+        /// ★ 왜 필요한가. 스카이박스 머티리얼의 **프로퍼티만** 바꾸는 것으로는 유니티의 기본
+        ///   리플렉션 큐브맵이 갱신되지 않는다. 이건 유니티의 대표적인 함정이고, 그대로 두면
+        ///   바다(MGOcean의 하늘 반사)가 **씬을 로드한 순간의 하늘을 영원히 되비친다** -
+        ///   노을이 져도 수면에는 한낮의 파란 하늘이 비치는, 안 하느니만 못한 그림이 된다.
+        ///
+        /// ★ 왜 예전에는 안 불렀나. 이 파일 위쪽 UpdateAmbientLight 주석에 "DynamicGI.UpdateEnvironment는
+        ///   비싸고, 밤 스카이박스에서 뽑은 환경광이 거의 0이라 밤에 아무것도 안 보인다"고 적혀 있다.
+        ///   **그 이유는 이제 성립하지 않는다** - 환경광은 Trilight 모드로 코드가 직접 정하므로
+        ///   이 호출은 환경광을 건드리지 않고 리플렉션 큐브맵만 다시 굽는다.
+        ///
+        /// 태양이 2도 움직였을 때만 부른다. 하루가 600초이므로 태양각은 초당 0.6도, 즉 약 3.3초에
+        /// 한 번이다. 기본 해상도가 128px이라 그 빈도면 비용이 무시할 수준이다.
+        /// </summary>
+        private void RefreshEnvironmentReflection(float sunAngle)
+        {
+            if (environmentReflectionPrimed
+                && Mathf.Abs(Mathf.DeltaAngle(lastEnvironmentSunAngle, sunAngle)) < 2f)
+                return;
+
+            environmentReflectionPrimed = true;
+            lastEnvironmentSunAngle = sunAngle;
+            DynamicGI.UpdateEnvironment();
         }
 
         /// <summary>

@@ -209,6 +209,11 @@ namespace MakeGame.Systems
                 wetSeconds, drySeconds, dryFloorSeconds);
 
             Shader.SetGlobalFloat(WetnessProperty, wetness);
+
+            // [실사감 E1] 셰이더 전역만으로는 URP Lit을 쓰는 구조물·바위·통나무가 젖지 않는다.
+            // 그쪽은 머티리얼 프로퍼티로 직접 젖힌다. 실제로 칠하는 것은 젖음이 눈에 띄게
+            // 달라졌을 때뿐이라(SurfaceWetness.ApplyThreshold) 매 프레임 불러도 된다.
+            SurfaceWetness.Apply(wetness);
             Shader.SetGlobalFloat(RainIntensityProperty, target);
             Shader.SetGlobalFloat(RainTimeProperty, Time.time);
             PushRippleParams(rippleTiling, rippleSpeed, rippleStrength);

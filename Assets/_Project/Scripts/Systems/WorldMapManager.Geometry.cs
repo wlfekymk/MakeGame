@@ -345,6 +345,12 @@ namespace MakeGame.Systems
                 float tiling = radius * 0.75f; // GrassCap과 동일한 배수
                 material.mainTextureScale = new Vector2(tiling, tiling);
             }
+
+            // [실사감 E1] 섬 지면도 비에 젖는다. 화면에서 가장 넓은 면이라, 여기가 안 젖으면
+            // 오두막과 바위만 어두워지고 그 아래 땅은 뽀송한 어색한 그림이 된다.
+            // (모래는 MGShoreline이 _MG_Wetness를 직접 읽으므로 이 경로에 들어오지 않는다.)
+            SurfaceWetness.Register(material);
+
             return material;
         }
     }
