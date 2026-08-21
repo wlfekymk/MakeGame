@@ -799,6 +799,30 @@ namespace MakeGame.Systems
         /// 지금 상태를 한 줄로 요약한다(예: "바닥판 4/8 · 돛 · 키"). HUD/퀘스트/디버그 패널이 공유해
         /// 서로 다른 문장을 만들지 않게 하는 단일 출처다.
         /// </summary>
+        /// <summary>
+        /// 지금 뗏목의 **상태 경고** 한 줄(침수/쏠림/과적). 이상 없으면 빈 문자열이다.
+        ///
+        /// ★ DescribeState와 나눠 둔 이유: 그쪽은 진행도 문자열이라 퀘스트 목표 줄과 제작 완료
+        ///   토스트가 함께 쓴다. 거기에 "[침수] 물이 든다"를 섞으면 퀘스트 목표에 침수 경고가
+        ///   붙는다. 경고는 **뗏목을 마주 보는 자리**(조타 프롬프트)에서만 띄운다.
+        /// </summary>
+        public string DescribeCondition()
+        {
+            if (sailing == null)
+                return string.Empty;
+
+            if (sailing.FloodWarning)
+                return "[침수] 갑판에 물이 든다 - 짐을 덜어라";
+
+            if (sailing.LoadRatio > 1f)
+                return $"[과적] 적재 {Mathf.RoundToInt(sailing.LoadRatio * 100f)}% - 뗏목이 잠긴다";
+
+            if (LoadTiltDegrees > 4f)
+                return $"[쏠림] 짐이 몰려 {Mathf.RoundToInt(LoadTiltDegrees)}도 기울었다";
+
+            return string.Empty;
+        }
+
         public string DescribeState()
         {
             var builder = new System.Text.StringBuilder();
@@ -1512,6 +1536,15 @@ namespace MakeGame.Systems
         }
 
         /// <summary>지금 파도로 기울어진 정도(피치/롤 중 큰 쪽, 도). 전복 위험 판정의 단일 출처다.</summary>
+        /// <summary>
+        /// 지금 **파도로** 기울어 있는 각(도). 쏠림(짐)은 여기 넣지 않는다.
+        ///
+        /// ★ 한 번 쏠림을 더해 봤다가 되돌렸다. RaftSailing의 위험 임계값(8도 / 3.2도)은 파도만
+        ///   재던 시절의 눈금이라, 쏠림을 더하면 **잔잔한 날 정박한 뗏목이 8초마다 아이템을 하나씩
+        ///   파괴한다**(적재 0.81부터). 되돌릴 수 없는 손실을 만들지 않는다는 그 파일의 전제와
+        ///   정면으로 부딪힌다. 쏠림이 위험한지는 침수(FloodWarning)가 이미 판정한다 -
+        ///   기울어도 물이 안 들면 그건 위험이 아니라 그냥 기운 배다.
+        /// </summary>
         public float CurrentTiltDegrees =>
             Mathf.Max(Mathf.Abs(smoothedPitchDeg), Mathf.Abs(smoothedRollDeg));
 
@@ -1590,10 +1623,23 @@ namespace MakeGame.Systems
             // [항해] 파도가 꺼져 있거나 뗏목이 아직 없어도, **기준 자세가 움직였으면 반드시 반영해야
             // 한다**(항해가 옮긴 위치가 여기서 화면에 나가기 때문이다). 아무것도 달라지지 않았을
             // 때만 빠져나간다 - 그 경우가 예전 동작(정지)과 100% 같다.
+            // 짐의 무게가 만드는 정적 성분을 **먼저** 읽는다 - 조기 반환 조건이 이 값을 봐야
+            // "파도는 잠잠하지만 짐 때문에 잠기고 기운" 상태에서 갱신을 건너뛰지 않는다.
+            float loadSink = 0f;
+            Vector2 loadList = Vector2.zero;
+
+            if (sailing != null)
+            {
+                loadSink = sailing.HullSinkMeters;
+                loadList = sailing.ListDegrees;
+            }
+
             bool wavesActive = waveMotionEnabled && baseTileCount > 0;
             if (!wavesActive)
             {
-                bool settled = smoothedHeave == 0f && smoothedPitchDeg == 0f && smoothedRollDeg == 0f;
+                bool settled = smoothedHeave == 0f && smoothedPitchDeg == 0f && smoothedRollDeg == 0f
+                    && loadSink == 0f && loadList == Vector2.zero;
+
                 if (settled && transform.position == anchorPosition && transform.rotation == anchorRotation)
                     return;
 
@@ -1614,14 +1660,108 @@ namespace MakeGame.Systems
                 smoothedRollDeg = Mathf.Lerp(smoothedRollDeg, targetRoll, blend);
             }
 
-            Vector3 newPosition = anchorPosition + Vector3.up * smoothedHeave;
-            Quaternion newRotation = anchorRotation * Quaternion.Euler(smoothedPitchDeg, 0f, smoothedRollDeg);
+            // ★ 정적 성분을 **저역통과 상태(smoothed*)에 섞지 않고 대입 직전에만 더한다.**
+            //   그 상태는 파도만의 것이어야 CaptureWaveAnchor의 시드(정박 직후 과도 구간 제거)가
+            //   계속 맞는다. 섞어 버리면 짐을 실을 때마다 뗏목이 파도를 "따라잡는" 출렁임이 되살아난다.
+            //
+            //   항해 중이든 정박 중이든 똑같이 적용된다 - 예전에는 침하가 TickNavigation 안에만 있어
+            //   정박한 뗏목은 아무리 실어도 잠기지 않았다.
+            //
+            //   합계 기울기는 다시 한 번 자른다. maxTiltDegrees는 파도 성분만 자르는 값이라, 쏠림을
+            //   그냥 더하면 그 하드 리밋(멀미·조작 불능 방지)이 우회된다.
+            float tiltCeiling = Mathf.Max(0f, maxTiltDegrees) + MaxLoadTiltDegrees;
+            float totalPitch = Mathf.Clamp(smoothedPitchDeg + loadList.x, -tiltCeiling, tiltCeiling);
+            float totalRoll = Mathf.Clamp(smoothedRollDeg + loadList.y, -tiltCeiling, tiltCeiling);
+
+            staticTiltDegrees = new Vector2(loadList.x, loadList.y).magnitude;
+
+            Vector3 newPosition = anchorPosition + Vector3.up * (smoothedHeave - loadSink);
+            Quaternion newRotation = anchorRotation * Quaternion.Euler(totalPitch, 0f, totalRoll);
+
+            UpdateDeckFreeboard(newPosition, newRotation);
 
             // 플레이어를 **먼저** 옮긴 뒤 뗏목을 옮긴다. 순서를 뒤집으면 갑판 콜라이더가 캡슐을 파고든
             // 상태에서 CharacterController.Move가 호출되어 밀려나거나 끼일 수 있다.
             CarryRider(newPosition, newRotation);
 
             transform.SetPositionAndRotation(newPosition, newRotation);
+        }
+
+        /// <summary>
+        /// 갑판 윗면과 그 자리 수면의 여유(m). **네 귀퉁이 중 가장 낮은 값**이라, 한쪽이 기울어
+        /// 잠기기 시작하면 곧바로 음수가 된다. 음수 = 갑판에 물이 든다.
+        ///
+        /// 처음 값이 1인 이유: 첫 프레임에 0이면 "이미 잠겼다"로 읽혀 침수가 헛돈다.
+        /// </summary>
+        public float DeckFreeboard { get; private set; } = 1f;
+
+        /// <summary>
+        /// 짐 쏠림이 더할 수 있는 기울기의 상한(도). RaftSailing.MaxListDegrees와 같은 값이어야 한다 -
+        /// 여기서 합계를 자를 때 쓴다(파도 상한만으로는 쏠림이 하드 리밋을 우회한다).
+        /// </summary>
+        private const float MaxLoadTiltDegrees = 10f;
+
+        /// <summary>
+        /// 지금 짐 쏠림으로 기울어 있는 각(도). **위험 판정에는 쓰지 않는다**(CurrentTiltDegrees 주석) -
+        /// 화면에 "몇 도 기울었다"를 적기 위한 값이다.
+        /// </summary>
+        public float LoadTiltDegrees => staticTiltDegrees;
+
+        private float staticTiltDegrees;
+
+        /// <summary>
+        /// 갑판 여유를 잰다. 수면 기준을 **플레이어의 수영 판정과 같은 식**으로 잡는 것이 핵심이다
+        /// (PlayerController.CurrentWaterSurfaceY = 해수면 + 파고 x oceanWaveFollowScale).
+        /// 그래야 "갑판이 잠겼다"와 "갑판 위에서 헤엄치기 시작한다"가 같은 순간이 된다 -
+        /// 둘이 어긋나면 물이 차는데 걸어 다니거나, 멀쩡해 보이는데 헤엄치는 상태가 생긴다.
+        /// </summary>
+        private void UpdateDeckFreeboard(Vector3 position, Quaternion rotation)
+        {
+            if (baseTileCount <= 0)
+            {
+                DeckFreeboard = 1f;
+                return;
+            }
+
+            // ★ **실제로 깔린 갑판**의 귀퉁이를 잰다. 격자 전체 크기로 잡으면 바닥판이 반만 깔린
+            //   뗏목에서 갑판이 없는 물 위 지점의 여유를 재게 된다.
+            // 바닥판이 5칸 이하면 DeckLocalSize가 (0,0)이다(원점 대칭 구간이 없다). 그 뗏목에는
+            // 화물을 놓을 수도 없으므로 잴 것이 없다 - 네 귀퉁이가 원점 한 점으로 붕괴하는 것을 막는다.
+            Vector2 deck = DeckLocalSize;
+            if (deck.x <= 0.01f || deck.y <= 0.01f)
+            {
+                DeckFreeboard = 1f;
+                return;
+            }
+
+            float halfWidth = deck.x * 0.5f;
+            float halfLength = deck.y * 0.5f;
+            float scale = Mathf.Max(0f, waveHeaveScale);
+            float lowest = float.MaxValue;
+
+            for (int corner = 0; corner < 4; corner++)
+            {
+                float localX = (corner % 2 == 0 ? -1f : 1f) * halfWidth;
+                float localZ = (corner < 2 ? -1f : 1f) * halfLength;
+                Vector3 world = position + rotation * new Vector3(localX, DeckSurfaceY, localZ);
+
+                // ★ **뗏목의 heave와 같은 함수(SampleHeight)를 쓴다.** 한 번 플레이어 수영 판정과
+                //   같은 감쇠판(SampleWaveOffset)으로 바꿔 봤다가 되돌렸다. 두 가지가 깨졌다:
+                //   (1) ComputeWaveTargets는 감쇠 없는 원 파형으로 heave를 만드는데 여유만 감쇠판으로
+                //       재면 물가에서 상쇄가 깨져, 폭풍마다 정박한 뗏목에 "[침수]"가 깜빡인다.
+                //   (2) 감쇠판은 수심 프로브(레이캐스트)를 타는데 그 캐시가 8칸이라, 뗏목이 두 대만
+                //       돼도 질의가 캐시를 밀어내 매 프레임 100% 미스가 된다(초당 수백 발).
+                //   플레이어의 수영 수면과는 얕은 물에서 갈리지만, 그 방향은 **여유를 작게 보는 쪽**
+                //   (경고가 조금 이르다)이라 "물이 차는데 걸어 다닌다"는 생기지 않는다.
+                float waterY = OceanWaves.SeaLevel
+                    + (OceanWaves.SampleHeight(world) - OceanWaves.SeaLevel) * scale;
+
+                float clearance = world.y - waterY;
+                if (clearance < lowest)
+                    lowest = clearance;
+            }
+
+            DeckFreeboard = lowest;
         }
 
         /// <summary>
@@ -1678,10 +1818,22 @@ namespace MakeGame.Systems
         /// 조건)가 **같은 판정**을 쓰도록 한 곳으로 뽑았다 - 둘이 갈라지면 "화면상 갑판에 서 있는데
         /// 조종에 못 들어간다"가 생긴다.
         /// </summary>
-        private static bool IsOnboardLocal(Vector3 local)
+        private bool IsOnboardLocal(Vector3 local)
         {
-            return Mathf.Abs(local.x) <= DeckWidth * 0.5f + RiderBoundsMargin
-                && Mathf.Abs(local.z) <= DeckLength * 0.5f + RiderBoundsMargin
+            // 바닥판이 하나도 없으면 올라탈 곳도 없다(제작 예정지 말뚝은 딛는 자리가 아니다).
+            if (baseTileCount <= 0)
+                return false;
+
+            // ★ **실제로 깔린 선체 범위**로 잰다. 예전에는 격자 전체(4x8)를 상자로 썼는데,
+            //   그러면 바닥판 한 칸짜리 뗏목이 사방 2~4m를 자기 갑판이라고 주장한다. 무게 개념이
+            //   들어오면서 그게 눈에 보이는 사고가 됐다 - 옆에서 헤엄치는 사람을 탑승자로 세어
+            //   부력 1.0짜리 뗏목이 적재 90%가 되고 13cm 잠겼다.
+            GetHullExtent(out float minZ, out float length, out float minX, out float width);
+
+            return local.x >= minX - RiderBoundsMargin
+                && local.x <= minX + width + RiderBoundsMargin
+                && local.z >= minZ - RiderBoundsMargin
+                && local.z <= minZ + length + RiderBoundsMargin
                 && local.y >= RiderMinLocalY
                 && local.y <= DeckSurfaceY + RiderHeadroom;
         }

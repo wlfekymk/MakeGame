@@ -109,9 +109,11 @@ namespace MakeGame.Systems
         /// <summary>갑판 위 건축 조각 하나의 적재 무게(부력 단위). 바닥판 한 칸(나무 1.0)의 절반 아래다.</summary>
         private const float PieceLoadUnits = 0.45f;
 
-        /// <summary>보관 상자 본체 / 내용물 한 칸의 적재 무게.</summary>
+        /// <summary>
+        /// 보관 상자 **본체**의 적재 무게. 내용물은 여기 없다 - 아이템마다 무게가 다르므로
+        /// RaftLoadCatalog가 따로 매긴다(예전에는 내용물 한 칸당 0.06 고정이었다).
+        /// </summary>
         private const float ChestLoadUnits = 0.4f;
-        private const float ChestItemLoadUnits = 0.06f;
 
         /// <summary>올라탄 플레이어의 적재 무게. Stranded Deep도 사람을 짐으로 센다.</summary>
         private const float RiderLoadUnits = 0.9f;
@@ -126,6 +128,64 @@ namespace MakeGame.Systems
         /// 않는다. 여기를 더 키우면 "짐을 실었더니 갑판에서 헤엄치기 시작한다"가 된다.
         /// </summary>
         private const float MaxOverloadSinkMeters = 0.25f;
+
+        /// <summary>
+        /// **용량을 넘긴 뒤로는 상한이 없다.** 적재 비율이 1.0을 1 넘을 때마다 이만큼 더 잠긴다.
+        /// 0.25m 예산은 "용량 안에서는 갑판에서 헤엄치지 않는다"를 지키기 위한 것이지, 아무리 실어도
+        /// 안 잠긴다는 뜻이 아니다. 여기서부터가 사용자가 요구한 "너무 많이 실으면 잠긴다"이다.
+        /// </summary>
+        private const float SinkMetersPerExcessRatio = 1.1f;
+
+        /// <summary>
+        /// 아무리 실어도 이보다 깊이 잠기지는 않는다(m). 갑판(0.72)이 0.9m쯤 물 밑인 상태로,
+        /// "완전히 잠긴 뗏목"으로 읽히면서도 승선 판정 상자 안이라 짐을 덜어 되살릴 수 있다.
+        /// </summary>
+        private const float MaxTotalSinkMeters = 1.6f;
+
+        // ── 쏠림(정적 기울기) ────────────────────────────────────────────────────
+        /// <summary>
+        /// 무게가 한쪽 끝까지 쏠렸을 때의 기울기(도). 파도 기울기 상한(9도)보다 크게 잡았다 -
+        /// 그래야 "파도에 흔들리는 것"과 "짐이 쏠려 기운 것"이 화면에서 구별된다.
+        /// </summary>
+        private const float MaxListDegrees = 10f;
+
+        // ★ [알아 둘 것] 이 상한은 지금 격자에서 **도달할 수 없다.** 칸 중심이 x = ±1(반폭 2 대비
+        //   0.50), z = ±3(반길이 4 대비 0.75)이라, 불감대를 빼면 계수 상한이 좌우 0.41 / 앞뒤 0.71이다
+        //   = 롤 최대 4.1도, 피치 최대 7.1도. 뗏목 폭이 두 칸뿐이라 좌우 쏠림이 구조적으로 약한 것이며,
+        //   바닥판 자유 증축(다음 판)으로 폭이 넓어지면 그때 실제 상한에 가까워진다.
+
+        /// <summary>
+        /// 무게중심이 이 비율(반폭/반길이 대비) 안쪽이면 **기울지 않는다.**
+        /// 이게 없으면 상자 하나를 갑판 앞쪽에 놓은 것만으로 뗏목이 기울어 물이 든다 -
+        /// "짐을 정확히 한복판에만 놓아야 하는 게임"이 되어 버린다.
+        /// </summary>
+        private const float ListDeadZone = 0.15f;
+
+        // ── 침수 ─────────────────────────────────────────────────────────────────
+        /// <summary>갑판이 완전히 잠겼을 때 초당 차오르는 물의 무게(부력 단위).</summary>
+        private const float FloodFillUnitsPerSecond = 0.30f;
+
+        /// <summary>
+        /// 초당 빠지는 물의 무게. **잠겨 있는 동안에도 계속 뺀다.**
+        ///
+        /// ★ 이게 이 시스템에서 가장 중요한 한 줄이다. 예전 판은 "갑판이 물 위로 올라왔을 때만"
+        ///   뺐는데, 물이 차면 더 잠기고 더 잠기면 더 차므로 **물 위로 올라오는 일 자체가 영영
+        ///   일어나지 않았다.** 상한까지 꽉 찬 뒤로는 짐이 다 부서지기를 10분 넘게 기다리는 것 말고는
+        ///   빠져나올 길이 없는 편도 통행이었다.
+        ///   상시 배수가 있으면 "차오르는 속도 = 빠지는 속도"인 평형점이 생겨, 침수는 **상태**가 되고
+        ///   원인(쏠린 짐)을 없애면 스스로 회복한다.
+        /// </summary>
+        private const float FloodDrainUnitsPerSecond = 0.22f;
+
+        /// <summary>이 깊이만큼 잠기면 최대 속도로 물이 찬다(m).</summary>
+        private const float FloodFullDepth = 0.45f;
+
+        /// <summary>
+        /// 찬 물의 무게 상한(용량 대비). 없으면 침수 → 더 잠김 → 더 침수로 무한히 발산한다.
+        /// **이 값이 낮아야 회복이 가능하다.** 상한이 높으면 그 무게만으로 갑판이 영영 물 밑이라
+        /// 배수 조건에 닿지 못한다(상시 배수와 함께 짝을 이루는 안전장치다).
+        /// </summary>
+        private const float MaxFloodRatio = 0.35f;
 
         // ── 전복(완화판) ─────────────────────────────────────────────────────────
         //
@@ -260,6 +320,27 @@ namespace MakeGame.Systems
 
         /// <summary>기울기 위험(전복 위험) 상태인가.</summary>
         public bool StabilityWarning { get; private set; }
+
+        /// <summary>갑판이 물에 잠기고 있는가(침수 중).</summary>
+        public bool FloodWarning { get; private set; }
+
+        /// <summary>지금 뗏목에 차 있는 물의 무게(부력 단위).</summary>
+        public float FloodUnits { get; private set; }
+
+        /// <summary>
+        /// 짐의 무게중심(뗏목 로컬 XZ, 미터). 중심이 0이면 균형이 맞은 것이다.
+        /// **높이(comHeight)와 달리 이 값은 전복이 아니라 기울기를 정한다.**
+        /// </summary>
+        public Vector2 LoadCenterLocal { get; private set; }
+
+        /// <summary>
+        /// 적재 때문에 선체가 더 잠기는 깊이(m). 파도 흔들림과 **따로** 계산되며
+        /// RaftStructure.UpdateWaveMotion이 매 프레임 여기에 물어본다(정박 중에도 적용된다).
+        /// </summary>
+        public float HullSinkMeters { get; private set; }
+
+        /// <summary>짐이 쏠려 생기는 정적 기울기(x = pitch, y = roll, 도).</summary>
+        public Vector2 ListDegrees { get; private set; }
 
         /// <summary>가장 가까운 섬까지의 거리(m). 없으면 float.MaxValue.</summary>
         public float NearestIslandDistance { get; private set; }
@@ -519,6 +600,7 @@ namespace MakeGame.Systems
             }
 
             RefreshLoad(dt);
+            UpdateBuoyancy(dt);
             UpdateStability(dt);
 
             // 뗏목이 없으면(제작 예정지) 항해 자체가 성립하지 않는다. 조종 중이었다면 내보낸다.
@@ -566,7 +648,11 @@ namespace MakeGame.Systems
             }
 
             basePosition += step;
-            basePosition.y = baseSeaLevelY - ComputeOverloadSink();
+
+            // ★ 침하는 여기서 빼지 않는다. UpdateBuoyancy가 계산한 HullSinkMeters를
+            //   RaftStructure.UpdateWaveMotion이 파도 오프셋과 함께 얹는다 - 그래야 **정박 중에도**
+            //   잠기고, 쏠림 기울기와 한 곳에서 합쳐진다. 여기서 또 빼면 두 번 잠긴다.
+            basePosition.y = baseSeaLevelY;
 
             raft.SetHullBase(basePosition, Quaternion.Euler(0f, headingDegrees, 0f));
 
@@ -801,7 +887,9 @@ namespace MakeGame.Systems
             if (loadRescanTimer > 0f)
             {
                 // 사람이 타고 내리는 것만 즉시 반영한다(짐 스캔은 다음 주기에).
-                LoadUnits = cachedCargoUnits + (riderAboard ? RiderLoadUnits : 0f);
+                // 찬 물은 매 프레임 변하므로 이 빠른 경로에도 반드시 넣는다 - 빼먹으면 침수가
+                // 2초에 한 번씩만 무게에 반영돼 되먹임이 계단처럼 튄다.
+                LoadUnits = cachedCargoUnits + (riderAboard ? RiderLoadUnits : 0f) + FloodUnits;
                 LoadRatio = LoadCapacity > 0.01f ? LoadUnits / LoadCapacity : 0f;
                 return;
             }
@@ -811,14 +899,15 @@ namespace MakeGame.Systems
             Transform deckRoot = raft.DeckRoot;
             float cargo = 0f;
             float weightedHeight = 0f;
+            Vector2 weightedPlan = Vector2.zero;
 
             if (deckRoot != null)
             {
                 if (deckPiecesContainer == null)
                     deckPiecesContainer = deckRoot.Find(BuildingSystem.DeckContainerName);
 
-                cargo += AccumulatePieces(raft.PlacedStructures, deckRoot, ref weightedHeight);
-                cargo += AccumulatePieces(deckPiecesContainer, deckRoot, ref weightedHeight);
+                cargo += AccumulatePieces(raft.PlacedStructures, deckRoot, ref weightedHeight, ref weightedPlan);
+                cargo += AccumulatePieces(deckPiecesContainer, deckRoot, ref weightedHeight, ref weightedPlan);
 
                 // 보관 상자는 내용물까지 센다. Stranded Deep에서 뗏목이 뒤집히는 가장 흔한 이유가
                 // "상자를 잔뜩 쌓았다"이므로, 내용물 무게를 빼면 이 시스템의 핵심이 사라진다.
@@ -830,22 +919,105 @@ namespace MakeGame.Systems
                     if (chest == null)
                         continue;
 
-                    float units = ChestLoadUnits + ChestItemLoadUnits * chest.State.items.Count;
+                    // [무게] 내용물을 개수로 세지 않고 **아이템마다 무게를 매긴다.**
+                    // 금속조각 한 상자와 야자잎 한 상자가 같은 무게라면 무게 개념이 없는 것과 같다.
+                    float units = ChestLoadUnits;
+                    var items = chest.State.items;
+                    for (int k = 0; k < items.Count; k++)
+                    {
+                        InventoryItem item = items[k];
+                        units += item != null && item.data != null
+                            ? RaftLoadCatalog.GetItemUnits(item.data.itemName)
+                            : RaftLoadCatalog.DefaultItemUnits;
+                    }
+
                     cargo += units;
-                    weightedHeight += units * Mathf.Max(0f,
-                        deckRoot.InverseTransformPoint(chest.transform.position).y);
+
+                    Vector3 chestLocal = deckRoot.InverseTransformPoint(chest.transform.position);
+                    weightedHeight += units * Mathf.Max(0f, chestLocal.y);
+                    weightedPlan += units * new Vector2(chestLocal.x, chestLocal.z);
                 }
             }
 
             cachedCargoUnits = cargo;
             comHeight = cargo > 0.01f ? weightedHeight / cargo : 0f;
+            LoadCenterLocal = cargo > 0.01f ? weightedPlan / cargo : Vector2.zero;
 
-            LoadUnits = cargo + (riderAboard ? RiderLoadUnits : 0f);
+            LoadUnits = cargo + (riderAboard ? RiderLoadUnits : 0f) + FloodUnits;
             LoadRatio = LoadCapacity > 0.01f ? LoadUnits / LoadCapacity : 0f;
         }
 
+        /// <summary>
+        /// 무게에서 나오는 것들을 갱신한다 - 침하 깊이 · 쏠림 기울기 · 침수.
+        /// **매 프레임 돈다**(짐 스캔은 2초 주기지만 이 계산은 싸고, 파도에 따라 결과가 바뀐다).
+        /// </summary>
+        private void UpdateBuoyancy(float dt)
+        {
+            // (1) 얼마나 잠기는가.
+            HullSinkMeters = ComputeOverloadSink();
+
+            // (2) 얼마나 기우는가.
+            //
+            // ★ 쏠림은 **짐만** 만든다. 사람과 찬 물은 무게에는 들어가되 기울기에는 안 들어간다 -
+            //   사람을 넣으면 갑판 가장자리로 걸어갈 때마다 배가 기울고, 기울면 미끄러지고, 미끄러지면
+            //   더 기우는 왕복이 생긴다. 찬 물은 애초에 한쪽에 고여 있다고 볼 근거가 없다.
+            float capacity = Mathf.Max(0.01f, LoadCapacity);
+            float listScale = Mathf.Clamp01(cachedCargoUnits / capacity);
+
+            // 지렛대는 **실제로 깔린 갑판**으로 잰다. 바닥판을 반만 깐 뗏목에서 전체 격자 크기로
+            // 나누면 쏠림이 실제보다 작게 나온다.
+            Vector2 deck = raft.DeckLocalSize;
+            if (deck.x <= 0.01f || deck.y <= 0.01f)
+            {
+                // 갑판이 아직 없다(바닥판 5칸 이하). 화물을 놓을 수도 없으므로 쏠림도 없다.
+                // 여기서 하한을 씌워 억지로 지렛대를 만들면 12cm 치우침에 최대로 기우는 극단이 된다.
+                ListDegrees = Vector2.zero;
+            }
+            else
+            {
+                float halfWidth = deck.x * 0.5f;
+                float halfLength = deck.y * 0.5f;
+
+                // 부호: Euler(pitch, 0, roll)에서 +roll은 우현을 **들어올린다**. 짐이 우현(+x)에
+                // 있으면 우현이 내려가야 하므로 roll은 음수다. +pitch는 뱃머리를 내리므로
+                // 짐이 뱃머리(+z)에 있으면 양수다.
+                float roll = -ListAxis(LoadCenterLocal.x / halfWidth) * MaxListDegrees * listScale;
+                float pitch = ListAxis(LoadCenterLocal.y / halfLength) * MaxListDegrees * listScale;
+
+                ListDegrees = new Vector2(pitch, roll);
+            }
+
+            // (3) 갑판이 잠기면 물이 찬다. 찬 물은 그대로 무게라 더 잠긴다.
+            //     **배수는 잠겨 있는 동안에도 계속 돈다**(FloodDrainUnitsPerSecond 주석 - 이 시스템에서
+            //     가장 중요한 한 줄이다). 그래서 차오름과 빠짐이 균형을 이루는 평형점이 생기고,
+            //     원인(쏠린 짐)을 없애면 스스로 회복한다.
+            float freeboard = raft.DeckFreeboard;
+            float severity = freeboard < 0f ? Mathf.Clamp01(-freeboard / FloodFullDepth) : 0f;
+
+            FloodUnits += (FloodFillUnitsPerSecond * severity - FloodDrainUnitsPerSecond) * dt;
+            FloodUnits = Mathf.Clamp(FloodUnits, 0f, capacity * MaxFloodRatio);
+
+            // 경고는 "지금 물이 들고 있다"일 때만 켠다. 물이 조금 남아 빠지는 중인 상태까지
+            // 경고로 치면 위험이 끝난 뒤에도 빨간 글씨가 한참 남는다.
+            FloodWarning = severity > 0f;
+        }
+
+        /// <summary>
+        /// 무게중심 치우침(-1~1)을 기울기 계수(-1~1)로 바꾼다. 가운데 ListDeadZone만큼은 0이다.
+        /// </summary>
+        private static float ListAxis(float normalizedOffset)
+        {
+            float magnitude = Mathf.Abs(Mathf.Clamp(normalizedOffset, -1f, 1f));
+            if (magnitude <= ListDeadZone)
+                return 0f;
+
+            float beyond = (magnitude - ListDeadZone) / (1f - ListDeadZone);
+            return Mathf.Sign(normalizedOffset) * beyond;
+        }
+
         /// <summary>컨테이너의 직계 자식을 건축 조각 하나씩으로 세고, 무게중심 높이에 누적한다.</summary>
-        private float AccumulatePieces(Transform container, Transform deckRoot, ref float weightedHeight)
+        private float AccumulatePieces(Transform container, Transform deckRoot,
+            ref float weightedHeight, ref Vector2 weightedPlan)
         {
             if (container == null)
                 return 0f;
@@ -857,9 +1029,15 @@ namespace MakeGame.Systems
                 if (child == null || !child.gameObject.activeSelf)
                     continue;
 
+                // 상자는 아래 상자 루프가 본체 + 내용물로 따로 센다. 여기서도 세면 이중 계상이다.
+                if (child.GetComponentInChildren<StorageChest>(true) != null)
+                    continue;
+
                 total += PieceLoadUnits;
-                weightedHeight += PieceLoadUnits * Mathf.Max(0f,
-                    deckRoot.InverseTransformPoint(child.position).y);
+
+                Vector3 local = deckRoot.InverseTransformPoint(child.position);
+                weightedHeight += PieceLoadUnits * Mathf.Max(0f, local.y);
+                weightedPlan += PieceLoadUnits * new Vector2(local.x, local.z);
             }
             return total;
         }
@@ -879,14 +1057,36 @@ namespace MakeGame.Systems
         /// <summary>과적으로 뗏목이 더 잠기는 깊이(m). 상한은 MaxOverloadSinkMeters 주석 참고.</summary>
         private float ComputeOverloadSink()
         {
-            float t = Mathf.Clamp01((LoadRatio - 0.7f) / 0.9f);
-            return t * MaxOverloadSinkMeters;
+            float over = LoadRatio - LoadFreeRatio;
+            if (over <= 0f)
+                return 0f;
+
+            // 여유 구간(0.8)에서 용량(1.0)까지는 0.25m 예산 안에서만 잠긴다 - 그 안에서는
+            // 갑판 위에서 수영 모드로 넘어가지 않는다(MaxOverloadSinkMeters 주석).
+            float toCapacity = Mathf.Clamp01(over / Mathf.Max(0.01f, 1f - LoadFreeRatio));
+            float sink = toCapacity * MaxOverloadSinkMeters;
+
+            // 용량을 넘기면 계속 잠긴다. 여기서부터가 진짜 "잠긴다"이다.
+            if (LoadRatio > 1f)
+                sink += (LoadRatio - 1f) * SinkMetersPerExcessRatio;
+
+            // ★ 그래도 상한은 있다. 상자 한 칸이 200개까지 들어가므로(BuildPieceCatalog) 금속을 가득
+            //   채우면 적재율이 4를 넘고 침하가 3.8m까지 간다. 승선 판정 상자(갑판 + 헤드룸 2.6m)를
+            //   넘는 순간 CarryRider가 사람을 놓고 IsRiderAboard가 false가 되어 **다시 올라타지도
+            //   조종하지도 못하는** 상태가 된다 - 짐을 덜어 되살릴 길이 사라진다.
+            return Mathf.Min(sink, MaxTotalSinkMeters);
         }
 
         /// <summary>
         /// 무게중심 높이 + 적재율 + 지금 파도의 기울기로 "전복 위험"을 판정한다.
         /// 진짜로 뒤집지는 않는다 - 판단 근거는 이 파일 위쪽 [판단: 진짜 전복을 넣지 않는다] 참고.
         /// </summary>
+        /// <summary>짐이 사라졌으니 다음 프레임에 곧바로 다시 잰다(2초를 기다리면 무게가 옛 값이다).</summary>
+        private void InvalidateLoadScan()
+        {
+            loadRescanTimer = 0f;
+        }
+
         private void UpdateStability(float dt)
         {
             // 무게중심 4m를 완전히 위태로운 상태로 본다(갑판 위 2층 집 + 지붕 정도).
@@ -894,7 +1094,10 @@ namespace MakeGame.Systems
             float instability = Mathf.Clamp01(0.6f * topHeavy + 0.4f * Mathf.Clamp01(LoadRatio));
             float dangerTilt = Mathf.Lerp(DangerTiltStable, DangerTiltUnstable, instability);
 
-            bool danger = raft.BaseTileCount > 0 && raft.CurrentTiltDegrees > dangerTilt;
+            // 침수는 그 자체로 위험이다 - 기울기가 얌전해도 물이 차고 있으면 짐을 덜어내야 한다.
+            bool danger = raft.BaseTileCount > 0
+                && (raft.CurrentTiltDegrees > dangerTilt || FloodWarning);
+
             StabilityWarning = danger;
 
             if (danger)
@@ -927,6 +1130,10 @@ namespace MakeGame.Systems
                 chest.State.items.RemoveAt(chest.State.items.Count - 1);
                 chest.NotifyChanged();
                 AudioManager.Instance?.PlayBreak();
+
+                // ★ 여기가 **무게가 실제로 줄어든** 자리다. 재스캔을 return 뒤에 두었다가
+                //   "아무것도 안 지웠을 때만 다시 잰다"는 정반대 동작이 됐었다.
+                InvalidateLoadScan();
                 return;
             }
         }
@@ -1148,6 +1355,12 @@ namespace MakeGame.Systems
                 return reason;
             }
 
+            // 조종을 시작하기 전에도 상태 경고를 보여 준다 - 정박한 뗏목도 짐이 쏠리면 물이 차는데,
+            // 경고가 조종 중에만 뜨면 섬에 다녀오는 사이 조용히 잠긴다.
+            string condition = raft != null ? raft.DescribeCondition() : string.Empty;
+            if (!string.IsNullOrEmpty(condition))
+                return $"{condition} · {DescribePropulsion()}";
+
             return $"{DescribePropulsion()} · {DescribeWind()}";
         }
 
@@ -1169,6 +1382,12 @@ namespace MakeGame.Systems
         /// </summary>
         public Vector3 HullForward => Quaternion.Euler(0f, headingDegrees, 0f) * Vector3.forward;
 
+        /// <summary>짐 쏠림으로 기운 각의 크기(도). 앞뒤와 좌우를 합쳐 하나로 읽는다.</summary>
+        public float ListMagnitudeDegrees()
+        {
+            return ListDegrees.magnitude;
+        }
+
         /// <summary>조종 중의 보조 문구(추진 수단 · 바람 · 적재 · 경고).</summary>
         public string GetSteeringDetail()
         {
@@ -1178,11 +1397,19 @@ namespace MakeGame.Systems
                 return $"{islandName} 해안에 얹혔다 - 뗏목에서 내려 뭍으로 갈 수 있다 · [S] 후진";
             }
 
+            if (FloodWarning)
+                return $"[침수] 갑판에 물이 든다 - 짐을 덜어라 · 적재 {LoadRatio * 100f:F0}%" +
+                       $" · 기운 각 {ListMagnitudeDegrees():F0}도";
+
             if (StabilityWarning)
                 return $"[경고] 기울기 위험 - 짐을 줄이거나 잔잔한 곳으로 · 적재 {LoadRatio * 100f:F0}%";
 
             if (LoadRatio > 1f)
                 return $"[과적] 적재 {LoadRatio * 100f:F0}% - 뗏목이 잠기고 느려진다 · {DescribeWind()}";
+
+            if (ListMagnitudeDegrees() > 6f)
+                return $"[쏠림] 짐이 한쪽으로 몰렸다 - 기운 각 {ListMagnitudeDegrees():F0}도" +
+                       $" · 적재 {LoadRatio * 100f:F0}%";
 
             string anchorHint = raft != null && raft.HasPart(RaftPart.Anchor)
                 ? "[F] 닻 내리기"

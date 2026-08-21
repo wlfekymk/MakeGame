@@ -198,6 +198,7 @@ namespace MakeGame.EditorTools
                     case 10: PhaseSave(); break;
                     case 11: PhaseDestroyAndLoad(); break;
                     case 12: PhaseVerifyRestore(); break;
+                    case 13: PhaseIdleBuoyancy(); break;
                     default: Finish(); return;
                 }
             }
@@ -1072,6 +1073,72 @@ namespace MakeGame.EditorTools
 
             Pass("왕복 복원", expected.Count + "대 전부 제자리 · " + string.Join(" · ", notes) +
                 " · 갑판 조각 " + string.Join("/", deckNotes));
+        }
+
+        // ── 13단계: 짐 없는 뗏목의 부력 상태 ────────────────────────────────
+        //
+        // [무게·균형·침수] 이 시스템의 가장 큰 위험은 "아무것도 안 실었는데 잠긴다"이다.
+        // 실제로 만들다가 두 번 그랬다 - 쏠림을 위험 기울기에 더했더니 잔잔한 날 정박한 뗏목이
+        // 8초마다 아이템을 파괴했고, 갑판 여유를 다른 파형 함수로 쟀더니 폭풍마다 헛 침수가 떴다.
+        // 그래서 "빈 뗏목은 조용해야 한다"를 못 박아 둔다.
+        private static void PhaseIdleBuoyancy()
+        {
+            var live = new List<RaftStructure>(RaftStructure.All);
+            var notes = new List<string>();
+
+            for (int i = 0; i < live.Count; i++)
+            {
+                RaftStructure raft = live[i];
+                if (raft == null)
+                    continue;
+
+                RaftSailing sailing = raft.GetComponent<RaftSailing>();
+                if (sailing == null)
+                {
+                    Fail(raft.gameObject.name + "에 RaftSailing이 없다");
+                    return;
+                }
+
+                float freeboard = raft.DeckFreeboard;
+                float sink = sailing.HullSinkMeters;
+                float list = sailing.ListMagnitudeDegrees();
+
+                if (sailing.FloodWarning)
+                {
+                    Fail(raft.gameObject.name + "이 짐도 없이 침수 중이다 (여유 " + F(freeboard) +
+                         "m, 침하 " + F(sink) + "m, 기울기 " + F(list) + "도)");
+                    return;
+                }
+
+                // 사람이 타고 있으면 잠기는 것이 정상이다 - 바닥판 한 칸짜리 뗏목(부력 1.0)에
+                // 사람(0.9)이 올라서면 적재 90%다. 그건 물리적으로 맞는 결과이므로 검사에서 뺀다.
+                bool rider = raft.IsRiderAboard;
+
+                if (!rider && sink > 0.01f)
+                {
+                    Fail(raft.gameObject.name + "이 아무도 안 탔는데 " + F(sink) + "m 잠겼다 (적재 " +
+                         F(sailing.LoadRatio * 100f) + "%)");
+                    return;
+                }
+
+                if (list > 0.5f)
+                {
+                    Fail(raft.gameObject.name + "이 짐도 없이 " + F(list) + "도 기울었다");
+                    return;
+                }
+
+                if (freeboard <= 0f)
+                {
+                    Fail(raft.gameObject.name + "의 갑판 여유가 " + F(freeboard) + "m다 (0보다 커야 한다)");
+                    return;
+                }
+
+                notes.Add(raft.gameObject.name + " 여유 " + F(freeboard) + "m/적재 " +
+                          F(sailing.LoadRatio * 100f) + "%/부력 " + F(sailing.LoadCapacity) +
+                          (rider ? "/탑승" : ""));
+            }
+
+            Pass("빈 뗏목 부력", string.Join(" · ", notes));
         }
 
         // ── 마무리 ─────────────────────────────────────────────────────────
