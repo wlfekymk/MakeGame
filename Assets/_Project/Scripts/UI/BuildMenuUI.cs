@@ -29,18 +29,45 @@ namespace MakeGame.UI
         /// 전부 실제로 지을 수 있다. **새 부품은 끝에만 붙인다** - 숫자키와 아이콘 순서가 이 배열 하나로
         /// 정해지므로, 중간에 끼우면 손에 익은 단축키가 통째로 밀린다.
         /// </summary>
-        private static readonly BuildPieceType[] SlotTypes =
+        /// <summary>
+        /// 핫바 칸 하나가 가리키는 것. 대부분은 격자 부품이지만 **뗏목은 부품이 아니다** -
+        /// 셀도 층도 없고 재료표도 다른(RaftBuildCatalog) 별개의 물건이라 BuildPieceType으로
+        /// 표현할 수 없다. 그래서 칸의 식별자를 한 겹 감쌌다.
+        /// </summary>
+        private readonly struct MenuEntry
         {
-            BuildPieceType.Floor,
-            BuildPieceType.Wall,
-            BuildPieceType.Doorway,
-            BuildPieceType.Window,
-            BuildPieceType.Stair,
-            BuildPieceType.Roof,
-            BuildPieceType.Chest,
+            /// <summary>true면 뗏목 배치 항목이다(<see cref="type"/>은 의미가 없다).</summary>
+            public readonly bool isRaft;
+
+            public readonly BuildPieceType type;
+
+            private MenuEntry(bool isRaft, BuildPieceType type)
+            {
+                this.isRaft = isRaft;
+                this.type = type;
+            }
+
+            public static MenuEntry ForPiece(BuildPieceType type) => new MenuEntry(false, type);
+
+            public static MenuEntry ForRaft() => new MenuEntry(true, default);
+        }
+
+        private static readonly MenuEntry[] SlotTypes =
+        {
+            MenuEntry.ForPiece(BuildPieceType.Floor),
+            MenuEntry.ForPiece(BuildPieceType.Wall),
+            MenuEntry.ForPiece(BuildPieceType.Doorway),
+            MenuEntry.ForPiece(BuildPieceType.Window),
+            MenuEntry.ForPiece(BuildPieceType.Stair),
+            MenuEntry.ForPiece(BuildPieceType.Roof),
+            MenuEntry.ForPiece(BuildPieceType.Chest),
+
+            // [뗏목 자유 배치] 마지막 칸. 고르면 격자를 쓰지 않는 배치 모드로 넘어가, 물 위에
+            // 발자국 고스트를 띄우고 좌클릭으로 그 자리에 뗏목을 세운다.
+            MenuEntry.ForRaft(),
         };
 
-        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5, 지붕 = 6, 상자 = 7).</summary>
+        /// <summary>숫자키 선택. SlotTypes와 같은 순서다(계단 = 5, 지붕 = 6, 상자 = 7, 뗏목 = 8).</summary>
         private static readonly KeyCode[] SelectKeys =
         {
             KeyCode.Alpha1,
@@ -50,6 +77,7 @@ namespace MakeGame.UI
             KeyCode.Alpha5,
             KeyCode.Alpha6,
             KeyCode.Alpha7,
+            KeyCode.Alpha8,
         };
 
         // ── 치수 ────────────────────────────────────────────────────────────────
@@ -69,7 +97,7 @@ namespace MakeGame.UI
         /// 정적 초기화 순서(선언 순서)상 안전하다.
         /// </summary>
         private static readonly float BodyWidth =
-            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing;                      // 7칸 = 664
+            SlotTypes.Length * SlotSize + (SlotTypes.Length - 1) * SlotSpacing;                      // 8칸 = 760
 
         /// <summary>기본 자리 계산에만 쓰는 창 전체 높이(본문 + 골격이 더하는 위아래 여백).</summary>
         private const float WindowHeight = BodyHeight + UITheme.ChromeTop + UITheme.ChromeBottom;    // 185
@@ -110,6 +138,8 @@ namespace MakeGame.UI
         private Text statusLabel;
 
         private BuildPieceType shownSelected = (BuildPieceType)(-1); // 첫 갱신을 강제하기 위한 초기값
+        private bool shownRaftSelected;
+        private string shownExtraReason = null; // null = 아직 한 번도 안 그렸다
         private BuildBlockReason shownReason = (BuildBlockReason)(-1);
         private bool shownCanPlace;
         private BuildSpace shownSpace = (BuildSpace)(-1);
@@ -203,7 +233,7 @@ namespace MakeGame.UI
 
             HandleSelectKeys();
 
-            if (shownSelected != building.SelectedType)
+            if (shownSelected != building.SelectedType || shownRaftSelected != building.IsRaftPlacementSelected)
             {
                 RefreshSlots();
                 RefreshStatus();  // 상태 줄에도 부품 이름이 들어간다
@@ -211,11 +241,26 @@ namespace MakeGame.UI
 
             // 사유는 enum 비교로만 확인하고, 실제로 바뀐 순간에만 문자열을 만든다
             // (매 프레임 문자열 조립 금지 - AGENT_BRIEF 2장).
+            // 뗏목 자리 사유는 문자열이지만 IsValidSite가 상수만 돌려주므로 참조 비교로 충분하다
+            // (같은 사유가 이어지는 프레임에는 ReferenceEquals가 참이라 아무 일도 하지 않는다).
             else if (shownReason != building.BlockReason
                 || shownCanPlace != building.CanPlaceNow
                 || shownSpace != building.TargetSpace
-                || shownIncludesLanding != building.TargetIncludesLanding)
+                || shownIncludesLanding != building.TargetIncludesLanding
+                || !ReferenceEquals(shownExtraReason, building.ExtraBlockReason))
                 RefreshStatus();
+        }
+
+        /// <summary>칸 하나를 고른다. 부품이면 건축 시스템의 부품 선택, 뗏목이면 배치 모드로 넘어간다.</summary>
+        private void SelectEntry(MenuEntry entry)
+        {
+            if (building == null)
+                return;
+
+            if (entry.isRaft)
+                building.SelectRaftPlacement();
+            else
+                building.SelectType(entry.type);
         }
 
         private void HandleSelectKeys()
@@ -224,7 +269,7 @@ namespace MakeGame.UI
             {
                 if (Input.GetKeyDown(SelectKeys[i]))
                 {
-                    building.SelectType(SlotTypes[i]);
+                    SelectEntry(SlotTypes[i]);
                     return;
                 }
             }
@@ -322,19 +367,23 @@ namespace MakeGame.UI
         }
 
         /// <summary>부품 칸 하나. 공용 CreateItemSlot 위에 이름/재료 글자만 얹는다.</summary>
-        private BuildSlot CreateSlot(RectTransform grid, int index, BuildPieceType type)
+        private BuildSlot CreateSlot(RectTransform grid, int index, MenuEntry entry)
         {
             var slot = new BuildSlot();
-            slot.locked = !BuildingSystem.IsTypeUnlocked(type);
+
+            // 뗏목은 잠금 체계 밖이다(BuildPieceType이 아니므로 IsTypeUnlocked가 물어볼 대상이 없다).
+            slot.locked = !entry.isRaft && !BuildingSystem.IsTypeUnlocked(entry.type);
             slot.visual = UIBuilder.CreateItemSlot(grid, $"Slot_{index}");
 
             UIBuilder.SlotVisual visual = slot.visual;
 
+            string displayName = entry.isRaft ? "뗏목" : BuildPieceCatalog.GetDisplayName(entry.type);
+
             // 이름: 칸 위쪽.
             visual.letterLabel.gameObject.SetActive(true);
             visual.letterLabel.text = slot.locked
-                ? $"{BuildPieceCatalog.GetDisplayName(type)} (잠김)"
-                : BuildPieceCatalog.GetDisplayName(type);
+                ? $"{displayName} (잠김)"
+                : displayName;
             visual.letterLabel.fontSize = UITheme.FontBody;
             visual.letterLabel.alignment = TextAnchor.UpperCenter;
             visual.letterLabel.color = slot.locked ? DimGray : Color.white;
@@ -346,7 +395,8 @@ namespace MakeGame.UI
             RectTransform iconRt = visual.icon.rectTransform;
             iconRt.offsetMin = new Vector2(28f, 40f);
             iconRt.offsetMax = new Vector2(-28f, -24f);
-            ApplyPieceIcon(slot, type);
+            if (!entry.isRaft)
+                ApplyPieceIcon(slot, entry.type);
 
             // 숫자키: 우상단(기본 자리인 우하단은 재료 글자와 겹친다).
             visual.countLabel.gameObject.SetActive(true);
@@ -474,18 +524,24 @@ namespace MakeGame.UI
                 return;
 
             shownSelected = building.SelectedType;
+            shownRaftSelected = building.IsRaftPlacementSelected;
 
             for (int i = 0; i < slots.Count && i < SlotTypes.Length; i++)
                 RefreshSlot(slots[i], SlotTypes[i]);
         }
 
-        private void RefreshSlot(BuildSlot slot, BuildPieceType type)
+        private void RefreshSlot(BuildSlot slot, MenuEntry entry)
         {
             if (building == null || slot == null || slot.visual == null)
                 return;
 
-            bool selected = !slot.locked && type == shownSelected;
-            bool affordable = slot.locked || building.HasMaterialsFor(type);
+            bool selected = !slot.locked && (entry.isRaft
+                ? shownRaftSelected
+                : (!shownRaftSelected && entry.type == shownSelected));
+
+            bool affordable = slot.locked || (entry.isRaft
+                ? building.HasMaterialsForRaft()
+                : building.HasMaterialsFor(entry.type));
 
             slot.visual.outline.enabled = selected;
             slot.visual.background.color = slot.locked
@@ -503,7 +559,7 @@ namespace MakeGame.UI
                 return;
             }
 
-            string costText = BuildCostText(type);
+            string costText = BuildCostText(entry);
             if (costText != slot.shownCost || affordable != slot.shownAffordable)
             {
                 slot.shownCost = costText;
@@ -514,8 +570,15 @@ namespace MakeGame.UI
         }
 
         /// <summary>"나뭇가지 4/6" 형태로 재료 줄을 만든다. 값이 실제로 바뀐 갱신에서만 불린다.</summary>
-        private string BuildCostText(BuildPieceType type)
+        private string BuildCostText(MenuEntry entry)
         {
+            // 뗏목은 재료표가 아예 다른 타입이다(RaftBuildCost). 첫 바닥판 값을 그대로 보여 준다 -
+            // 배치할 때 실제로 나가는 재료가 그것이기 때문이다(BuildingSystem.TryPlaceRaft).
+            if (entry.isRaft)
+                return BuildRaftCostText();
+
+            BuildPieceType type = entry.type;
+
             IReadOnlyList<BuildPieceCost> cost = BuildPieceCatalog.GetCost(type);
             if (cost == null || cost.Count == 0)
                 return "재료 없음";
@@ -523,18 +586,18 @@ namespace MakeGame.UI
             costBuilder.Length = 0;
             for (int i = 0; i < cost.Count; i++)
             {
-                BuildPieceCost entry = cost[i];
-                if (string.IsNullOrEmpty(entry.itemName) || entry.count <= 0)
+                BuildPieceCost line = cost[i];
+                if (string.IsNullOrEmpty(line.itemName) || line.count <= 0)
                     continue;
 
                 if (costBuilder.Length > 0)
                     costBuilder.Append('\n');
 
-                costBuilder.Append(entry.itemName);
+                costBuilder.Append(line.itemName);
                 costBuilder.Append(' ');
-                costBuilder.Append(building.CountOwned(entry.itemName));
+                costBuilder.Append(building.CountOwned(line.itemName));
                 costBuilder.Append('/');
-                costBuilder.Append(entry.count);
+                costBuilder.Append(line.count);
             }
 
             // 계단은 꼭대기에 딛고 설 참(바닥)을 함께 깔고 그 재료도 함께 나간다(BuildingSystem.TryPlace).
@@ -544,6 +607,33 @@ namespace MakeGame.UI
                 if (costBuilder.Length > 0)
                     costBuilder.Append('\n');
                 costBuilder.Append("+ 참 바닥");
+            }
+
+            return costBuilder.Length == 0 ? "재료 없음" : costBuilder.ToString();
+        }
+
+        /// <summary>뗏목 한 대(첫 바닥판)의 재료 줄. 부품 쪽과 같은 "이름 보유/필요" 형식이다.</summary>
+        private string BuildRaftCostText()
+        {
+            IReadOnlyList<RaftBuildCost> cost = RaftBuildCatalog.GetCost(RaftBuildEntry.BaseWood);
+            if (cost == null || cost.Count == 0)
+                return "재료 없음";
+
+            costBuilder.Length = 0;
+            for (int i = 0; i < cost.Count; i++)
+            {
+                RaftBuildCost line = cost[i];
+                if (string.IsNullOrEmpty(line.itemName) || line.count <= 0)
+                    continue;
+
+                if (costBuilder.Length > 0)
+                    costBuilder.Append('\n');
+
+                costBuilder.Append(line.itemName);
+                costBuilder.Append(' ');
+                costBuilder.Append(building.CountOwned(line.itemName));
+                costBuilder.Append('/');
+                costBuilder.Append(line.count);
             }
 
             return costBuilder.Length == 0 ? "재료 없음" : costBuilder.ToString();
@@ -560,21 +650,31 @@ namespace MakeGame.UI
             shownCanPlace = building.CanPlaceNow;
             shownSpace = building.TargetSpace;
             shownIncludesLanding = building.TargetIncludesLanding;
+            shownExtraReason = building.ExtraBlockReason;
 
             // 갑판 위를 겨누고 있으면 그렇다고 알려 준다 - 같은 부품이 뗏목에 붙는지 땅에 박히는지는
             // 화면만 봐서는 구별이 어렵고, 배가 떠난 뒤에야 알게 되면 늦다.
             string where = shownSpace == BuildSpace.Deck ? "갑판 · " : "";
 
             // 계단은 참(바닥)이 함께 깔리고 그 재료도 함께 나간다. 조용히 더 나가면 안 되니 이름에 붙인다.
-            string what = BuildPieceCatalog.GetDisplayName(building.SelectedType);
+            string what = shownRaftSelected
+                ? "뗏목"
+                : BuildPieceCatalog.GetDisplayName(building.SelectedType);
+
             if (shownIncludesLanding)
                 what += " + 참(바닥)";
 
             // 구분자는 프로젝트의 다른 창들이 이미 쓰는 "·"를 그대로 쓴다(내장 LegacyRuntime 폰트에
             // 없을 수 있는 글자를 새로 들이지 않는다).
+            // 뗏목 자리 사유는 enum으로 담을 수 없어 문장 그대로 온다. 있으면 그것이 더 구체적이다
+            // ("물이 얕다 - 뗏목이 뜨지 않는다" vs "여기엔 놓을 수 없다").
+            string why = string.IsNullOrEmpty(shownExtraReason)
+                ? BuildingSystem.DescribeBlockReason(shownReason)
+                : shownExtraReason;
+
             statusLabel.text = shownCanPlace
                 ? $"{where}{what} · 설치 가능"
-                : $"{where}{what} · {BuildingSystem.DescribeBlockReason(shownReason)}";
+                : $"{where}{what} · {why}";
 
             statusLabel.color = shownCanPlace ? UIBuilder.MedicGreen : UIBuilder.DangerRed;
         }
@@ -588,7 +688,7 @@ namespace MakeGame.UI
             if (building == null || index < 0 || index >= SlotTypes.Length)
                 return;
 
-            building.SelectType(SlotTypes[index]);
+            SelectEntry(SlotTypes[index]);
             RefreshSlots();
         }
 

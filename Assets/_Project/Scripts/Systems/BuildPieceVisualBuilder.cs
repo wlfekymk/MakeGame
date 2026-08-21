@@ -260,6 +260,73 @@ namespace MakeGame.Systems
         /// 그때만 GetComponentsInChildren 배열이 한 번 생긴다(가만히 들고 있는 동안은 할당이 0이다).
         /// 머티리얼은 공유본을 갈아끼우는 것이라(sharedMaterial) 인스턴스가 늘어나지도 않는다.
         /// </summary>
+        /// <summary>
+        /// 뗏목을 세울 자리를 보여 주는 발자국 고스트. 부품 고스트와 **같은 머티리얼 규약**을 쓰므로
+        /// <see cref="SetGhostValid"/>가 그대로 유효/불가 색을 갈아 끼운다.
+        ///
+        /// 그리는 것은 뗏목 실물이 아니라 **자리**다: 선체 크기(DeckWidth x DeckLength)의 테두리와
+        /// 통나무 세 줄, 모서리 말뚝 넷, 그리고 뱃머리 표시 하나. 뱃머리 표시가 없으면 90도 회전이
+        /// 화면에서 구별되지 않는다(4x8이라 두 번 돌리면 같아 보인다).
+        /// </summary>
+        public static GameObject CreateRaftSiteGhost(Transform parent, bool valid)
+        {
+            EnsureGhostMaterials();
+
+            GameObject root = CreateRoot("RaftSiteGhost", parent);
+            Material material = valid ? ghostValidMaterial : ghostInvalidMaterial;
+
+            const float rim = 0.22f;
+            const float postHeight = 1.1f;
+
+            float width = RaftStructure.DeckWidth;
+            float length = RaftStructure.DeckLength;
+            float halfX = width * 0.5f;
+            float halfZ = length * 0.5f;
+
+            // 테두리 네 줄. 위치는 뗏목 로컬 원점(선체 중심)과 같아, 고스트가 선 자리가 곧 선체 자리다.
+            Part(root.transform, "RimFore", new Vector3(0f, 0f, halfZ - rim * 0.5f),
+                new Vector3(width, rim, rim), material);
+            Part(root.transform, "RimAft", new Vector3(0f, 0f, -halfZ + rim * 0.5f),
+                new Vector3(width, rim, rim), material);
+            Part(root.transform, "RimPort", new Vector3(-halfX + rim * 0.5f, 0f, 0f),
+                new Vector3(rim, rim, length), material);
+            Part(root.transform, "RimStarboard", new Vector3(halfX - rim * 0.5f, 0f, 0f),
+                new Vector3(rim, rim, length), material);
+
+            // 통나무 세 줄 - "여기에 뗏목이 선다"가 테두리만으로는 잘 안 읽힌다.
+            for (int i = 0; i < 3; i++)
+            {
+                float z = -halfZ * 0.5f + halfZ * 0.5f * i;
+                Part(root.transform, $"Log_{i}", new Vector3(0f, -0.14f, z),
+                    new Vector3(width - rim * 2f, 0.18f, 0.55f), material);
+            }
+
+            // 모서리 말뚝 넷. 물 위에서 발자국이 수면에 묻히지 않게 세로로 세운다.
+            for (int i = 0; i < 4; i++)
+            {
+                float x = (i % 2 == 0 ? -1f : 1f) * (halfX - rim * 0.5f);
+                float z = (i < 2 ? -1f : 1f) * (halfZ - rim * 0.5f);
+                Part(root.transform, $"Post_{i}", new Vector3(x, postHeight * 0.5f, z),
+                    new Vector3(0.16f, postHeight, 0.16f), material);
+            }
+
+            // 뱃머리 표시(+Z가 앞이다 - RaftStructure.PlaceAt의 facing과 같은 규약).
+            Part(root.transform, "BowMark", new Vector3(0f, 0.18f, halfZ + 0.5f),
+                new Vector3(0.9f, 0.14f, 0.9f), material);
+
+            var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] == null)
+                    continue;
+
+                renderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderers[i].receiveShadows = false;
+            }
+
+            return root;
+        }
+
         public static void SetGhostValid(GameObject ghost, bool valid)
         {
             if (ghost == null)

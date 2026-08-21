@@ -514,6 +514,21 @@ namespace MakeGame.Systems
         /// 명부에서 **즉시** 빼는 것이 핵심이다. Destroy는 프레임 끝에 처리되므로, 명부를 비우지
         /// 않으면 바로 뒤에 세우는 새 뗏목이 "이미 뗏목이 있다"고 판정되어 배치가 막힌다.
         /// </summary>
+        /// <summary>
+        /// 뗏목 한 대를 없앤다. 배치를 되돌릴 때 쓴다.
+        ///
+        /// **명부에서 즉시 뺀다** - Destroy는 프레임 끝까지 지연되므로, 그때까지 명부에 남겨 두면
+        /// 같은 프레임의 IsValidSite가 방금 지운 뗏목을 보고 "다른 뗏목과 너무 가깝다"로 막는다.
+        /// </summary>
+        public static void DestroyRaft(RaftStructure raft)
+        {
+            if (raft == null)
+                return;
+
+            all.Remove(raft);
+            Destroy(raft.gameObject);
+        }
+
         public static void DestroyAll()
         {
             for (int i = all.Count - 1; i >= 0; i--)
@@ -994,6 +1009,9 @@ namespace MakeGame.Systems
             // 다음 실행의 뗏목이 전부 0번을 쓰게 된다(갑판 칸이 섞인다).
             System.Array.Clear(keySlotTaken, 0, keySlotTaken.Length);
 
+            // 씬을 다시 열면 월드 매니저도 새 인스턴스다.
+            siteWorldMap = null;
+
             // 모델 캐시도 함께 비운다. 도메인 리로드를 끈 플레이 모드에서 이전 실행의 (이미 언로드된)
             // 메시를 들고 시작하면 파츠가 통째로 빈 채로 만들어진다.
             System.Array.Clear(baseTilePrimary, 0, baseTilePrimary.Length);
@@ -1317,19 +1335,41 @@ namespace MakeGame.Systems
         /// reason에는 안 되는 이유를 그대로 담는다(고스트 옆에 그대로 띄우기 위해서다 - "왜 안 되는지
         /// 모르겠는 빨간 고스트"가 이 프로젝트에서 반복해서 나온 UX 실패다).
         /// </summary>
-        public static bool IsValidSite(Vector3 worldPoint, RaftStructure ignore, out string reason)
+        public static bool IsValidSite(Vector3 worldPoint, float yaw, RaftStructure ignore, out string reason)
         {
-            var worldMap = FindAnyObjectByType<WorldMapManager>();
-            float seaLevel = worldMap != null ? worldMap.seaLevel : 0f;
+            // 매 프레임 씬을 뒤지지 않는다 - 이 함수는 건축 고스트가 조준하는 동안 계속 불린다.
+            if (siteWorldMap == null)
+                siteWorldMap = FindAnyObjectByType<WorldMapManager>();
 
-            // (1) 물 위인가. 해저까지의 깊이를 잰다.
-            float groundY = SampleTerrainHeightStatic(worldPoint, out bool hitTerrain);
-            float depth = hitTerrain ? seaLevel - groundY : DeepWaterAssumedDepth;
+            float seaLevel = siteWorldMap != null ? siteWorldMap.seaLevel : 0f;
 
-            if (depth < MinSiteDepth)
+            // (1) 물 위인가. **중심 한 점이 아니라 선체 네 귀퉁이까지** 잰다.
+            //
+            // ★ 이게 왜 중요한가: 첫 바닥판은 선체 중심이 아니라 **고물-좌현 모서리**에 놓인다
+            //   (GetBaseTileCenter(0) = 로컬 (-1, 0, -3)). 중심만 보면 수심 0.6m를 통과해도 실제로
+            //   생기는 판자는 3m 뒤 모래밭에 박힐 수 있다. 고스트는 4x8 테두리를 그리므로 플레이어
+            //   눈에는 "초록 사각형 한복판을 겨눴는데 판자가 구석에 나온" 것으로 보인다.
+            if (!IsWaterDeepEnough(worldPoint, seaLevel))
             {
                 reason = "물이 얕다 - 뗏목이 뜨지 않는다";
                 return false;
+            }
+
+            float halfWidth = DeckWidth * 0.5f - 0.3f;
+            float halfLength = DeckLength * 0.5f - 0.3f;
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+
+            for (int corner = 0; corner < 4; corner++)
+            {
+                float localX = (corner % 2 == 0 ? -1f : 1f) * halfWidth;
+                float localZ = (corner < 2 ? -1f : 1f) * halfLength;
+                Vector3 probe = worldPoint + rotation * new Vector3(localX, 0f, localZ);
+
+                if (!IsWaterDeepEnough(probe, seaLevel))
+                {
+                    reason = "선체가 걸린다 - 네 귀퉁이가 다 물에 잠겨야 한다";
+                    return false;
+                }
             }
 
             // (2) 물가에서 너무 멀지 않은가. 반경을 넓혀 가며 뭍을 찾는다.
@@ -1360,6 +1400,26 @@ namespace MakeGame.Systems
             return true;
         }
 
+        /// <summary>
+        /// 뱃머리 방향을 모르는 호출자를 위한 판(정북을 향한다고 본다).
+        /// 자유 배치는 반드시 yaw를 넘겨야 한다 - 선체가 4x8이라 방향에 따라 답이 달라진다.
+        /// </summary>
+        public static bool IsValidSite(Vector3 worldPoint, RaftStructure ignore, out string reason)
+        {
+            return IsValidSite(worldPoint, 0f, ignore, out reason);
+        }
+
+        /// <summary>그 지점이 뗏목을 띄울 만큼 파여 있는가.</summary>
+        private static bool IsWaterDeepEnough(Vector3 worldPoint, float seaLevel)
+        {
+            float groundY = SampleTerrainHeightStatic(worldPoint, out bool hitTerrain);
+            float depth = hitTerrain ? seaLevel - groundY : DeepWaterAssumedDepth;
+            return depth >= MinSiteDepth;
+        }
+
+        /// <summary>IsValidSite가 해수면을 물어볼 월드 매니저(씬당 하나). ResetStatics에서 비운다.</summary>
+        private static WorldMapManager siteWorldMap;
+
         /// <summary>지형을 못 맞혔을 때 가정하는 수심(m). 먼바다는 충분히 깊다고 본다.</summary>
         private const float DeepWaterAssumedDepth = 50f;
 
@@ -1376,12 +1436,15 @@ namespace MakeGame.Systems
         /// </summary>
         private static bool HasShoreWithin(Vector3 worldPoint, float seaLevel, float maxDistance)
         {
+            // 걸음을 2m로 넓혔다(예전 1m). 이 함수는 건축 고스트가 조준하는 동안 계속 불리는데,
+            // 한 걸음이 레이 하나다(8방향 x 14걸음 = 112회). 해안선이 2m 폭보다 좁은 모래톱만으로
+            // 이루어진 경우는 없어(섬 지형 생성이 그런 형상을 만들지 않는다) 판정은 그대로다.
             for (int dir = 0; dir < 8; dir++)
             {
                 float angle = dir * (Mathf.PI * 2f / 8f);
                 var step = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
 
-                for (float d = 1f; d <= maxDistance; d += 1f)
+                for (float d = 2f; d <= maxDistance; d += 2f)
                 {
                     Vector3 probe = worldPoint + step * d;
                     float y = SampleTerrainHeightStatic(probe, out bool hit);

@@ -38,6 +38,25 @@ namespace MakeGame.Systems
     }
 
     /// <summary>
+    /// 건축 모드가 지금 무엇을 놓으려 하는가.
+    ///
+    /// [왜 BuildPieceType에 뗏목을 붙이지 않았나] 조각은 전부 격자 위의 물건이다 - 셀·층·모서리 축이
+    /// 있고, 다섯 개의 격자 표(floor/wall/stair/roof/chest) 중 하나에 반드시 등록된다. 뗏목은 4x8m
+    /// 물 위 구조물이라 셀도 층도 축도 없다. 열거형에 값을 하나 붙이면 RegisterPiece·ResolveTarget·
+    /// GetYawFor·CreatePieceObject의 default가 전부 "벽"이라, 뗏목이 벽 표에 앉아 실내 판정과 철거
+    /// 순서를 오염시키고 세이브 복원의 종류 범위 검사(Floor~Roof)에서 조용히 버려진다.
+    /// 그래서 격자를 한 줄도 건드리지 않는 별도 모드로 두고, 갈라지는 지점을 세 곳으로 못 박았다:
+    /// ResolveTarget · UpdateGhost(EnsureGhost) · TryPlace.
+    /// </summary>
+    public enum BuildPlacementMode
+    {
+        /// <summary>격자 위의 건축 부품(바닥·벽·문·창문·계단·지붕·상자).</summary>
+        Piece = 0,
+        /// <summary>물 위에 새 뗏목을 세운다. 격자를 쓰지 않는다.</summary>
+        Raft = 1,
+    }
+
+    /// <summary>
     /// 건축물이 서 있는 좌표 공간. **정수값이 세이브에 그대로 들어간다 - 바꾸지 마라.**
     /// 옛 세이브에는 이 필드가 없어 0(Ground)으로 읽히는데, 그게 정확히 옛 동작이다.
     /// </summary>
@@ -98,6 +117,12 @@ namespace MakeGame.Systems
 
         /// <summary>조각을 놓을 수 있는 최대 거리(m). 상호작용 거리(4m)보다 넉넉해야 벽 한 장 너머가 잡힌다.</summary>
         public float buildDistance = 8f;
+
+        /// <summary>
+        /// 뗏목을 세울 수 있는 최대 거리(m). 조각(buildDistance)보다 넉넉하다 - 뗏목은 4x8m라
+        /// 팔 닿는 거리에 두면 발밑밖에 안 보이고, 물가에 서서 앞바다에 놓는 것이 정상적인 자세다.
+        /// </summary>
+        public float raftPlaceDistance = 14f;
 
         // ── 격자 상수 ───────────────────────────────────────────────────────────
         private const float CellSize = BuildPieceCatalog.CellSize;
@@ -260,6 +285,29 @@ namespace MakeGame.Systems
         private BuildPieceType selectedType = BuildPieceType.Floor;
         private int rotationSteps;
 
+        /// <summary>지금 조각을 놓는 중인가, 뗏목을 세우는 중인가.</summary>
+        private BuildPlacementMode placementMode = BuildPlacementMode.Piece;
+
+        /// <summary>지금 떠 있는 고스트가 뗏목 발자국인가(부품 고스트와 재사용 판정이 다르다).</summary>
+        private bool ghostIsRaft;
+
+        /// <summary>
+        /// BuildBlockReason으로 표현할 수 없는 불가 사유(뗏목 자리 판정이 돌려주는 문장).
+        /// 비어 있으면 UI는 BlockReason을 쓴다. IsValidSite가 상수 문자열만 돌려주므로 할당이 없다.
+        /// </summary>
+        private string extraBlockReason = string.Empty;
+
+        // 뗏목 자리 판정 캐시. IsValidSite는 레이를 100번 넘게 쏘는데 고스트는 매 프레임 묻는다.
+        // 조준점이 실제로 움직였을 때만 다시 묻는다(가만히 서 있으면 레이가 한 번도 안 나간다).
+        private Vector3 raftSiteQueryPoint = new Vector3(float.MaxValue, 0f, 0f);
+        private float raftSiteQueryYaw = float.MaxValue;
+        private int raftSiteQueryRaftCount = -1;
+        private bool raftSiteQueryValid;
+        private string raftSiteQueryReason = string.Empty;
+
+        /// <summary>해수면 높이를 물어볼 월드 매니저. 매 프레임 찾지 않도록 잡아 둔다.</summary>
+        private WorldMapManager cachedWorldMap;
+
         // 이번 프레임의 조준 결과(위치/회전은 targetSpace의 로컬 값이다).
         private bool hasTarget;
         private bool targetValid;
@@ -359,6 +407,21 @@ namespace MakeGame.Systems
 
         public bool IsBuildModeOn => buildMode;
         public BuildPieceType SelectedType => selectedType;
+
+        /// <summary>지금 조각을 놓는 중인가, 뗏목을 세우는 중인가.</summary>
+        public BuildPlacementMode PlacementMode => placementMode;
+
+        /// <summary>건축 메뉴에서 "뗏목"이 골라져 있는가.</summary>
+        public bool IsRaftPlacementSelected => placementMode == BuildPlacementMode.Raft;
+
+        /// <summary>BuildBlockReason으로 못 담는 불가 사유. 비어 있으면 BlockReason을 쓴다.</summary>
+        public string ExtraBlockReason => extraBlockReason;
+
+        /// <summary>뗏목 한 대를 세울 재료(첫 바닥판)를 들고 있는지.</summary>
+        public bool HasMaterialsForRaft()
+        {
+            return RaftBuildCatalog.HasMaterials(Inventory, RaftBuildEntry.BaseWood);
+        }
         public BuildBlockReason BlockReason => blockReason;
         public bool CanPlaceNow => hasTarget && targetValid;
         public int PieceCount => pieces.Count;
@@ -370,7 +433,8 @@ namespace MakeGame.Systems
         /// 지금 계단을 놓으면 참(landing) 바닥이 함께 깔리고 그 재료까지 소모되는지.
         /// UI가 "계단 + 참"이라고 미리 알려 주기 위한 값이다(재료가 조용히 더 나가면 안 된다).
         /// </summary>
-        public bool TargetIncludesLanding => targetNeedsLanding && selectedType == BuildPieceType.Stair;
+        public bool TargetIncludesLanding =>
+            placementMode == BuildPlacementMode.Piece && targetNeedsLanding && selectedType == BuildPieceType.Stair;
 
         /// <summary>
         /// 실제로 지을 수 있는 부품인지. **배치 26에서 계단이 해금됐다** - 이제 잠긴 부품은 없지만,
@@ -573,7 +637,14 @@ namespace MakeGame.Systems
                 hasTarget = false;
                 targetValid = false;
                 blockReason = BuildBlockReason.NoTarget;
+
+                // 사유 문자열도 함께 지운다. 이것만 남으면 창을 다시 열었을 때 한 프레임 동안
+                // 옛 뗏목 사유가 떠 있고, 시간이 멈춘 상태(사망/엔딩)에서는 계속 남는다.
+                extraBlockReason = string.Empty;
             }
+
+            // 창을 여닫는 사이에 뗏목이 늘거나 줄었을 수 있다.
+            InvalidateRaftSiteCache();
 
             Changed?.Invoke();
         }
@@ -581,11 +652,29 @@ namespace MakeGame.Systems
         /// <summary>부품을 고른다. 잠긴 부품은 무시한다(현재 잠긴 부품은 없다).</summary>
         public void SelectType(BuildPieceType type)
         {
-            if (!IsTypeUnlocked(type) || selectedType == type)
+            if (!IsTypeUnlocked(type))
                 return;
 
+            // ★ "이미 그 부품이다"만 보고 일찍 돌아가면, 뗏목 모드에서 같은 부품을 다시 눌렀을 때
+            //   모드가 안 빠져나온다. 모드까지 함께 봐야 한다.
+            if (placementMode == BuildPlacementMode.Piece && selectedType == type)
+                return;
+
+            placementMode = BuildPlacementMode.Piece;
             selectedType = type;
             rotationSteps = 0;
+            Changed?.Invoke();
+        }
+
+        /// <summary>건축 메뉴의 "뗏목" 항목. 격자를 쓰지 않는 배치 모드로 넘어간다.</summary>
+        public void SelectRaftPlacement()
+        {
+            if (placementMode == BuildPlacementMode.Raft)
+                return;
+
+            placementMode = BuildPlacementMode.Raft;
+            rotationSteps = 0;
+            InvalidateRaftSiteCache();
             Changed?.Invoke();
         }
 
@@ -981,6 +1070,173 @@ namespace MakeGame.Systems
         // 조준 / 스냅
         // ────────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 뗏목을 세울 자리를 조준한다. 조각과 달리 **격자에 스냅하지 않는다** - 조준선을 해수면
+        /// 평면에 떨어뜨린 지점이 곧 자리다(물 위에는 붙일 격자가 없다).
+        ///
+        /// 판정 순서는 "자리 → 재료"다. 재료를 먼저 보면, 물이 얕아서 못 짓는 자리에 서 있는데
+        /// "재료 부족"이라고 뜬다.
+        /// </summary>
+        private void ResolveRaftTarget()
+        {
+            targetAxis = NonWallAxis;
+            targetCellX = 0;
+            targetCellZ = 0;
+            targetLevel = 0;
+
+            Camera cam = GetCamera();
+            if (cam == null)
+                return;
+
+            Transform camTransform = cam.transform;
+            Vector3 origin = camTransform.position;
+            Vector3 direction = camTransform.forward;
+
+            // 수평선 위를 보고 있으면 평면과 만나지 않거나 지평선 너머의 엉뚱한 지점이 나온다.
+            if (direction.y > -0.05f)
+                return;
+
+            float seaLevel = ResolveSeaLevel();
+            float travel = (seaLevel - origin.y) / direction.y;
+            if (travel <= 0.5f || travel > raftPlaceDistance)
+                return;
+
+            Vector3 point = origin + direction * travel;
+            point.y = seaLevel;
+
+            hasTarget = true;
+            targetPosition = point;
+            targetYaw = ResolveRaftYaw(camTransform);
+
+            // 조준선이 무엇에 가로막혀 있지는 않은가. 부품 경로는 실제로 맞은 콜라이더로 자리를
+            // 정하지만(CastBuildRay) 뗏목은 평면 교점이라, 이 검사가 없으면 바위나 남의 뗏목
+            // **너머** 물에 뗏목이 선다.
+            if (IsRaftSiteBlocked(origin, point))
+            {
+                blockReason = BuildBlockReason.BlockedByRaft;
+                return;
+            }
+
+            if (!QueryRaftSite(point, targetYaw, out string reason))
+            {
+                // IsValidSite가 돌려주는 문장을 그대로 띄운다. "왜 안 되는지 모르겠는 빨간 고스트"가
+                // 이 프로젝트에서 반복해서 나온 UX 실패라, 사유를 요약하지 않고 그대로 넘긴다.
+                extraBlockReason = reason;
+                return;
+            }
+
+            if (!HasMaterialsForRaft())
+            {
+                blockReason = BuildBlockReason.NotEnoughMaterials;
+                return;
+            }
+
+            targetValid = true;
+            blockReason = BuildBlockReason.None;
+        }
+
+        /// <summary>뱃머리 방향. 바라보는 쪽을 기준으로 삼고 휠/Q로 90도씩 돌린다.</summary>
+        private float ResolveRaftYaw(Transform camTransform)
+        {
+            Vector3 flat = camTransform.forward;
+            flat.y = 0f;
+
+            float baseYaw = flat.sqrMagnitude > 0.0001f
+                ? Quaternion.LookRotation(flat).eulerAngles.y
+                : 0f;
+
+            return Mathf.Repeat(baseYaw + rotationSteps * 90f, 360f);
+        }
+
+        /// <summary>해수면 높이. 매 프레임 씬을 뒤지지 않도록 월드 매니저를 잡아 둔다.</summary>
+        private float ResolveSeaLevel()
+        {
+            if (cachedWorldMap == null)
+                cachedWorldMap = FindAnyObjectByType<WorldMapManager>();
+
+            return cachedWorldMap != null ? cachedWorldMap.seaLevel : 0f;
+        }
+
+        /// <summary>
+        /// 그 자리에 뗏목을 세울 수 있는지. **조준점이 실제로 움직였을 때만** 진짜로 묻는다.
+        ///
+        /// IsValidSite는 수심 다섯 번(중심 + 네 귀퉁이) + 물가 탐침 여덟 방향(최대 56번)의
+        /// 레이캐스트를 쏘는데, 고스트는 매 프레임 같은 질문을 한다. 가만히 서서 조준만 하고 있으면
+        /// 레이가 한 번도 안 나가야 한다.
+        ///
+        /// ★ 캐시 반경 0.25m는 **정확하지 않다.** 뗏목 자리의 경계는 격자가 아니라 수심 등고선·물가
+        ///   거리·뗏목 간 원이라 전부 연속이고, 0.25m 안쪽에서는 실제로 틀린 답이 나올 수 있다.
+        ///   그래서 확정(TryPlaceRaft)은 캐시를 거치지 않고 다시 묻는다 - 고스트의 색이 한 프레임
+        ///   늦는 것은 감수하고, 실제로 서는 자리만은 반드시 옳게 한다.
+        /// </summary>
+        private bool QueryRaftSite(Vector3 point, float yaw, out string reason)
+        {
+            const float CacheRadius = 0.25f;
+            const float CacheYawDegrees = 3f;
+
+            // 뗏목 수가 달라졌으면(세우거나 부쉈거나 불러왔다) 답이 통째로 달라진다.
+            // 항해로 남의 뗏목이 움직이는 경우까지는 못 잡지만, 그건 0.25m만 조준을 움직이면 풀린다.
+            int raftCount = RaftStructure.Count;
+
+            if (raftCount == raftSiteQueryRaftCount
+                && Mathf.Abs(Mathf.DeltaAngle(yaw, raftSiteQueryYaw)) < CacheYawDegrees
+                && (point - raftSiteQueryPoint).sqrMagnitude < CacheRadius * CacheRadius)
+            {
+                reason = raftSiteQueryReason;
+                return raftSiteQueryValid;
+            }
+
+            raftSiteQueryValid = RaftStructure.IsValidSite(point, yaw, null, out raftSiteQueryReason);
+            raftSiteQueryPoint = point;
+            raftSiteQueryYaw = yaw;
+            raftSiteQueryRaftCount = raftCount;
+
+            reason = raftSiteQueryReason;
+            return raftSiteQueryValid;
+        }
+
+        /// <summary>
+        /// 눈에서 그 자리까지 가는 길이 막혀 있는가. **지형과 뗏목만** 막는 것으로 친다 -
+        /// 풀·물결·건축 조각은 조준선을 가려도 그 자리에 뗏목을 못 세울 이유가 되지 않는다.
+        /// </summary>
+        private bool IsRaftSiteBlocked(Vector3 origin, Vector3 point)
+        {
+            Vector3 delta = point - origin;
+            float distance = delta.magnitude;
+            if (distance <= 0.5f)
+                return false;
+
+            // 끝을 조금 남긴다 - 목표점 바로 아래의 해저에 스치는 것까지 "막힘"으로 세면
+            // 얕은 물가에서는 어디를 겨눠도 빨간 고스트가 된다.
+            float reach = distance - 0.35f;
+            int count = Physics.RaycastNonAlloc(new Ray(origin, delta / distance), rayBuffer, reach);
+
+            for (int i = 0; i < count; i++)
+            {
+                Collider collider = rayBuffer[i].collider;
+                if (collider == null)
+                    continue;
+
+                if (collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal))
+                    return true;
+
+                if (IsRaftCollider(collider.transform))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>자리 판정 캐시를 버린다(뗏목을 세운 직후처럼 답이 달라졌을 때).</summary>
+        private void InvalidateRaftSiteCache()
+        {
+            raftSiteQueryPoint = new Vector3(float.MaxValue, 0f, 0f);
+            raftSiteQueryYaw = float.MaxValue;
+            raftSiteQueryRaftCount = -1;
+            raftSiteQueryValid = false;
+            raftSiteQueryReason = string.Empty;
+        }
+
         private void ResolveTarget()
         {
             hasTarget = false;
@@ -988,6 +1244,14 @@ namespace MakeGame.Systems
             targetNeedsLanding = false;
             blockReason = BuildBlockReason.NoTarget;
             targetSpace = BuildSpace.Ground;
+            extraBlockReason = string.Empty;
+
+            // 뗏목은 격자에 붙지 않으므로 조준 방식 자체가 다르다. 여기서 갈라진다.
+            if (placementMode == BuildPlacementMode.Raft)
+            {
+                ResolveRaftTarget();
+                return;
+            }
 
             Camera cam = GetCamera();
             if (cam == null)
@@ -2047,13 +2311,29 @@ namespace MakeGame.Systems
 
         private void EnsureGhost()
         {
-            if (ghost != null && ghostType == selectedType)
+            if (placementMode == BuildPlacementMode.Raft)
+            {
+                if (ghost != null && ghostIsRaft)
+                    return;
+
+                DestroyGhost();
+
+                ghost = BuildPieceVisualBuilder.CreateRaftSiteGhost(ghostRoot, targetValid);
+                ghostIsRaft = true;
+                ghostValid = targetValid;
+                return;
+            }
+
+            // ★ ghostIsRaft도 함께 본다. 뗏목 고스트가 떠 있는 상태에서 부품으로 돌아왔을 때
+            //   ghostType이 우연히 같으면 뗏목 발자국이 그대로 남는다.
+            if (ghost != null && !ghostIsRaft && ghostType == selectedType)
                 return;
 
             DestroyGhost();
 
             ghost = BuildPieceVisualBuilder.CreateGhost(selectedType, ghostRoot, targetValid);
             ghostType = selectedType;
+            ghostIsRaft = false;
             ghostValid = targetValid;
         }
 
@@ -2067,6 +2347,7 @@ namespace MakeGame.Systems
             ghost.SetActive(false);
             Destroy(ghost);
             ghost = null;
+            ghostIsRaft = false;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -2074,8 +2355,63 @@ namespace MakeGame.Systems
         // ────────────────────────────────────────────────────────────────────────
 
         /// <summary>지금 조준한 자리에 조각을 세운다. 유효하지 않으면 아무것도 하지 않는다.</summary>
+        /// <summary>
+        /// 겨눈 자리에 새 뗏목을 세운다.
+        ///
+        /// **순서가 곧 안전장치다.** 뗏목을 먼저 세우고, 재료는 첫 바닥판이 실제로 놓였을 때만
+        /// 나간다(RaftBuildCatalog.TryBuild가 검사·소모·설치를 한 곳에서 한다). 실패하면 방금 만든
+        /// 뗏목을 도로 지운다 - "재료만 사라졌다"도 "빈 뗏목이 남았다"도 생기지 않는다.
+        /// (이 프로젝트에서 아이템이 증발한 사고가 네 번 있었고 전부 반대 순서였다.)
+        /// </summary>
+        private void TryPlaceRaft()
+        {
+            if (!hasTarget || !targetValid)
+            {
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
+            // 확정 직전 재검사. 고스트 판정은 0.25m 캐시를 타므로 그 사이에 다른 뗏목이 섰을 수 있다.
+            // 여기서는 캐시를 거치지 않고 직접 묻는다(클릭 한 번에 레이 한 묶음은 싸다).
+            if (!RaftStructure.IsValidSite(targetPosition, targetYaw, null, out string reason))
+            {
+                // 상태줄도 이번 프레임에 바로 바꾼다. 사유 없이 실패음만 나면 "왜 안 되는지 모르겠는
+                // 빨간 고스트"가 되고, 그건 이 프로젝트에서 반복해서 나온 UX 실패다.
+                extraBlockReason = reason;
+                targetValid = false;
+
+                Debug.LogWarning($"[BuildingSystem] 뗏목을 세울 수 없다: {reason}");
+                InvalidateRaftSiteCache();
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
+            RaftStructure raft = RaftStructure.Create();
+            raft.PlaceAt(targetPosition, Quaternion.Euler(0f, targetYaw, 0f));
+
+            if (!RaftBuildCatalog.TryBuild(raft, Inventory, RaftBuildEntry.BaseWood, out string failure))
+            {
+                RaftStructure.DestroyRaft(raft);
+                Debug.LogWarning($"[BuildingSystem] 뗏목 첫 바닥판을 놓지 못해 배치를 취소했다: {failure}");
+                AudioManager.Instance?.PlayActionFail();
+                return;
+            }
+
+            // 방금 선 뗏목 때문에 주변 자리 판정이 달라졌다.
+            InvalidateRaftSiteCache();
+
+            AudioManager.Instance?.PlayCraftSuccess();
+            Changed?.Invoke();
+        }
+
         public void TryPlace()
         {
+            if (placementMode == BuildPlacementMode.Raft)
+            {
+                TryPlaceRaft();
+                return;
+            }
+
             if (!hasTarget || !targetValid)
             {
                 AudioManager.Instance?.PlayActionFail();

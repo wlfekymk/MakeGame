@@ -71,7 +71,8 @@ namespace MakeGame.Systems
         /// </summary>
         private static bool IsTerrainHit(RaycastHit hit)
         {
-            return hit.collider != null && hit.collider.gameObject.name.StartsWith(TerrainNamePrefix);
+            return hit.collider != null
+                && hit.collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal);
         }
     }
 }

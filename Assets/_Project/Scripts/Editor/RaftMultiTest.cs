@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using MakeGame.Data;
+using MakeGame.Player;
 using MakeGame.Systems;
 using UnityEditor;
 using UnityEngine;
@@ -114,6 +116,12 @@ namespace MakeGame.EditorTools
             public float yaw;
             public int tiles;
             public int parts;
+
+            /// <summary>
+            /// 저장 직전 그 뗏목의 갑판 위 건축 조각 수. **대수를 상수로 박지 않는 것과 같은 이유로**
+            /// 이것도 기록해서 대조한다 - 건축 메뉴로 방금 세운 뗏목은 갑판이 없어 0개가 정상이다.
+            /// </summary>
+            public int deckPieces;
         }
 
         /// <summary>
@@ -184,9 +192,11 @@ namespace MakeGame.EditorTools
                     case 4: PhaseDeckPieceOwnership(); break;
                     case 5: PhaseWalkBetweenRafts(); break;
                     case 6: PhaseVerifyWalk(); break;
-                    case 7: PhaseSave(); break;
-                    case 8: PhaseDestroyAndLoad(); break;
-                    case 9: PhaseVerifyRestore(); break;
+                    case 7: PhaseAimRaftFromBuildMenu(); break;
+                    case 8: PhaseConfirmRaftFromBuildMenu(); break;
+                    case 9: PhaseSave(); break;
+                    case 10: PhaseDestroyAndLoad(); break;
+                    case 11: PhaseVerifyRestore(); break;
                     default: Finish(); return;
                 }
             }
@@ -234,6 +244,10 @@ namespace MakeGame.EditorTools
             RaftStructure first = RaftStructure.All[0];
             Vector3 origin = first.AnchorPosition;
 
+            // ★ 자리 판정은 뱃머리 방향을 탄다(선체가 4x8이라 네 귀퉁이 위치가 방향마다 다르다).
+            //   탐색과 실제 배치가 같은 yaw를 써야 "초록이었는데 못 세운다"가 안 나온다.
+            const float PlaceYaw = 37f;
+
             float minGap = RaftStructure.FootprintRadius * 2f;
             Vector3 site = Vector3.zero;
             string lastReason = "(후보 없음)";
@@ -248,7 +262,7 @@ namespace MakeGame.EditorTools
                     Vector3 p = origin + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * r;
                     tried++;
 
-                    if (RaftStructure.IsValidSite(p, null, out string reason))
+                    if (RaftStructure.IsValidSite(p, PlaceYaw, null, out string reason))
                     {
                         site = p;
                         found = true;
@@ -280,7 +294,7 @@ namespace MakeGame.EditorTools
                 return;
             }
 
-            second.PlaceAt(site, Quaternion.Euler(0f, 37f, 0f));
+            second.PlaceAt(site, Quaternion.Euler(0f, PlaceYaw, 0f));
 
             if (!second.IsPlaced)
             {
@@ -318,7 +332,8 @@ namespace MakeGame.EditorTools
 
             // (a) 방금 세운 자리는 이제 "다른 뗏목과 너무 가깝다"여야 한다.
             Vector3 taken = second.transform.position;
-            if (RaftStructure.IsValidSite(taken, null, out string r1))
+            float takenYaw = second.AnchorYaw;
+            if (RaftStructure.IsValidSite(taken, takenYaw, null, out string r1))
             {
                 Fail("이미 뗏목이 선 자리가 여전히 유효하다고 나온다");
                 return;
@@ -326,7 +341,7 @@ namespace MakeGame.EditorTools
             notes.Add("점유된 자리 거절: \"" + r1 + "\"");
 
             // (b) 같은 자리라도 그 뗏목 자신을 ignore로 넘기면 통과해야 한다(이동/재배치용).
-            if (!RaftStructure.IsValidSite(taken, second, out string r2))
+            if (!RaftStructure.IsValidSite(taken, takenYaw, second, out string r2))
             {
                 Fail("ignore로 자신을 넘겼는데도 거절당했다: " + r2);
                 return;
@@ -361,7 +376,7 @@ namespace MakeGame.EditorTools
             {
                 notes.Add("뭍 지점을 못 찾아 (c) 건너뜀");
             }
-            else if (RaftStructure.IsValidSite(land, null, out string r3))
+            else if (RaftStructure.IsValidSite(land, 0f, null, out string r3))
             {
                 Fail("뭍 위(" + V(land) + ")가 유효한 자리로 나온다");
                 return;
@@ -373,7 +388,7 @@ namespace MakeGame.EditorTools
 
             // (d) 먼바다는 거절되어야 한다.
             Vector3 offshore = o + new Vector3(600f, 0f, 600f);
-            if (RaftStructure.IsValidSite(offshore, null, out string r4))
+            if (RaftStructure.IsValidSite(offshore, 0f, null, out string r4))
             {
                 Fail("먼바다(" + V(offshore) + ")가 유효한 자리로 나온다");
                 return;
@@ -570,7 +585,256 @@ namespace MakeGame.EditorTools
                  + "\"space\":1,\"tier\":1,\"raftId\":\"" + raft.RaftId + "\"}";
         }
 
-        // ── 6단계: 저장 ────────────────────────────────────────────────────
+        // ── 7단계: 건축 메뉴로 뗏목 조준 ────────────────────────────────────
+        //
+        // 실제 게임 흐름을 그대로 탄다: 건축 모드 켜기 → "뗏목" 항목 고르기 → 물 위를 조준.
+        // 하네스가 하는 일은 **카메라를 그 자리 위로 옮기고 재료를 쥐여 주는 것뿐**이고,
+        // 조준·유효성·고스트 판정은 전부 BuildingSystem이 매 프레임 하던 그대로 돈다.
+        private static void PhaseAimRaftFromBuildMenu()
+        {
+            var building = BuildingSystem.Instance;
+            if (building == null)
+            {
+                Fail("BuildingSystem.Instance가 없다");
+                return;
+            }
+
+            RaftStructure first = RaftStructure.All[0];
+            Vector3 origin = first.AnchorPosition;
+            float minGap = RaftStructure.FootprintRadius * 2f;
+
+            menuSite = Vector3.zero;
+            bool found = false;
+
+            for (float r = minGap + 1f; r <= minGap + 40f && !found; r += 1.5f)
+            {
+                for (int a = 0; a < 36 && !found; a++)
+                {
+                    float ang = a * (Mathf.PI * 2f / 36f);
+                    Vector3 p = origin + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * r;
+
+                    if (RaftStructure.IsValidSite(p, MenuYaw, null, out string _))
+                    {
+                        menuSite = p;
+                        found = true;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                Fail("건축 메뉴 검사에 쓸 빈 자리를 못 찾았다");
+                return;
+            }
+
+            if (!GrantRaftMaterials(out string grantNote))
+            {
+                Fail("뗏목 재료를 쥐여 주지 못했다: " + grantNote);
+                return;
+            }
+
+            // 카메라를 자리 위 8m에 두고 똑바로 내려다본다. 조준선이 해수면과 만나는 지점이 곧 자리다.
+            Camera cam = Camera.main;
+            if (cam == null)
+            {
+                Fail("Camera.main이 없다");
+                return;
+            }
+
+            // ★ 조작 스크립트를 먼저 재운다. 카메라는 플레이어의 자식이고 PlayerController가
+            //   **매 프레임** localEulerAngles와 몸통 회전을 다시 써 넣는다 - 그걸 안 끄면 여기서
+            //   맞춰 둔 시선이 다음 프레임에 통째로 되돌아가고, 조준이 영영 물에 닿지 않는다.
+            //   (처음에 이걸 빼먹어 "놓을 자리를 찾는 중"으로 헛 FAIL이 났다.)
+            GameObject player = GameObject.Find("Player");
+            if (player == null)
+            {
+                Fail("Player를 못 찾았다");
+                return;
+            }
+
+            suspendedController = player.GetComponent<PlayerController>();
+            if (suspendedController != null)
+                suspendedController.enabled = false;
+
+            var controller = player.GetComponent<CharacterController>();
+            if (controller != null)
+                controller.enabled = false;
+
+            player.transform.position = new Vector3(menuSite.x, menuSite.y + 8f, menuSite.z);
+            Physics.SyncTransforms();
+
+            cam.transform.SetPositionAndRotation(
+                new Vector3(menuSite.x, menuSite.y + 8f, menuSite.z),
+                Quaternion.LookRotation(Vector3.down, Vector3.forward));
+
+            building.SetBuildMode(true);
+            building.SelectRaftPlacement();
+
+            if (!building.IsRaftPlacementSelected)
+            {
+                Fail("SelectRaftPlacement 뒤에도 뗏목 모드가 아니다");
+                return;
+            }
+
+            // 조준은 Update에서 돈다. 몇 프레임 준다.
+            waitFrames = 6;
+            Pass("건축 메뉴 조준", "자리 " + V(menuSite) + " 위 8m에서 내려다봄 · " + grantNote);
+        }
+
+        // ── 8단계: 좌클릭 확정 ──────────────────────────────────────────────
+        private static void PhaseConfirmRaftFromBuildMenu()
+        {
+            var building = BuildingSystem.Instance;
+            if (building == null)
+            {
+                Fail("BuildingSystem.Instance가 사라졌다");
+                return;
+            }
+
+            if (!building.CanPlaceNow)
+            {
+                Fail("건축 메뉴가 이 자리를 거절했다: " +
+                     (string.IsNullOrEmpty(building.ExtraBlockReason)
+                        ? BuildingSystem.DescribeBlockReason(building.BlockReason)
+                        : building.ExtraBlockReason));
+                return;
+            }
+
+            int before = RaftStructure.Count;
+            int woodBefore = building.CountOwned(RaftMaterialName);
+
+            building.TryPlace();
+
+            if (RaftStructure.Count != before + 1)
+            {
+                Fail("좌클릭 뒤 뗏목이 " + RaftStructure.Count + "대다 (기대 " + (before + 1) + "대)");
+                return;
+            }
+
+            RaftStructure placed = RaftStructure.All[RaftStructure.Count - 1];
+            float error = Flat(placed.AnchorPosition - menuSite);
+
+            if (error > 0.5f)
+            {
+                Fail("겨눈 자리와 실제로 선 자리가 " + F(error) + "m 어긋났다");
+                return;
+            }
+
+            if (placed.BaseTileCount != 1)
+            {
+                Fail("새 뗏목의 바닥판이 " + placed.BaseTileCount + "칸이다 (기대 1칸)");
+                return;
+            }
+
+            int woodAfter = building.CountOwned(RaftMaterialName);
+            if (woodAfter >= woodBefore)
+            {
+                Fail("재료가 줄지 않았다 (" + RaftMaterialName + " " + woodBefore + " → " + woodAfter + ")");
+                return;
+            }
+
+            building.SetBuildMode(false);
+            ResumePlayerController();
+
+            Pass("건축 메뉴 확정",
+                "겨눈 자리에 '" + placed.gameObject.name + "' 배치(오차 " + F(error) + "m), 바닥판 1칸, " +
+                RaftMaterialName + " " + woodBefore + "->" + woodAfter);
+        }
+
+        /// <summary>건축 메뉴 검사에 쓸 자리와 뱃머리 방향.</summary>
+        private const float MenuYaw = 0f;
+        private static Vector3 menuSite;
+
+        /// <summary>검사 동안 재워 둔 조작 스크립트. 어떤 경로로 끝나든 반드시 깨운다.</summary>
+        private static PlayerController suspendedController;
+
+        /// <summary>재워 둔 조작 스크립트를 깨운다(두 번 불러도 안전하다).</summary>
+        private static void ResumePlayerController()
+        {
+            if (suspendedController != null)
+            {
+                suspendedController.enabled = true;
+                suspendedController = null;
+            }
+
+            GameObject player = GameObject.Find("Player");
+            var controller = player != null ? player.GetComponent<CharacterController>() : null;
+            if (controller != null)
+                controller.enabled = true;
+        }
+
+        /// <summary>재료가 줄었는지 확인할 때 볼 품목(뗏목 첫 바닥판 재료의 첫 줄).</summary>
+        private static string RaftMaterialName = "나뭇가지";
+
+        /// <summary>
+        /// 뗏목 첫 바닥판 재료를 쥐여 준다. 새 판에는 아무것도 없어서, 이걸 안 하면
+        /// "재료가 모자란다"에 막혀 조준·확정 경로를 한 줄도 못 밟는다.
+        /// </summary>
+        private static bool GrantRaftMaterials(out string note)
+        {
+            note = string.Empty;
+
+            var inventory = UnityEngine.Object.FindAnyObjectByType<PlayerInventory>();
+            if (inventory == null)
+            {
+                note = "PlayerInventory가 없다";
+                return false;
+            }
+
+            ItemDataRegistry registry = ItemDataRegistry.LoadFromResources();
+            if (registry == null || registry.allItems == null)
+            {
+                note = "ItemDataRegistry를 못 읽었다";
+                return false;
+            }
+
+            IReadOnlyList<RaftBuildCost> cost = RaftBuildCatalog.GetCost(RaftBuildEntry.BaseWood);
+            var granted = new List<string>();
+
+            for (int i = 0; i < cost.Count; i++)
+            {
+                RaftBuildCost line = cost[i];
+                if (string.IsNullOrEmpty(line.itemName) || line.count <= 0)
+                    continue;
+
+                ItemData data = null;
+                for (int k = 0; k < registry.allItems.Count; k++)
+                {
+                    ItemData candidate = registry.allItems[k];
+                    if (candidate != null && candidate.itemName == line.itemName)
+                    {
+                        data = candidate;
+                        break;
+                    }
+                }
+
+                if (data == null)
+                {
+                    note = "'" + line.itemName + "' ItemData를 못 찾았다";
+                    return false;
+                }
+
+                if (i == 0)
+                    RaftMaterialName = line.itemName;
+
+                int need = line.count - RaftBuildCatalog.CountOwned(inventory, line.itemName);
+                for (int k = 0; k < need; k++)
+                {
+                    if (!inventory.TryAddItem(data))
+                    {
+                        note = "'" + line.itemName + "'을 소지품에 넣지 못했다(칸 부족)";
+                        return false;
+                    }
+                }
+
+                granted.Add(line.itemName + " " + line.count);
+            }
+
+            note = "재료 지급: " + string.Join(", ", granted);
+            return true;
+        }
+
+        // ── 9단계: 저장 ────────────────────────────────────────────────────
         private static void PhaseSave()
         {
             var slc = UnityEngine.Object.FindAnyObjectByType<SaveLoadController>();
@@ -604,6 +868,7 @@ namespace MakeGame.EditorTools
                     yaw = raft.AnchorYaw,
                     tiles = raft.BaseTileCount,
                     parts = PartsOf(raft),
+                    deckPieces = DeckPieceCount(raft),
                 });
             }
 
@@ -740,6 +1005,8 @@ namespace MakeGame.EditorTools
             }
 
             // 갑판 조각도 제 뗏목으로 돌아왔는가. 이게 오늘 고친 결함의 최종 관문이다.
+            var deckNotes = new List<string>();
+
             for (int e = 0; e < expected.Count; e++)
             {
                 RaftStructure raft = MatchByPosition(live, expected[e].pos);
@@ -747,16 +1014,18 @@ namespace MakeGame.EditorTools
                     continue;
 
                 int deckPieces = DeckPieceCount(raft);
-                if (deckPieces != 1)
+                if (deckPieces != expected[e].deckPieces)
                 {
-                    Fail("불러오기 뒤 " + expected[e].name + "의 갑판 조각이 " + deckPieces + "개다 (기대 1개)" +
-                         " - 조각이 남의 뗏목으로 갔거나 사라졌다");
+                    Fail("불러오기 뒤 " + expected[e].name + "의 갑판 조각이 " + deckPieces + "개다 (기대 " +
+                         expected[e].deckPieces + "개) - 조각이 남의 뗏목으로 갔거나 사라졌다");
                     return;
                 }
+
+                deckNotes.Add(expected[e].name + " " + deckPieces + "개");
             }
 
             Pass("왕복 복원", expected.Count + "대 전부 제자리 · " + string.Join(" · ", notes) +
-                " · 갑판 조각도 각자 뗏목에 1개씩");
+                " · 갑판 조각 " + string.Join("/", deckNotes));
         }
 
         // ── 마무리 ─────────────────────────────────────────────────────────
@@ -764,6 +1033,9 @@ namespace MakeGame.EditorTools
         {
             EditorApplication.update -= Tick;
             running = false;
+
+            // 검사 도중 실패했더라도 조작은 반드시 돌려준다(안 그러면 판이 통째로 멈춘 것처럼 보인다).
+            ResumePlayerController();
 
             // 사용자의 원본 슬롯 파일을 되돌린다.
             try
