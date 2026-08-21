@@ -845,6 +845,18 @@ namespace MakeGame.Systems
             // 달라지므로(매니저 오브젝트) 기준으로 쓸 수 없다.
             Camera cam = GetCamera();
             Vector3 origin = cam != null ? cam.transform.position : transform.position;
+
+            // ★ **밟고 선 뗏목이 언제나 이긴다.**
+            //
+            //   예전에는 중심까지의 거리로만 골랐다. 뗏목 사이 최소 간격이 8.9m인데 갑판 위에서
+            //   중심으로부터 4.5m까지 떨어져 설 수 있으니, A의 갑판 끝에 서서 B를 바로 옆에 세우면
+            //   B가 더 가까워진다. 그러면 결속이 B로 넘어가고, B는 아직 갑판이 없어 A 위에 지으려던
+            //   조각이 통째로 막힌다("뗏목에 막힘"). 자유 배치가 들어오면서 손쉽게 재현되는 상황이
+            //   됐으므로, 발밑을 먼저 본다.
+            RaftStructure standingOn = FindRaftUnderfoot(origin);
+            if (standingOn != null)
+                return standingOn;
+
             RaftStructure nearest = RaftStructure.Nearest(origin);
             if (nearest == null)
                 return null;
@@ -853,6 +865,43 @@ namespace MakeGame.Systems
             float reach = RaftStructure.FootprintRadius + buildDistance + 2f;
             Vector3 delta = nearest.transform.position - origin;
             return delta.sqrMagnitude <= reach * reach ? nearest : null;
+        }
+
+        /// <summary>
+        /// 그 지점이 **어느 뗏목의 갑판 위인가**(수평으로 선체 안, 높이는 갑판 언저리).
+        /// 두 뗏목이 겹칠 수 없으므로(IsValidSite) 답은 많아야 하나다.
+        /// </summary>
+        private static RaftStructure FindRaftUnderfoot(Vector3 worldPoint)
+        {
+            // 눈높이에서 갑판까지의 여유. 서 있으면 1.6m 안팎, 앉거나 점프해도 이 안이다.
+            const float VerticalReach = 3.5f;
+
+            var rafts = RaftStructure.All;
+            for (int i = 0; i < rafts.Count; i++)
+            {
+                RaftStructure raft = rafts[i];
+                if (raft == null || !raft.HasDeck)
+                    continue;
+
+                Transform deckRoot = raft.DeckRoot;
+                if (deckRoot == null)
+                    continue;
+
+                // 뗏목 로컬로 옮겨 사각형 안인지 본다(원이 아니라 사각형이라 4x8의 긴 쪽이 정확하다).
+                Vector3 local = deckRoot.InverseTransformPoint(worldPoint);
+                Vector2 size = raft.DeckLocalSize;
+
+                if (Mathf.Abs(local.x) > size.x * 0.5f || Mathf.Abs(local.z) > size.y * 0.5f)
+                    continue;
+
+                float height = local.y - raft.DeckTopLocalY;
+                if (height < -0.5f || height > VerticalReach)
+                    continue;
+
+                return raft;
+            }
+
+            return null;
         }
 
         private void UnbindRaft()

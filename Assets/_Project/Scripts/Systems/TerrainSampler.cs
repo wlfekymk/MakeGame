@@ -69,10 +69,39 @@ namespace MakeGame.Systems
         /// <summary>
         /// 레이가 맞은 콜라이더가 섬 지형인지 판별한다. TerrainNamePrefix 주석 참고.
         /// </summary>
+        // 최근에 판정한 콜라이더 몇 개를 기억해 둔다.
+        //
+        // [왜 필요한가] Unity에서 gameObject.name을 읽으면 **호출마다 새 문자열이 만들어진다.**
+        // 이 함수는 뗏목 자리 판정 같은 경로에서 한 프레임에 수십 번 불리는데, 그 히트는 거의
+        // 전부 같은 섬 콜라이더 하나다. 링 버퍼 네 칸이면 사실상 다 걸린다.
+        //
+        // 파괴된 콜라이더가 칸에 남아도 해롭지 않다 - 새 콜라이더와 참조가 같을 수 없어 그냥
+        // 안 맞고 밀려날 뿐이다(딕셔너리가 아니라 링이라 자라지도 않는다).
+        private const int TerrainCacheSize = 4;
+        private static readonly Collider[] terrainCacheKeys = new Collider[TerrainCacheSize];
+        private static readonly bool[] terrainCacheValues = new bool[TerrainCacheSize];
+        private static int terrainCacheNext;
+
         private static bool IsTerrainHit(RaycastHit hit)
         {
-            return hit.collider != null
-                && hit.collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal);
+            Collider collider = hit.collider;
+            if (collider == null)
+                return false;
+
+            for (int i = 0; i < TerrainCacheSize; i++)
+            {
+                if (ReferenceEquals(terrainCacheKeys[i], collider))
+                    return terrainCacheValues[i];
+            }
+
+            bool isTerrain = collider.gameObject.name.StartsWith(
+                TerrainNamePrefix, System.StringComparison.Ordinal);
+
+            terrainCacheKeys[terrainCacheNext] = collider;
+            terrainCacheValues[terrainCacheNext] = isTerrain;
+            terrainCacheNext = (terrainCacheNext + 1) % TerrainCacheSize;
+
+            return isTerrain;
         }
     }
 }

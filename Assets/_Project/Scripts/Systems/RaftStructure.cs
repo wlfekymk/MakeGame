@@ -199,6 +199,12 @@ namespace MakeGame.Systems
         private const float RampRun = 2.2f;
 
         /// <summary>
+        /// 승선 발판이 고물 뒤로 뻗는 길이(m). 건축 고스트가 발판을 같은 크기로 그리기 위해 공개한다 -
+        /// 그림과 판정이 다른 값을 쓰면 "고스트에는 닿는데 실제로는 안 닿는" 자리가 생긴다.
+        /// </summary>
+        public const float RampRunPublic = RampRun;
+
+        /// <summary>
         /// 승선 발판 밑동을 실측 해변 높이보다 얼마나 더 아래(모래 속)에 박을지(m).
         /// 잔잔한 날의 상하 흔들림 실측 최대치(0.35m)에 맞췄다 - 근거는 TryAnchorToShore 주석.
         /// </summary>
@@ -1355,9 +1361,9 @@ namespace MakeGame.Systems
                 return false;
             }
 
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
             float halfWidth = DeckWidth * 0.5f - 0.3f;
             float halfLength = DeckLength * 0.5f - 0.3f;
-            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
 
             for (int corner = 0; corner < 4; corner++)
             {
@@ -1372,10 +1378,23 @@ namespace MakeGame.Systems
                 }
             }
 
-            // (2) 물가에서 너무 멀지 않은가. 반경을 넓혀 가며 뭍을 찾는다.
-            if (!HasShoreWithin(worldPoint, seaLevel, MaxShoreDistance))
+            // (2) **승선 발판이 뭍에 닿는가.**
+            //
+            // 예전에는 "반경 14m 안에 뭍이 있는가"를 여덟 방향으로 훑었다. 그런데 발판은 고물(-Z)
+            // 한 방향에 고정이라, 물가가 옆이나 앞에만 있으면 검사는 통과하고 발판은 허공에 뜬다
+            // (수영으로는 올라탈 수 있지만 "왜 안 올라가지"가 된다). 그래서 두루뭉술한 반경 대신
+            // **실제로 발판이 놓일 지점 한 곳**을 잰다 - PlaceAt이 발판 높이를 재는 바로 그 점이다.
+            //
+            // 덤으로 싸다. 여덟 방향 탐침은 최대 56회 레이캐스트였고 이건 1회다.
+            Vector3 facing = rotation * Vector3.forward;
+            Vector3 rampFoot = worldPoint - facing * (DeckLength * 0.5f + RampRun);
+            float rampGroundY = SampleTerrainHeightStatic(rampFoot, out bool rampHitTerrain);
+
+            // PlaceAt이 발판 밑동을 Clamp(groundY - center.y - RampFootDig, -0.9f, ...)로 자른다.
+            // 그 하한에 걸리는 깊이보다 더 파여 있으면 발판이 바닥에 닿지 않는다.
+            if (!rampHitTerrain || rampGroundY < seaLevel - (0.9f - RampFootDig))
             {
-                reason = "물가에서 너무 멀다 - 올라탈 발판이 닿지 않는다";
+                reason = "승선 발판이 뭍에 닿지 않는다 - 뱃머리를 물 쪽으로 돌려라";
                 return false;
             }
 
@@ -1425,36 +1444,6 @@ namespace MakeGame.Systems
 
         /// <summary>뗏목을 띄우려면 최소한 이만큼은 파여 있어야 한다(m).</summary>
         private const float MinSiteDepth = 0.55f;
-
-        /// <summary>물가에서 이 거리 안이어야 뗏목을 세울 수 있다(m).</summary>
-        private const float MaxShoreDistance = 14f;
-
-        /// <summary>
-        /// worldPoint 주변 maxDistance 안에 해수면 위로 솟은 땅이 있는가.
-        /// 여덟 방향으로 1m씩 걸어 나가며 지형 높이를 재는 단순한 탐침이다 - 해안선은 곡선이라
-        /// 한 방향만 봐서는 "바로 옆이 뭍인데 못 짓는다"가 나온다.
-        /// </summary>
-        private static bool HasShoreWithin(Vector3 worldPoint, float seaLevel, float maxDistance)
-        {
-            // 걸음을 2m로 넓혔다(예전 1m). 이 함수는 건축 고스트가 조준하는 동안 계속 불리는데,
-            // 한 걸음이 레이 하나다(8방향 x 14걸음 = 112회). 해안선이 2m 폭보다 좁은 모래톱만으로
-            // 이루어진 경우는 없어(섬 지형 생성이 그런 형상을 만들지 않는다) 판정은 그대로다.
-            for (int dir = 0; dir < 8; dir++)
-            {
-                float angle = dir * (Mathf.PI * 2f / 8f);
-                var step = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
-
-                for (float d = 2f; d <= maxDistance; d += 2f)
-                {
-                    Vector3 probe = worldPoint + step * d;
-                    float y = SampleTerrainHeightStatic(probe, out bool hit);
-                    if (hit && y > seaLevel + 0.05f)
-                        return true;
-                }
-            }
-
-            return false;
-        }
 
         /// <summary>
         /// 파도 흔들림의 기준(정박 위치/회전)을 기억한다. 흔들림은 매 프레임 이 기준에 오프셋을 얹어

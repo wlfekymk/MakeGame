@@ -190,13 +190,14 @@ namespace MakeGame.EditorTools
                     case 2: PhaseValidSiteRules(); break;
                     case 3: PhaseDistinguish(); break;
                     case 4: PhaseDeckPieceOwnership(); break;
-                    case 5: PhaseWalkBetweenRafts(); break;
-                    case 6: PhaseVerifyWalk(); break;
-                    case 7: PhaseAimRaftFromBuildMenu(); break;
-                    case 8: PhaseConfirmRaftFromBuildMenu(); break;
-                    case 9: PhaseSave(); break;
-                    case 10: PhaseDestroyAndLoad(); break;
-                    case 11: PhaseVerifyRestore(); break;
+                    case 5: PhaseVerifyDeckPieceOwnership(); break;
+                    case 6: PhaseWalkBetweenRafts(); break;
+                    case 7: PhaseVerifyWalk(); break;
+                    case 8: PhaseAimRaftFromBuildMenu(); break;
+                    case 9: PhaseConfirmRaftFromBuildMenu(); break;
+                    case 10: PhaseSave(); break;
+                    case 11: PhaseDestroyAndLoad(); break;
+                    case 12: PhaseVerifyRestore(); break;
                     default: Finish(); return;
                 }
             }
@@ -244,9 +245,10 @@ namespace MakeGame.EditorTools
             RaftStructure first = RaftStructure.All[0];
             Vector3 origin = first.AnchorPosition;
 
-            // ★ 자리 판정은 뱃머리 방향을 탄다(선체가 4x8이라 네 귀퉁이 위치가 방향마다 다르다).
-            //   탐색과 실제 배치가 같은 yaw를 써야 "초록이었는데 못 세운다"가 안 나온다.
-            const float PlaceYaw = 37f;
+            // ★ 자리 판정은 뱃머리 방향을 **강하게** 탄다. 선체가 4x8이라 네 귀퉁이가 방향마다
+            //   다른 데다, 승선 발판이 고물 한 방향 고정이라 뱃머리를 물 쪽으로 돌려야만 통과한다.
+            //   그래서 자리와 방향을 함께 찾고, 찾은 방향 그대로 세운다.
+            float placeYaw = 0f;
 
             float minGap = RaftStructure.FootprintRadius * 2f;
             Vector3 site = Vector3.zero;
@@ -262,14 +264,19 @@ namespace MakeGame.EditorTools
                     Vector3 p = origin + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * r;
                     tried++;
 
-                    if (RaftStructure.IsValidSite(p, PlaceYaw, null, out string reason))
+                    for (int y = 0; y < 8 && !found; y++)
                     {
-                        site = p;
-                        found = true;
-                    }
-                    else
-                    {
-                        lastReason = reason;
+                        float yaw = y * 45f;
+                        if (RaftStructure.IsValidSite(p, yaw, null, out string reason))
+                        {
+                            site = p;
+                            placeYaw = yaw;
+                            found = true;
+                        }
+                        else
+                        {
+                            lastReason = reason;
+                        }
                     }
                 }
             }
@@ -294,7 +301,7 @@ namespace MakeGame.EditorTools
                 return;
             }
 
-            second.PlaceAt(site, Quaternion.Euler(0f, PlaceYaw, 0f));
+            second.PlaceAt(site, Quaternion.Euler(0f, placeYaw, 0f));
 
             if (!second.IsPlaced)
             {
@@ -319,7 +326,7 @@ namespace MakeGame.EditorTools
             freshRaft = second;
 
             Pass("뗏목 추가 배치",
-                "후보 " + tried + "개 탐색 → " + V(site) + " 에 '" + second.gameObject.name +
+                "후보 " + tried + "개 탐색 → " + V(site) + " 뱃머리 " + F(placeYaw) + "도, '" + second.gameObject.name +
                 "' 배치. 명부 " + RaftStructure.Count + "대, 간격 " + F(d.magnitude) + "m");
         }
 
@@ -466,8 +473,28 @@ namespace MakeGame.EditorTools
 
             building.RestoreFromJson(json);
 
-            int countA = DeckPieceCount(a);
-            int countB = DeckPieceCount(b);
+            // ★ **한 프레임 기다린 뒤에 센다.** RestoreFromJson이 먼저 부르는 ClearAllPieces의
+            //   Destroy는 프레임 끝에야 실제로 지워지는데, 그때까지 옛 조각도 컨테이너의 자식으로
+            //   남아 childCount에 잡힌다(같은 세션에서 두 번째로 돌리면 "A 2, B 1"이 나온다).
+            deckOwnerA = a;
+            deckOwnerB = b;
+            waitFrames = 3;
+
+            Pass("갑판 조각 배치", "두 뗏목의 같은 칸(0,0)에 조각을 하나씩 세웠다 (판정은 다음 단계)");
+        }
+
+        // ── 5단계: 갑판 조각 소속 판정 ──────────────────────────────────────
+        private static void PhaseVerifyDeckPieceOwnership()
+        {
+            var building = BuildingSystem.Instance;
+            if (building == null || deckOwnerA == null || deckOwnerB == null)
+            {
+                Fail("갑판 조각 판정에 쓸 대상이 사라졌다");
+                return;
+            }
+
+            int countA = DeckPieceCount(deckOwnerA);
+            int countB = DeckPieceCount(deckOwnerB);
 
             if (countA != 1 || countB != 1)
             {
@@ -478,7 +505,7 @@ namespace MakeGame.EditorTools
 
             // 저장으로 되돌려 소속이 그대로 실려 나가는지 본다.
             string roundTrip = building.SerializeToJson();
-            if (!roundTrip.Contains(a.RaftId) || !roundTrip.Contains(b.RaftId))
+            if (!roundTrip.Contains(deckOwnerA.RaftId) || !roundTrip.Contains(deckOwnerB.RaftId))
             {
                 Fail("저장 JSON에 두 뗏목의 식별자가 모두 실리지 않았다");
                 return;
@@ -487,6 +514,9 @@ namespace MakeGame.EditorTools
             Pass("갑판 조각 소속",
                 "두 뗏목의 같은 칸(0,0)에 각각 1개씩 (A=" + countA + ", B=" + countB + "), 저장 JSON에 소속 2종 기록");
         }
+
+        private static RaftStructure deckOwnerA;
+        private static RaftStructure deckOwnerB;
 
         // ── 5단계: 뗏목 사이를 걸어 본다 ────────────────────────────────────
         //
@@ -613,10 +643,15 @@ namespace MakeGame.EditorTools
                     float ang = a * (Mathf.PI * 2f / 36f);
                     Vector3 p = origin + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * r;
 
-                    if (RaftStructure.IsValidSite(p, MenuYaw, null, out string _))
+                    for (int y = 0; y < 8 && !found; y++)
                     {
-                        menuSite = p;
-                        found = true;
+                        float yaw = y * 45f;
+                        if (RaftStructure.IsValidSite(p, yaw, null, out string _))
+                        {
+                            menuSite = p;
+                            menuYaw = yaw;
+                            found = true;
+                        }
                     }
                 }
             }
@@ -660,12 +695,18 @@ namespace MakeGame.EditorTools
             if (controller != null)
                 controller.enabled = false;
 
-            player.transform.position = new Vector3(menuSite.x, menuSite.y + 8f, menuSite.z);
+            player.transform.position = menuSite + Vector3.up * 8f;
             Physics.SyncTransforms();
 
+            // ★ 똑바로 내려다보면 안 된다. BuildingSystem은 **카메라가 바라보는 수평 방향**으로
+            //   뱃머리를 정하는데(ResolveRaftYaw), 수직으로 내려다보면 그 수평 성분이 0이라 뱃머리가
+            //   언제나 0도가 된다. 그러면 여덟 방향 중 0도만 통과하는 자리에서는 영영 초록이 안 뜬다.
+            //   그래서 찾아 둔 방향에서 살짝 비켜 서서 내려다본다(2m 뒤, 8m 위).
+            Vector3 facing = Quaternion.Euler(0f, menuYaw, 0f) * Vector3.forward;
+            Vector3 camPos = menuSite - facing * 2f + Vector3.up * 8f;
+
             cam.transform.SetPositionAndRotation(
-                new Vector3(menuSite.x, menuSite.y + 8f, menuSite.z),
-                Quaternion.LookRotation(Vector3.down, Vector3.forward));
+                camPos, Quaternion.LookRotation((menuSite - camPos).normalized, Vector3.up));
 
             building.SetBuildMode(true);
             building.SelectRaftPlacement();
@@ -678,7 +719,8 @@ namespace MakeGame.EditorTools
 
             // 조준은 Update에서 돈다. 몇 프레임 준다.
             waitFrames = 6;
-            Pass("건축 메뉴 조준", "자리 " + V(menuSite) + " 위 8m에서 내려다봄 · " + grantNote);
+            Pass("건축 메뉴 조준",
+                "자리 " + V(menuSite) + " 뱃머리 " + F(menuYaw) + "도로 내려다봄 · " + grantNote);
         }
 
         // ── 8단계: 좌클릭 확정 ──────────────────────────────────────────────
@@ -741,9 +783,13 @@ namespace MakeGame.EditorTools
                 RaftMaterialName + " " + woodBefore + "->" + woodAfter);
         }
 
-        /// <summary>건축 메뉴 검사에 쓸 자리와 뱃머리 방향.</summary>
-        private const float MenuYaw = 0f;
+        /// <summary>
+        /// 건축 메뉴 검사에 쓸 자리. 뱃머리 방향은 **BuildingSystem이 카메라를 보고 정한다** -
+        /// 하네스가 정해 주지 않는다(그게 실제 플레이 흐름이다). 그래서 자리 탐색은 여덟 방향 중
+        /// 하나라도 되는 곳을 찾고, 확정 판정은 게임이 고른 방향으로 이뤄진다.
+        /// </summary>
         private static Vector3 menuSite;
+        private static float menuYaw;
 
         /// <summary>검사 동안 재워 둔 조작 스크립트. 어떤 경로로 끝나든 반드시 깨운다.</summary>
         private static PlayerController suspendedController;

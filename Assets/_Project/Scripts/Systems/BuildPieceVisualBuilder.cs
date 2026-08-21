@@ -314,6 +314,12 @@ namespace MakeGame.Systems
             Part(root.transform, "BowMark", new Vector3(0f, 0.18f, halfZ + 0.5f),
                 new Vector3(0.9f, 0.14f, 0.9f), material);
 
+            // **승선 발판**. 고물(-Z) 쪽 한 방향에 고정이라, 이걸 안 그리면 어느 쪽으로 올라타는지
+            // 화면에서 알 길이 없다. 자리 판정도 바로 이 발판이 뭍에 닿는지를 보므로(IsValidSite),
+            // 빨간 고스트가 떴을 때 "아 뒤쪽이 물이구나" 하고 휠로 돌릴 수 있게 여기 그려 둔다.
+            Part(root.transform, "Ramp", new Vector3(0f, -0.22f, -halfZ - RaftStructure.RampRunPublic * 0.5f),
+                new Vector3(width * 0.55f, 0.14f, RaftStructure.RampRunPublic), material);
+
             var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
             for (int i = 0; i < renderers.Length; i++)
             {
