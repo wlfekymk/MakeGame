@@ -122,7 +122,7 @@ namespace MakeGame.Systems
         /// 뗏목을 세울 수 있는 최대 거리(m). 조각(buildDistance)보다 넉넉하다 - 뗏목은 4x8m라
         /// 팔 닿는 거리에 두면 발밑밖에 안 보이고, 물가에 서서 앞바다에 놓는 것이 정상적인 자세다.
         /// </summary>
-        public float raftPlaceDistance = 14f;
+        public float raftPlaceDistance = 18f;
 
         // ── 격자 상수 ───────────────────────────────────────────────────────────
         private const float CellSize = BuildPieceCatalog.CellSize;

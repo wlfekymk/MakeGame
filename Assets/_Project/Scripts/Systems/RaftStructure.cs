@@ -1306,15 +1306,20 @@ namespace MakeGame.Systems
             // 승선 발판이 닿을 해변 지점의 실제 높이를 잰다. terrainMaxHeight는 씬 직렬화 값(8)이
             // 코드 기본값(2.5)과 다르므로 상수로 가정하면 안 된다 - 반드시 실측한다.
             //
-            // [파도 v5] 잰 높이보다 RampFootDig만큼 **더 아래**를 발판 밑동으로 잡는다(하한도 함께
-            // 내렸다). 상하 흔들림 상한이 1.2m라, 발판을 모래 표면에 딱 맞춰 두면 파도 마루마다 발판
-            // 끝이 통째로 떠올라 CharacterController.stepOffset(씬 값 0.3)을 넘는 턱이 생기기 때문이다.
+            // [파도 v5] 잰 높이보다 RampFootDig만큼 **더 아래**를 발판 밑동으로 잡는다. 상하 흔들림
+            // 상한이 1.2m라, 발판을 모래 표면에 딱 맞춰 두면 파도 마루마다 발판 끝이 통째로 떠올라
+            // CharacterController.stepOffset(씬 값 0.3)을 넘는 턱이 생기기 때문이다.
+            //
+            // ★ [자유 배치] **해저를 쫓아 내려가지 않는다.** 예전 하한은 -0.9였는데, 그 값은 물가에
+            //   붙여 짓던 시절에는 닿을 일이 없었다(모래가 해수면 언저리라 -0.35쯤에서 멈춘다).
+            //   깊은 물에 자유 배치를 하면 해저가 -3m라 하한까지 내려가고, 발판이 바다로 잠수하는
+            //   커다란 판때기가 된다. 뭍이 없으면 발판은 **수면에 걸치는 것**이 맞다 - 거기서부터는
+            //   헤엄쳐 올라오는 자리다.
             Vector3 facing = rotation * Vector3.forward;
             Vector3 rampFoot = center - facing * (DeckLength * 0.5f + RampRun);
             float groundY = SampleTerrainHeight(rampFoot, out bool hitTerrain);
-            rampFootLocalY = hitTerrain
-                ? Mathf.Clamp(groundY - center.y - RampFootDig, -0.9f, DeckSurfaceY - 0.08f)
-                : -RampFootDig;
+            float rampRelative = hitTerrain ? groundY - center.y - RampFootDig : -RampFootDig;
+            rampFootLocalY = Mathf.Clamp(rampRelative, -RampFootDig, DeckSurfaceY - 0.08f);
 
             CaptureWaveAnchor();
             anchored = true;
@@ -1355,46 +1360,58 @@ namespace MakeGame.Systems
             //   (GetBaseTileCenter(0) = 로컬 (-1, 0, -3)). 중심만 보면 수심 0.6m를 통과해도 실제로
             //   생기는 판자는 3m 뒤 모래밭에 박힐 수 있다. 고스트는 4x8 테두리를 그리므로 플레이어
             //   눈에는 "초록 사각형 한복판을 겨눴는데 판자가 구석에 나온" 것으로 보인다.
-            if (!IsWaterDeepEnough(worldPoint, seaLevel))
-            {
-                reason = "물이 얕다 - 뗏목이 뜨지 않는다";
-                return false;
-            }
-
             Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
-            float halfWidth = DeckWidth * 0.5f - 0.3f;
-            float halfLength = DeckLength * 0.5f - 0.3f;
 
-            for (int corner = 0; corner < 4; corner++)
+            // 네 귀퉁이만 보면 그 사이로 모래 비탈이 지나간다. 발자국 전체를 3x5 격자로 훑는다.
+            // 레이 15회지만 조준점이 0.25m 넘게 움직였을 때만 도는 경로다(BuildingSystem.QueryRaftSite).
+            const int SamplesAcross = 3;
+            const int SamplesAlong = 5;
+
+            for (int ix = 0; ix < SamplesAcross; ix++)
             {
-                float localX = (corner % 2 == 0 ? -1f : 1f) * halfWidth;
-                float localZ = (corner < 2 ? -1f : 1f) * halfLength;
-                Vector3 probe = worldPoint + rotation * new Vector3(localX, 0f, localZ);
+                float localX = (ix / (float)(SamplesAcross - 1) - 0.5f) * DeckWidth;
 
-                if (!IsWaterDeepEnough(probe, seaLevel))
+                for (int iz = 0; iz < SamplesAlong; iz++)
                 {
-                    reason = "선체가 걸린다 - 네 귀퉁이가 다 물에 잠겨야 한다";
-                    return false;
+                    float localZ = (iz / (float)(SamplesAlong - 1) - 0.5f) * DeckLength;
+                    Vector3 probe = worldPoint + rotation * new Vector3(localX, 0f, localZ);
+
+                    if (!IsWaterDeepEnough(probe, seaLevel))
+                    {
+                        reason = "물이 얕다 - 선체가 모래에 걸린다";
+                        return false;
+                    }
                 }
             }
 
-            // (2) **승선 발판이 뭍에 닿는가.**
+            // (2) **물가가 고물 쪽에 있는가.**
             //
-            // 예전에는 "반경 14m 안에 뭍이 있는가"를 여덟 방향으로 훑었다. 그런데 발판은 고물(-Z)
-            // 한 방향에 고정이라, 물가가 옆이나 앞에만 있으면 검사는 통과하고 발판은 허공에 뜬다
-            // (수영으로는 올라탈 수 있지만 "왜 안 올라가지"가 된다). 그래서 두루뭉술한 반경 대신
-            // **실제로 발판이 놓일 지점 한 곳**을 잰다 - PlaceAt이 발판 높이를 재는 바로 그 점이다.
+            // 승선 발판은 고물(-Z) 한 방향에 고정이다. 그러니 뱃머리가 바다를 보고 고물이 뭍을
+            // 향해야 올라탈 수 있고, 그 방향에 뭍이 있어야 "해안 건조물"이라는 전제도 성립한다.
             //
-            // 덤으로 싸다. 여덟 방향 탐침은 최대 56회 레이캐스트였고 이건 1회다.
+            // ★ **발판 끝이 마른 땅에 닿을 것까지 요구하면 안 된다.** 한 판(0.2.66) 그렇게 했다가
+            //   뗏목이 통째로 파도치는 물가로 끌려 들어가 모래에 걸쳐 섰다("물 밑에 만들어진다").
+            //   발판은 물 위에 조금 떠 있어도 되고(PlaceAt이 높이를 잘라 준다), 여기서 볼 것은
+            //   "저쪽이 뭍인가"뿐이다.
             Vector3 facing = rotation * Vector3.forward;
-            Vector3 rampFoot = worldPoint - facing * (DeckLength * 0.5f + RampRun);
-            float rampGroundY = SampleTerrainHeightStatic(rampFoot, out bool rampHitTerrain);
+            Vector3 sternEdge = worldPoint - facing * (DeckLength * 0.5f);
+            bool shoreBehind = false;
 
-            // PlaceAt이 발판 밑동을 Clamp(groundY - center.y - RampFootDig, -0.9f, ...)로 자른다.
-            // 그 하한에 걸리는 깊이보다 더 파여 있으면 발판이 바닥에 닿지 않는다.
-            if (!rampHitTerrain || rampGroundY < seaLevel - (0.9f - RampFootDig))
+            for (float d = 1f; d <= MaxShoreDistance; d += 2f)
             {
-                reason = "승선 발판이 뭍에 닿지 않는다 - 뱃머리를 물 쪽으로 돌려라";
+                Vector3 probe = sternEdge - facing * d;
+                float y = SampleTerrainHeightStatic(probe, out bool hit);
+
+                if (hit && y > seaLevel + 0.05f)
+                {
+                    shoreBehind = true;
+                    break;
+                }
+            }
+
+            if (!shoreBehind)
+            {
+                reason = "물가를 등지고 세워야 한다 - 뱃머리를 바다 쪽으로 돌려라";
                 return false;
             }
 
@@ -1442,8 +1459,17 @@ namespace MakeGame.Systems
         /// <summary>지형을 못 맞혔을 때 가정하는 수심(m). 먼바다는 충분히 깊다고 본다.</summary>
         private const float DeepWaterAssumedDepth = 50f;
 
-        /// <summary>뗏목을 띄우려면 최소한 이만큼은 파여 있어야 한다(m).</summary>
-        private const float MinSiteDepth = 0.55f;
+        /// <summary>
+        /// 뗏목을 띄우려면 최소한 이만큼은 파여 있어야 한다(m).
+        ///
+        /// 뗏목 몸통은 전부 해수면 **위**에 있으므로(바닥판 모델 밑면이 로컬 y=0.09~0.36) 물리적으로
+        /// 걸릴 일은 없다. 이 값이 존재하는 이유는 **파도가 치는 물가를 피하기 위해서**다 - 55cm에서는
+        /// 밀려온 물이 갑판을 덮고 모래 비탈이 선체 밑으로 들어와 "물 밑에 지어진" 것처럼 보인다.
+        /// </summary>
+        private const float MinSiteDepth = 1.0f;
+
+        /// <summary>고물 뒤 이 거리 안에 뭍이 있어야 한다(m). 뗏목은 해안 건조물이다.</summary>
+        private const float MaxShoreDistance = 16f;
 
         /// <summary>
         /// 파도 흔들림의 기준(정박 위치/회전)을 기억한다. 흔들림은 매 프레임 이 기준에 오프셋을 얹어

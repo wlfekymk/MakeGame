@@ -278,26 +278,33 @@ namespace MakeGame.Systems
             const float rim = 0.22f;
             const float postHeight = 1.1f;
 
+            // ★ 고스트를 **실제 뗏목이 설 높이**에 맞춰 띄운다.
+            //
+            //   예전에는 테두리를 로컬 y=0, 곧 해수면에 딱 그렸다. 그러면 고스트의 절반이 물에 잠겨
+            //   "뗏목이 물 밑에 만들어진다"로 보인다. 실제 바닥판 모델의 밑면은 로컬 0.36(통나무)이라
+            //   뗏목은 언제나 수면 위에 뜬다 - 그림도 그렇게 그려야 한다.
+            const float floatY = 0.36f;
+
             float width = RaftStructure.DeckWidth;
             float length = RaftStructure.DeckLength;
             float halfX = width * 0.5f;
             float halfZ = length * 0.5f;
 
             // 테두리 네 줄. 위치는 뗏목 로컬 원점(선체 중심)과 같아, 고스트가 선 자리가 곧 선체 자리다.
-            Part(root.transform, "RimFore", new Vector3(0f, 0f, halfZ - rim * 0.5f),
+            Part(root.transform, "RimFore", new Vector3(0f, floatY, halfZ - rim * 0.5f),
                 new Vector3(width, rim, rim), material);
-            Part(root.transform, "RimAft", new Vector3(0f, 0f, -halfZ + rim * 0.5f),
+            Part(root.transform, "RimAft", new Vector3(0f, floatY, -halfZ + rim * 0.5f),
                 new Vector3(width, rim, rim), material);
-            Part(root.transform, "RimPort", new Vector3(-halfX + rim * 0.5f, 0f, 0f),
+            Part(root.transform, "RimPort", new Vector3(-halfX + rim * 0.5f, floatY, 0f),
                 new Vector3(rim, rim, length), material);
-            Part(root.transform, "RimStarboard", new Vector3(halfX - rim * 0.5f, 0f, 0f),
+            Part(root.transform, "RimStarboard", new Vector3(halfX - rim * 0.5f, floatY, 0f),
                 new Vector3(rim, rim, length), material);
 
             // 통나무 세 줄 - "여기에 뗏목이 선다"가 테두리만으로는 잘 안 읽힌다.
             for (int i = 0; i < 3; i++)
             {
                 float z = -halfZ * 0.5f + halfZ * 0.5f * i;
-                Part(root.transform, $"Log_{i}", new Vector3(0f, -0.14f, z),
+                Part(root.transform, $"Log_{i}", new Vector3(0f, floatY - 0.09f, z),
                     new Vector3(width - rim * 2f, 0.18f, 0.55f), material);
             }
 
@@ -306,18 +313,20 @@ namespace MakeGame.Systems
             {
                 float x = (i % 2 == 0 ? -1f : 1f) * (halfX - rim * 0.5f);
                 float z = (i < 2 ? -1f : 1f) * (halfZ - rim * 0.5f);
-                Part(root.transform, $"Post_{i}", new Vector3(x, postHeight * 0.5f, z),
+                Part(root.transform, $"Post_{i}", new Vector3(x, floatY + postHeight * 0.5f, z),
                     new Vector3(0.16f, postHeight, 0.16f), material);
             }
 
             // 뱃머리 표시(+Z가 앞이다 - RaftStructure.PlaceAt의 facing과 같은 규약).
-            Part(root.transform, "BowMark", new Vector3(0f, 0.18f, halfZ + 0.5f),
+            Part(root.transform, "BowMark", new Vector3(0f, floatY + 0.18f, halfZ + 0.5f),
                 new Vector3(0.9f, 0.14f, 0.9f), material);
 
             // **승선 발판**. 고물(-Z) 쪽 한 방향에 고정이라, 이걸 안 그리면 어느 쪽으로 올라타는지
             // 화면에서 알 길이 없다. 자리 판정도 바로 이 발판이 뭍에 닿는지를 보므로(IsValidSite),
             // 빨간 고스트가 떴을 때 "아 뒤쪽이 물이구나" 하고 휠로 돌릴 수 있게 여기 그려 둔다.
-            Part(root.transform, "Ramp", new Vector3(0f, -0.22f, -halfZ - RaftStructure.RampRunPublic * 0.5f),
+            // 발판은 고물에서 물가 쪽으로 **내려간다**. 갑판보다 낮게 그려야 "저쪽으로 내려서 올라탄다"가
+            // 읽힌다(실제로도 PlaceAt이 발판 밑동을 지면 높이에 맞춰 내린다).
+            Part(root.transform, "Ramp", new Vector3(0f, floatY * 0.35f, -halfZ - RaftStructure.RampRunPublic * 0.5f),
                 new Vector3(width * 0.55f, 0.14f, RaftStructure.RampRunPublic), material);
 
             var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
