@@ -187,8 +187,7 @@ namespace MakeGame.Systems
                 playerInventory = FindAnyObjectByType<PlayerInventory>();
             if (survivalStats == null)
                 survivalStats = FindAnyObjectByType<SurvivalStats>();
-            if (raft == null)
-                raft = RaftStructure.Active;
+            raft = RaftStructure.Active;   // 가장 완성된 뗏목. 여러 대면 바뀔 수 있다.
             if (aircraftRepair == null)
                 aircraftRepair = FindAnyObjectByType<AircraftRepairSystem>();
 

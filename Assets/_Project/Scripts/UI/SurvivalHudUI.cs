@@ -672,8 +672,9 @@ namespace MakeGame.UI
             //
             // 뗏목 참조는 매번 다시 확인한다: 씬 리로드마다 새 인스턴스가 되므로 Start에서 잡아 둔
             // 참조가 죽어 있을 수 있다(전역 검색이 아니라 static 프로퍼티 읽기라 비용이 없다).
-            if (raftStructure == null)
-                raftStructure = RaftStructure.Active;
+            // 뗏목이 여러 대가 되면서 "가장 완성된 것"이 바뀔 수 있다. null일 때만 잡아 두면
+            // 나중에 더 좋은 뗏목을 지어도 진행도가 첫 뗏목에 묶인다(뗏목 다중화, 0.2.63).
+            raftStructure = RaftStructure.Active;
 
             // 인자는 전부 null 허용이다. islandTravel 참조는 이 UI가 들고 있지 않아 null을 넘기는데,
             // 그러면 "시작 섬을 떠났다" 신호만 빠지고 손도끼 보유 신호로 3단계 판정이 유지된다.

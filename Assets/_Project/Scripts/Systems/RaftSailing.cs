@@ -186,8 +186,38 @@ namespace MakeGame.Systems
         // ── 상태 ─────────────────────────────────────────────────────────────────
         private static RaftSailing activeInstance;
 
-        /// <summary>씬에 살아 있는 항해 컴포넌트. 없으면 null.</summary>
-        public static RaftSailing Active => activeInstance != null ? activeInstance : null;
+        /// <summary>
+        /// **지금 조종 중인 항해 컴포넌트.** 없으면 마지막으로 깨어난 것, 그것도 없으면 null.
+        ///
+        /// ★ 조종 중인 것을 먼저 찾는 이유(뗏목 다중화). 예전에는 뗏목이 하나라 "씬에 살아 있는
+        ///   컴포넌트"와 "지금 조종 중인 것"이 같은 말이었다. 이제는 다르다. Awake가 무조건
+        ///   activeInstance를 덮으므로 **가장 나중에 만들어진 뗏목이 이기고**, A를 조종하는 중에
+        ///   B가 생기면 Active가 B로 넘어간다. 그러면 E를 눌러도 Active.IsSteering이 false라
+        ///   조종에서 빠져나오지 못하고 플레이어 이동 잠금이 걸린 채로 남는다 - 실제로 불러오기가
+        ///   뗏목을 다시 세우는 경로에서 재현된다.
+        ///
+        ///   이 프로퍼티를 읽는 곳(상호작용 E · 조작 안내 · 농사 판정)이 묻는 것은 전부
+        ///   "지금 조종 중인가"이므로, 조종 중인 것을 먼저 돌려주는 것이 세 곳 모두에서 정답이다.
+        /// </summary>
+        public static RaftSailing Active
+        {
+            get
+            {
+                var rafts = RaftStructure.All;
+                for (int i = 0; i < rafts.Count; i++)
+                {
+                    RaftStructure raft = rafts[i];
+                    if (raft == null)
+                        continue;
+
+                    var sailing = raft.GetComponent<RaftSailing>();
+                    if (sailing != null && sailing.IsSteering)
+                        return sailing;
+                }
+
+                return activeInstance != null ? activeInstance : null;
+            }
+        }
 
         private RaftStructure raft;
         private WorldMapManager worldMap;

@@ -5,6 +5,37 @@ using MakeGame.Data;
 namespace MakeGame.Systems
 {
     /// <summary>
+    /// 뗏목 한 대의 저장 단위. 위치·방향까지 담는 것이 v3의 핵심이다 - 예전에는 자리가 코드에서
+    /// 유도되는 값(시작 섬 물가)이라 저장할 것이 없었지만, 이제는 플레이어가 정한 값이라
+    /// 저장하지 않으면 불러올 때마다 뗏목이 사라진다.
+    ///
+    /// 위치를 Vector3가 아니라 float 셋으로 두는 이유: JsonUtility는 Vector3를 직렬화하지만
+    /// 이 파일의 다른 좌표들이 전부 float 셋 관례를 쓰고 있어 형식을 맞춘다.
+    /// </summary>
+    [System.Serializable]
+    public class RaftSaveEntry
+    {
+        public float posX;
+        public float posY;
+        public float posZ;
+
+        /// <summary>뱃머리 방향(도). 뗏목은 수평으로만 놓이므로 yaw 하나면 자세가 정해진다.</summary>
+        public float yaw;
+
+        /// <summary>바닥판 칸 수(0 ~ RaftStructure.MaxBaseTiles). 복원 시 범위 밖 값은 잘린다.</summary>
+        public int baseTileCount;
+
+        /// <summary>장착 부품 비트 플래그((int)RaftPart). 돛=1 · 키=2 · 닻=4 · 노=8 · 모터=16.</summary>
+        public int installedParts;
+
+        /// <summary>
+        /// 격자 순번대로 한 칸에 정수 하나. 하위 3비트 = RaftBaseTileKind(1=통나무 · 2=부력통 ·
+        /// 3=드럼통), 8비트(값 8) = 갑판 바닥재가 깔림. 목록 길이는 baseTileCount와 같다.
+        /// </summary>
+        public List<int> baseTiles = new List<int>();
+    }
+
+    /// <summary>
     /// 저장 파일 하나에 담기는 전체 게임 상태.
     /// JsonUtility로 직렬화되므로 모든 필드가 값 타입이거나 [System.Serializable] 클래스여야 한다.
     /// B2-15 1단계: 플레이어가 설치한 구조물(모닥불/쉼터/물 증류기)의 위치·상태를 저장·복원 대상에
@@ -142,14 +173,10 @@ namespace MakeGame.Systems
         // **맨 끝에 추가만 했다**(JsonUtility 관례). 이 필드가 없는 옛 세이브는 전부 0으로 읽히고,
         // 그것이 정확히 "아직 뗏목을 한 칸도 안 깔았다"는 뜻이라 별도 마이그레이션이 필요 없다.
 
-        [Header("뗏목 (해안 건조)")]
-        [Tooltip("해안에 깐 바닥판 칸 수(0 ~ RaftStructure.MaxBaseTiles). 복원 시 범위 밖 값은 잘린다.")]
-        public int raftBaseTileCount;
-
-        [Tooltip("장착된 뗏목 부품 비트 플래그((int)RaftPart). 돛=1 · 키=2 · 닻=4 · 노=8 · 모터=16.\n" +
-            "enum이 아니라 int로 저장하는 이유: JsonUtility는 enum을 정수로 쓰긴 하지만, 나중에 열거자" +
-            " 이름이 바뀌어도 파일 형식이 흔들리지 않도록 저장 계층에서는 정수로 고정한다.")]
-        public int raftInstalledParts;
+        // [자유 배치 · v3] 뗏목이 한 대가 아니게 되면서 스칼라 세 필드로는 표현할 수 없게 됐다.
+        // 아래 rafts 목록이 그 자리를 대신한다. 옛 필드는 **지웠다** - 세이브 호환을 유지하지 않기로
+        // 한 결정(2026-08-19)에 따라 마이그레이션 코드를 남기지 않는다. 옛 세이브를 읽으면 rafts가
+        // 비어 있어 "뗏목을 아직 한 대도 안 지었다"가 되고, 그건 크래시가 아니라 정상적인 무동작이다.
 
         // ── 콘텐츠 스키마 버전 ───────────────────────────────────────────────────────
         // saveKeyVersion과 **일부러 분리했다.** 그쪽은 "절차 생성 개체의 대조 키" 전용이고, 값이
@@ -161,8 +188,11 @@ namespace MakeGame.Systems
             " 승격했다는 안내 로그를 남긴다. 어느 경우든 그 외 모든 데이터는 그대로 복원한다.")]
         public int saveContentVersion;
 
-        /// <summary>현재 콘텐츠 스키마 버전. v2 = 뗏목 바닥판 칸별 구성(raftBaseTiles).</summary>
-        public const int CurrentSaveContentVersion = 2;
+        /// <summary>현재 콘텐츠 스키마 버전. v3 = 뗏목 자유 배치(여러 대 + 위치).</summary>
+        public const int CurrentSaveContentVersion = 3;
+
+        /// <summary>뗏목이 목록이 된 버전. 이 미만이면 rafts가 비어 있다(= 뗏목 없음).</summary>
+        public const int RaftFreePlacementContentVersion = 3;
 
         /// <summary>3단계 도면-작업대 배 시스템이 사라진 버전(뗏목 도입). 이 미만이면 배 진행이 없어진다.</summary>
         public const int RaftContentVersion = 1;
@@ -179,13 +209,9 @@ namespace MakeGame.Systems
         // **갑판 바닥재 유무**가 따로 있고, 종류는 부력(항해 성능)까지 정한다. 칸 수만 저장하면
         // 드럼통 8칸으로 만든 뗏목이 불러오기 한 번에 통나무 8칸이 된다.
 
-        [Header("뗏목 바닥판 칸별 구성 (콘텐츠 v2)")]
-        [Tooltip("격자 순번대로 한 칸에 정수 하나. 하위 3비트 = RaftBaseTileKind(1=통나무 · 2=부력통 ·" +
-            " 3=드럼통), 8비트(값 8) = 갑판 바닥재가 깔림.\n" +
-            "예: 9 = 통나무 + 바닥재, 3 = 드럼통(바닥재 없음). 목록 길이는 raftBaseTileCount와 같다.\n" +
-            "문자열로 압축하지 않고 List<int>로 두는 이유: 칸이 최대 8개뿐이라 압축 이득이 없고," +
-            " JsonUtility가 List<int>를 그대로 직렬화하므로 파싱 코드(=버그 자리)가 아예 필요 없다.")]
-        public List<int> raftBaseTiles = new List<int>();
+        [Header("뗏목 목록 (콘텐츠 v3 · 자유 배치)")]
+        [Tooltip("월드에 세워진 뗏목들. 위치·방향까지 기록하므로 어디에 몇 대를 세우든 그대로 복원된다.")]
+        public List<RaftSaveEntry> rafts = new List<RaftSaveEntry>();
 
         // ── 엔드게임 보스 ────────────────────────────────────────────────────────────
         // **맨 끝에 추가만 했다**(JsonUtility 관례 - 위 필드들과 같은 이유). 이 두 필드가 없는 옛

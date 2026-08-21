@@ -878,14 +878,15 @@ namespace MakeGame.UI
         /// </summary>
         private string GetRaftProgressText()
         {
-            if (raftStructure == null)
-                raftStructure = RaftStructure.Active;
+            // 인스펙터 핀이 있으면 존중하고, 아니면 가장 완성된 뗏목을 본다. 필드에 되쓰지 않는다 -
+            // 엔딩 판정(EndingChecker.Raft)은 핀을 존중하는데 통계 줄만 Best를 보여 주면 둘이 어긋난다.
+            RaftStructure raft = raftStructure != null ? raftStructure : RaftStructure.Active;
 
-            if (raftStructure == null)
+            if (raft == null)
                 return UnknownValue;
 
-            int percent = Mathf.RoundToInt(Mathf.Clamp01(raftStructure.GetOverallProgress()) * 100f);
-            return $"{percent}% ({raftStructure.BaseTileCount}/{RaftStructure.MaxBaseTiles}칸)";
+            int percent = Mathf.RoundToInt(Mathf.Clamp01(raft.GetOverallProgress()) * 100f);
+            return $"{percent}% ({raft.BaseTileCount}/{RaftStructure.MaxBaseTiles}칸)";
         }
 
         /// <summary>채집 스킬 레벨.</summary>

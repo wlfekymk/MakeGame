@@ -318,15 +318,16 @@ namespace MakeGame.UI
 
             // 뗏목은 씬 배선이 아니라 런타임 생성이므로 매 갱신마다 Active를 한 번 확인한다
             // (static 프로퍼티 읽기라 전역 검색 비용이 없다).
-            if (raftStructure == null)
-                raftStructure = RaftStructure.Active;
+            // 인스펙터에 핀을 꽂아 뒀으면 그것을 존중하고, 아니면 가장 완성된 뗏목을 본다.
+            // **필드에 되쓰지 않는다** - 되쓰면 핀이 첫 갱신에 지워진다.
+            RaftStructure shownRaft = raftStructure != null ? raftStructure : RaftStructure.Active;
 
-            if (raftStructure != null)
+            if (shownRaft != null)
             {
-                builder.Append("뗏목: ").Append(raftStructure.DescribeState())
-                    .Append("  [").Append(Mathf.RoundToInt(raftStructure.GetOverallProgress() * 100f)).Append("%]")
-                    .Append(raftStructure.IsOceanReady ? " 대양 준비"
-                        : raftStructure.IsSeaworthy ? " 항해 가능" : "")
+                builder.Append("뗏목: ").Append(shownRaft.DescribeState())
+                    .Append("  [").Append(Mathf.RoundToInt(shownRaft.GetOverallProgress() * 100f)).Append("%]")
+                    .Append(shownRaft.IsOceanReady ? " 대양 준비"
+                        : shownRaft.IsSeaworthy ? " 항해 가능" : "")
                     .Append('\n');
             }
 

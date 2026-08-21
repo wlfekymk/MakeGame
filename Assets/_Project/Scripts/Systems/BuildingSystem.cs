@@ -562,12 +562,16 @@ namespace MakeGame.Systems
         // ────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// RaftStructure.Active를 따라가며 갑판 컨테이너를 유지한다.
+        /// **플레이어가 지금 있는 곳의 뗏목**을 따라가며 갑판 컨테이너를 유지한다.
         /// 뗏목이 바뀌었거나(다른 인스턴스) 컨테이너가 파괴됐으면 다시 만들고 갑판 조각을 되세운다.
+        ///
+        /// ★ 여기서 RaftStructure.Active(= 가장 완성된 뗏목)를 쓰면 안 된다. 뗏목이 여러 대가 된
+        ///   지금, 그러면 저쪽 섬에 있는 더 좋은 뗏목의 갑판에 집을 짓게 된다. 이 질문의 답은
+        ///   "지금 내가 밟고 있는 뗏목"이므로 플레이어 위치에서 가장 가까운 것을 쓴다.
         /// </summary>
         private void SyncRaftBinding()
         {
-            RaftStructure active = RaftStructure.Active;
+            RaftStructure active = ResolveNearbyRaft();
 
             if (active != boundRaft)
             {
@@ -585,7 +589,13 @@ namespace MakeGame.Systems
                 return;
 
             // 컨테이너가 없거나(첫 결속) 갑판 재생성에 휩쓸려 파괴됐으면 다시 만든다.
-            if (deckContainer == null || boundDeckRoot != deckRoot)
+            //
+            // ★ 판정 기준이 boundDeckRoot가 아니라 **실제 부모**인 이유: 뭍으로 걸어 나가면
+            //   결속이 풀리며 boundDeckRoot가 null이 되는데, 컨테이너는 그대로 남는다. 돌아왔을 때
+            //   boundDeckRoot를 보면 "달라졌다"가 되어 매번 새 컨테이너를 만들고 옛것을 빈 채로
+            //   남긴다 - 물가를 오갈 때마다 GameObject가 하나씩 새고 갑판 조각 전체가 리페어런팅된다.
+            //   부모를 보면 같은 뗏목으로 돌아왔을 때 기존 컨테이너를 그대로 재사용한다.
+            if (deckContainer == null || deckContainer.parent != deckRoot)
             {
                 var go = new GameObject("BuildDeckPieces");
                 deckContainer = go.transform;
@@ -605,6 +615,26 @@ namespace MakeGame.Systems
 
             if (pendingDeckEntries.Count > 0 || pendingDeckChests.Count > 0)
                 FlushPendingDeckEntries();
+        }
+
+        /// <summary>
+        /// 플레이어(없으면 이 컴포넌트) 근처의 뗏목. 너무 멀면 null을 돌려 갑판 결속을 푼다 -
+        /// 뭍에 서 있는데 저 멀리 뗏목이 결속돼 있으면 지상 건축이 갑판 좌표계로 새어 든다.
+        /// </summary>
+        private RaftStructure ResolveNearbyRaft()
+        {
+            // 기준점은 플레이어 카메라다. 이 컴포넌트 자신의 위치는 씬 어디에 놓였는지에 따라
+            // 달라지므로(매니저 오브젝트) 기준으로 쓸 수 없다.
+            Camera cam = GetCamera();
+            Vector3 origin = cam != null ? cam.transform.position : transform.position;
+            RaftStructure nearest = RaftStructure.Nearest(origin);
+            if (nearest == null)
+                return null;
+
+            // 선체 반경 + 건축 사거리만큼은 넉넉히 잡는다(갑판 가장자리에 서서 짓는 경우).
+            float reach = RaftStructure.FootprintRadius + buildDistance + 2f;
+            Vector3 delta = nearest.transform.position - origin;
+            return delta.sqrMagnitude <= reach * reach ? nearest : null;
         }
 
         private void UnbindRaft()
@@ -1540,7 +1570,11 @@ namespace MakeGame.Systems
         /// </summary>
         private bool IsRaftCollider(Transform t)
         {
-            RaftStructure raft = boundRaft != null ? boundRaft : RaftStructure.Active;
+            // 기준점은 ResolveNearbyRaft와 같아야 한다 - 이 컴포넌트 자신의 위치는 매니저 오브젝트라
+            // 월드 어디에 놓였는지에 따라 달라져 기준으로 쓸 수 없다.
+            Camera raftCam = GetCamera();
+            Vector3 raftOrigin = raftCam != null ? raftCam.transform.position : transform.position;
+            RaftStructure raft = boundRaft != null ? boundRaft : RaftStructure.Nearest(raftOrigin);
             if (raft == null)
                 return false;
 

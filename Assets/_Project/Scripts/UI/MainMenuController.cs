@@ -51,7 +51,7 @@ namespace MakeGame.UI
         /// 없으므로 여기 한 곳에만 둔다(VERSION이 올라가면 이 값도 같이 올린다). PlayerSettings의
         /// bundleVersion이 VERSION과 동기화되어 있다면 Application.version으로 바꿔도 된다.
         /// </summary>
-        public const string DisplayVersion = "0.2.62";
+        public const string DisplayVersion = "0.2.63";
 
         // [슬롯 3개] 예전에는 저장 파일 이름("makegame_save.json")을 여기에 복사해 두고 직접 File.Exists로
         // 확인했다. 같은 문자열이 두 파일에 살아 있는 것은 이 프로젝트가 반복해서 낸 사고 유형이라,

@@ -296,11 +296,20 @@ namespace MakeGame.Systems
         /// </summary>
         private RaftSailing sailing;
 
-        // ── 건축 시스템 계약 ────────────────────────────────────────────────────────
-        private static RaftStructure activeInstance;
+        // ── 명부 ────────────────────────────────────────────────────────────────────
+        //
+        // 예전에는 static 싱글턴 하나였다(activeInstance). 뗏목을 아무 물가에나, 여러 대 지을 수
+        // 있게 되면서 "월드에 뗏목은 하나"라는 전제 자체가 사라졌다.
+        //
+        // 대신 두 가지 질문에 답한다. 부르는 쪽이 무엇을 묻는지가 서로 다르기 때문이다.
+        //  · **Best** — "탈출할 배가 준비됐는가?" 진행도·엔딩·퀘스트·섬 이동 게이트가 이걸 본다.
+        //    여러 대가 있으면 가장 완성된 것 하나가 그 질문의 답이다.
+        //  · **Nearest(pos)** — "지금 내가 만지고 있는 뗏목은 어느 것인가?" 갑판 건축과 항해가
+        //    이걸 본다. 여기서 Best를 쓰면 저쪽 섬에 있는 더 좋은 뗏목의 갑판에 집을 짓게 된다.
+        private static readonly List<RaftStructure> all = new List<RaftStructure>();
 
-        /// <summary>씬 로드 훅을 이미 걸었는지. 도메인 리로드를 꺼도 이벤트가 두 번 걸리지 않게 한다.</summary>
-        private static bool bootstrapHooked;
+        /// <summary>월드에 살아 있는 모든 뗏목. 순서는 만들어진 순서다.</summary>
+        public static IReadOnlyList<RaftStructure> All => all;
 
         /// <summary>갑판 좌표계의 뿌리. 상태가 바뀌어도 **절대 파괴되지 않는다**.</summary>
         private Transform deckRoot;
@@ -315,11 +324,114 @@ namespace MakeGame.Systems
         private BoxCollider deckSurfaceCollider;
 
         /// <summary>
-        /// 씬에 살아 있는 뗏목. 없으면 null이다.
-        /// 인스턴스 확보는 이 클래스의 Bootstrap/EnsureInstance가 담당한다(중복 방지 포함) -
-        /// 여기서는 "먼저 깨어난 쪽이 이긴다"만 지킨다. 늦게 깨어난 중복은 스스로 비활성화한다.
+        /// **가장 완성된 뗏목.** 없으면 null이다.
+        ///
+        /// "탈출할 배가 준비됐는가"를 묻는 쪽(진행도 표시·엔딩 판정·퀘스트·섬 이동 게이트)이 쓴다.
+        /// 이름이 Active인 것은 예전 싱글턴 시절의 호출부를 그대로 두기 위해서이고, 뜻은
+        /// "지금 활성인 하나"가 아니라 "지금 이 월드를 대표하는 하나"다.
+        ///
+        /// ★ 이 값은 **뗏목을 지을수록 바뀐다.** 예전에는 인스턴스가 하나뿐이라 Start에서 한 번
+        ///   잡아 두면 그만이었지만, 이제는 캐시해 두면 낡는다. 호출부는 매 갱신마다 다시 읽는다
+        ///   (static 프로퍼티 읽기라 전역 검색 비용이 없다는 기존 주석의 전제는 그대로다).
         /// </summary>
-        public static RaftStructure Active => activeInstance != null ? activeInstance : null;
+        public static RaftStructure Active => Best;
+
+        /// <summary>가장 완성된 뗏목. 점수 = 바닥판 칸 수 + 장착 부품 수 × 4(부품이 더 귀하다).</summary>
+        public static RaftStructure Best
+        {
+            get
+            {
+                RaftStructure best = null;
+                int bestScore = int.MinValue;
+
+                for (int i = 0; i < all.Count; i++)
+                {
+                    RaftStructure raft = all[i];
+                    if (raft == null)
+                        continue;
+
+                    int score = raft.BaseTileCount + CountBits((int)raft.InstalledParts) * 4;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = raft;
+                    }
+                }
+
+                return best;
+            }
+        }
+
+        /// <summary>
+        /// 주어진 위치에서 가장 가까운 뗏목. 없으면 null.
+        /// "지금 내가 만지고 있는 뗏목"을 묻는 쪽(갑판 건축·항해)이 쓴다.
+        /// </summary>
+        public static RaftStructure Nearest(Vector3 worldPosition)
+        {
+            RaftStructure nearest = null;
+            float bestSqr = float.MaxValue;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                RaftStructure raft = all[i];
+                if (raft == null)
+                    continue;
+
+                float sqr = (raft.transform.position - worldPosition).sqrMagnitude;
+                if (sqr < bestSqr)
+                {
+                    bestSqr = sqr;
+                    nearest = raft;
+                }
+            }
+
+            return nearest;
+        }
+
+        /// <summary>세워진 뗏목 수.</summary>
+        public static int Count => all.Count;
+
+        /// <summary>
+        /// 파도 흔들림을 뺀 기준 위치. **저장에는 반드시 이 값을 쓴다** - transform.position에는
+        /// 그 프레임의 상하 흔들림이 섞여 있어, 그대로 저장하면 불러올 때마다 뗏목이 조금씩 위아래로
+        /// 옮겨 앉는다.
+        /// </summary>
+        public Vector3 AnchorPosition => anchored ? anchorPosition : transform.position;
+
+        /// <summary>기준 뱃머리 방향(도).</summary>
+        public float AnchorYaw => (anchored ? anchorRotation : transform.rotation).eulerAngles.y;
+
+        /// <summary>자리를 확정했는가.</summary>
+        public bool IsPlaced => anchored;
+
+        /// <summary>
+        /// 월드의 뗏목을 전부 없앤다. 불러오기가 세이브대로 다시 세우기 전에 부른다.
+        ///
+        /// 명부에서 **즉시** 빼는 것이 핵심이다. Destroy는 프레임 끝에 처리되므로, 명부를 비우지
+        /// 않으면 바로 뒤에 세우는 새 뗏목이 "이미 뗏목이 있다"고 판정되어 배치가 막힌다.
+        /// </summary>
+        public static void DestroyAll()
+        {
+            for (int i = all.Count - 1; i >= 0; i--)
+            {
+                RaftStructure raft = all[i];
+                all.RemoveAt(i);
+
+                if (raft != null)
+                    Destroy(raft.gameObject);
+            }
+        }
+
+        private static int CountBits(int value)
+        {
+            int count = 0;
+            while (value != 0)
+            {
+                value &= value - 1;
+                count++;
+            }
+            return count;
+        }
 
         /// <summary>
         /// 갑판 위에 물건을 붙일 부모. 이 밑에 두면 뗏목 좌표계를 따라간다(뗏목이 옮겨져도 같이 간다).
@@ -766,18 +878,27 @@ namespace MakeGame.Systems
         /// 파괴한다. 그 밑에 두면 불러오기 때 뗏목이 함께 지워진다.
         ///
         /// [훅을 한 번만 거는 이유] 도메인 리로드를 끈 플레이 모드에서는 static 구독이 이전 실행에서
-        /// 살아남는다. bootstrapHooked를 ResetStatics에서 **되돌리지 않는 것**이 핵심이다 - 리로드가
-        /// 켜져 있으면 false로 초기화되어 다시 걸리고, 꺼져 있으면 true로 남아 중복 구독을 막는다.
+        /// 살아남는다. 그래서 구독은 "한 번만"이 아니라 **매번 멱등하게**(-= 뒤 +=) 건다 -
+        /// 자세한 이유는 아래 구독 지점 주석에 있다.
         /// </summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStatics()
         {
-            activeInstance = null;
+            all.Clear();
 
             // 모델 캐시도 함께 비운다. 도메인 리로드를 끈 플레이 모드에서 이전 실행의 (이미 언로드된)
             // 메시를 들고 시작하면 파츠가 통째로 빈 채로 만들어진다.
             System.Array.Clear(baseTilePrimary, 0, baseTilePrimary.Length);
             System.Array.Clear(baseTileSecondary, 0, baseTileSecondary.Length);
+            // 공유 머티리얼도 함께 비운다(static이 된 뒤로는 모델 캐시와 수명이 같다).
+            hullWoodMaterial = null;
+            plankWoodMaterial = null;
+            fiberMaterial = null;
+            sailMaterial = null;
+            cargoMaterial = null;
+            metalMaterial = null;
+            ghostMaterial = null;
+
             floorPrimary = null;
             floorSecondary = null;
             sailPrimary = null;
@@ -790,16 +911,43 @@ namespace MakeGame.Systems
             motorSecondary = null;
             modelProbeFrame = -1;
 
-            if (bootstrapHooked)
-                return;
-
-            bootstrapHooked = true;
+            // ★★ 구독은 **매번, 멱등하게** 건다. 예전에는 bootstrapHooked 플래그로 "한 번만" 걸었는데,
+            //     그 방식은 조건이 어긋나는 순간 뗏목이 통째로 안 생긴다:
+            //     플래그는 static이라 도메인 리로드를 끈 플레이 모드에서 살아남는 반면,
+            //     sceneLoaded 구독은 플레이 모드를 빠져나올 때 정리될 수 있다. 그러면
+            //     "이미 걸었다"고 믿는 플래그만 남고 실제 구독은 없는 상태가 된다.
+            //     실기에서 정확히 그 증상이 나왔다 - 재컴파일 직후 첫 플레이에서만 뗏목이 생기고
+            //     그 뒤로는 안 생겼다.
+            //
+            //     -= 뒤에 += 는 구독이 없어도 안전하고(없는 것을 빼도 예외가 아니다) 중복도 막는다.
+            //     이 프로젝트의 다른 자기 부트스트랩 시스템(WindSystem·SkySystem 등)이 매번 거는 것과
+            //     같은 결과이면서, 중복 구독까지 원리적으로 불가능하다.
+            SceneManager.sceneLoaded -= HandleSceneLoaded;
             SceneManager.sceneLoaded += HandleSceneLoaded;
         }
 
         private static void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            EnsureInstance();
+            // ★★ mode로 거르지 말 것. Additive 로드를 걸러내려고 `if (mode != LoadSceneMode.Single) return;`
+            //     을 넣었더니 **시작 뗏목이 아예 안 생겼다.** 진단 로그로 실측한 결과 에디터에서
+            //     플레이 모드에 들어갈 때 이 콜백이 받는 mode 값은 **4**다 - LoadSceneMode의
+            //     Single(0)도 Additive(1)도 아니다. 문서에 없는 값이라 코드로 짐작하면 반드시 틀린다.
+            //
+            //     이 프로젝트에서 씬을 Additive로 여는 경로는 없고, 중복은 아래 `all.Count == 0`
+            //     하나로 이미 막힌다. 그 조건만으로 충분하다.
+            all.RemoveAll(raft => raft == null);
+
+            // 시작 뗏목 한 대를 시작 섬 물가에 세운다.
+            //
+            // ★ 자유 배치가 들어온 뒤에도 이 한 대를 남기는 이유(임시): 지금은 이 말뚝 표시가
+            //   뗏목이라는 기능의 **유일한 발견 경로**다. 건축 메뉴에서 원하는 물가에 세우는 경로가
+            //   들어오면 이 자동 생성은 지운다 - 자동으로 한 대가 서 있으면 "내가 놓은 것"이라는
+            //   감각이 처음부터 사라지기 때문이다.
+            //
+            //   불러오기는 이것과 무관하다. SaveLoadController가 DestroyAll로 전부 지우고
+            //   세이브에 적힌 자리에 다시 세운다.
+            if (all.Count == 0)
+                Create();
         }
 
         /// <summary>
@@ -809,33 +957,37 @@ namespace MakeGame.Systems
         /// </summary>
         public static RaftStructure EnsureInstance()
         {
-            if (activeInstance != null)
-                return activeInstance;
+            RaftStructure best = Best;
+            if (best != null)
+                return best;
 
             var existing = FindAnyObjectByType<RaftStructure>();
             if (existing != null)
-            {
-                activeInstance = existing;
                 return existing;
-            }
 
-            var go = new GameObject("RaftStructure");
+            return Create();
+        }
+
+        /// <summary>
+        /// 새 뗏목을 하나 만든다. 자리는 아직 정하지 않은 상태로 나오므로, 부르는 쪽이 곧바로
+        /// <see cref="PlaceAt"/>로 자리를 주거나, 주지 않으면 예전처럼 시작 섬 물가를 스스로 찾는다.
+        ///
+        /// **씬 루트에 만든다.** WorldMapManager.RegenerateWorld(불러오기)가 자기 자식을 전부
+        /// 파괴하므로 그 밑에 두면 불러오기 때 뗏목이 함께 지워진다(예전 주석의 이유 그대로).
+        /// </summary>
+        public static RaftStructure Create()
+        {
+            var go = new GameObject(all.Count == 0 ? "RaftStructure" : $"RaftStructure_{all.Count}");
             return go.AddComponent<RaftStructure>();
         }
 
         private void Awake()
         {
-            // 중복 방지: 정상 경로(EnsureInstance)는 이미 하나만 만든다. 여기 걸린다면 씬에 손으로 놓은
-            // 것 + 런타임 생성이 겹친 경우다. 먼저 깨어난 쪽이 이미 해안을 잡고 파츠를 지었을 수 있으므로,
-            // 나중 것을 파괴하지 않고 조용히 재운다(파괴하면 씬 직렬화 값이 사라진다 - AGENT_BRIEF 2장 2번).
-            if (activeInstance != null && activeInstance != this)
-            {
-                Debug.LogWarning($"[RaftStructure] 뗏목이 이미 있다. 중복 인스턴스 '{name}'을 비활성화한다.");
-                enabled = false;
-                return;
-            }
-
-            activeInstance = this;
+            // 명부에 오른다. 예전에는 여기서 "이미 뗏목이 있으면 나를 재운다"고 했지만, 이제 뗏목은
+            // 여러 대가 정상이다. 등록이 Awake인 이유: 자리를 잡기 전에도 명부에 있어야 배치 코드가
+            // "다른 뗏목과 겹치는가"를 물어볼 수 있다.
+            if (!all.Contains(this))
+                all.Add(this);
 
             EnsureDeckRoot();
             EnsureMaterials();
@@ -859,14 +1011,21 @@ namespace MakeGame.Systems
 
         private void OnEnable()
         {
-            if (activeInstance == null)
-                activeInstance = this;
+            // 비활성화됐다 다시 켜지는 경로(섬 재생성 등)에서 명부로 돌아온다.
+            if (!all.Contains(this))
+                all.Add(this);
+        }
+
+        private void OnDisable()
+        {
+            // 명부를 떠나는 경로가 이것뿐이다. 없으면 SetActive(false)된 뗏목이 계속 Best/Nearest에
+            // 잡히고, "뗏목이 한 대도 없으면 한 대 세운다"는 규칙도 영영 발동하지 않는다.
+            all.Remove(this);
         }
 
         private void OnDestroy()
         {
-            if (activeInstance == this)
-                activeInstance = null;
+            all.Remove(this);
         }
 
         private void Update()
@@ -983,7 +1142,31 @@ namespace MakeGame.Systems
             Vector3 center = startIsland.mapPosition + facing * (shoreDistance + DeckLength * 0.5f + shoreOutwardOffset);
             center.y = worldMap.seaLevel;
 
-            transform.SetPositionAndRotation(center, Quaternion.LookRotation(facing, Vector3.up));
+            PlaceAt(center, Quaternion.LookRotation(facing, Vector3.up));
+        }
+
+        /// <summary>
+        /// 이 뗏목을 주어진 자리에 세운다. 자동 해안 탐색(TryAnchorToShore)과 건축 메뉴 배치가
+        /// **같은 이 메서드**를 통과하므로, 두 경로가 서로 다른 상태로 끝날 여지가 없다.
+        ///
+        /// center는 선체 중심의 월드 좌표다(y는 해수면으로 맞춰진다). rotation의 forward가
+        /// 뱃머리 방향이고, 승선 발판은 그 반대쪽(고물)에 달린다.
+        /// </summary>
+        public void PlaceAt(Vector3 center, Quaternion rotation)
+        {
+            if (worldMap == null)
+                worldMap = FindAnyObjectByType<WorldMapManager>();
+
+            if (worldMap != null)
+                center.y = worldMap.seaLevel;
+
+            // 갓 만든 MeshCollider는 Physics.autoSyncTransforms가 기본 false라 아직 물리 씬에 없을 수
+            // 있다. 아래 발판 높이 실측이 그걸 그대로 밟는다 - 빠뜨리면 레이가 지형을 못 맞혀
+            // 발판이 해변에 닿지 않고, 그러면 뗏목에 올라탈 방법이 사라진다(stepOffset 0.3).
+            // TryAnchorToShore에 있던 이 한 줄이 측정과 함께 여기로 와야 했다.
+            Physics.SyncTransforms();
+
+            transform.SetPositionAndRotation(center, rotation);
 
             // 승선 발판이 닿을 해변 지점의 실제 높이를 잰다. terrainMaxHeight는 씬 직렬화 값(8)이
             // 코드 기본값(2.5)과 다르므로 상수로 가정하면 안 된다 - 반드시 실측한다.
@@ -991,6 +1174,7 @@ namespace MakeGame.Systems
             // [파도 v5] 잰 높이보다 RampFootDig만큼 **더 아래**를 발판 밑동으로 잡는다(하한도 함께
             // 내렸다). 상하 흔들림 상한이 1.2m라, 발판을 모래 표면에 딱 맞춰 두면 파도 마루마다 발판
             // 끝이 통째로 떠올라 CharacterController.stepOffset(씬 값 0.3)을 넘는 턱이 생기기 때문이다.
+            Vector3 facing = rotation * Vector3.forward;
             Vector3 rampFoot = center - facing * (DeckLength * 0.5f + RampRun);
             float groundY = SampleTerrainHeight(rampFoot, out bool hitTerrain);
             rampFootLocalY = hitTerrain
@@ -1000,6 +1184,102 @@ namespace MakeGame.Systems
             CaptureWaveAnchor();
             anchored = true;
             RefreshVisual();
+        }
+
+        /// <summary>
+        /// 이 뗏목이 차지하는 수평 반경(m). 배치할 때 다른 뗏목과 겹치는지 볼 때 쓴다.
+        /// 선체 대각선의 절반에 여유를 조금 더한 값이다.
+        /// </summary>
+        public static float FootprintRadius =>
+            Mathf.Sqrt(DeckLength * DeckLength + DeckWidth * DeckWidth) * 0.5f + 0.6f;
+
+        /// <summary>
+        /// 여기에 뗏목을 세울 수 있는가. 건축 메뉴의 고스트가 매 프레임 묻는다.
+        ///
+        /// 세 가지를 본다.
+        ///  (1) **물 위인가.** 해수면 아래로 최소 MinSiteDepth만큼 파여 있어야 한다 - 모래 위에 배를
+        ///      지어 놓으면 띄울 수가 없다.
+        ///  (2) **물가에서 너무 멀지 않은가.** 뗏목은 해안 건조물이다. 먼바다 한복판에 지을 수 있으면
+        ///      승선 발판이 닿을 땅이 없어 올라탈 방법이 사라진다.
+        ///  (3) **다른 뗏목과 겹치지 않는가.**
+        ///
+        /// reason에는 안 되는 이유를 그대로 담는다(고스트 옆에 그대로 띄우기 위해서다 - "왜 안 되는지
+        /// 모르겠는 빨간 고스트"가 이 프로젝트에서 반복해서 나온 UX 실패다).
+        /// </summary>
+        public static bool IsValidSite(Vector3 worldPoint, RaftStructure ignore, out string reason)
+        {
+            var worldMap = FindAnyObjectByType<WorldMapManager>();
+            float seaLevel = worldMap != null ? worldMap.seaLevel : 0f;
+
+            // (1) 물 위인가. 해저까지의 깊이를 잰다.
+            float groundY = SampleTerrainHeightStatic(worldPoint, out bool hitTerrain);
+            float depth = hitTerrain ? seaLevel - groundY : DeepWaterAssumedDepth;
+
+            if (depth < MinSiteDepth)
+            {
+                reason = "물이 얕다 - 뗏목이 뜨지 않는다";
+                return false;
+            }
+
+            // (2) 물가에서 너무 멀지 않은가. 반경을 넓혀 가며 뭍을 찾는다.
+            if (!HasShoreWithin(worldPoint, seaLevel, MaxShoreDistance))
+            {
+                reason = "물가에서 너무 멀다 - 올라탈 발판이 닿지 않는다";
+                return false;
+            }
+
+            // (3) 다른 뗏목과 겹치지 않는가.
+            float minGap = FootprintRadius * 2f;
+            for (int i = 0; i < all.Count; i++)
+            {
+                RaftStructure other = all[i];
+                if (other == null || other == ignore || !other.anchored)
+                    continue;
+
+                Vector3 delta = other.transform.position - worldPoint;
+                delta.y = 0f;
+                if (delta.sqrMagnitude < minGap * minGap)
+                {
+                    reason = "다른 뗏목과 너무 가깝다";
+                    return false;
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        /// <summary>지형을 못 맞혔을 때 가정하는 수심(m). 먼바다는 충분히 깊다고 본다.</summary>
+        private const float DeepWaterAssumedDepth = 50f;
+
+        /// <summary>뗏목을 띄우려면 최소한 이만큼은 파여 있어야 한다(m).</summary>
+        private const float MinSiteDepth = 0.55f;
+
+        /// <summary>물가에서 이 거리 안이어야 뗏목을 세울 수 있다(m).</summary>
+        private const float MaxShoreDistance = 14f;
+
+        /// <summary>
+        /// worldPoint 주변 maxDistance 안에 해수면 위로 솟은 땅이 있는가.
+        /// 여덟 방향으로 1m씩 걸어 나가며 지형 높이를 재는 단순한 탐침이다 - 해안선은 곡선이라
+        /// 한 방향만 봐서는 "바로 옆이 뭍인데 못 짓는다"가 나온다.
+        /// </summary>
+        private static bool HasShoreWithin(Vector3 worldPoint, float seaLevel, float maxDistance)
+        {
+            for (int dir = 0; dir < 8; dir++)
+            {
+                float angle = dir * (Mathf.PI * 2f / 8f);
+                var step = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+
+                for (float d = 1f; d <= maxDistance; d += 1f)
+                {
+                    Vector3 probe = worldPoint + step * d;
+                    float y = SampleTerrainHeightStatic(probe, out bool hit);
+                    if (hit && y > seaLevel + 0.05f)
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1289,6 +1569,16 @@ namespace MakeGame.Systems
         /// 상태를 바꾸지 않으므로 아무 때나 불러도 안전하다.
         /// </summary>
         public float SampleTerrainHeight(Vector3 position, out bool hitTerrain)
+        {
+            return SampleTerrainHeightStatic(position, out hitTerrain);
+        }
+
+        /// <summary>
+        /// 위와 같은 계산의 static 판. 배치 판정(IsValidSite)은 인스턴스가 아직 없는 상태에서도
+        /// 지형 높이를 물어야 하므로 필요하다. 인스턴스 메서드는 이걸 그대로 부른다 -
+        /// "Island_ 콜라이더만 지형" 규약의 복사본이 생기지 않는다.
+        /// </summary>
+        public static float SampleTerrainHeightStatic(Vector3 position, out bool hitTerrain)
         {
             const float Sentinel = -1000f;
 

@@ -222,19 +222,39 @@ namespace MakeGame.Systems
                 }
             }
 
-            // 뗏목 상태. 씬에 배선하는 참조가 없다 - RaftStructure는 씬 로드마다 스스로 생기는
-            // 런타임 오브젝트라 static Active로만 접근한다. 뗏목이 아직 없으면 두 값 모두 0이 나가고,
-            // 그것이 정확히 "한 칸도 안 깔았다"는 뜻이다.
-            var raft = RaftStructure.Active;
-            if (raft != null)
-            {
-                data.raftBaseTileCount = raft.BaseTileCount;
-                data.raftInstalledParts = (int)raft.InstalledParts;
+            // [자유 배치 v3] 뗏목 목록. 이제 뗏목은 여러 대이고 자리도 플레이어가 정하므로,
+            // **위치·방향까지** 저장하지 않으면 불러올 때 통째로 사라진다.
+            //
+            // 좌표는 transform.position이 아니라 AnchorPosition을 쓴다 - 그쪽에는 그 프레임의 파도
+            // 흔들림이 섞여 있어 저장/불러오기를 반복할 때마다 뗏목이 조금씩 위아래로 옮겨 앉는다.
+            data.rafts.Clear();
 
-                // [콘텐츠 v2] 칸별 구성(종류 + 갑판 바닥재). raftBaseTileCount는 **그대로 함께 기록한다** -
-                // 두 값이 어긋날 일이 없고(같은 상태에서 뽑는다), 이 파일을 여는 옛 빌드가 칸 수만 읽어도
-                // 뗏목이 그럭저럭 되살아난다. WriteBaseTileCodes는 넘긴 목록을 채우므로 할당이 없다.
-                raft.WriteBaseTileCodes(data.raftBaseTiles);
+            var rafts = RaftStructure.All;
+            for (int i = 0; i < rafts.Count; i++)
+            {
+                RaftStructure raft = rafts[i];
+                if (raft == null)
+                    continue;
+
+                // ★ 아직 자리를 못 잡은 뗏목은 저장하지 않는다. 그런 뗏목은 원점에 서 있고
+                //   (섬 지형이 만들어지기를 기다리는 중이다), 그 좌표를 저장하면 불러올 때
+                //   PlaceAt이 원점에서 정박을 확정해 버려 말뚝 표시가 월드 원점에 영구히 박힌다.
+                if (!raft.IsPlaced)
+                    continue;
+
+                Vector3 anchor = raft.AnchorPosition;
+                var entry = new RaftSaveEntry
+                {
+                    posX = anchor.x,
+                    posY = anchor.y,
+                    posZ = anchor.z,
+                    yaw = raft.AnchorYaw,
+                    baseTileCount = raft.BaseTileCount,
+                    installedParts = (int)raft.InstalledParts,
+                };
+
+                raft.WriteBaseTileCodes(entry.baseTiles);
+                data.rafts.Add(entry);
             }
 
             // [B25] 건축 조각. BuildingSystem은 RuntimeInitializeOnLoadMethod로 스스로 생기므로
@@ -403,17 +423,15 @@ namespace MakeGame.Systems
             // [콘텐츠 v2] 버전이 둘로 늘었으므로 **단계별로** 안내한다. 예전처럼
             // "< CurrentSaveContentVersion" 하나로 묶으면, 배 진행과 아무 상관없는 v1(해안 뗏목) 세이브를
             // 열 때마다 "배 단계가 사라졌다"는 엉뚱한 경고가 나온다.
-            if (data.saveContentVersion < SaveData.RaftContentVersion)
+            // [자유 배치 v3] 이제 뗏목은 위치까지 저장하는 목록이다. v3 미만 세이브에는 그 목록이
+            // 없으므로 뗏목이 한 대도 복원되지 않는다 - 세이브 호환을 유지하지 않기로 한 결정
+            // (2026-08-19)에 따라 승격 코드를 만들지 않고, 대신 무슨 일이 일어났는지만 알린다.
+            if (data.saveContentVersion < SaveData.RaftFreePlacementContentVersion)
             {
-                Debug.LogWarning("[SaveLoadController] 옛 배 제작 시스템 시절의 세이브입니다." +
-                    " 배 단계/도면/투입 재료는 더 이상 존재하지 않아 사라지고, 뗏목은 바닥판 0칸에서" +
-                    " 시작합니다. 나머지 진행(인벤토리·건축·구조물·시계 등)은 그대로 불러옵니다.");
-            }
-            else if (data.saveContentVersion < SaveData.RaftTileDetailContentVersion)
-            {
-                Debug.LogWarning("[SaveLoadController] 바닥판 칸별 구성이 없던 시절의 세이브입니다." +
-                    $" 뗏목 {data.raftBaseTileCount}칸을 모두 '통나무 바닥판 + 갑판 바닥재'로 되살립니다" +
-                    " (갑판 높이가 같아 갑판 위 건축물은 그대로 유지됩니다). 장착 부품은 그대로입니다.");
+                Debug.LogWarning("[SaveLoadController] 뗏목 자유 배치 이전의 세이브입니다." +
+                    " 예전 뗏목은 자리가 코드에서 정해지는 값이라 위치가 저장돼 있지 않아 되살릴 수" +
+                    " 없습니다. 뗏목은 없는 상태로 시작하고, 건축 메뉴에서 원하는 물가에 새로 세우면" +
+                    " 됩니다. 나머지 진행(인벤토리·건축·구조물·시계 등)은 그대로 불러옵니다.");
             }
 
             // 저장된 worldSeed로 섬/바다/자원/위험요소/사냥감 배치를 처음부터 다시 만들어, 저장 시점과
@@ -510,20 +528,37 @@ namespace MakeGame.Systems
             // 바로 아래에서 되돌리는 바닥판 칸 수가 정한다. 순서가 뒤집히면 갑판 조각이 전부
             // pendingDeckEntries로 밀려 그 세션 동안 보이지 않는다.
             //
-            // RaftStructure.EnsureInstance()로 확보하는 이유: 뗏목은 씬 로드 훅으로 생기는데, 그 훅과
-            // 이 복원 코드의 실행 순서는 보장되지 않는다(AGENT_BRIEF 4장). 이미 있으면 그대로 쓴다.
-            var raft = RaftStructure.EnsureInstance();
-            if (raft != null)
+            // [자유 배치 v3] 세이브에 적힌 대로 뗏목을 다시 세운다.
+            //
+            // **먼저 전부 없앤다.** 이 세션에서 지어 둔 뗏목이 남아 있으면 세이브의 뗏목과 겹쳐
+            // 두 배로 늘어난다. DestroyAll은 명부에서 즉시 빼므로(Destroy는 프레임 끝이라)
+            // 바로 아래에서 세우는 새 뗏목이 "이미 뗏목이 있다"에 걸리지 않는다.
+            RaftStructure.DestroyAll();
+
+            for (int i = 0; i < data.rafts.Count; i++)
             {
-                // ApplySavedState 하나로 값 대입 + 외형 재생성 + ProgressChanged 발행이 모두 끝난다.
-                // 뗏목이 아직 해안 자리를 못 잡았으면 외형은 정박 직후 프레임에 자동으로 세워진다.
-                //
-                // [콘텐츠 v2] 칸별 구성을 함께 넘긴다. 목록이 비었거나(v1 이하) 칸 수보다 짧으면
-                // ApplySavedState가 모자란 칸을 통나무 + 갑판 바닥재로 승격한다 - 승격 규칙을 여기
-                // 두지 않는 이유는, 로드 경로가 늘어날 때마다 규칙이 갈라지면 갑판 높이가 어긋나기 때문이다.
-                raft.ApplySavedState(data.raftBaseTileCount, (RaftPart)data.raftInstalledParts,
-                    data.raftBaseTiles);
+                RaftSaveEntry entry = data.rafts[i];
+                if (entry == null)
+                    continue;
+
+                RaftStructure raft = RaftStructure.Create();
+
+                // 자리를 먼저 준다. PlaceAt이 정박을 확정하므로 그 뒤의 ApplySavedState가 만드는
+                // 외형이 곧바로 제자리에 선다(자리 없이 상태만 넣으면 원점에 한 프레임 나타난다).
+                raft.PlaceAt(new Vector3(entry.posX, entry.posY, entry.posZ),
+                    Quaternion.Euler(0f, entry.yaw, 0f));
+
+                // ApplySavedState 하나로 값 대입 + 외형 재생성 + ProgressChanged 발행이 끝난다.
+                raft.ApplySavedState(entry.baseTileCount, (RaftPart)entry.installedParts, entry.baseTiles);
             }
+
+            // ★ 세이브에 뗏목이 하나도 없으면 한 대 세운다.
+            //   불러오기는 씬 로드가 아니므로 RaftStructure의 씬 로드 훅이 다시 돌지 않는다.
+            //   이 줄이 없으면 v3 이전 세이브(또는 뗏목을 아직 안 지은 세이브)를 연 세션은
+            //   뗏목이 0대인 채로 남고, 거기서 다시 저장하면 뗏목이 영영 사라진다.
+            //   규칙은 씬 로드 훅과 같다("한 대도 없으면 한 대").
+            if (RaftStructure.Count == 0)
+                RaftStructure.Create();
 
             // [B25] 건축 조각 복원. **반드시 RegenerateWorld(위쪽) 뒤여야 한다** -
             // 순서가 뒤집히면 새 지형을 만드는 도중의 레이캐스트에 방금 되살린 조각이 섞인다.

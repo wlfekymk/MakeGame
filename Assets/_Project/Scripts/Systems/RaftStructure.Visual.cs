@@ -17,17 +17,23 @@ namespace MakeGame.Systems
         // ─────────────────────────────────────────────────────────────────────────
 
         // 공유 머티리얼 7개. 파츠 수와 무관하게 이것만 만든다.
-        private Material hullWoodMaterial;
-        private Material plankWoodMaterial;
-        private Material fiberMaterial;
-        private Material sailMaterial;
-        private Material cargoMaterial;
+        //
+        // ★ static인 이유(뗏목 다중화). "파츠 수와 무관하게 이것만"은 뗏목이 하나일 때만 참이었다.
+        //   인스턴스 필드로 두면 뗏목 N대에 7N장이 생겨 (a) SRP 배처가 뗏목 경계마다 끊기고
+        //   (b) 런타임 생성 Material은 GC 대상이 아니라 불러오기 때마다(DestroyAll + Create)
+        //   7장씩 영구히 샌다. 뗏목마다 색이 달라야 할 이유가 없으므로 월드에 한 벌이면 된다.
+        //   ResetStatics가 모델 캐시와 함께 비운다.
+        private static Material hullWoodMaterial;
+        private static Material plankWoodMaterial;
+        private static Material fiberMaterial;
+        private static Material sailMaterial;
+        private static Material cargoMaterial;
 
         /// <summary>실물 모델의 `metal` 그룹(드럼통 테·닻·모터 몸통·바닥재 못)에 쓰는 금속색.</summary>
-        private Material metalMaterial;
+        private static Material metalMaterial;
 
         /// <summary>"제작 예정지" 유령 칸에 쓰는 반투명 머티리얼(불투명 URP Lit은 알파를 버린다).</summary>
-        private Material ghostMaterial;
+        private static Material ghostMaterial;
 
         // ─────────────────────────────────────────────────────────────────────────
         //  실물 모델 (Resources/Models/raft_*.obj)
