@@ -815,7 +815,7 @@ namespace MakeGame.Systems
             if (deckRoot != null)
             {
                 if (deckPiecesContainer == null)
-                    deckPiecesContainer = deckRoot.Find("BuildDeckPieces");
+                    deckPiecesContainer = deckRoot.Find(BuildingSystem.DeckContainerName);
 
                 cargo += AccumulatePieces(raft.PlacedStructures, deckRoot, ref weightedHeight);
                 cargo += AccumulatePieces(deckPiecesContainer, deckRoot, ref weightedHeight);

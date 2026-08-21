@@ -33,6 +33,13 @@ namespace MakeGame.Systems
         /// 3=드럼통), 8비트(값 8) = 갑판 바닥재가 깔림. 목록 길이는 baseTileCount와 같다.
         /// </summary>
         public List<int> baseTiles = new List<int>();
+
+        /// <summary>
+        /// [뗏목 v4 - **맨 끝에 추가만 했다**] 이 뗏목의 불변 식별자. 갑판 위에 지은 건축 조각이
+        /// 이 값으로 자기 소속 뗏목을 되찾는다. 이 필드가 없는 옛 세이브는 ""로 읽히고, 그러면
+        /// 복원이 대표 뗏목에 귀속시킨다 - 뗏목이 한 대뿐이던 시절과 정확히 같은 동작이다.
+        /// </summary>
+        public string raftId;
     }
 
     /// <summary>
@@ -109,7 +116,7 @@ namespace MakeGame.Systems
 
         // [B25] 건축 시스템(바닥/벽/문/창문)이 놓은 조각 전체. BuildingSystem이 스스로 JsonUtility로
         // 직렬화한 문자열을 그대로 담는다. **추가만 했다** - JsonUtility는 JSON에 없는 필드를 건드리지
-        // 않으므로 옛 세이브를 읽으면 ""로 남고, RestoreFromJson은 ""/null에서 아무것도 하지 않는다.
+        // 않으므로 옛 세이브를 읽으면 ""로 남고, RestoreFromJson은 ""/null에서 표만 비우고 끝낸다.
         public string buildStructureJson = "";
         public List<ItemCountEntry> aircraftCollectedMaterials = new List<ItemCountEntry>();
 
@@ -404,6 +411,9 @@ namespace MakeGame.Systems
 
         [Tooltip("상자에 든 아이템(이름 + 개수 + 남은 사용 횟수).")]
         public List<ChestItemSaveEntry> items = new List<ChestItemSaveEntry>();
+
+        [Tooltip("[뗏목 v4] 갑판 위 상자의 소속 뗏목 식별자. 지면 상자는 빈 문자열이다.")]
+        public string raftId;
     }
 
     /// <summary>

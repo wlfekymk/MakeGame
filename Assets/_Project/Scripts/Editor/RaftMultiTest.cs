@@ -181,9 +181,12 @@ namespace MakeGame.EditorTools
                     case 1: PhasePlaceSecond(); break;
                     case 2: PhaseValidSiteRules(); break;
                     case 3: PhaseDistinguish(); break;
-                    case 4: PhaseSave(); break;
-                    case 5: PhaseDestroyAndLoad(); break;
-                    case 6: PhaseVerifyRestore(); break;
+                    case 4: PhaseDeckPieceOwnership(); break;
+                    case 5: PhaseWalkBetweenRafts(); break;
+                    case 6: PhaseVerifyWalk(); break;
+                    case 7: PhaseSave(); break;
+                    case 8: PhaseDestroyAndLoad(); break;
+                    case 9: PhaseVerifyRestore(); break;
                     default: Finish(); return;
                 }
             }
@@ -386,13 +389,16 @@ namespace MakeGame.EditorTools
             RaftStructure a = RaftStructure.All[0];
             RaftStructure b = freshRaft;
 
-            a.SetBaseTileCount(4);
+            // ★ 칸 수는 아무 값이나 쓸 수 없다. 갑판(HasDeck)은 **원점 대칭으로 쓸 수 있는 구간**이
+            //   있어야 인정되므로(DeckLocalSize), 4행 중 3행 이상이 차야 한다 = 6칸 이상.
+            //   4칸으로 두었다가 "갑판이 없다"로 걸렸다. 6칸과 8칸(만석)이면 둘 다 갑판이 선다.
+            a.SetBaseTileCount(6);
             a.InstallPart(RaftPart.Sail | RaftPart.Rudder);
 
-            b.SetBaseTileCount(7);
+            b.SetBaseTileCount(8);
             b.InstallPart(RaftPart.Anchor);
 
-            if (a.BaseTileCount != 4 || b.BaseTileCount != 7)
+            if (a.BaseTileCount != 6 || b.BaseTileCount != 8)
             {
                 Fail("바닥판 칸 수가 서로 섞였다 (A=" + a.BaseTileCount + ", B=" + b.BaseTileCount + ")");
                 return;
@@ -411,10 +417,160 @@ namespace MakeGame.EditorTools
             }
 
             Pass("상태 독립성",
-                "A(" + a.gameObject.name + ") 칸4/돛+키, B(" + b.gameObject.name + ") 칸7/닻 - 서로 안 섞임");
+                "A(" + a.gameObject.name + ") 칸" + a.BaseTileCount + "/돛+키, B(" +
+                b.gameObject.name + ") 칸" + b.BaseTileCount + "/닻 - 서로 안 섞임");
         }
 
-        // ── 4단계: 저장 ────────────────────────────────────────────────────
+        // ── 4단계: 갑판 조각 소속 ───────────────────────────────────────────
+        //
+        // 오늘 고친 결함을 정면으로 두들긴다. **두 뗏목의 똑같은 칸 (0,0)** 에 바닥 조각을 하나씩
+        // 세운다. 예전에는 (1) 격자 키에 뗏목 번호가 없어 뒤엣것이 "이미 찼다"로 버려졌고,
+        // (2) 조각에 소속이 없어 둘 다 "지금 결속된" 컨테이너 하나에 매달렸다.
+        private static void PhaseDeckPieceOwnership()
+        {
+            var building = BuildingSystem.Instance;
+            if (building == null)
+            {
+                Fail("BuildingSystem.Instance가 없다");
+                return;
+            }
+
+            RaftStructure a = RaftStructure.All[0];
+            RaftStructure b = freshRaft;
+
+            if (!a.HasDeck || !b.HasDeck)
+            {
+                Fail("두 뗏목 중 갑판이 없는 쪽이 있다 (A " + a.HasDeck + ", B " + b.HasDeck + ")");
+                return;
+            }
+
+            // 세이브 복원 경로를 그대로 탄다. 조준·건축 UI를 흉내 내지 않고도 "소속이 적힌 조각"을
+            // 세울 수 있는 유일한 공개 통로다.
+            string json = "{\"version\":1,\"pieces\":["
+                + DeckFloorEntryJson(a) + "," + DeckFloorEntryJson(b) + "]}";
+
+            building.RestoreFromJson(json);
+
+            int countA = DeckPieceCount(a);
+            int countB = DeckPieceCount(b);
+
+            if (countA != 1 || countB != 1)
+            {
+                Fail("같은 칸에 세운 갑판 조각이 뗏목별로 하나씩 서지 않았다 (A " + countA + ", B " + countB +
+                     ") - 격자 키에 뗏목이 섞였거나 조각이 한쪽으로 몰렸다");
+                return;
+            }
+
+            // 저장으로 되돌려 소속이 그대로 실려 나가는지 본다.
+            string roundTrip = building.SerializeToJson();
+            if (!roundTrip.Contains(a.RaftId) || !roundTrip.Contains(b.RaftId))
+            {
+                Fail("저장 JSON에 두 뗏목의 식별자가 모두 실리지 않았다");
+                return;
+            }
+
+            Pass("갑판 조각 소속",
+                "두 뗏목의 같은 칸(0,0)에 각각 1개씩 (A=" + countA + ", B=" + countB + "), 저장 JSON에 소속 2종 기록");
+        }
+
+        // ── 5단계: 뗏목 사이를 걸어 본다 ────────────────────────────────────
+        //
+        // 예전 결함의 방아쇠가 정확히 이것이었다 - 다른 뗏목 근처로 가는 순간 SyncRaftBinding이
+        // 컨테이너를 갈아치우며 **모든** 갑판 조각을 그쪽으로 재부모화했다.
+        private static void PhaseWalkBetweenRafts()
+        {
+            RaftStructure a = RaftStructure.All[0];
+            RaftStructure b = freshRaft;
+
+            GameObject player = GameObject.Find("Player");
+            if (player == null)
+            {
+                Fail("Player를 못 찾아 이동 검사를 할 수 없다");
+                return;
+            }
+
+            Vector3 origin = player.transform.position;
+
+            TeleportTo(player, b.AnchorPosition);
+            TeleportTo(player, a.AnchorPosition);
+            TeleportTo(player, b.AnchorPosition);
+            TeleportTo(player, origin);
+
+            // 실제 게임 Update가 몇 번 더 돌게 둔다. TeleportTo가 SyncRaftBinding을 직접 재촉하긴
+            // 하지만, 진짜 프레임에서도 같은 결과인지 봐야 검사가 의미가 있다.
+            waitFrames = 8;
+            Pass("뗏목 갈아타기", "A↔B를 세 번 오가며 결속을 흔들었다 (판정은 다음 단계)");
+        }
+
+        // ── 6단계: 갈아타기 뒤 소속 확인 ────────────────────────────────────
+        private static void PhaseVerifyWalk()
+        {
+            RaftStructure a = RaftStructure.All[0];
+            RaftStructure b = freshRaft;
+
+            int countA = DeckPieceCount(a);
+            int countB = DeckPieceCount(b);
+
+            if (countA != 1 || countB != 1)
+            {
+                Fail("뗏목 사이를 오간 뒤 갑판 조각이 옮겨 앉았다 (A " + countA + ", B " + countB + ")" +
+                     " - 결속이 바뀔 때 남의 조각을 끌어오고 있다");
+                return;
+            }
+
+            Pass("갈아타기 뒤 소속", "조각이 각자 뗏목에 그대로 (A 1, B 1)");
+        }
+
+        /// <summary>
+        /// 플레이어를 그 자리로 옮기고 건축 시스템이 한 번 갱신되게 한다.
+        /// SyncRaftBinding은 Update에서 도는데 이 하네스는 EditorApplication.update에서 돌아
+        /// 프레임을 넘길 수 없으므로, 결속 갱신을 직접 한 번 재촉한다.
+        /// </summary>
+        private static void TeleportTo(GameObject player, Vector3 target)
+        {
+            var controller = player.GetComponent<CharacterController>();
+            if (controller != null)
+                controller.enabled = false;
+
+            player.transform.position = new Vector3(target.x, target.y + 2f, target.z);
+
+            if (controller != null)
+                controller.enabled = true;
+
+            Physics.SyncTransforms();
+
+            // 카메라도 함께 옮긴다 - ResolveNearbyRaft의 기준점이 카메라이기 때문이다.
+            Camera cam = Camera.main;
+            if (cam != null)
+                cam.transform.position = player.transform.position;
+
+            BuildingSystem.Instance?.SendMessage("SyncRaftBinding",
+                SendMessageOptions.DontRequireReceiver);
+        }
+
+        /// <summary>그 뗏목의 갑판 건축 컨테이너에 매달린 조각 수.</summary>
+        private static int DeckPieceCount(RaftStructure raft)
+        {
+            if (raft == null)
+                return -1;
+
+            Transform deckRoot = raft.DeckRoot;
+            if (deckRoot == null)
+                return -1;
+
+            Transform container = deckRoot.Find(BuildingSystem.DeckContainerName);
+            return container != null ? container.childCount : 0;
+        }
+
+        /// <summary>갑판 (0,0)칸 바닥 조각 하나의 저장 항목 JSON.</summary>
+        private static string DeckFloorEntryJson(RaftStructure raft)
+        {
+            return "{\"type\":0,\"cellX\":0,\"cellZ\":0,\"level\":0,\"axis\":0,"
+                 + "\"posX\":1.0,\"posY\":0.0,\"posZ\":1.0,\"yaw\":0.0,"
+                 + "\"space\":1,\"tier\":1,\"raftId\":\"" + raft.RaftId + "\"}";
+        }
+
+        // ── 6단계: 저장 ────────────────────────────────────────────────────
         private static void PhaseSave()
         {
             var slc = UnityEngine.Object.FindAnyObjectByType<SaveLoadController>();
@@ -583,7 +739,24 @@ namespace MakeGame.EditorTools
                 notes.Add(want.name + " 오차 " + F(bestDist) + "m/" + F(yawErr) + "°");
             }
 
-            Pass("왕복 복원", expected.Count + "대 전부 제자리 · " + string.Join(" · ", notes));
+            // 갑판 조각도 제 뗏목으로 돌아왔는가. 이게 오늘 고친 결함의 최종 관문이다.
+            for (int e = 0; e < expected.Count; e++)
+            {
+                RaftStructure raft = MatchByPosition(live, expected[e].pos);
+                if (raft == null)
+                    continue;
+
+                int deckPieces = DeckPieceCount(raft);
+                if (deckPieces != 1)
+                {
+                    Fail("불러오기 뒤 " + expected[e].name + "의 갑판 조각이 " + deckPieces + "개다 (기대 1개)" +
+                         " - 조각이 남의 뗏목으로 갔거나 사라졌다");
+                    return;
+                }
+            }
+
+            Pass("왕복 복원", expected.Count + "대 전부 제자리 · " + string.Join(" · ", notes) +
+                " · 갑판 조각도 각자 뗏목에 1개씩");
         }
 
         // ── 마무리 ─────────────────────────────────────────────────────────
@@ -663,6 +836,29 @@ namespace MakeGame.EditorTools
             if (raft.HasPart(RaftPart.Oar)) mask |= 8;
             if (raft.HasPart(RaftPart.Motor)) mask |= 16;
             return mask;
+        }
+
+        /// <summary>그 자리에 가장 가까운 뗏목.</summary>
+        private static RaftStructure MatchByPosition(List<RaftStructure> live, Vector3 target)
+        {
+            RaftStructure best = null;
+            float bestDist = float.MaxValue;
+
+            for (int i = 0; i < live.Count; i++)
+            {
+                RaftStructure raft = live[i];
+                if (raft == null)
+                    continue;
+
+                float d = Flat(raft.AnchorPosition - target);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = raft;
+                }
+            }
+
+            return best;
         }
 
         private static float Flat(Vector3 v)

@@ -391,6 +391,110 @@ namespace MakeGame.Systems
         /// <summary>세워진 뗏목 수.</summary>
         public static int Count => all.Count;
 
+        // ── 뗏목 식별자 ─────────────────────────────────────────────────────────
+        //
+        // [왜 필요한가] 갑판 위에 지은 건축 조각이 "어느 뗏목 소속인지"를 적어 두려면 뗏목마다
+        // 변하지 않는 이름표가 있어야 한다.
+        //
+        // [왜 명부 인덱스가 아닌가] all은 DestroyAll·씬 리로드·불러오기로 순서가 갈리고, 저장은
+        // 아직 자리를 못 잡은 뗏목을 건너뛰므로(SaveLoadController) 저장 인덱스와 런타임 인덱스가
+        // 이미 어긋난다. [왜 앵커 좌표가 아닌가] 항해하면 바뀌고, 두 뗏목이 가까울 때 부동소수
+        // 비교로 소속을 가리면 조각이 섞인다.
+
+        [SerializeField] private string raftId;
+
+        /// <summary>이 뗏목의 불변 식별자. 세이브에 실려 나가고 불러오기 때 그대로 돌아온다.</summary>
+        public string RaftId
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(raftId))
+                    raftId = System.Guid.NewGuid().ToString("N");
+                return raftId;
+            }
+        }
+
+        /// <summary>
+        /// 세이브에서 읽은 식별자를 물린다. **PlaceAt/ApplySavedState보다 먼저** 불러야 한다 -
+        /// 건축 조각 복원이 이 값으로 소속 뗏목을 찾기 때문이다.
+        /// 빈 값이면 아무것도 하지 않는다(스스로 새로 발급한 것을 덮어쓰지 않는다).
+        /// </summary>
+        public void AssignId(string id)
+        {
+            if (!string.IsNullOrEmpty(id))
+                raftId = id;
+        }
+
+        /// <summary>식별자로 살아 있는 뗏목을 찾는다. 없으면 null.</summary>
+        public static RaftStructure FindById(string id)
+        {
+            if (string.IsNullOrEmpty(id))
+                return null;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                RaftStructure raft = all[i];
+                if (raft != null && raft.RaftId == id)
+                    return raft;
+            }
+
+            return null;
+        }
+
+        /// <summary>격자 키에 접어 넣을 수 있는 가장 큰 뗏목 번호(6비트).</summary>
+        public const int MaxKeySlot = 63;
+
+        private int keySlot = -1;
+
+        /// <summary>
+        /// 건축 격자 키에 접어 넣는 짧은 번호(0~63). GUID를 그대로 키에 넣을 수는 없어서 둔 값이다.
+        /// **살아 있는 뗏목끼리만 겹치지 않으면 된다** - 세이브에 나가지 않고, 불러오기 때 새로
+        /// 발급된다(조각의 번호도 그때 다시 매겨진다).
+        /// </summary>
+        public int KeySlot
+        {
+            get
+            {
+                if (keySlot < 0)
+                    keySlot = AllocateKeySlot();
+                return keySlot;
+            }
+        }
+
+        /// <summary>
+        /// 번호 점유표. **명부(all)를 훑지 않는 이유**: 명부는 OnDisable에서 빠졌다가 OnEnable에서
+        /// 돌아온다. 그 사이에 다른 뗏목이 같은 번호를 받으면, 돌아온 뗏목과 번호가 겹쳐 두 뗏목의
+        /// 갑판 칸이 같은 격자 키를 쓰게 된다(이미 등록된 조각의 번호는 그대로라 되돌릴 수도 없다).
+        /// 점유는 파괴될 때까지 유지한다.
+        /// </summary>
+        private static readonly bool[] keySlotTaken = new bool[MaxKeySlot + 1];
+
+        /// <summary>아무도 쓰지 않는 가장 작은 번호를 잡는다.</summary>
+        private static int AllocateKeySlot()
+        {
+            for (int slot = 0; slot <= MaxKeySlot; slot++)
+            {
+                if (keySlotTaken[slot])
+                    continue;
+
+                keySlotTaken[slot] = true;
+                return slot;
+            }
+
+            Debug.LogWarning($"[RaftStructure] 뗏목 번호를 {MaxKeySlot + 1}개 다 썼다." +
+                " 갑판 칸 점유 판정이 뗏목 사이에서 섞일 수 있다.");
+            return 0;
+        }
+
+        /// <summary>파괴될 때 번호를 돌려놓는다.</summary>
+        private void ReleaseKeySlot()
+        {
+            if (keySlot >= 0 && keySlot <= MaxKeySlot)
+                keySlotTaken[keySlot] = false;
+
+            keySlot = -1;
+        }
+
         /// <summary>
         /// 파도 흔들림을 뺀 기준 위치. **저장에는 반드시 이 값을 쓴다** - transform.position에는
         /// 그 프레임의 상하 흔들림이 섞여 있어, 그대로 저장하면 불러올 때마다 뗏목이 조금씩 위아래로
@@ -886,6 +990,10 @@ namespace MakeGame.Systems
         {
             all.Clear();
 
+            // 격자 번호 점유표. OnDestroy가 안 불린 채 도메인이 리로드되면 표가 다 찬 채로 남아,
+            // 다음 실행의 뗏목이 전부 0번을 쓰게 된다(갑판 칸이 섞인다).
+            System.Array.Clear(keySlotTaken, 0, keySlotTaken.Length);
+
             // 모델 캐시도 함께 비운다. 도메인 리로드를 끈 플레이 모드에서 이전 실행의 (이미 언로드된)
             // 메시를 들고 시작하면 파츠가 통째로 빈 채로 만들어진다.
             System.Array.Clear(baseTilePrimary, 0, baseTilePrimary.Length);
@@ -1026,6 +1134,9 @@ namespace MakeGame.Systems
         private void OnDestroy()
         {
             all.Remove(this);
+
+            // 격자 번호는 **파괴될 때만** 돌려놓는다(비활성화로는 놓지 않는다 - AllocateKeySlot 주석).
+            ReleaseKeySlot();
         }
 
         private void Update()

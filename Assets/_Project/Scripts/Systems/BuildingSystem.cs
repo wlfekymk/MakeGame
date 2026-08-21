@@ -204,13 +204,26 @@ namespace MakeGame.Systems
 
             /// <summary>
             /// 보관 상자 전용. 내용물과 등급은 **실물이 아니라 이 기록이 들고 있다** - 갑판 재생성으로
-            /// 실물이 파괴돼도(RestoreDeckPiecesAfterRebuild) 새 실물에 같은 그릇을 다시 물려주면
+            /// 실물이 파괴돼도(RestoreDeckPieces) 새 실물에 같은 그릇을 다시 물려주면
             /// 상자 안의 물건이 그대로 이어진다. 상자가 아닌 조각에서는 항상 null이다.
             /// </summary>
             public StorageChestState chestState;
 
             /// <summary>보관 상자 전용. 지금 그 그릇을 물고 있는 컴포넌트(실물이 없으면 null).</summary>
             public StorageChest chest;
+
+            /// <summary>
+            /// [뗏목 v4] 갑판 조각의 **소속 뗏목**. 지면 조각은 빈 문자열이다.
+            /// 이 값이 없던 시절에는 갑판 조각이 "지금 결속된 컨테이너"에 매여 있어서, 다른 뗏목으로
+            /// 걸어가는 순간 구조물 전체가 그쪽으로 재부모화됐다(뗏목 사이를 순간이동했다).
+            /// </summary>
+            public string raftId = string.Empty;
+
+            /// <summary>
+            /// [뗏목 v4] 격자 키에 접어 넣는 소속 뗏목 번호(지면은 0). 등록할 때 정해지며 세이브에
+            /// 나가지 않는다 - 불러오기 때 뗏목이 번호를 새로 받고 조각도 그때 다시 등록된다.
+            /// </summary>
+            public int keySlot;
         }
 
         private readonly List<PlacedPiece> pieces = new List<PlacedPiece>();
@@ -274,8 +287,19 @@ namespace MakeGame.Systems
         private Transform boundDeckRoot;
 
         /// <summary>
-        /// 갑판 위 조각을 모아 두는 전용 컨테이너. DeckRoot 밑에 있고 로컬 원점이 **갑판 윗면 중심**이라,
-        /// 이 컨테이너의 로컬 좌표가 곧 Deck 공간 좌표다(별도 변환식이 필요 없다).
+        /// 갑판 건축 컨테이너의 이름. 뗏목마다 DeckRoot 밑에 하나씩 있다.
+        /// **공개인 이유**: RaftSailing이 뗏목별 적재량을 잴 때 이 이름으로 컨테이너를 찾는다.
+        /// 문자열이 양쪽에 따로 박혀 있으면 한쪽만 바뀌었을 때 적재량이 조용히 0이 된다.
+        /// </summary>
+        public const string DeckContainerName = "BuildDeckPieces";
+
+        /// <summary>
+        /// **지금 결속된 뗏목의** 갑판 컨테이너 캐시. DeckRoot 밑에 있고 로컬 원점이 갑판 윗면
+        /// 중심이라, 이 컨테이너의 로컬 좌표가 곧 Deck 공간 좌표다(별도 변환식이 필요 없다).
+        ///
+        /// ★ 이 필드는 **컨테이너의 주인이 아니다.** 진짜 컨테이너는 뗏목마다 하나씩 DeckRoot 밑에
+        ///   살아 있고(EnsureDeckContainer), 여기 담기는 것은 그중 지금 밟고 선 뗏목 것뿐이다.
+        ///   예전에는 이 필드가 유일한 컨테이너라, 뗏목을 갈아탈 때마다 갑판 조각 전체가 딸려 왔다.
         /// </summary>
         private Transform deckContainer;
 
@@ -284,6 +308,14 @@ namespace MakeGame.Systems
 
         /// <summary>갑판이 아직 없을 때 복원된 갑판 위 상자의 대기열(조각 대기열과 같은 규칙).</summary>
         private readonly List<ChestSaveEntry> pendingDeckChests = new List<ChestSaveEntry>();
+
+        // 대기열을 비우는 동안 원본을 그대로 순회하면, 아직도 세울 수 없는 항목이 스스로 다시
+        // 대기열에 들어가면서 목록이 자라 무한히 돈다. 복사본을 돌리고 원본은 먼저 비운다.
+        private readonly List<BuildPieceSaveEntry> flushEntryBuffer = new List<BuildPieceSaveEntry>();
+        private readonly List<ChestSaveEntry> flushChestBuffer = new List<ChestSaveEntry>();
+
+        /// <summary>대기열을 마지막으로 시도했을 때의 뗏목 상황. 같은 상황이면 다시 시도하지 않는다.</summary>
+        private int lastPendingFlushSignature = -1;
 
         /// <summary>조각이 놓이거나 부서질 때마다 올라간다. 실내 판정 캐시를 통째로 버리는 기준이다.</summary>
         private int structureVersion;
@@ -582,39 +614,136 @@ namespace MakeGame.Systems
             }
 
             if (boundRaft == null || !boundRaft.HasDeck)
+            {
+                deckContainer = null;
                 return;
+            }
 
             Transform deckRoot = boundRaft.DeckRoot;
             if (deckRoot == null)
-                return;
-
-            // 컨테이너가 없거나(첫 결속) 갑판 재생성에 휩쓸려 파괴됐으면 다시 만든다.
-            //
-            // ★ 판정 기준이 boundDeckRoot가 아니라 **실제 부모**인 이유: 뭍으로 걸어 나가면
-            //   결속이 풀리며 boundDeckRoot가 null이 되는데, 컨테이너는 그대로 남는다. 돌아왔을 때
-            //   boundDeckRoot를 보면 "달라졌다"가 되어 매번 새 컨테이너를 만들고 옛것을 빈 채로
-            //   남긴다 - 물가를 오갈 때마다 GameObject가 하나씩 새고 갑판 조각 전체가 리페어런팅된다.
-            //   부모를 보면 같은 뗏목으로 돌아왔을 때 기존 컨테이너를 그대로 재사용한다.
-            if (deckContainer == null || deckContainer.parent != deckRoot)
             {
-                var go = new GameObject("BuildDeckPieces");
-                deckContainer = go.transform;
-                deckContainer.SetParent(deckRoot, false);
-                boundDeckRoot = deckRoot;
-                RestoreDeckPiecesAfterRebuild();
+                deckContainer = null;
+                return;
             }
 
-            // 갑판 높이는 건조 단계마다 달라질 수 있다. 컨테이너만 옮기면 그 밑의 집이 통째로 따라간다.
-            Vector3 local = deckContainer.localPosition;
-            float topY = boundRaft.DeckTopLocalY;
+            boundDeckRoot = deckRoot;
+
+            // 컨테이너는 **뗏목이 들고 있다.** 여기서는 지금 밟고 선 뗏목 것을 집어 올 뿐이라,
+            // 물가를 오가거나 뗏목을 갈아타도 남의 조각을 끌어오지 않는다.
+            //
+            // 캐시가 이미 이 뗏목 것이면 이름 탐색을 건너뛴다(이 함수는 매 프레임 돈다).
+            bool created = false;
+            if (deckContainer == null || deckContainer.parent != deckRoot)
+                deckContainer = EnsureDeckContainer(boundRaft, out created);
+            else
+                AlignDeckContainer(deckContainer, boundRaft.DeckTopLocalY);
+
+            // 컨테이너를 새로 만들었다 = 이 뗏목의 갑판 조각 실물이 사라졌을 수 있다.
+            // **그 뗏목 것만** 되세운다.
+            if (created)
+                RestoreDeckPieces(boundRaft);
+
+            TryFlushPendingDeckEntries();
+        }
+
+        /// <summary>
+        /// 대기 중인 갑판 조각을 세워 본다. **뗏목 상황이 지난 시도 때와 같으면 아무것도 하지 않는다.**
+        ///
+        /// [왜 이 빗장이 필요한가] 세우지 못한 항목은 스스로 다시 대기열에 들어간다. 그런데 이 경로가
+        /// 매 프레임 도는 SyncRaftBinding에 있어서, 영영 못 세우는 항목이 하나라도 있으면 프레임마다
+        /// 전부 다시 시도하며 경고까지 쏟는다. 실제로 그럴 수 있다 - 세이브에 뗏목이 하나도 없으면
+        /// 바닥판 0칸짜리 뗏목이 한 대 서는데, 갑판이 없으니 갑판 조각은 언제까지고 대기열에 남는다.
+        ///
+        /// 결과를 바꿀 수 있는 것은 "뗏목이 늘거나 줄었다" 또는 "갑판이 깔린 뗏목 수가 달라졌다"뿐이다.
+        /// 그 둘을 숫자 하나로 접어 두고, 값이 달라졌을 때만 다시 시도한다.
+        /// </summary>
+        private void TryFlushPendingDeckEntries()
+        {
+            if (pendingDeckEntries.Count == 0 && pendingDeckChests.Count == 0)
+                return;
+
+            int signature = PendingFlushSignature();
+            if (signature == lastPendingFlushSignature)
+                return;
+
+            lastPendingFlushSignature = signature;
+            FlushPendingDeckEntries();
+        }
+
+        /// <summary>대기열 재시도의 판단 근거: (뗏목 수, 갑판이 깔린 뗏목 수).</summary>
+        private static int PendingFlushSignature()
+        {
+            var rafts = RaftStructure.All;
+            int decked = 0;
+
+            for (int i = 0; i < rafts.Count; i++)
+            {
+                RaftStructure raft = rafts[i];
+                if (raft != null && raft.HasDeck)
+                    decked++;
+            }
+
+            return rafts.Count * 1024 + decked;
+        }
+
+        /// <summary>
+        /// 그 뗏목의 갑판 건축 컨테이너를 확보한다(없으면 만든다). 로컬 원점을 갑판 윗면 중심에
+        /// 맞춰 두므로 컨테이너의 로컬 좌표가 곧 그 뗏목의 Deck 공간 좌표가 된다.
+        ///
+        /// 이름으로 찾는다(<see cref="DeckContainerName"/>). 캐시 필드를 두지 않는 이유는, 캐시가
+        /// 하나뿐이면 결국 "지금 결속된 뗏목"에 묶여 예전 버그로 되돌아가기 때문이다. DeckRoot 밑의
+        /// 자식은 한 줌이라 Find 비용은 무시할 수 있다.
+        /// </summary>
+        private Transform EnsureDeckContainer(RaftStructure raft, out bool created)
+        {
+            created = false;
+
+            if (raft == null)
+                return null;
+
+            Transform deckRoot = raft.DeckRoot;
+            if (deckRoot == null)
+                return null;
+
+            Transform container = deckRoot.Find(DeckContainerName);
+            if (container == null)
+            {
+                var go = new GameObject(DeckContainerName);
+                container = go.transform;
+                container.SetParent(deckRoot, false);
+                created = true;
+            }
+
+            AlignDeckContainer(container, raft.DeckTopLocalY);
+            return container;
+        }
+
+        /// <summary>
+        /// 컨테이너의 로컬 원점을 갑판 윗면 중심에 맞춘다. 지금은 DeckTopLocalY가 상수라 첫 정렬
+        /// 이후로는 아무 일도 하지 않지만, 값이 상태에 따라 달라지게 바뀌더라도 여기 한 줄이
+        /// 그 밑에 지은 집을 통째로 데려간다(조각 좌표를 하나도 안 건드린다).
+        /// </summary>
+        private static void AlignDeckContainer(Transform container, float topY)
+        {
+            if (container == null)
+                return;
+
+            Vector3 local = container.localPosition;
             if (!Mathf.Approximately(local.y, topY) || local.x != 0f || local.z != 0f)
-                deckContainer.localPosition = new Vector3(0f, topY, 0f);
+                container.localPosition = new Vector3(0f, topY, 0f);
 
-            if (deckContainer.localRotation != Quaternion.identity)
-                deckContainer.localRotation = Quaternion.identity;
+            if (container.localRotation != Quaternion.identity)
+                container.localRotation = Quaternion.identity;
+        }
 
-            if (pendingDeckEntries.Count > 0 || pendingDeckChests.Count > 0)
-                FlushPendingDeckEntries();
+        /// <summary>그 뗏목의 갑판 컨테이너. 없으면 만들지 않고 null을 돌려준다.</summary>
+        private static Transform FindDeckContainer(RaftStructure raft)
+        {
+            if (raft == null)
+                return null;
+
+            Transform deckRoot = raft.DeckRoot;
+            return deckRoot != null ? deckRoot.Find(DeckContainerName) : null;
         }
 
         /// <summary>
@@ -653,22 +782,39 @@ namespace MakeGame.Systems
         /// </summary>
         private void OnDeckRebuilt()
         {
-            // 이 프레임에는 아직 새 갑판 Transform이 잡히지 않았을 수 있다. 실제 재건은 SyncRaftBinding이
-            // 다음 호출에서 컨테이너 유무를 보고 처리한다(여기서는 표식만 지운다).
-            if (deckContainer == null)
-                boundDeckRoot = null;
+            if (boundRaft == null)
+                return;
+
+            // 컨테이너는 DeckRoot의 자식이고 DeckRoot는 파츠 재생성 대상이 아니라 보통 살아남는다.
+            // 그래도 **항상** 되세운다 - 실물만 사라진 경우(상자 주석 참고)를 여기서 흡수한다.
+            // 살아 있는 조각에는 같은 부모·같은 로컬 좌표를 다시 대입할 뿐이라 사실상 무해하고,
+            // 이 이벤트 자체가 드물게(바닥판을 넓힐 때만) 발생한다.
+            deckContainer = EnsureDeckContainer(boundRaft, out _);
+            RestoreDeckPieces(boundRaft);
         }
 
         /// <summary>
         /// 갑판 조각의 실물이 사라졌으면 기록을 보고 다시 만든다. 살아 있으면 새 컨테이너로 옮기기만 한다.
         /// </summary>
-        private void RestoreDeckPiecesAfterRebuild()
+        private void RestoreDeckPieces(RaftStructure raft)
         {
+            if (raft == null)
+                return;
+
+            Transform container = FindDeckContainer(raft);
+            if (container == null)
+                return;
+
+            // ★ 소속으로 거른다. 예전에는 "space == Deck" 하나만 보고 **모든 뗏목의** 갑판 조각을
+            //   여기로 끌어왔다. 그게 구조물이 뗏목 사이를 순간이동하던 원인이다.
+            string ownerId = raft.RaftId;
+
             rebuildBuffer.Clear();
             for (int i = 0; i < pieces.Count; i++)
             {
-                if (pieces[i].space == BuildSpace.Deck)
-                    rebuildBuffer.Add(pieces[i]);
+                PlacedPiece candidate = pieces[i];
+                if (candidate.space == BuildSpace.Deck && candidate.raftId == ownerId)
+                    rebuildBuffer.Add(candidate);
             }
 
             if (rebuildBuffer.Count == 0)
@@ -680,7 +826,7 @@ namespace MakeGame.Systems
 
                 if (piece.go != null)
                 {
-                    piece.go.transform.SetParent(deckContainer, false);
+                    piece.go.transform.SetParent(container, false);
                     ApplyDeckLocalTransform(piece.go.transform, piece.position, piece.yaw);
                     continue;
                 }
@@ -689,7 +835,7 @@ namespace MakeGame.Systems
                 int tier = piece.type == BuildPieceType.Chest
                     ? (piece.chestState != null ? piece.chestState.tier : 0)
                     : piece.tier;
-                GameObject go = CreatePieceObject(piece.type, deckContainer, tier);
+                GameObject go = CreatePieceObject(piece.type, container, tier);
                 if (go == null)
                 {
                     Debug.LogWarning("[BuildingSystem] 갑판 재생성 후 조각 실물을 다시 만들지 못했다.");
@@ -715,15 +861,39 @@ namespace MakeGame.Systems
         /// <summary>대기 중이던 갑판 조각·상자(갑판이 없을 때 불러온 세이브)를 실제로 세운다.</summary>
         private void FlushPendingDeckEntries()
         {
-            for (int i = 0; i < pendingDeckEntries.Count; i++)
-                CreatePieceFromEntry(pendingDeckEntries[i]);
+            // ★ 복사본을 돌리고 원본은 먼저 비운다. 아직 소속 뗏목이 안 선 항목은 CreatePieceFromEntry가
+            //   **스스로 다시 대기열에 넣는다** - 원본을 그대로 순회하면 목록이 자라며 무한히 돈다.
+            // 실제로 하나라도 세웠을 때만 물리 동기화와 UI 갱신을 한다. 해소되지 않는 항목이
+            // 남아 있으면 이 함수는 매 프레임 불리는데, 그때마다 UI를 다시 그리면 게임 내내
+            // 건축 창이 깜빡인다.
+            int before = pieces.Count;
 
-            pendingDeckEntries.Clear();
+            if (pendingDeckEntries.Count > 0)
+            {
+                flushEntryBuffer.Clear();
+                flushEntryBuffer.AddRange(pendingDeckEntries);
+                pendingDeckEntries.Clear();
 
-            for (int i = 0; i < pendingDeckChests.Count; i++)
-                CreateChestFromEntry(pendingDeckChests[i]);
+                for (int i = 0; i < flushEntryBuffer.Count; i++)
+                    CreatePieceFromEntry(flushEntryBuffer[i]);
 
-            pendingDeckChests.Clear();
+                flushEntryBuffer.Clear();
+            }
+
+            if (pendingDeckChests.Count > 0)
+            {
+                flushChestBuffer.Clear();
+                flushChestBuffer.AddRange(pendingDeckChests);
+                pendingDeckChests.Clear();
+
+                for (int i = 0; i < flushChestBuffer.Count; i++)
+                    CreateChestFromEntry(flushChestBuffer[i]);
+
+                flushChestBuffer.Clear();
+            }
+
+            if (pieces.Count == before)
+                return;
 
             Physics.SyncTransforms();
             Changed?.Invoke();
@@ -738,13 +908,31 @@ namespace MakeGame.Systems
         /// <summary>갑판에 조각을 놓을 수 있는 상태인가(뗏목이 있고, 갑판 단계이고, 컨테이너가 살아 있다).</summary>
         private bool IsDeckReady => deckContainer != null && boundRaft != null && boundRaft.HasDeck;
 
+        /// <summary>그 갑판 조각이 **지금 결속된 뗏목** 것인가. 조준·건축은 이 뗏목 위에서만 일어난다.</summary>
+        private bool IsBoundRaftPiece(PlacedPiece piece)
+        {
+            if (piece == null || piece.space != BuildSpace.Deck)
+                return true;
+
+            return boundRaft != null && piece.raftId == boundRaft.RaftId;
+        }
+
         /// <summary>그 셀이 갑판 안에 **온전히** 들어가는지. 한 귀퉁이라도 밖이면 못 짓는다.</summary>
         private bool IsDeckCellInBounds(int cellX, int cellZ)
         {
-            if (boundRaft == null || !boundRaft.HasDeck)
+            return IsDeckCellInBounds(boundRaft, cellX, cellZ);
+        }
+
+        /// <summary>
+        /// 그 셀이 **그 뗏목의** 갑판 안에 온전히 들어가는지. 철거 판정처럼 "조각의 뗏목"이 따로
+        /// 정해진 자리에서는 결속된 뗏목이 아니라 이쪽을 써야 한다.
+        /// </summary>
+        private static bool IsDeckCellInBounds(RaftStructure raft, int cellX, int cellZ)
+        {
+            if (raft == null || !raft.HasDeck)
                 return false;
 
-            Vector2 size = boundRaft.DeckLocalSize;
+            Vector2 size = raft.DeckLocalSize;
             float halfX = size.x * 0.5f;
             float halfZ = size.y * 0.5f;
 
@@ -1464,6 +1652,16 @@ namespace MakeGame.Systems
                 PlacedPiece piece = FindPieceOf(collider.transform);
                 bool onDeck = false;
 
+                // ★ 남의 뗏목에 지은 조각은 조준 대상이 아니다. 지금 밟고 선 뗏목(boundRaft)의
+                //   좌표계로 그 조각을 풀면, A의 조각을 겨눠 B의 엉뚱한 칸에 짓게 된다.
+                //   뗏목 본체와 똑같이 "막힘"으로 처리한다(허공이 아니라 실제로 뭔가 있으므로).
+                if (piece != null && piece.space == BuildSpace.Deck && !IsBoundRaftPiece(piece))
+                {
+                    if (hit.distance < raftBlockDistance)
+                        raftBlockDistance = hit.distance;
+                    continue;
+                }
+
                 if (piece == null)
                 {
                     bool isTerrain = collider.gameObject.name.StartsWith(TerrainNamePrefix, System.StringComparison.Ordinal);
@@ -1641,6 +1839,33 @@ namespace MakeGame.Systems
         private bool HasRoofAt(BuildSpace space, int cellX, int cellZ, int level)
         {
             return roofByKey.ContainsKey(PieceKey(space, cellX, cellZ, level, NonWallAxis));
+        }
+
+        // ── 소속 맥락 판(철거 전용) ────────────────────────────────────────────
+        //
+        // 위의 조회들은 전부 "지금 조준 중인 맥락"(= 결속된 뗏목)으로 키를 만든다. 그런데 철거는
+        // **부수려는 조각의 뗏목**이 기준이어야 한다 - 뗏목 두 대가 가까이 붙어 ResolveNearbyRaft가
+        // 옆 뗏목을 집으면, 지붕이 얹힌 벽이 "위에 아무것도 없다"로 판정돼 부서지고 지붕이 공중에 뜬다.
+
+        /// <summary>그 조각이 속한 뗏목 기준으로 그 칸 그 층에 지붕이 있는지.</summary>
+        private bool HasRoofAt(PlacedPiece context, int cellX, int cellZ, int level)
+        {
+            return roofByKey.ContainsKey(
+                PieceKey(context.space, context.keySlot, cellX, cellZ, level, NonWallAxis));
+        }
+
+        /// <summary>그 조각이 속한 뗏목 기준으로 그 칸 그 층에 딛고 설 바닥이 있는지.</summary>
+        private bool HasFloorAt(PlacedPiece context, int cellX, int cellZ, int level)
+        {
+            if (floorByKey.ContainsKey(
+                    PieceKey(context.space, context.keySlot, cellX, cellZ, level, NonWallAxis)))
+                return true;
+
+            // 갑판 0층은 실물 없는 바닥이다(TryGetFloorTopY 주석 참고). **그 조각의 뗏목** 크기로 본다.
+            if (context.space == BuildSpace.Deck && level == 0)
+                return IsDeckCellInBounds(RaftStructure.FindById(context.raftId), cellX, cellZ);
+
+            return false;
         }
 
         /// <summary>
@@ -2072,9 +2297,18 @@ namespace MakeGame.Systems
         /// 조각 하나를 표에 올린다. **만들어진 기록을 돌려준다** - 보관 상자처럼 등록 직후에 부가 상태
         /// (내용물 그릇)를 물려야 하는 부품이 있어서, 호출부가 그 기록을 손에 쥘 수 있어야 한다.
         /// </summary>
+        /// <param name="owner">
+        /// 갑판 조각의 소속 뗏목. null이면 지금 결속된 뗏목으로 본다(직접 짓는 경우가 그렇다).
+        /// **세이브 복원에서는 반드시 명시해야 한다** - 뭍에 서서 불러오면 결속된 뗏목이 없거나
+        /// 엉뚱한 뗏목이라, 조각이 남의 갑판에 등록된다.
+        /// </param>
         private PlacedPiece RegisterPiece(BuildPieceType type, BuildSpace space, GameObject go, int cellX, int cellZ,
-            int level, int axis, Vector3 position, float yaw)
+            int level, int axis, Vector3 position, float yaw, RaftStructure owner = null)
         {
+            RaftStructure raft = space == BuildSpace.Deck
+                ? (owner != null ? owner : boundRaft)
+                : null;
+
             var piece = new PlacedPiece
             {
                 type = type,
@@ -2087,6 +2321,8 @@ namespace MakeGame.Systems
                 axis = axis,
                 position = position,
                 yaw = yaw,
+                raftId = raft != null ? raft.RaftId : string.Empty,
+                keySlot = raft != null ? raft.KeySlot : 0,
             };
 
             pieces.Add(piece);
@@ -2095,24 +2331,24 @@ namespace MakeGame.Systems
             switch (type)
             {
                 case BuildPieceType.Floor:
-                    floorByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    floorByKey[PieceKey(space, piece.keySlot, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
                 case BuildPieceType.Stair:
-                    stairByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    stairByKey[PieceKey(space, piece.keySlot, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
                 case BuildPieceType.Roof:
-                    roofByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    roofByKey[PieceKey(space, piece.keySlot, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
                 // 상자는 **딴 표**다. 바닥/천장 조회에 절대 들어가지 않는다(BuildPieceType.Chest 주석 참고).
                 case BuildPieceType.Chest:
-                    chestByKey[PieceKey(space, cellX, cellZ, level, NonWallAxis)] = piece;
+                    chestByKey[PieceKey(space, piece.keySlot, cellX, cellZ, level, NonWallAxis)] = piece;
                     break;
 
                 default:
-                    wallByKey[PieceKey(space, cellX, cellZ, level, axis)] = piece;
+                    wallByKey[PieceKey(space, piece.keySlot, cellX, cellZ, level, axis)] = piece;
                     break;
             }
 
@@ -2147,23 +2383,23 @@ namespace MakeGame.Systems
             switch (piece.type)
             {
                 case BuildPieceType.Floor:
-                    floorByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    floorByKey.Remove(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
                 case BuildPieceType.Stair:
-                    stairByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    stairByKey.Remove(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
                 case BuildPieceType.Roof:
-                    roofByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    roofByKey.Remove(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
                 case BuildPieceType.Chest:
-                    chestByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
+                    chestByKey.Remove(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level, NonWallAxis));
                     break;
 
                 default:
-                    wallByKey.Remove(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level, piece.axis));
+                    wallByKey.Remove(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level, piece.axis));
                     break;
             }
 
@@ -2191,6 +2427,10 @@ namespace MakeGame.Systems
             chestByKey.Clear();
             pendingDeckEntries.Clear();
             pendingDeckChests.Clear();
+
+            // 빗장을 푼다. 새로 불러온 세이브의 대기열은 뗏목 상황이 그대로여도 반드시 한 번은 시도해야 한다.
+            lastPendingFlushSignature = -1;
+
             StorageChest.SetFocused(null);
             structureVersion++;
         }
@@ -2244,6 +2484,13 @@ namespace MakeGame.Systems
         /// 1티어로 그대로 되살아난다(파괴되지 않는다).
         /// </summary>
         public int tier;
+
+        /// <summary>
+        /// [뗏목 v4 추가 - **맨 끝에 추가만 했다**] 갑판 조각의 소속 뗏목 식별자(RaftStructure.RaftId).
+        /// 지면 조각은 ""다. 이 필드가 없는 옛 세이브도 ""로 읽히는데, 그 시절에는 뗏목이 한 대뿐이라
+        /// 복원이 대표 뗏목에 귀속시키는 것이 정확히 옛 동작이다(ResolveSavedRaft).
+        /// </summary>
+        public string raftId;
     }
 
     /// <summary>

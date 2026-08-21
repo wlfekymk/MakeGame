@@ -54,6 +54,9 @@ namespace MakeGame.Systems
                     yaw = piece.yaw,
                     // [건축 4티어] 1~4로 잘라 저장한다(0은 "옛 세이브"의 표식이므로 새 세이브에 쓰지 않는다).
                     tier = BuildPieceCatalog.ClampPieceTier(piece.tier),
+
+                    // [뗏목 v4] 갑판 조각의 소속. 지면 조각은 ""라 불러올 때 그대로 지면으로 간다.
+                    raftId = piece.raftId,
                 });
             }
 
@@ -65,14 +68,23 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 저장된 조각을 그대로 되살린다. json이 ""/null이면 **아무것도 하지 않는다**(건축 기능이
-        /// 없던 시절의 옛 세이브 호환 - 지금 지어 둔 것을 지우지도 않는다).
+        /// 저장된 조각을 그대로 되살린다. **어느 경로로 나가든 먼저 표를 비운다** - json이 비었든
+        /// 깨졌든, 불러오기는 언제나 "이전 판을 지우고 이 세이브를 세우는" 일이기 때문이다.
+        /// (예전에는 빈 json에서 그냥 돌아가 이전 판의 조각 기록이 표에 남았고, 그 기록이 나중에
+        /// 같은 RaftId의 뗏목이 서는 순간 유령 구조물로 되살아났다.)
         /// 옛 세이브에는 space 필드가 없어 0(Ground)으로 읽히는데, 그게 정확히 옛 동작이다.
         /// </summary>
         public void RestoreFromJson(string json)
         {
+            // ★ 빈 세이브라도 **먼저 비운다.** 예전에는 여기서 그냥 돌아가 이전 판의 조각 기록이
+            //   표에 남았다. 실물은 파괴된 뗏목과 함께 사라져 go == null이 되는데, 같은 세이브를
+            //   다시 열어 같은 RaftId의 뗏목이 서면 소속 비교가 통과해 유령 구조물이 되살아난다.
             if (string.IsNullOrEmpty(json))
+            {
+                ClearAllPieces();
+                Changed?.Invoke();
                 return;
+            }
 
             BuildStructureSaveData data;
             try
@@ -82,11 +94,17 @@ namespace MakeGame.Systems
             catch (System.Exception e)
             {
                 Debug.LogWarning($"[BuildingSystem] 건축 저장 데이터를 읽지 못했다: {e.Message}");
+                ClearAllPieces();
+                Changed?.Invoke();
                 return;
             }
 
             if (data == null || data.pieces == null)
+            {
+                ClearAllPieces();
+                Changed?.Invoke();
                 return;
+            }
 
             ClearAllPieces();
 
@@ -126,26 +144,35 @@ namespace MakeGame.Systems
             var type = (BuildPieceType)entry.type;
             var space = entry.space == (int)BuildSpace.Deck ? BuildSpace.Deck : BuildSpace.Ground;
 
-            if (space == BuildSpace.Deck && !IsDeckReady)
+            // [뗏목 v4] 갑판 조각은 **적힌 뗏목**에 되세운다. 결속된 뗏목이 아니다 - 뭍에 서서
+            // 불러오면 결속이 없거나 엉뚱한 뗏목이라, 그걸 기준으로 삼으면 집이 남의 배로 간다.
+            RaftStructure owner = null;
+            if (space == BuildSpace.Deck)
             {
-                pendingDeckEntries.Add(entry);
-                return;
+                owner = ResolveSavedRaft(entry.raftId);
+                if (owner == null || !owner.HasDeck)
+                {
+                    pendingDeckEntries.Add(entry);
+                    return;
+                }
             }
+
+            int ownerSlot = owner != null ? owner.KeySlot : 0;
 
             bool occupied;
             switch (type)
             {
                 case BuildPieceType.Floor:
-                    occupied = floorByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    occupied = floorByKey.ContainsKey(PieceKey(space, ownerSlot, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
                     break;
                 case BuildPieceType.Stair:
-                    occupied = stairByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    occupied = stairByKey.ContainsKey(PieceKey(space, ownerSlot, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
                     break;
                 case BuildPieceType.Roof:
-                    occupied = roofByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
+                    occupied = roofByKey.ContainsKey(PieceKey(space, ownerSlot, entry.cellX, entry.cellZ, entry.level, NonWallAxis));
                     break;
                 default:
-                    occupied = wallByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, entry.axis));
+                    occupied = wallByKey.ContainsKey(PieceKey(space, ownerSlot, entry.cellX, entry.cellZ, entry.level, entry.axis));
                     break;
             }
 
@@ -159,18 +186,63 @@ namespace MakeGame.Systems
             // 해석한다 - 옛 세이브의 부품은 전부 1티어로 그대로 복원된다(하위호환의 핵심).
             int tier = BuildPieceCatalog.ClampPieceTier(entry.tier);
 
-            Transform parent = space == BuildSpace.Deck ? deckContainer : piecesRoot;
+            Transform parent = space == BuildSpace.Deck
+                ? EnsureDeckContainer(owner, out _)
+                : piecesRoot;
+
+            if (parent == null)
+            {
+                Debug.LogWarning("[BuildingSystem] 조각을 담을 컨테이너를 못 찾아 복원을 건너뛴다.");
+                return;
+            }
+
             GameObject go = CreatePieceObject(type, parent, tier);
             if (go == null)
                 return;
 
-
+            // 좌표는 부모의 로컬이다(ApplyPieceTransform이 Deck이면 로컬로 대입한다).
+            // 부모를 owner의 컨테이너로 잡아 두었으므로 그대로 제자리에 선다.
             var position = new Vector3(entry.posX, entry.posY, entry.posZ);
             ApplyPieceTransform(go.transform, space, position, entry.yaw);
 
             PlacedPiece piece = RegisterPiece(type, space, go, entry.cellX, entry.cellZ, entry.level, entry.axis,
-                position, entry.yaw);
+                position, entry.yaw, owner);
             piece.tier = tier;
+        }
+
+        /// <summary>
+        /// 세이브에 적힌 소속 뗏목을 찾는다.
+        ///
+        /// raftId가 비어 있으면(뗏목 소속을 적기 전 세이브) **대표 뗏목**에 귀속시킨다 - 그 시절에는
+        /// 뗏목이 한 대뿐이었으므로 그게 정확히 옛 동작이다.
+        ///
+        /// raftId가 적혀 있는데 그 뗏목이 사라졌을 때도 **대표 뗏목에 얹는다.** 안 세우고 대기열에
+        /// 남기는 편이 얼핏 안전해 보이지만, 그 항목은 영영 해소되지 않는다(자세한 이유는 본문 주석).
+        /// </summary>
+        private static RaftStructure ResolveSavedRaft(string raftId)
+        {
+            if (string.IsNullOrEmpty(raftId))
+                return RaftStructure.Best;
+
+            RaftStructure raft = RaftStructure.FindById(raftId);
+            if (raft != null)
+                return raft;
+
+            // 적힌 뗏목이 사라졌다. **대표 뗏목에 얹는다.**
+            //
+            // null을 돌려 대기열에 남기면 그 항목은 영영 해소되지 않고, 대기열이 비지 않는 한
+            // SyncRaftBinding이 매 프레임 flush를 돌린다(라이브락). 실제로 그럴 수 있는 경로가 있다:
+            // 저장은 아직 자리를 못 잡은 뗏목을 건너뛰므로(SaveLoadController), 그 뗏목 위에 지어 둔
+            // 조각의 raftId는 불러오기 뒤 주인이 없다. 집이 옆 배로 옮겨 앉는 편이 영영 안 나타나거나
+            // 프레임마다 재시도하는 것보다 낫다 - 대신 무슨 일이 있었는지 한 줄 남긴다.
+            RaftStructure fallback = RaftStructure.Best;
+            if (fallback != null)
+            {
+                Debug.LogWarning("[BuildingSystem] 갑판 조각이 적어 둔 뗏목을 못 찾아" +
+                    " 대표 뗏목에 되세운다(그 뗏목이 저장되지 않았을 수 있다).");
+            }
+
+            return fallback;
         }
 
         // ────────────────────────────────────────────────────────────────────────
@@ -197,6 +269,7 @@ namespace MakeGame.Systems
 
                 var entry = new ChestSaveEntry
                 {
+                    raftId = piece.raftId,
                     space = (int)piece.space,
                     cellX = piece.cellX,
                     cellZ = piece.cellZ,
@@ -257,9 +330,8 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 저장된 보관 상자를 되살린다. 목록이 비어 있으면(= 상자 기능이 없던 옛 세이브) **아무것도 하지
-        /// 않는다** - 지금 지어 둔 상자를 지우지도 않는다. 건축 조각 복원(RestoreFromJson)이 ""를 만났을
-        /// 때와 완전히 같은 규칙이다.
+        /// 저장된 보관 상자를 되살린다. 목록이 비어 있으면(= 상자 기능이 없던 옛 세이브) 아무것도
+        /// 하지 않는다 - 이 경우 상자를 걷어내는 일은 앞선 RestoreFromJson의 ClearAllPieces가 이미 했다.
         ///
         /// 반드시 RestoreFromJson **뒤에** 불러야 한다: 그쪽이 ClearAllPieces로 격자 표를 비우기 때문에,
         /// 순서가 뒤집히면 방금 세운 상자가 그대로 지워진다.
@@ -269,8 +341,9 @@ namespace MakeGame.Systems
             if (entries == null || entries.Count == 0)
                 return;
 
-            // 건축 조각이 하나도 없는 세이브(buildStructureJson == "")는 RestoreFromJson이 일찍 돌아가
-            // 표를 비우지 않는다. 그 경우에도 상자가 겹쳐 서지 않도록 여기서 상자만 따로 걷어낸다.
+            // RestoreFromJson이 이미 표를 통째로 비웠으므로 보통은 할 일이 없다. 그래도 남겨 둔다 -
+            // 이 함수를 불러오기 밖에서(예: 상자만 되돌리는 도구) 부르게 되는 날, 상자가 겹쳐 서는
+            // 사고를 막는 유일한 방어선이 이 한 줄이다. 비용은 목록 한 번 훑기다.
             RemoveAllChests();
 
             SyncRaftBinding();
@@ -312,20 +385,37 @@ namespace MakeGame.Systems
 
             var space = entry.space == (int)BuildSpace.Deck ? BuildSpace.Deck : BuildSpace.Ground;
 
-            if (space == BuildSpace.Deck && !IsDeckReady)
+            // [뗏목 v4] 조각과 같은 규칙이다(CreatePieceFromEntry 주석 참고).
+            RaftStructure owner = null;
+            if (space == BuildSpace.Deck)
             {
-                pendingDeckChests.Add(entry);
-                return;
+                owner = ResolveSavedRaft(entry.raftId);
+                if (owner == null || !owner.HasDeck)
+                {
+                    pendingDeckChests.Add(entry);
+                    return;
+                }
             }
 
-            if (chestByKey.ContainsKey(PieceKey(space, entry.cellX, entry.cellZ, entry.level, NonWallAxis)))
+            int ownerSlot = owner != null ? owner.KeySlot : 0;
+
+            if (chestByKey.ContainsKey(PieceKey(space, ownerSlot, entry.cellX, entry.cellZ, entry.level, NonWallAxis)))
             {
                 Debug.LogWarning("[BuildingSystem] 같은 자리에 상자가 둘 저장돼 있어 뒤엣것을 건너뛴다.");
                 return;
             }
 
             int tier = BuildPieceCatalog.ClampChestTier(entry.tier);
-            Transform parent = space == BuildSpace.Deck ? deckContainer : piecesRoot;
+            Transform parent = space == BuildSpace.Deck
+                ? EnsureDeckContainer(owner, out _)
+                : piecesRoot;
+
+            if (parent == null)
+            {
+                Debug.LogWarning("[BuildingSystem] 상자를 담을 컨테이너를 못 찾아 복원을 건너뛴다.");
+                return;
+            }
+
             GameObject go = CreatePieceObject(BuildPieceType.Chest, parent, tier);
             if (go == null)
             {
@@ -337,7 +427,7 @@ namespace MakeGame.Systems
             ApplyPieceTransform(go.transform, space, position, entry.yaw);
 
             PlacedPiece piece = RegisterPiece(BuildPieceType.Chest, space, go, entry.cellX, entry.cellZ,
-                entry.level, NonWallAxis, position, entry.yaw);
+                entry.level, NonWallAxis, position, entry.yaw, owner);
 
             piece.chestState = new StorageChestState { tier = tier };
             AttachChest(piece);

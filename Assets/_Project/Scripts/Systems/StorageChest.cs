@@ -9,7 +9,7 @@ namespace MakeGame.Systems
     /// 보관 상자 하나의 **내용물과 등급**. GameObject와 수명을 분리해 두는 그릇이다.
     ///
     /// 왜 컴포넌트가 직접 들고 있지 않은가: 뗏목 갑판이 다시 만들어지면 갑판 밑 컨테이너가 통째로
-    /// 파괴될 수 있고(BuildingSystem.RestoreDeckPiecesAfterRebuild), 그때 상자 실물도 함께 사라진다.
+    /// 파괴될 수 있고(BuildingSystem.RestoreDeckPieces), 그때 상자 실물도 함께 사라진다.
     /// 상태가 컴포넌트 안에만 있으면 그 순간 내용물이 조용히 증발한다. BuildingSystem이 이 그릇을
     /// 조각 기록(PlacedPiece)에 들고 있다가 새 실물에 다시 물려주므로, 실물이 몇 번 다시 만들어져도
     /// 내용물과 등급은 그대로 남는다.

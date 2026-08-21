@@ -251,6 +251,10 @@ namespace MakeGame.Systems
                     yaw = raft.AnchorYaw,
                     baseTileCount = raft.BaseTileCount,
                     installedParts = (int)raft.InstalledParts,
+
+                    // [뗏목 v4] 갑판 위 건축 조각이 소속을 되찾는 열쇠. 조각 저장(buildStructureJson)
+                    // 보다 반드시 먼저 기록돼야 하는 값은 아니지만, 같은 세이브 안에서 짝이 맞아야 한다.
+                    raftId = raft.RaftId,
                 };
 
                 raft.WriteBaseTileCodes(entry.baseTiles);
@@ -542,6 +546,10 @@ namespace MakeGame.Systems
                     continue;
 
                 RaftStructure raft = RaftStructure.Create();
+
+                // [뗏목 v4] **식별자를 가장 먼저** 물린다. 아래 RestoreFromJson이 갑판 조각의
+                // 소속 뗏목을 이 값으로 찾으므로, 자리보다도 먼저 정해져 있어야 한다.
+                raft.AssignId(entry.raftId);
 
                 // 자리를 먼저 준다. PlaceAt이 정박을 확정하므로 그 뒤의 ApplySavedState가 만드는
                 // 외형이 곧바로 제자리에 선다(자리 없이 상태만 넣으면 원점에 한 프레임 나타난다).

@@ -228,18 +228,45 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// (space, x, z, level, axis)를 long 하나로 접는다. x/z 각 21비트(±1,048,575 - 월드 반경
-        /// 20,000m를 셀 크기 2로 나눠도 10,000이라 넉넉하다), level 12비트, axis 2비트, 공간 1비트로
-        /// 총 57비트다. 공간 비트가 있어서 지면 (0,0,0)칸과 갑판 (0,0,0)칸이 절대 섞이지 않는다.
+        /// (space, raftSlot, x, z, level, axis)를 long 하나로 접는다. x/z 각 21비트(±1,048,575 -
+        /// 월드 반경 20,000m를 셀 크기 2로 나눠도 10,000이라 넉넉하다), level 12비트, axis 2비트,
+        /// 공간 1비트, **뗏목 번호 6비트**로 총 63비트다(부호 비트는 쓰지 않는다).
+        ///
+        /// 공간 비트가 있어서 지면 (0,0,0)칸과 갑판 (0,0,0)칸이 섞이지 않고, 뗏목 번호가 있어서
+        /// **뗏목 A의 갑판 (0,0)칸과 뗏목 B의 (0,0)칸이 섞이지 않는다.** 뗏목 번호가 없던 시절에는
+        /// 둘이 같은 키였고, 그래서 B 갑판에 지으려 하면 A에 있는 조각 때문에 "이미 찼다"가 떴다.
+        /// raftSlot은 지면 조각에서는 언제나 0이다.
         /// </summary>
-        private static long PieceKey(BuildSpace space, int x, int z, int level, int axis)
+        private static long PieceKey(BuildSpace space, int raftSlot, int x, int z, int level, int axis)
         {
             long kx = (long)(x + 1048576) & 0x1FFFFF;
             long kz = (long)(z + 1048576) & 0x1FFFFF;
             long kl = (long)(level + 512) & 0xFFF;
             long ka = axis & 0x3;
             long ks = (long)space & 0x1;
-            return (ks << 56) | (kx << 35) | (kz << 14) | (kl << 2) | ka;
+            long kr = (long)raftSlot & 0x3F;
+            return (kr << 57) | (ks << 56) | (kx << 35) | (kz << 14) | (kl << 2) | ka;
+        }
+
+        /// <summary>
+        /// **지금 조준하고 있는 맥락**의 키(= 결속된 뗏목). 조회 전용이다.
+        ///
+        /// ★ 등록·해제·세이브 복원처럼 "그 조각의 뗏목"이 따로 정해져 있는 자리에서는 반드시
+        ///   6인자 판을 써야 한다. 뭍에 서서 불러오기를 하면 boundRaft가 null이거나 엉뚱한 뗏목이라,
+        ///   여기로 키를 만들면 조각이 남의 칸에 등록된다.
+        /// </summary>
+        private long PieceKey(BuildSpace space, int x, int z, int level, int axis)
+        {
+            return PieceKey(space, ContextKeySlot(space), x, z, level, axis);
+        }
+
+        /// <summary>조준 맥락의 뗏목 번호. 지면이거나 결속된 뗏목이 없으면 0이다.</summary>
+        private int ContextKeySlot(BuildSpace space)
+        {
+            if (space != BuildSpace.Deck)
+                return 0;
+
+            return boundRaft != null ? boundRaft.KeySlot : 0;
         }
     }
 }

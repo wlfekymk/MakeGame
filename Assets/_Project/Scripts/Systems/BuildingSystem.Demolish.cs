@@ -65,7 +65,7 @@ namespace MakeGame.Systems
             // 벽 위에 벽을 쌓을 수 있게 됐으니(배치 37) 반대쪽 대칭도 맞춘다 - 아래 벽을 먼저 부수면
             // 위 벽이 허공에 뜬다. 바닥에 이미 적용하던 "위에 얹힌 것이 있으면 못 부순다"와 같은 원칙이다.
             if (IsWallType(piece.type)
-                && wallByKey.ContainsKey(PieceKey(piece.space, piece.cellX, piece.cellZ, piece.level + 1, piece.axis)))
+                && wallByKey.ContainsKey(PieceKey(piece.space, piece.keySlot, piece.cellX, piece.cellZ, piece.level + 1, piece.axis)))
             {
                 Debug.LogWarning("[BuildingSystem] 이 벽 위에 다른 벽이 얹혀 있어 부술 수 없다. 위쪽부터 철거하라.");
                 AudioManager.Instance?.PlayActionFail();
@@ -125,43 +125,43 @@ namespace MakeGame.Systems
         private bool HasRoofOnWall(PlacedPiece wall)
         {
             int roofLevel = wall.level + 1;
-            if (HasRoofAt(wall.space, wall.cellX, wall.cellZ, roofLevel))
+            if (HasRoofAt(wall, wall.cellX, wall.cellZ, roofLevel))
                 return true;
 
             int nx = wall.axis == 0 ? wall.cellX : wall.cellX - 1;
             int nz = wall.axis == 0 ? wall.cellZ - 1 : wall.cellZ;
-            return HasRoofAt(wall.space, nx, nz, roofLevel);
+            return HasRoofAt(wall, nx, nz, roofLevel);
         }
 
         /// <summary>이 바닥이 사라지면 공중에 뜨는 조각이 있는지 확인한다.</summary>
         private bool HasLoadAbove(PlacedPiece floor)
         {
             // 바로 위층 바닥.
-            if (floorByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level + 1, NonWallAxis)))
+            if (floorByKey.ContainsKey(PieceKey(floor.space, floor.keySlot, floor.cellX, floor.cellZ, floor.level + 1, NonWallAxis)))
                 return true;
 
             // 이 바닥만 보고 얹은 지붕(벽 없는 정자 형태). 벽이 함께 받치고 있어도 순서를 지키게 한다.
-            if (HasRoofAt(floor.space, floor.cellX, floor.cellZ, floor.level + 1))
+            if (HasRoofAt(floor, floor.cellX, floor.cellZ, floor.level + 1))
                 return true;
 
             // 이 바닥을 딛고 선 계단.
-            if (stairByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
+            if (stairByKey.ContainsKey(PieceKey(floor.space, floor.keySlot, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
                 return true;
 
             // 이 바닥 위에 앉은 상자. 바닥을 먼저 부수면 상자가 허공에 뜬다 - 계단과 같은 원칙이다.
             // (상자는 비우기 전에는 부술 수도 없으므로, 순서는 "비우기 → 상자 → 바닥"이 된다.)
-            if (chestByKey.ContainsKey(PieceKey(floor.space, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
+            if (chestByKey.ContainsKey(PieceKey(floor.space, floor.keySlot, floor.cellX, floor.cellZ, floor.level, NonWallAxis)))
                 return true;
 
             // 이 바닥 위에 선 벽류. 단, 모서리를 함께 쓰는 옆 칸 바닥이 아직 있으면 그쪽이 받쳐 준다.
             for (int side = 0; side < 4; side++)
             {
                 GetEdgeOfCell(floor.cellX, floor.cellZ, side, out int ex, out int ez, out int axis);
-                if (!wallByKey.ContainsKey(PieceKey(floor.space, ex, ez, floor.level, axis)))
+                if (!wallByKey.ContainsKey(PieceKey(floor.space, floor.keySlot, ex, ez, floor.level, axis)))
                     continue;
 
                 GetNeighborCell(floor.cellX, floor.cellZ, side, out int nx, out int nz);
-                if (!HasFloorAt(floor.space, nx, nz, floor.level))
+                if (!HasFloorAt(floor, nx, nz, floor.level))
                     return true;
             }
 
