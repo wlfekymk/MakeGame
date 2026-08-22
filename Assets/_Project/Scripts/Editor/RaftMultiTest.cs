@@ -1121,9 +1121,16 @@ namespace MakeGame.EditorTools
                     return;
                 }
 
-                if (list > 0.5f)
+                // [허용치가 왜 고정값이 아닌가] 이 단계에 오는 뗏목에는 앞 단계에서 세운 갑판 조각이
+                // 올라가 있다 - 그건 짐이다. 조각 무게가 만들 수 있는 만큼 기우는 것은 정상이고,
+                // 그 상한은 RaftSailing.MaxListDegrees(10도) x 적재율이다. 적재 0%면 예전과 같은
+                // 0.5도이고, 짐이 있으면 "그 짐으로 설명되는 범위"까지만 열린다 - 설명 안 되는
+                // 기울기(빈 뗏목이 기운다 / 짐보다 크게 기운다)는 여전히 잡힌다.
+                float listAllowance = 0.5f + sailing.LoadRatio * 10f;
+                if (list > listAllowance)
                 {
-                    Fail(raft.gameObject.name + "이 짐도 없이 " + F(list) + "도 기울었다");
+                    Fail(raft.gameObject.name + "이 " + F(list) + "도 기울었다 - 적재 " +
+                         F(sailing.LoadRatio * 100f) + "%로 설명되는 한계 " + F(listAllowance) + "도를 넘었다");
                     return;
                 }
 
@@ -1135,7 +1142,7 @@ namespace MakeGame.EditorTools
 
                 notes.Add(raft.gameObject.name + " 여유 " + F(freeboard) + "m/적재 " +
                           F(sailing.LoadRatio * 100f) + "%/부력 " + F(sailing.LoadCapacity) +
-                          (rider ? "/탑승" : ""));
+                          "/기울기 " + F(list) + "도" + (rider ? "/탑승" : ""));
             }
 
             Pass("빈 뗏목 부력", string.Join(" · ", notes));

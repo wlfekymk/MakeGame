@@ -975,14 +975,18 @@ namespace MakeGame.Systems
             }
             else
             {
+                // 지렛대의 원점은 뗏목 원점이 아니라 **갑판 중심**이다(임의 형태에서는 둘이 다르다).
+                Vector2 deckCenter = raft.DeckCenterLocal;
                 float halfWidth = deck.x * 0.5f;
                 float halfLength = deck.y * 0.5f;
 
                 // 부호: Euler(pitch, 0, roll)에서 +roll은 우현을 **들어올린다**. 짐이 우현(+x)에
                 // 있으면 우현이 내려가야 하므로 roll은 음수다. +pitch는 뱃머리를 내리므로
                 // 짐이 뱃머리(+z)에 있으면 양수다.
-                float roll = -ListAxis(LoadCenterLocal.x / halfWidth) * MaxListDegrees * listScale;
-                float pitch = ListAxis(LoadCenterLocal.y / halfLength) * MaxListDegrees * listScale;
+                float roll = -ListAxis((LoadCenterLocal.x - deckCenter.x) / halfWidth)
+                    * MaxListDegrees * listScale;
+                float pitch = ListAxis((LoadCenterLocal.y - deckCenter.y) / halfLength)
+                    * MaxListDegrees * listScale;
 
                 ListDegrees = new Vector2(pitch, roll);
             }
@@ -1311,10 +1315,14 @@ namespace MakeGame.Systems
             if (player == null)
                 return;
 
+            // 고물 끝에서 90cm 안쪽. **격자 상수가 아니라 실제 선체 범위**로 잡는다 - 임의 형태
+            // 뗏목에서 상수로 잡으면 바닥판이 없는 물 위에 내려놓게 된다.
+            raft.GetHullExtent(out float hullMinZ, out float hullLength,
+                out float hullMinX, out float hullWidth);
             Vector3 target = raft.transform.TransformPoint(new Vector3(
-                0f,
+                hullMinX + hullWidth * 0.5f,
                 RaftStructure.DeckSurfaceY + 0.05f,
-                -RaftStructure.DeckLength * 0.5f + 0.9f));
+                hullMinZ + Mathf.Min(0.9f, hullLength * 0.5f)));
 
             bool wasEnabled = playerController != null && playerController.enabled;
             if (wasEnabled)

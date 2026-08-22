@@ -887,11 +887,14 @@ namespace MakeGame.Systems
                 if (deckRoot == null)
                     continue;
 
-                // 뗏목 로컬로 옮겨 사각형 안인지 본다(원이 아니라 사각형이라 4x8의 긴 쪽이 정확하다).
+                // 뗏목 로컬로 옮겨 **실제 선체 사각형** 안인지 본다(원이 아니라 사각형이라 긴 쪽이
+                // 정확하다). 임의 형태 뗏목은 원점 대칭이 아니므로 DeckLocalSize가 아니라 선체 범위를 쓴다.
                 Vector3 local = deckRoot.InverseTransformPoint(worldPoint);
-                Vector2 size = raft.DeckLocalSize;
+                raft.GetHullExtent(out float hullMinZ, out float hullLength,
+                    out float hullMinX, out float hullWidth);
 
-                if (Mathf.Abs(local.x) > size.x * 0.5f || Mathf.Abs(local.z) > size.y * 0.5f)
+                if (local.x < hullMinX || local.x > hullMinX + hullWidth
+                    || local.z < hullMinZ || local.z > hullMinZ + hullLength)
                     continue;
 
                 float height = local.y - raft.DeckTopLocalY;
@@ -1064,24 +1067,17 @@ namespace MakeGame.Systems
         /// <summary>
         /// 그 셀이 **그 뗏목의** 갑판 안에 온전히 들어가는지. 철거 판정처럼 "조각의 뗏목"이 따로
         /// 정해진 자리에서는 결속된 뗏목이 아니라 이쪽을 써야 한다.
+        ///
+        /// **칸 단위로 묻는다.** 건축 격자(CellSize 2m, CellIndexOf = floor(v / CellSize))와 뗏목 바닥판
+        /// 격자(BaseTilePitch 2m, 셀 중심 = (n + 0.5) * pitch)는 **같은 격자**라 셀 좌표가 1:1로 맞는다.
+        /// 예전처럼 사각형으로 재면 ㄱ자·십자 같은 임의 형태 뗏목에서 빈 칸 위 허공에 조각이 놓인다.
         /// </summary>
         private static bool IsDeckCellInBounds(RaftStructure raft, int cellX, int cellZ)
         {
             if (raft == null || !raft.HasDeck)
                 return false;
 
-            Vector2 size = raft.DeckLocalSize;
-            float halfX = size.x * 0.5f;
-            float halfZ = size.y * 0.5f;
-
-            const float epsilon = 0.01f; // 부동소수 오차로 딱 맞는 칸이 탈락하지 않게
-            float minX = cellX * CellSize;
-            float minZ = cellZ * CellSize;
-
-            return minX >= -halfX - epsilon
-                && minX + CellSize <= halfX + epsilon
-                && minZ >= -halfZ - epsilon
-                && minZ + CellSize <= halfZ + epsilon;
+            return raft.HasBaseTileAt(cellX, cellZ);
         }
 
         // ── 공간 ↔ 월드 변환 ────────────────────────────────────────────────────

@@ -319,25 +319,23 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 지금 깔린 바닥판이 차지하는 로컬 범위(z 시작/길이, x 시작/폭). 선체·묶음이 공유한다.
-        /// 반만 찬 행도 실물로는 존재하므로 여기서는 **놓인 칸 전부**를 센다(갑판 판정과는 다르다).
+        /// 지금 깔린 바닥판이 차지하는 로컬 범위(z 시작/길이, x 시작/폭). 선체·묶음·콜라이더·승선
+        /// 판정이 전부 이 하나를 공유한다. **놓인 칸의 실제 경계**이므로 임의 형태에서도 맞는다.
+        /// 한 칸도 없으면 첫 칸(옛 순차 격자의 시작 자리) 한 칸짜리 범위를 준다 - 제작 예정지 표시가
+        /// 쓸 자리다.
         /// </summary>
-        private void GetHullExtent(out float minZ, out float length, out float minX, out float width)
+        public void GetHullExtent(out float minZ, out float length, out float minX, out float width)
         {
-            float rowLength = DeckLength / BaseGridRows;
-            float columnWidth = DeckWidth / BaseGridColumns;
+            if (!GetCellBounds(out int cellMinX, out int cellMaxX, out int cellMinZ, out int cellMaxZ))
+            {
+                cellMinX = cellMaxX = LegacyFirstCellX;
+                cellMinZ = cellMaxZ = LegacyFirstCellZ;
+            }
 
-            int occupiedRows = Mathf.CeilToInt((float)baseTileCount / BaseGridColumns);
-            occupiedRows = Mathf.Clamp(occupiedRows, 1, BaseGridRows);
-
-            // 마지막 행이 반만 찼으면 그 행은 한 열만 있다. 폭은 "가장 넓은 행"을 따른다.
-            bool anyFullRow = baseTileCount >= BaseGridColumns;
-            int widestColumns = anyFullRow ? BaseGridColumns : 1;
-
-            minZ = -DeckLength * 0.5f;
-            length = rowLength * occupiedRows;
-            minX = -DeckWidth * 0.5f;
-            width = columnWidth * widestColumns;
+            minX = cellMinX * BaseTilePitch;
+            width = (cellMaxX - cellMinX + 1) * BaseTilePitch;
+            minZ = cellMinZ * BaseTilePitch;
+            length = (cellMaxZ - cellMinZ + 1) * BaseTilePitch;
         }
 
         /// <summary>통나무를 가로로 묶은 밧줄 띠. 통나무 윗면(0.5)을 감싸도록 얹는다.</summary>
@@ -363,7 +361,7 @@ namespace MakeGame.Systems
         {
             for (int i = 0; i < baseTileCount; i++)
             {
-                RaftBaseTileKind kind = (RaftBaseTileKind)(baseTiles[i] & KindMask);
+                RaftBaseTileKind kind = (RaftBaseTileKind)(tiles[i].code & KindMask);
                 int slot = (int)kind - 1;
                 if (slot < 0 || slot >= baseTilePrimary.Length)
                     slot = 0;
@@ -391,19 +389,16 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 격자 순번 i의 칸 중심(로컬 XZ, y는 0). 바닥판·바닥재·유령 표시가 전부 이 하나를 쓴다 -
-        /// 좌표 계산이 두 벌이면 바닥재가 바닥판에서 살짝 어긋나 이음매가 벌어진다.
-        /// 칸은 고물(-Z) 좌현(-X)부터 열 방향으로 채워진다.
+        /// 순번 index의 칸 중심(로컬 XZ, y는 0). 바닥판·바닥재가 전부 이 하나를 쓴다 - 좌표 계산이
+        /// 두 벌이면 바닥재가 바닥판에서 살짝 어긋나 이음매가 벌어진다.
+        /// 자리는 이제 순번이 아니라 **칸에 저장된 좌표**가 정한다(GetCellCenterLocal).
         /// </summary>
-        private static Vector3 GetBaseTileCenter(int index)
+        private Vector3 GetBaseTileCenter(int index)
         {
-            int row = index / BaseGridColumns;
-            int column = index % BaseGridColumns;
+            if (!GetBaseTileCell(index, out int cx, out int cz))
+                return GetCellCenterLocal(LegacyFirstCellX, LegacyFirstCellZ);
 
-            return new Vector3(
-                -DeckWidth * 0.5f + BaseTilePitch * (column + 0.5f),
-                0f,
-                -DeckLength * 0.5f + BaseTilePitch * (row + 0.5f));
+            return GetCellCenterLocal(cx, cz);
         }
 
         /// <summary>
@@ -417,7 +412,7 @@ namespace MakeGame.Systems
 
             for (int i = 0; i < baseTileCount; i++)
             {
-                if ((baseTiles[i] & FloorBit) == 0)
+                if ((tiles[i].code & FloorBit) == 0)
                     continue;
 
                 Vector3 center = GetBaseTileCenter(i);
@@ -471,7 +466,7 @@ namespace MakeGame.Systems
             // 첫 칸의 유령. 실물 통나무 바닥판을 **놓일 자리 그대로** 반투명하게 한 번 더 그린다
             // (두 색 그룹 모두 같은 유령 머티리얼 - 병합 임포트에서 서브메시 하나가 빠져 반쪽만
             // 보이는 일이 없게 CreateModelPart를 그대로 쓴다). 모델이 아직 없으면 같은 크기의 큐브다.
-            Vector3 center = GetBaseTileCenter(0);
+            Vector3 center = GetCellCenterLocal(LegacyFirstCellX, LegacyFirstCellZ);
             if (baseTilePrimary[0] != null)
             {
                 CreateModelPart("SiteGhostTile", baseTilePrimary[0], baseTileSecondary[0],
@@ -752,58 +747,112 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 난간. 갑판으로 인정된 구간(GetDeckedSpan)에만 세운다.
+        /// 난간. 바닥판이 놓인 **칸의 바깥 변**마다 세운다(빈 칸 위 허공에 뜨지 않게).
         /// 콜라이더를 붙이지 않는다 - 붙이면 갑판에 올라간 플레이어가 갇힌다.
         /// </summary>
         private void BuildRailings()
         {
-            GetDeckedSpan(baseTileCount, out float deckMinZ, out float deckMaxZ);
-
-            float railY = DeckSurfaceY + 0.45f;
-            float halfWidth = DeckWidth * 0.5f - 0.08f;
-            float startZ = deckMinZ + 0.3f;
-            float endZ = deckMaxZ - 0.3f;
-            float length = endZ - startZ;
-            if (length <= 0.2f)
+            if (!GetCellBounds(out int minCellX, out int maxCellX, out int minCellZ, out int maxCellZ))
                 return;
 
-            for (int side = -1; side <= 1; side += 2)
-            {
-                StructureVisualBuilder.CreateVisualPart(visualRoot, $"RailBar{side}", PrimitiveType.Cube,
-                    new Vector3(side * halfWidth, railY, (startZ + endZ) * 0.5f),
-                    new Vector3(0.09f, 0.09f, length), plankWoodMaterial);
+            float railY = DeckSurfaceY + 0.45f;
+            float inset = BaseTilePitch * 0.5f - 0.08f;
 
-                const int PostCount = 4;
-                for (int i = 0; i < PostCount; i++)
+            // ★ 사각형이 아니라 **칸의 바깥 변**마다 세운다. 예전처럼 갑판 사각형의 양옆에 긴 막대를
+            //   하나씩 놓으면, 그 사각형 안에 빈 칸이 있는 모양(반만 깐 행 · ㄱ자 뗏목)에서 난간이
+            //   물 위 허공에 뜬다.
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                int cellX = tiles[i].x;
+                int cellZ = tiles[i].z;
+                Vector3 center = GetCellCenterLocal(cellX, cellZ);
+
+                for (int side = -1; side <= 1; side += 2)
                 {
-                    float z = startZ + length * i / (PostCount - 1);
-                    StructureVisualBuilder.CreateVisualPart(visualRoot, $"RailPost{side}_{i}", PrimitiveType.Cube,
-                        new Vector3(side * halfWidth, DeckSurfaceY + 0.22f, z),
+                    // 옆 칸이 있으면 그건 바깥이 아니라 이음매다.
+                    if (HasBaseTileAt(cellX + side, cellZ))
+                        continue;
+
+                    float railX = center.x + side * inset;
+
+                    StructureVisualBuilder.CreateVisualPart(visualRoot, $"RailBar{cellX}_{cellZ}_{side}",
+                        PrimitiveType.Cube, new Vector3(railX, railY, center.z),
+                        new Vector3(0.09f, 0.09f, BaseTilePitch), plankWoodMaterial);
+
+                    StructureVisualBuilder.CreateVisualPart(visualRoot, $"RailPost{cellX}_{cellZ}_{side}",
+                        PrimitiveType.Cube, new Vector3(railX, DeckSurfaceY + 0.22f, center.z),
                         new Vector3(0.11f, 0.45f, 0.11f), plankWoodMaterial);
                 }
             }
 
             // 바닥판을 끝까지 깔았을 때만 뱃머리 난간이 닫힌다(완성 신호).
-            if (baseTileCount >= MaxBaseTiles)
+            if (tiles.Count < MaxBaseTiles)
+                return;
+
+            for (int i = 0; i < tiles.Count; i++)
             {
-                StructureVisualBuilder.CreateVisualPart(visualRoot, "BowRail", PrimitiveType.Cube,
-                    new Vector3(0f, railY, endZ), new Vector3(DeckWidth - 0.16f, 0.09f, 0.09f), plankWoodMaterial);
+                int cellX = tiles[i].x;
+                int cellZ = tiles[i].z;
+                if (HasBaseTileAt(cellX, cellZ + 1))
+                    continue;
+
+                Vector3 center = GetCellCenterLocal(cellX, cellZ);
+                StructureVisualBuilder.CreateVisualPart(visualRoot, $"BowRail{cellX}_{cellZ}",
+                    PrimitiveType.Cube, new Vector3(center.x, railY, center.z + inset),
+                    new Vector3(BaseTilePitch - 0.16f, 0.09f, 0.09f), plankWoodMaterial);
             }
         }
 
         /// <summary>갑판 위 보급품. 갑판이 생기면 궤짝이, 바닥판을 다 깔면 물통이 하나 더 놓인다.</summary>
         private void BuildCargo()
         {
-            StructureVisualBuilder.CreateVisualPart(visualRoot, "SupplyCrate", PrimitiveType.Cube,
-                new Vector3(1.65f, DeckSurfaceY + 0.31f, -2.3f),
-                new Vector3(0.62f, 0.62f, 0.62f), plankWoodMaterial, Quaternion.Euler(0f, 18f, 0f));
+            // 자리는 **실재하는 칸** 위에서 고른다. 상수로 박아 두면 그 칸이 없는 모양에서
+            // 궤짝이 물 위에 뜬다(순차 격자 8칸에서는 예전과 같은 자리로 떨어진다).
+            if (FindCornerCell(1, -1, out int crateX, out int crateZ))
+            {
+                Vector3 crateCenter = GetCellCenterLocal(crateX, crateZ);
+                StructureVisualBuilder.CreateVisualPart(visualRoot, "SupplyCrate", PrimitiveType.Cube,
+                    new Vector3(crateCenter.x + 0.65f, DeckSurfaceY + 0.31f, crateCenter.z + 0.7f),
+                    new Vector3(0.62f, 0.62f, 0.62f), plankWoodMaterial, Quaternion.Euler(0f, 18f, 0f));
+            }
 
-            if (baseTileCount < MaxBaseTiles)
+            if (tiles.Count < MaxBaseTiles)
                 return;
 
-            StructureVisualBuilder.CreateVisualPart(visualRoot, "SupplyBarrel", PrimitiveType.Cylinder,
-                new Vector3(-1.65f, DeckSurfaceY + 0.35f, -2.6f),
-                new Vector3(0.52f, 0.35f, 0.52f), cargoMaterial);
+            if (FindCornerCell(-1, -1, out int barrelX, out int barrelZ))
+            {
+                Vector3 barrelCenter = GetCellCenterLocal(barrelX, barrelZ);
+                StructureVisualBuilder.CreateVisualPart(visualRoot, "SupplyBarrel", PrimitiveType.Cylinder,
+                    new Vector3(barrelCenter.x - 0.65f, DeckSurfaceY + 0.35f, barrelCenter.z + 0.4f),
+                    new Vector3(0.52f, 0.35f, 0.52f), cargoMaterial);
+            }
+        }
+
+        /// <summary>
+        /// 지정한 방향의 모퉁이에 가장 가까운 **실재하는** 칸. dirX/dirZ가 +1이면 큰 쪽, -1이면 작은 쪽이다.
+        /// 갑판 위 장식·부품이 빈 칸 위에 놓이지 않게 하는 공용 자리 고르개다.
+        /// </summary>
+        private bool FindCornerCell(int dirX, int dirZ, out int cellX, out int cellZ)
+        {
+            cellX = 0;
+            cellZ = 0;
+            if (tiles.Count == 0)
+                return false;
+
+            int bestScore = int.MinValue;
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                // z를 먼저(가중치 8) 보고 x로 가른다. 격자 폭이 4칸이라 8이면 순위가 섞이지 않는다.
+                int score = tiles[i].z * dirZ * 8 + tiles[i].x * dirX;
+                if (score <= bestScore)
+                    continue;
+
+                bestScore = score;
+                cellX = tiles[i].x;
+                cellZ = tiles[i].z;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -829,7 +878,7 @@ namespace MakeGame.Systems
                 //
                 // **자리를 확정하기 전에는 켜지 않는다**(anchored). 정박 전 뗏목 루트는 아직 월드
                 // 원점 근처에 있을 수 있어, 그 자리에 상자를 켜면 시작 섬 한복판에 상자가 선다.
-                Vector3 ghostCenter = GetBaseTileCenter(0);
+                Vector3 ghostCenter = GetCellCenterLocal(LegacyFirstCellX, LegacyFirstCellZ);
 
                 hullCollider.enabled = anchored;
                 hullCollider.center = new Vector3(ghostCenter.x, FrameTopY * 0.5f, ghostCenter.z);
@@ -866,18 +915,21 @@ namespace MakeGame.Systems
             if (deckSurfaceCollider == null)
                 return;
 
-            GetDeckedSpan(baseTileCount, out float minZ, out float maxZ);
+            // HasDeck 게이트가 있어야 "갑판이라고 부르기 전"(바닥판 5칸 이하)에 이 판이 켜지지 않는다.
+            GetDeckedSpan(out float minX, out float maxX, out float minZ, out float maxZ);
             float span = maxZ - minZ;
+            float breadth = maxX - minX;
 
-            if (span <= 0.01f)
+            if (!HasDeck || span <= 0.01f || breadth <= 0.01f)
             {
                 deckSurfaceCollider.enabled = false;
                 return;
             }
 
             // DeckRoot는 뗏목 본체와 로컬 원점/회전이 같으므로(EnsureDeckRoot) 아래 값은 곧 뗏목 로컬이다.
-            deckSurfaceCollider.center = new Vector3(0f, DeckPlankY, (minZ + maxZ) * 0.5f);
-            deckSurfaceCollider.size = new Vector3(DeckWidth, DeckPlankThickness, span);
+            deckSurfaceCollider.center = new Vector3(
+                (minX + maxX) * 0.5f, DeckPlankY, (minZ + maxZ) * 0.5f);
+            deckSurfaceCollider.size = new Vector3(breadth, DeckPlankThickness, span);
             deckSurfaceCollider.enabled = true;
         }
 

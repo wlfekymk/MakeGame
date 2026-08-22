@@ -162,6 +162,31 @@ namespace MakeGame.Systems
         /// <summary>바닥판을 전부 깔았을 때의 칸 수. 격자 치수의 **단일 출처**다.</summary>
         public const int MaxBaseTiles = BaseGridColumns * BaseGridRows;
 
+        // ── 셀 좌표계 ──────────────────────────────────────────────────────────
+        /// <summary>
+        /// 바닥판 셀 좌표의 하한/상한(x·z 공통). 4x4 = 16칸이 **원점 대칭으로** 잡힌다
+        /// (셀 -2..1 → 로컬 -4m..+4m). 지금 깔 수 있는 칸 수는 MaxBaseTiles로 따로 제한되므로,
+        /// 이 범위는 "어디에 붙일 수 있는가"의 경계이지 "몇 칸까지 되는가"가 아니다.
+        ///
+        /// **왜 하필 이 식인가:** 셀 중심의 로컬 좌표를 ((x + 0.5) * BaseTilePitch, 0, (z + 0.5) * BaseTilePitch)로
+        /// 두면 BuildingSystem의 갑판 격자(CellIndexOf = floor(v / CellSize), CellSize = 2m)와 **같은 식**이 된다.
+        /// 그래서 뗏목 칸 좌표와 갑판 건축 셀 좌표가 1:1로 맞고, 임의 형태 뗏목에서도 건축 가능 여부를
+        /// "그 칸에 바닥판이 있는가"(HasBaseTileAt) 하나로 물을 수 있다.
+        /// </summary>
+        public const int CellMin = -2;
+
+        /// <summary>셀 좌표의 상한(포함). CellMin과 함께 4x4 범위를 만든다.</summary>
+        public const int CellMax = 1;
+
+        /// <summary>
+        /// 옛 순차 격자(고물 좌현부터 열 방향)의 첫 칸 좌표. AddBaseTile()처럼 자리를 지정하지 않는
+        /// 호출부와 좌표가 없는 옛 세이브가 이 순서를 따른다.
+        /// </summary>
+        public const int LegacyFirstCellX = -BaseGridColumns / 2;
+
+        /// <summary>옛 순차 격자의 첫 칸 z 좌표.</summary>
+        public const int LegacyFirstCellZ = -BaseGridRows / 2;
+
         /// <summary>
         /// 항해(IsSeaworthy)에 필요한 최소 바닥판 칸 수. 격자의 절반이다 - 사람 하나와 짐이 올라설
         /// 면적은 되지만 아직 대양에 나갈 크기는 아니라는 선.
@@ -246,21 +271,54 @@ namespace MakeGame.Systems
 
         // ── 새 진행 상태 ──────────────────────────────────────────────────────────
         /// <summary>
-        /// 해안에 실제로 놓인 바닥판 칸 수(0 ~ MaxBaseTiles). 0이면 뗏목 자리만 잡혀 있고 아직
-        /// 아무것도 놓이지 않은 상태다. **직접 대입하지 말 것** - SetBaseTileCount/AddBaseTile을 쓴다
-        /// (외형 재생성과 ProgressChanged 발행이 거기에 묶여 있다).
+        /// 바닥판 한 칸. **격자 순번이 아니라 좌표로** 들고 있다 - 뗏목이 고물부터 순서대로만 자라지
+        /// 않고 플레이어가 고른 칸에 붙는(자유 증축) 형태를 위해서다.
+        /// x/z는 셀 좌표(CellMin..CellMax)이고, code는 **세이브에 그대로 나가는 값**이다:
+        /// 하위 3비트 = RaftBaseTileKind, 8비트 = 갑판 바닥재, 16~23비트 = 좌표(CellBit 참고).
         /// </summary>
-        private int baseTileCount;
+        private struct BaseTileCell
+        {
+            public sbyte x;
+            public sbyte z;
+            public int code;
+        }
 
         /// <summary>
-        /// 칸별 구성. 인덱스 = 격자 순번(고물 좌현부터 BaseGridColumns 단위로 채워진다)이고,
-        /// 값은 **세이브에 그대로 나가는 코드**다: 하위 3비트 = RaftBaseTileKind, 8비트 = 갑판 바닥재.
-        /// baseTileCount보다 뒤쪽 항목은 항상 0(없는 칸)이다.
+        /// 놓인 바닥판 전부. **순서는 놓은 차례**이고(옛 격자 순번과 같은 의미라 index를 받는 기존
+        /// 계약이 그대로 산다), 자리는 각 항목의 x/z가 정한다. **직접 건드리지 말 것** -
+        /// AddBaseTile/AddBaseTileAt/SetBaseTileCount/ApplySavedState를 쓴다(외형 재생성과
+        /// ProgressChanged 발행이 거기에 묶여 있다).
         /// </summary>
-        private readonly int[] baseTiles = new int[MaxBaseTiles];
+        private readonly List<BaseTileCell> tiles = new List<BaseTileCell>(MaxBaseTiles);
+
+        /// <summary>
+        /// 해안에 실제로 놓인 바닥판 칸 수(0 ~ MaxBaseTiles). 0이면 뗏목 자리만 잡혀 있고 아직
+        /// 아무것도 놓이지 않은 상태다. 예전에는 필드였고 지금은 tiles에서 유도한다 - 칸 수와
+        /// 칸 목록이 어긋날 수 있는 경로 자체를 없앤다.
+        /// </summary>
+        private int baseTileCount => tiles.Count;
 
         /// <summary>칸 코드에서 "갑판 바닥재가 깔렸다"를 나타내는 비트. 종류 값(1~3)과 겹치지 않는다.</summary>
         private const int FloorBit = 8;
+
+        /// <summary>
+        /// 칸 코드에 **좌표가 동봉되어 있다**는 표식. 세이브 파일 형태를 바꾸지 않고 좌표를 실어
+        /// 보내기 위한 장치다(SaveData.RaftSaveEntry.baseTiles는 int 목록 그대로다).
+        /// 이 비트가 0인 코드 = 좌표가 없던 옛 세이브 → ApplySavedState가 옛 순차 격자 자리로 되돌린다.
+        /// </summary>
+        private const int CellBit = 1 << 30;
+
+        /// <summary>좌표를 싣는 자리(x는 16~19비트, z는 20~23비트). 저장 값은 좌표 + CellBias다.</summary>
+        private const int CellXShift = 16;
+
+        /// <summary>좌표 z가 실리는 비트 자리.</summary>
+        private const int CellZShift = 20;
+
+        /// <summary>음수 좌표를 4비트에 담기 위한 보정값. 실제 범위(-2..1)보다 넉넉하다.</summary>
+        private const int CellBias = 8;
+
+        /// <summary>좌표 한 축을 꺼내는 마스크(4비트).</summary>
+        private const int CellAxisMask = 0xF;
 
         /// <summary>종류 값을 꺼내는 마스크(하위 3비트 = 0~7).</summary>
         private const int KindMask = 7;
@@ -588,29 +646,53 @@ namespace MakeGame.Systems
         /// 지금 **온전한 갑판이 깔려 있는가**. 통나무만 있거나 바닥판이 성기게 깔린 상태는 false다.
         /// 판정 자체는 DeckLocalSize에서 유도한다(둘이 갈라지지 않게).
         /// </summary>
-        public bool HasDeck
-        {
-            get
-            {
-                Vector2 size = DeckLocalSize;
-                return size.x > 0.01f && size.y > 0.01f;
-            }
-        }
+        public bool HasDeck => tiles.Count >= DeckMinTiles;
+
+        /// <summary>
+        /// 갑판으로 인정하는 최소 바닥판 칸 수.
+        ///
+        /// **예전에는 "원점 대칭으로 쓸 수 있는 구간"으로 판정했다.** 순차 격자에서는 그게 곧
+        /// "6칸 이상"이었지만, 자유 증축이 들어오면 원점을 걸치지 않는 모양(예: 전부 우현 쪽)이
+        /// 만들어질 수 있고 그때 갑판이 통째로 사라진다 - 건축도 못 하고, 세이브에 있던 갑판
+        /// 조각이 영영 대기열에 남는다. 그래서 판정을 **칸 수 하나**로 바꾸고, "그 칸에 지을 수
+        /// 있는가"는 HasBaseTileAt이 칸 단위로 답한다.
+        /// 값 6은 예전 판정이 처음 참이 되던 칸 수 그대로다(체감 변화 없음).
+        /// </summary>
+        public const int DeckMinTiles = 6;
 
         /// <summary>갑판 윗면의 로컬 y. 바닥판 상수에서 유도한 값이다.</summary>
         public float DeckTopLocalY => DeckSurfaceY;
 
         /// <summary>
         /// 실제로 바닥판이 깔린 갑판의 가로(x) x 세로(z), 로컬 미터. 갑판이 없으면 (0,0).
-        /// 세로는 **원점 대칭으로 쓸 수 있는 길이**다(건축 시스템이 갑판 중심을 원점으로 보고 셀을 깐다).
+        /// **원점 대칭이 아니다** - 중심은 DeckCenterLocal이 따로 준다(임의 형태에서는 갑판이
+        /// 뗏목 원점을 중심으로 놓여 있지 않다).
         /// </summary>
         public Vector2 DeckLocalSize
         {
             get
             {
-                GetDeckedSpan(baseTileCount, out float minZ, out float maxZ);
-                float usable = 2f * Mathf.Min(-minZ, maxZ);
-                return usable > 0.01f ? new Vector2(DeckWidth, usable) : Vector2.zero;
+                if (!HasDeck)
+                    return Vector2.zero;
+
+                GetDeckedSpan(out float minX, out float maxX, out float minZ, out float maxZ);
+                return new Vector2(maxX - minX, maxZ - minZ);
+            }
+        }
+
+        /// <summary>
+        /// 갑판 사각형의 중심(로컬 x, z). DeckLocalSize와 짝이다 - 이 둘로 갑판의 네 귀퉁이가 나온다.
+        /// 갑판이 없으면 (0,0).
+        /// </summary>
+        public Vector2 DeckCenterLocal
+        {
+            get
+            {
+                if (!HasDeck)
+                    return Vector2.zero;
+
+                GetDeckedSpan(out float minX, out float maxX, out float minZ, out float maxZ);
+                return new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f);
             }
         }
 
@@ -644,19 +726,19 @@ namespace MakeGame.Systems
         /// <summary>격자 순번 index의 바닥판 종류. 아직 놓지 않은 칸은 None이다.</summary>
         public RaftBaseTileKind GetBaseTileKind(int index)
         {
-            if (index < 0 || index >= baseTileCount)
+            if (index < 0 || index >= tiles.Count)
                 return RaftBaseTileKind.None;
 
-            return (RaftBaseTileKind)(baseTiles[index] & KindMask);
+            return (RaftBaseTileKind)(tiles[index].code & KindMask);
         }
 
         /// <summary>격자 순번 index에 갑판 바닥재(걸어 다닐 판)가 깔려 있는가.</summary>
         public bool HasFloorAt(int index)
         {
-            if (index < 0 || index >= baseTileCount)
+            if (index < 0 || index >= tiles.Count)
                 return false;
 
-            return (baseTiles[index] & FloorBit) != 0;
+            return (tiles[index].code & FloorBit) != 0;
         }
 
         /// <summary>갑판 바닥재가 깔린 칸 수. 제작 UI가 "바닥재 n/m"을 적을 때 쓴다.</summary>
@@ -665,9 +747,9 @@ namespace MakeGame.Systems
             get
             {
                 int count = 0;
-                for (int i = 0; i < baseTileCount; i++)
+                for (int i = 0; i < tiles.Count; i++)
                 {
-                    if ((baseTiles[i] & FloorBit) != 0)
+                    if ((tiles[i].code & FloorBit) != 0)
                         count++;
                 }
                 return count;
@@ -682,13 +764,182 @@ namespace MakeGame.Systems
         {
             get
             {
-                for (int i = 0; i < baseTileCount; i++)
+                for (int i = 0; i < tiles.Count; i++)
                 {
-                    if ((baseTiles[i] & FloorBit) == 0)
+                    if ((tiles[i].code & FloorBit) == 0)
                         return i;
                 }
                 return -1;
             }
+        }
+
+        // ── 셀 좌표 읽기·쓰기 (자유 증축의 기반) ────────────────────────────────
+
+        /// <summary>셀 좌표 (cx, cz)의 중심 로컬 좌표(y는 0). 바닥판·바닥재·유령·콜라이더가 전부 이걸 쓴다.</summary>
+        public static Vector3 GetCellCenterLocal(int cx, int cz)
+        {
+            return new Vector3((cx + 0.5f) * BaseTilePitch, 0f, (cz + 0.5f) * BaseTilePitch);
+        }
+
+        /// <summary>그 좌표가 뗏목이 자랄 수 있는 범위 안인가.</summary>
+        public static bool IsCellInRange(int cx, int cz)
+        {
+            return cx >= CellMin && cx <= CellMax && cz >= CellMin && cz <= CellMax;
+        }
+
+        /// <summary>그 좌표에 놓인 바닥판의 순번. 없으면 -1.</summary>
+        public int IndexOfCell(int cx, int cz)
+        {
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                if (tiles[i].x == cx && tiles[i].z == cz)
+                    return i;
+            }
+            return -1;
+        }
+
+        /// <summary>그 좌표에 바닥판이 놓여 있는가. **건축 시스템의 갑판 셀 판정이 이 하나를 쓴다.**</summary>
+        public bool HasBaseTileAt(int cx, int cz)
+        {
+            return IndexOfCell(cx, cz) >= 0;
+        }
+
+        /// <summary>그 좌표에 갑판 바닥재(걸어 다닐 판)까지 깔려 있는가.</summary>
+        public bool HasFloorAtCell(int cx, int cz)
+        {
+            int index = IndexOfCell(cx, cz);
+            return index >= 0 && (tiles[index].code & FloorBit) != 0;
+        }
+
+        /// <summary>순번 index의 바닥판이 놓인 좌표. 없는 순번이면 false.</summary>
+        public bool GetBaseTileCell(int index, out int cx, out int cz)
+        {
+            if (index < 0 || index >= tiles.Count)
+            {
+                cx = 0;
+                cz = 0;
+                return false;
+            }
+
+            cx = tiles[index].x;
+            cz = tiles[index].z;
+            return true;
+        }
+
+        /// <summary>
+        /// 그 좌표에 바닥판을 새로 놓을 수 있는가. 막히는 이유를 함께 준다(UI가 문구를 다시 만들지 않게).
+        /// 규칙은 셋뿐이다: 범위 안 · 빈 칸 · **이미 있는 칸과 변이 맞닿을 것**(첫 칸은 예외).
+        /// 맞닿기를 요구하지 않으면 물 위에 뗏목 조각이 따로 떠 있는 형태가 만들어진다.
+        /// </summary>
+        public bool CanAddBaseTileAt(int cx, int cz, out string reason)
+        {
+            if (tiles.Count >= MaxBaseTiles)
+            {
+                reason = "바닥판을 더 놓을 수 없다";
+                return false;
+            }
+
+            if (!IsCellInRange(cx, cz))
+            {
+                reason = "뗏목이 더 커질 수 없다";
+                return false;
+            }
+
+            if (HasBaseTileAt(cx, cz))
+            {
+                reason = "이미 바닥판이 있다";
+                return false;
+            }
+
+            if (tiles.Count > 0 && !HasAdjacentTile(cx, cz))
+            {
+                reason = "옆 칸에 붙여야 한다";
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
+
+        /// <summary>네 변 중 하나라도 바닥판과 맞닿는가(대각선은 맞닿음이 아니다).</summary>
+        private bool HasAdjacentTile(int cx, int cz)
+        {
+            return HasBaseTileAt(cx - 1, cz) || HasBaseTileAt(cx + 1, cz)
+                || HasBaseTileAt(cx, cz - 1) || HasBaseTileAt(cx, cz + 1);
+        }
+
+        /// <summary>
+        /// 지정한 좌표에 바닥판을 놓는다. **재료 소모는 여기 없다** - 부르는 쪽이 먼저 소모한다.
+        /// CanAddBaseTileAt이 거절하는 자리면 false다.
+        /// </summary>
+        public bool AddBaseTileAt(int cx, int cz, RaftBaseTileKind kind)
+        {
+            if (kind == RaftBaseTileKind.None)
+                return false;
+
+            if (!CanAddBaseTileAt(cx, cz, out _))
+                return false;
+
+            tiles.Add(new BaseTileCell
+            {
+                x = (sbyte)cx,
+                z = (sbyte)cz,
+                code = (int)kind & KindMask
+            });
+
+            RefreshVisual();
+            NotifyProgressChanged();
+            return true;
+        }
+
+        /// <summary>
+        /// 지금 놓인 칸들이 차지하는 셀 범위(양끝 포함). 한 칸도 없으면 false.
+        /// 선체·콜라이더·갑판 크기가 전부 여기서 유도된다 - 자리 계산이 두 벌이면 실물과 판정이 갈라진다.
+        /// </summary>
+        private bool GetCellBounds(out int minX, out int maxX, out int minZ, out int maxZ)
+        {
+            if (tiles.Count == 0)
+            {
+                minX = 0;
+                maxX = -1;
+                minZ = 0;
+                maxZ = -1;
+                return false;
+            }
+
+            minX = int.MaxValue;
+            maxX = int.MinValue;
+            minZ = int.MaxValue;
+            maxZ = int.MinValue;
+
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                BaseTileCell cell = tiles[i];
+                if (cell.x < minX) minX = cell.x;
+                if (cell.x > maxX) maxX = cell.x;
+                if (cell.z < minZ) minZ = cell.z;
+                if (cell.z > maxZ) maxZ = cell.z;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 자리를 지정하지 않는 호출부(AddBaseTile·SetBaseTileCount·좌표 없는 옛 세이브)가 쓰는
+        /// **옛 순차 격자**의 n번째 칸. 고물(-Z) 좌현(-X)부터 열 방향으로 채워진다.
+        /// </summary>
+        private static bool GetLegacyCell(int sequence, out int cx, out int cz)
+        {
+            if (sequence < 0 || sequence >= BaseGridColumns * BaseGridRows)
+            {
+                cx = LegacyFirstCellX;
+                cz = LegacyFirstCellZ;
+                return false;
+            }
+
+            cx = LegacyFirstCellX + sequence % BaseGridColumns;
+            cz = LegacyFirstCellZ + sequence / BaseGridColumns;
+            return true;
         }
 
         /// <summary>
@@ -716,8 +967,8 @@ namespace MakeGame.Systems
             get
             {
                 float total = 0f;
-                for (int i = 0; i < baseTileCount; i++)
-                    total += GetBuoyancy((RaftBaseTileKind)(baseTiles[i] & KindMask));
+                for (int i = 0; i < tiles.Count; i++)
+                    total += GetBuoyancy((RaftBaseTileKind)(tiles[i].code & KindMask));
                 return total;
             }
         }
@@ -867,15 +1118,21 @@ namespace MakeGame.Systems
         /// </summary>
         public bool AddBaseTile(RaftBaseTileKind kind)
         {
-            if (kind == RaftBaseTileKind.None || baseTileCount >= MaxBaseTiles)
+            if (kind == RaftBaseTileKind.None || tiles.Count >= MaxBaseTiles)
                 return false;
 
-            baseTiles[baseTileCount] = (int)kind & KindMask;
-            baseTileCount++;
+            // 자리를 지정하지 않는 호출부다. 옛 순차 격자에서 아직 비어 있는 첫 칸에 놓는다 -
+            // 자유 증축(AddBaseTileAt)이 들어와도 이 경로의 결과가 예전과 같아야 한다.
+            for (int sequence = 0; sequence < BaseGridColumns * BaseGridRows; sequence++)
+            {
+                if (!GetLegacyCell(sequence, out int cx, out int cz))
+                    break;
 
-            RefreshVisual();
-            NotifyProgressChanged();
-            return true;
+                if (!HasBaseTileAt(cx, cz))
+                    return AddBaseTileAt(cx, cz, kind);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -888,7 +1145,9 @@ namespace MakeGame.Systems
             if (index < 0)
                 return false;
 
-            baseTiles[index] |= FloorBit;
+            BaseTileCell cell = tiles[index];
+            cell.code |= FloorBit;
+            tiles[index] = cell;
 
             RefreshVisual();
             NotifyProgressChanged();
@@ -904,15 +1163,25 @@ namespace MakeGame.Systems
         public void SetBaseTileCount(int count)
         {
             int clamped = Mathf.Clamp(count, 0, MaxBaseTiles);
-            if (clamped == baseTileCount)
+            if (clamped == tiles.Count)
                 return;
 
-            for (int i = baseTileCount; i < clamped; i++)
-                baseTiles[i] = (int)RaftBaseTileKind.Wood | FloorBit;
-            for (int i = clamped; i < MaxBaseTiles; i++)
-                baseTiles[i] = 0;
+            // 칸별 자리를 모르는 경로이므로 **옛 순차 격자 모양으로 다시 깐다**(자유 증축으로 만든
+            // 모양이 있었다면 사라진다 - 이 경로는 치트/디버그/옛 계약 전용이라 그게 맞다).
+            tiles.Clear();
+            for (int sequence = 0; sequence < clamped; sequence++)
+            {
+                if (!GetLegacyCell(sequence, out int cx, out int cz))
+                    break;
 
-            baseTileCount = clamped;
+                tiles.Add(new BaseTileCell
+                {
+                    x = (sbyte)cx,
+                    z = (sbyte)cz,
+                    code = (int)RaftBaseTileKind.Wood | FloorBit
+                });
+            }
+
             RefreshVisual();
             NotifyProgressChanged();
         }
@@ -966,29 +1235,70 @@ namespace MakeGame.Systems
         public void ApplySavedState(int savedBaseTileCount, RaftPart savedParts,
             System.Collections.Generic.IList<int> savedTileCodes)
         {
-            baseTileCount = Mathf.Clamp(savedBaseTileCount, 0, MaxBaseTiles);
+            int wanted = Mathf.Clamp(savedBaseTileCount, 0, MaxBaseTiles);
             installedParts = savedParts;
 
             int provided = savedTileCodes != null ? savedTileCodes.Count : 0;
-            for (int i = 0; i < MaxBaseTiles; i++)
-            {
-                if (i >= baseTileCount)
-                {
-                    baseTiles[i] = 0;
-                    continue;
-                }
+            tiles.Clear();
 
+            for (int i = 0; i < wanted; i++)
+            {
                 int code = i < provided ? savedTileCodes[i] : 0;
                 int kind = code & KindMask;
 
                 // 알 수 없는/없는 종류는 통나무로 되돌린다(파일이 손상돼도 칸이 사라지지 않게).
                 if (kind <= 0 || kind > (int)RaftBaseTileKind.Barrel)
                 {
-                    baseTiles[i] = (int)RaftBaseTileKind.Wood | FloorBit;
-                    continue;
+                    // 종류만 되돌린다. code를 통째로 갈아 끼우면 **좌표까지 지워져**(CellBit 포함)
+                    // 그 칸이 옛 순차 자리로 튀고, 뒤 칸들이 자리 다툼을 하며 뗏목 모양이 어긋난다.
+                    kind = (int)RaftBaseTileKind.Wood;
+                    code = (code & ~KindMask) | kind | FloorBit;
                 }
 
-                baseTiles[i] = kind | (code & FloorBit);
+                // [좌표 복원] CellBit이 서 있으면 코드에 실린 좌표를 그대로 쓴다. 없으면 좌표가
+                // 없던 옛 세이브다 - 그때 뗏목은 순차 격자로만 자랐으므로 순번 그대로 되돌린다.
+                int cx;
+                int cz;
+                bool hasCell = (code & CellBit) != 0;
+                if (hasCell)
+                {
+                    cx = ((code >> CellXShift) & CellAxisMask) - CellBias;
+                    cz = ((code >> CellZShift) & CellAxisMask) - CellBias;
+                }
+                else
+                {
+                    GetLegacyCell(i, out cx, out cz);
+                }
+
+                // 범위 밖이거나 이미 찬 자리(손상된 파일)는 순차 격자의 빈 칸으로 밀어 넣는다.
+                // 칸을 버리면 칸 수와 저장값이 어긋나고, 그 위에 지어 둔 건축물이 허공에 남는다.
+                if (!IsCellInRange(cx, cz) || HasBaseTileAt(cx, cz))
+                {
+                    bool placed = false;
+                    for (int sequence = 0; sequence < BaseGridColumns * BaseGridRows; sequence++)
+                    {
+                        if (!GetLegacyCell(sequence, out int fx, out int fz))
+                            break;
+
+                        if (HasBaseTileAt(fx, fz))
+                            continue;
+
+                        cx = fx;
+                        cz = fz;
+                        placed = true;
+                        break;
+                    }
+
+                    if (!placed)
+                        continue;
+                }
+
+                tiles.Add(new BaseTileCell
+                {
+                    x = (sbyte)cx,
+                    z = (sbyte)cz,
+                    code = kind | (code & FloorBit)
+                });
             }
 
             RefreshVisual();
@@ -1006,8 +1316,19 @@ namespace MakeGame.Systems
                 return;
 
             buffer.Clear();
-            for (int i = 0; i < baseTileCount; i++)
-                buffer.Add(baseTiles[i]);
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                BaseTileCell cell = tiles[i];
+
+                // 종류·바닥재에 **좌표를 동봉**해서 내보낸다(CellBit 참고). 세이브 파일의 형태는
+                // 예전과 같은 int 목록이라 SaveData/SaveLoadController는 손대지 않는다.
+                int code = (cell.code & (KindMask | FloorBit))
+                    | CellBit
+                    | (((cell.x + CellBias) & CellAxisMask) << CellXShift)
+                    | (((cell.z + CellBias) & CellAxisMask) << CellZShift);
+
+                buffer.Add(code);
+            }
         }
 
         /// <summary>진행 상태 변화 통지. 외부에서 상태를 되돌린 뒤에도 부를 수 있도록 public이다.</summary>
@@ -1236,9 +1557,13 @@ namespace MakeGame.Systems
         /// </summary>
         private int ComputeStateSignature()
         {
-            int signature = baseTileCount * 1024 + (int)installedParts;
-            for (int i = 0; i < baseTileCount; i++)
-                signature = signature * 33 + baseTiles[i];
+            int signature = tiles.Count * 1024 + (int)installedParts;
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                BaseTileCell cell = tiles[i];
+                signature = signature * 33 + cell.code;
+                signature = signature * 33 + (cell.x * 31 + cell.z);
+            }
 
             return signature;
         }
@@ -1355,7 +1680,13 @@ namespace MakeGame.Systems
         /// 선체 대각선의 절반에 여유를 조금 더한 값이다.
         /// </summary>
         public static float FootprintRadius =>
-            Mathf.Sqrt(DeckLength * DeckLength + DeckWidth * DeckWidth) * 0.5f + 0.6f;
+            MaxFootprintSpan * BaseTilePitch * Mathf.Sqrt(2f) * 0.5f + 0.6f;
+
+        /// <summary>
+        /// 한 축으로 가질 수 있는 최대 칸 수(CellMin..CellMax). 겹침 판정 반경이 여기서 나온다 -
+        /// 격자 상수(DeckLength/DeckWidth)로 재면 자유 증축으로 넓어진 뗏목끼리 겹칠 수 있다.
+        /// </summary>
+        public const int MaxFootprintSpan = CellMax - CellMin + 1;
 
         /// <summary>
         /// 여기에 뗏목을 세울 수 있는가. 건축 메뉴의 고스트가 매 프레임 묻는다.
@@ -1734,6 +2065,9 @@ namespace MakeGame.Systems
                 return;
             }
 
+            // ★ 갑판은 뗏목 원점을 중심으로 놓여 있지 않다(임의 형태). 중심을 빼먹으면 갑판이 없는
+            //   물 위 지점의 여유를 재게 되고, 그쪽이 더 낮아 정박 중에도 침수 경고가 깜빡인다.
+            Vector2 deckCenter = DeckCenterLocal;
             float halfWidth = deck.x * 0.5f;
             float halfLength = deck.y * 0.5f;
             float scale = Mathf.Max(0f, waveHeaveScale);
@@ -1741,8 +2075,8 @@ namespace MakeGame.Systems
 
             for (int corner = 0; corner < 4; corner++)
             {
-                float localX = (corner % 2 == 0 ? -1f : 1f) * halfWidth;
-                float localZ = (corner < 2 ? -1f : 1f) * halfLength;
+                float localX = deckCenter.x + (corner % 2 == 0 ? -1f : 1f) * halfWidth;
+                float localZ = deckCenter.y + (corner < 2 ? -1f : 1f) * halfLength;
                 Vector3 world = position + rotation * new Vector3(localX, DeckSurfaceY, localZ);
 
                 // ★ **뗏목의 heave와 같은 함수(SampleHeight)를 쓴다.** 한 번 플레이어 수영 판정과
@@ -1965,31 +2299,27 @@ namespace MakeGame.Systems
         }
 
         /// <summary>
-        /// 온전히 채워진 바닥판 **행**의 개수. 한 행(좌현+우현)이 다 차야 그 구간을 갑판으로 인정한다.
-        /// 반만 깔린 행을 갑판으로 세면 건축 조각이 빈 칸 위 허공에 놓인다.
-        /// GetDeckedSpan(건축 시스템에 알려 주는 크기)과 BuildBaseTiles(실제 파츠 배치)가 공유한다.
+        /// 바닥판이 실제로 덮은 로컬 구간(x·z). 하나도 없으면 빈 구간(0,0)을 준다.
+        ///
+        /// **예전(행 단위 판정)과 무엇이 다른가:** 예전에는 "좌현+우현이 다 찬 행"만 갑판으로 셌다.
+        /// 지금은 놓인 칸의 실제 경계를 그대로 준다 - 대신 "그 칸 위에 지을 수 있는가"는
+        /// HasBaseTileAt이 칸 단위로 답하므로, 빈 칸 위 허공에 건축 조각이 놓이는 일은 없다.
         /// </summary>
-        private static int GetCompletedRows(int tileCount)
+        private void GetDeckedSpan(out float minX, out float maxX, out float minZ, out float maxZ)
         {
-            return Mathf.Clamp(tileCount, 0, MaxBaseTiles) / BaseGridColumns;
-        }
-
-        /// <summary>
-        /// 바닥판이 실제로 덮은 로컬 z 구간. 바닥판은 고물(-Z)부터 채워지므로 도중 단계에서는 앞쪽이
-        /// 비어 있다. 하나도 없으면 빈 구간(0,0)을 준다.
-        /// </summary>
-        private static void GetDeckedSpan(int tileCount, out float minZ, out float maxZ)
-        {
-            int rows = GetCompletedRows(tileCount);
-            if (rows <= 0)
+            if (!GetCellBounds(out int cellMinX, out int cellMaxX, out int cellMinZ, out int cellMaxZ))
             {
+                minX = 0f;
+                maxX = 0f;
                 minZ = 0f;
                 maxZ = 0f;
                 return;
             }
 
-            minZ = -DeckLength * 0.5f;
-            maxZ = minZ + (DeckLength / BaseGridRows) * rows;
+            minX = cellMinX * BaseTilePitch;
+            maxX = (cellMaxX + 1) * BaseTilePitch;
+            minZ = cellMinZ * BaseTilePitch;
+            maxZ = (cellMaxZ + 1) * BaseTilePitch;
         }
 
     }
